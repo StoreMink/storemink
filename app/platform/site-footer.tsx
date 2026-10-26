@@ -3,6 +3,7 @@ import { Globe2, Mail } from "lucide-react";
 import { LEGAL_DOCS } from "@/lib/legal/documents";
 import {
   BRAND_TAGLINE,
+  BRAND_TAGLINE_DETAIL,
   BRAND_SOCIAL_LINKS,
   SUPPORT_EMAIL,
 } from "@/lib/seo/brand-identity";
@@ -35,8 +36,9 @@ export function SiteFooter() {
             </span>
           </Link>
           <p>
-            {BRAND_TAGLINE} The AI-native business operating system for
-            independent brands.
+            {BRAND_TAGLINE}
+            <br />
+            {BRAND_TAGLINE_DETAIL}
           </p>
           <span>
             Made in India <Globe2 size={14} />

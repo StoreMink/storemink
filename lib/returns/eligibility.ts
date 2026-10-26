@@ -8,7 +8,7 @@
 // ── The window starts at DELIVERY ──────────────────────────────────────────
 // ★ Measured from `created_at`, a 7-day window on a 10-day delivery has
 // expired before the customer ever held the goods. `orders.delivered_at`
-// exists for exactly this (refunds_01_gateway.sql).
+// exists for exactly this.
 //
 // Fallback chain, in order:
 //   delivered_at  → it landed

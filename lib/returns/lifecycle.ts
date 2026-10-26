@@ -1,4 +1,4 @@
-// Where a return is in its life (returns_02_requests.sql).
+// Where a return is in its life (order_returns.status, order_returns_status_check).
 //
 // PURE, and in its own module because THREE callers have to agree on one
 // question — "does this return still hold the units it names?" — and they are

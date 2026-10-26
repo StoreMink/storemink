@@ -26,7 +26,7 @@
 // ── What this does NOT do ──────────────────────────────────────────────────
 // It does not restock. A refund and a return are different facts (a returned
 // item may be damaged, and a cancellation has no goods at all) — roadmap
-// invariant 8, and pos_12_returns.sql already keeps the two tables apart.
+// invariant 8, and the schema already keeps order_refunds and order_returns apart.
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -75,7 +75,7 @@ export interface RefundRow {
   createdAt: string | null;
   actor: string | null;
   /** GST credit note serial, once the refund has settled on a taxed order.
-   *  Allocated by a trigger — see returns_04_credit_notes.sql. */
+   *  Allocated by the order_refunds_credit_note trigger. */
   creditNoteRef: string | null;
 }
 
@@ -217,7 +217,7 @@ function offlineReason(paymentMethod: string | null): string {
     case "upi":
     case "split":
     case "pos":
-      return "This sale was paid at the counter, so it's refunded there: take the return at the till, or pay the customer back yourself and record it here.";
+      return "This sale was paid at the counter, so it's refunded there: take the return in POS, or pay the customer back yourself and record it here.";
     case "pay_at_store":
       return "This order was paid at the counter when it was collected, so there's no online payment to reverse. Pay the customer back however you normally do, then record it here.";
     default:

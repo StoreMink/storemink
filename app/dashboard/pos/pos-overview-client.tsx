@@ -1,11 +1,9 @@
 "use client";
 
 import { useTransition } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import posMultiDeviceImage from "@/public/brand/storemink-pos-multidevice.png";
 import {
   ArrowUpRight,
   Boxes,
@@ -48,7 +46,7 @@ export function PosOverviewClient({
       const res = await enablePos();
       if (res.error) toast.error(res.error);
       else {
-        toast.success("Point of Sale enabled");
+        toast.success("POS enabled");
         router.refresh();
       }
     });
@@ -58,7 +56,7 @@ export function PosOverviewClient({
       const res = await disablePos();
       if (res.error) toast.error(res.error);
       else {
-        toast.success("Point of Sale disabled");
+        toast.success("POS disabled");
         router.refresh();
       }
     });
@@ -66,10 +64,10 @@ export function PosOverviewClient({
   return (
     <div className="dash-page-enter">
       <header className="dash-page-header">
-        <h1>Point of Sale</h1>
+        <h1>POS</h1>
         <p>
-          Sell in person with an in-store register that shares your catalog,
-          inventory, and customers.
+          Sell in person with POS, which shares your catalog, inventory, and
+          customers.
         </p>
       </header>
 
@@ -108,7 +106,7 @@ export function PosOverviewClient({
                   </span>
                 </h2>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-slate-300 sm:text-[15px]">
-                  Run counter sales, click-and-collect, returns, and stock
+                  Run in-store sales, click-and-collect, returns, and stock
                   across every location from the same commerce system as your
                   website.
                 </p>
@@ -160,31 +158,11 @@ export function PosOverviewClient({
                 </div>
               </div>
 
-              <div className="relative mx-auto w-full max-w-md lg:ml-auto">
-                <div className="rounded-[22px] border border-white/15 bg-white/10 p-2 shadow-2xl shadow-black/30 backdrop-blur-md">
-                  <div className="relative aspect-[3/2] overflow-hidden rounded-2xl bg-[#d6c3ae] shadow-sm">
-                    <Image
-                      src={posMultiDeviceImage}
-                      alt="StoreMink POS running across a desktop register, tablet, and phone with the real checkout interface"
-                      fill
-                      sizes="(max-width: 640px) calc(100vw - 80px), (max-width: 1200px) 42vw, 440px"
-                      loading="eager"
-                      className="object-cover"
-                    />
-                    <div
-                      aria-hidden="true"
-                      className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#111329]/35 to-transparent"
-                    />
-                  </div>
-                </div>
-
-                <div className="absolute -bottom-4 -left-4 hidden items-center gap-2 rounded-xl border border-white/10 bg-[#202342]/95 px-3 py-2 text-xs font-semibold text-white shadow-xl backdrop-blur-md sm:flex">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-400/15 text-emerald-300">
-                    <Boxes className="h-3.5 w-3.5" strokeWidth={2} />
-                  </span>
-                  Website + counter, always in sync
-                </div>
-              </div>
+              {/* ★ NO PRODUCT PICTURE until a new one exists (owner, 26 Oct
+                  2026): public/brand/storemink-pos-multidevice.png shows
+                  "Register" on its screens, and the product says POS. The file
+                  stays for its replacement; the grid takes a second column
+                  again when the new picture goes in. */}
             </div>
           </section>
         )}
@@ -199,11 +177,10 @@ export function PosOverviewClient({
                   <Store className="h-7 w-7" strokeWidth={1.75} />
                 </div>
                 <h2 className="mt-4 text-lg font-bold text-[#111827]">
-                  Turn on Point of Sale
+                  Turn on POS
                 </h2>
                 <p className="mx-auto mt-2 max-w-md text-sm text-[#5b6472]">
-                  Enable POS to add your store locations and open the register
-                  at{" "}
+                  Enable POS to add your store locations and open POS at{" "}
                   <code className="rounded bg-[#f2f3f5] px-1.5 py-0.5 text-[12px]">
                     /pos
                   </code>
@@ -241,14 +218,14 @@ export function PosOverviewClient({
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-[#111827]">
-                          Point of Sale is on
+                          POS is on
                         </span>
                         <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
                           Live
                         </span>
                       </div>
                       <p className="text-sm text-[#5b6472]">
-                        Register available at /pos on your store.
+                        POS is available at /pos on your store.
                       </p>
                     </div>
                   </div>
@@ -258,7 +235,7 @@ export function PosOverviewClient({
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 rounded-lg bg-[#111827] px-3.5 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
                   >
-                    Open register
+                    Open POS
                     <ExternalLink className="h-4 w-4" strokeWidth={2} />
                   </a>
                 </div>

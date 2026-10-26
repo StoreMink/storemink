@@ -46,6 +46,7 @@ import "server-only";
 // ---------------------------------------------------------------------------
 
 import { can } from "@/app/dashboard/lib/permissions";
+import { pgErrorCode } from "@/lib/db/errors";
 import type { EmitEventInput } from "@/lib/notifications/record";
 import { logInfo, logWarn } from "@/lib/observability/logger";
 import type { ThemeDefinition } from "@/lib/themes/types";
@@ -220,16 +221,33 @@ export const REVAMP_PLAN_RETRY_MIN_LEFT_MS = 6 * 60_000;
 const REVAMP_CHAIN_LIMIT = REVAMP_LIMITS.maxRefinements + 1;
 /** How long a transient failure waits before the next claim. */
 export const REVAMP_RETRY_AFTER_MS = 60_000;
+/**
+ * How long before the lease could lapse the runner stops when no renewal has
+ * succeeded since (D1): the lease runs `REVAMP_LIMITS.leaseMs` from the start
+ * of the last renewal that succeeded (or of the claim), and after it another
+ * invocation may claim the job and pay for the same calls again. Theme
+ * Studio's worker lease stops the same 5 s early (worker-lease.ts).
+ */
+export const REVAMP_LEASE_MARGIN_MS = 5_000;
 /** One progress write per this long, at most; the rest ride on the next save. */
 export const REVAMP_REPORT_INTERVAL_MS = 2_000;
 /**
  * How long a step may drain after the deadline before it is stopped (jobs-4).
  * ★ The calls in flight at the deadline are billed whatever happens next, so
- *   they are let finish and be stored: one image call gives up well inside
- *   this. ★ The route runs for 1,200 seconds against an 18 minute deadline,
- *   so 90 seconds of drain still leaves half a minute to hand over.
+ *   they are let finish and be stored. ★★ No IMAGE call can still be on the
+ *   wire at the hard stop (D2): one is admitted only while its own per-try
+ *   clock and `REVAMP_LIMITS.hardStopMarginMs` fit before it, so a studio
+ *   photo or a photo check (75 s each) is admitted until the drain and a
+ *   shoot photo (180 s) only until 95 s before it (photos.ts
+ *   `revampAdmissionDrain`). The planner and its compile repairs are not held
+ *   to this yet: each is admitted until the drain on a 6 minute cap
+ *   (site-planner.ts REVAMP_PLANNER_TIMEOUT_MS), so one admitted late can
+ *   still be cut off by the hard stop. ★ The route runs for 1,200 seconds
+ *   against an 18 minute deadline, so 90 seconds of drain still leaves half a
+ *   minute to hand over; it cannot grow to a photo's 180 s without a shorter
+ *   deadline.
  */
-export const REVAMP_DEADLINE_GRACE_MS = 90_000;
+export const REVAMP_DEADLINE_GRACE_MS = REVAMP_LIMITS.deadlineGraceMs;
 /**
  * ★★ The steps that wait on Google (robustness audit B8): the planner and its
  *   repairs, the shoot and its checks, the studio photos, each queued on the
@@ -341,6 +359,8 @@ async function runHeldRevamp(
   const now = input.now ?? Date.now;
   const requestId = input.requestId ?? crypto.randomUUID();
 
+  // The lease runs from the claim's own write, which starts after this.
+  const claimStarted = now();
   const claimed = await jobs.claim(input.revampId);
   if (!claimed) return { outcome: "not_claimed" };
   const { job, leaseToken } = claimed;
@@ -376,24 +396,66 @@ async function runHeldRevamp(
     drainController.abort(new RevampHalted("deadline"));
     graceTimer = setTimeout(() => halt("deadline"), REVAMP_DEADLINE_GRACE_MS);
   }, deadlineMs);
-  // ★ One renewal at a time; a caller that must know the answer (the card
-  //   step, before its charge) awaits the one already in flight.
-  let renewal: Promise<void> | null = null;
-  const renewOnce = (): Promise<void> => {
-    if (stop) return Promise.resolve();
-    renewal ??= (async () => {
-      try {
-        const lease = await jobs.renew(revampId, leaseToken);
-        if (!lease.ok) halt("lease_lost");
-        else if (lease.cancelRequested) halt("cancelled");
-      } catch (error) {
-        // ★ A renewal that THREW is not an answer about the lease (jobs.ts):
-        //   stop, give the lease back with a wait, and let the next claim see.
-        logWarn("mink.revamp: lease renewal failed", {
+  // ★★ ONLY A LOST LEASE STOPS PAID WORK AT ONCE, NOT A FAILED RENEWAL (D1,
+  //   Theme Studio's P2 rule, worker-lease.ts). A renewal answering false
+  //   means another invocation owns the job: stop at once. A renewal that
+  //   THROWS says nothing about the lease (jobs.ts): one UPDATE whose pool
+  //   wait is 5 s can time out on a busy server with minutes of lease left,
+  //   and stopping then aborted every photo Google was already drawing, paid
+  //   for and drawn again by the next invocation. It is logged and asked
+  //   again at the next tick, and this watchdog, armed from the START of the
+  //   last renewal that succeeded (or of the claim), still stops the work
+  //   `REVAMP_LEASE_MARGIN_MS` before the lease could lapse, the halt the
+  //   throw used to make: parked and counted as before.
+  let leaseWatch: ReturnType<typeof setTimeout> | null = null;
+  // ★ Set once the run has returned: a renewal still in flight then answers
+  //   into a finished run and must not arm the watchdog again (Theme
+  //   Studio's `stopped`, worker-lease.ts).
+  let ended = false;
+  let renewFailures = 0;
+  const watchLease = (from: number) => {
+    if (leaseWatch) clearTimeout(leaseWatch);
+    leaseWatch = setTimeout(
+      () => {
+        if (stop) return;
+        logWarn("mink.revamp: lease could lapse, stopping", {
           revampId,
-          error: errorText(error),
+          failures: renewFailures,
         });
         halt("renew_failed");
+      },
+      Math.max(
+        0,
+        from + REVAMP_LIMITS.leaseMs - REVAMP_LEASE_MARGIN_MS - now(),
+      ),
+    );
+  };
+  watchLease(claimStarted);
+  // ★ One renewal at a time; a caller that must know the answer (the card
+  //   step, before its charge) awaits the one already in flight. Resolves
+  //   false when the renewal threw, so no answer about the lease came back.
+  let renewal: Promise<boolean> | null = null;
+  const renewOnce = (): Promise<boolean> => {
+    if (stop) return Promise.resolve(true);
+    renewal ??= (async () => {
+      const started = now();
+      try {
+        const lease = await jobs.renew(revampId, leaseToken);
+        renewFailures = 0;
+        if (!lease.ok) halt("lease_lost");
+        else if (lease.cancelRequested) halt("cancelled");
+        else if (!stop && !ended) watchLease(started);
+        return true;
+      } catch (error) {
+        renewFailures += 1;
+        // ★ Content-free: a failed query's message carries its SQL text and
+        //   parameters, so only a closed code is logged.
+        logWarn("mink.revamp: lease renewal failed", {
+          revampId,
+          attempt: renewFailures,
+          code: failureCode(error),
+        });
+        return false;
       } finally {
         renewal = null;
       }
@@ -827,8 +889,10 @@ async function runHeldRevamp(
   try {
     return { outcome: await drive() };
   } finally {
+    ended = true;
     clearTimeout(deadlineTimer);
     if (graceTimer) clearTimeout(graceTimer);
+    if (leaseWatch) clearTimeout(leaseWatch);
     clearInterval(renewTimer);
   }
 
@@ -1666,8 +1730,10 @@ async function runHeldRevamp(
       // ★★ The lease is asked right before the charge, not left to the
       //   once-a-minute timer: renewing reads the cancel flag, so a Stop the
       //   merchant pressed during the last minute is honoured here and
-      //   nothing is charged for it.
-      await renewOnce();
+      //   nothing is charged for it. ★ A renewal that threw read no flag, so
+      //   no card is made on it: the job is parked, as it always was (D1
+      //   spares only paid work in flight, and none is in flight here).
+      if (!(await renewOnce())) halt("renew_failed");
       // ★ Checked before the charge: a card made for a job nobody can finish
       //   is a charge with nothing to show for it.
       if (stopNow()) return settleStop();
@@ -2093,6 +2159,28 @@ function boundedDetail(detail: string | null): string | null {
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 300) : "unknown";
+}
+
+/**
+ * A closed, content-free word for why a database call threw (D1): the pool's
+ * reason (DatabaseBusyError), the SQLSTATE or system code (`57014`,
+ * `ECONNRESET`), else the error's class name. ★ Never its message: a failed
+ * query's carries its SQL text and parameters.
+ */
+function failureCode(error: unknown): string {
+  const word = (value: unknown): string | null =>
+    typeof value === "string" && /^[A-Za-z0-9_]{1,40}$/.test(value)
+      ? value
+      : null;
+  if (error instanceof Error && error.name === "DatabaseBusyError") {
+    const reason = word((error as { reason?: unknown }).reason);
+    if (reason) return reason;
+  }
+  return (
+    word(pgErrorCode(error)) ??
+    (error instanceof Error ? word(error.name) : null) ??
+    "unknown"
+  );
 }
 
 /**

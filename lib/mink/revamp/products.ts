@@ -51,6 +51,7 @@ import {
 } from "../errors";
 import {
   generateMinkMediaImage,
+  isUnbilledImageFailure,
   type MinkGeneratedImage,
 } from "../media-generation";
 import {
@@ -746,19 +747,21 @@ export async function makeRevampProductPhotos(
             });
             return { kind: "failed", reason: REASONS.failed };
           }
-          // ★ A call the run's own stop interrupted may still have been
-          //   billed, so its photo stays claimed and its spend is counted;
-          //   the step rethrows below.
-          if (ctx.signal.aborted) {
-            spent = true;
-            bill({ ...DRAW_USAGE });
-            return { kind: "stopped" };
-          }
-          // ★ Still turned away with 429: the request never ran and billed
-          //   nothing, so it is asked for again after a wait, never at once.
-          //   Counted against the image model (P0).
-          if (error instanceof MinkImageRateLimitedError) {
-            bill(revampCallUsage(imageModel, { rateLimited: 1 }));
+          // ★★ STILL TURNED AWAY WITH 429, OR NEVER SENT: NOTHING WAS BILLED
+          //   (B3, D3), even when the run's stop came meanwhile, so its photo
+          //   is not spent and no draw is counted. A 429 never ran, so it is
+          //   asked for again after a wait, never at once, and counted
+          //   against the image model (P0).
+          if (isUnbilledImageFailure(error)) {
+            if (error instanceof MinkImageRateLimitedError) {
+              bill(revampCallUsage(imageModel, { rateLimited: 1 }));
+            }
+            if (ctx.signal.aborted) return { kind: "stopped" };
+            if (!(error instanceof MinkImageRateLimitedError)) {
+              // Never sent, for a reason of ours: no image model set up, or
+              // a prompt that would not render.
+              return { kind: "failed", reason: REASONS.failed };
+            }
             const next = await waitForImageService(ctx, retry, wait, now);
             if (next === "again") continue;
             if (next === "gave_up") {
@@ -770,6 +773,17 @@ export async function makeRevampProductPhotos(
               return { kind: "failed", reason: REASONS.busy };
             }
             return next === "stopped" ? { kind: "stopped" } : { kind: "left" };
+          }
+          // ★ A call the run's own stop cut off on the wire may still have
+          //   been billed, so its photo stays claimed and its spend is
+          //   counted; the step rethrows below. ⚠ While this run still owns
+          //   the job: after a lost lease, a crash or a claim it cannot
+          //   clear, the next run settles the claim from the stored photos
+          //   (photo-hold.ts) and gives this one back.
+          if (ctx.signal.aborted) {
+            spent = true;
+            bill({ ...DRAW_USAGE });
+            return { kind: "stopped" };
           }
           // A refusal returns no image and bills no image, though the
           // estimate counts it; a missing project setting never reached the
@@ -1665,6 +1679,8 @@ async function defaultGenerate(
   // No project: the call refuses before any provider (image_not_configured).
   if (!config.projectId) return attempt(signal);
   let sent = false;
+  // How the try itself ended, once it has (D3).
+  let ended: unknown = null;
   try {
     return await sharedProviderCapacity(
       config.projectId,
@@ -1683,6 +1699,7 @@ async function defaultGenerate(
           permit.succeeded();
           return image;
         } catch (error) {
+          ended = error;
           if (error instanceof MinkImageRateLimitedError) {
             // ★ The others on the model wait the shared ceiling (15 s) at most.
             await permit
@@ -1703,6 +1720,12 @@ async function defaultGenerate(
       draining ? { admission: draining } : undefined,
     );
   } catch (error) {
+    // ★★ HOW THE TRY ENDED DECIDES, NOT WHAT ENDED ITS TURN (B3, D3). The
+    //   capacity gives up with the run's stop as soon as it lands, even
+    //   while a 429 the try already got is being shared with the others on
+    //   the model; read as the stop, that try would count as a draw cut off
+    //   on the wire and keep its photo spent, though nothing was billed.
+    if (isUnbilledImageFailure(ended)) throw ended;
     if (sent || error instanceof ProductDrawNotSent) throw error;
     throw new ProductDrawNotSent(
       `Not sent: ${error instanceof Error ? error.message : String(error)}`,

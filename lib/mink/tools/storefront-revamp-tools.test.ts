@@ -1,6 +1,10 @@
 import { getTableName, type Table } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MinkToolInputError, MinkToolTimeoutError } from "../errors";
+import {
+  MinkRunStoppedError,
+  MinkToolInputError,
+  MinkToolTimeoutError,
+} from "../errors";
 import { MINK_MAX_RUN_CREDITS } from "../metering";
 import { REVAMP_PRICES } from "../revamp/contract";
 import { readRevampRequest } from "../revamp/request";
@@ -8,6 +12,7 @@ import type { MinkActorContext } from "../types";
 
 const h = vi.hoisted(() => ({
   createRevampJob: vi.fn(),
+  findActiveRevampId: vi.fn(),
   cancelRevamp: vi.fn(),
   listConversationRevamps: vi.fn(),
   countRefinements: vi.fn(),
@@ -33,6 +38,7 @@ vi.mock("../revamp/jobs", async (importOriginal) => {
     FREE_HOLDING_STATUSES,
     revampStartLimit,
     createRevampJob: h.createRevampJob,
+    findActiveRevampId: h.findActiveRevampId,
     cancelRevamp: h.cancelRevamp,
     listConversationRevamps: h.listConversationRevamps,
     countRefinements: h.countRefinements,
@@ -92,9 +98,61 @@ import { minkStorefrontRevampTools } from "./storefront-revamp-tools";
 const [contextTool, startTool, refineTool] = minkStorefrontRevampTools;
 
 const CONVERSATION = "22222222-2222-4222-8222-222222222222";
+const OTHER_CONVERSATION = "77777777-7777-4777-8777-777777777777";
 const JOB = "11111111-1111-4111-8111-111111111111";
 const PARENT = "33333333-3333-4333-8333-333333333333";
 const PHOTO = "https://storage.googleapis.com/bucket/stores/s/media/jar.webp";
+
+const RELAY =
+  "Tell the merchant this in one short sentence, in plain words. Do not say a card is shown.";
+const ALREADY_STARTED =
+  "A redesign started earlier in this chat is still being made, and its card is shown with this answer. Say that in one short sentence. Do not start another, do not describe the design and do not write any id.";
+const ALREADY_STARTED_REFINE =
+  "A redesign in this chat is still being made, and its card is shown with this answer. Tell the merchant in one short sentence that they can ask for changes once it is ready. Do not describe the design and do not write any id.";
+const ALREADY_READY =
+  "This chat already has a redesign ready to review, and its card is shown with this answer. Tell the merchant in one short sentence that they can apply it, publish it or ask for changes. Start a new redesign only if they say they want a new one, with replace_earlier true.";
+const ELSEWHERE =
+  "A redesign is already being made for this store in another chat, yours or a teammate's. A new one can start once that one is finished.";
+
+/** A redesign of this chat as `listConversationRevamps` returns it. */
+const entry = (overrides: Record<string, unknown> = {}) => ({
+  id: JOB,
+  kind: "full",
+  status: "running",
+  draftId: null,
+  summary: null,
+  appliedAt: null,
+  publishedAt: null,
+  undoneAt: null,
+  createdAt: "2026-10-25T10:30:25.669Z",
+  cancelRequested: false,
+  ...overrides,
+});
+
+/** The store's active job as `readRevampJob` reads it after a refused insert. */
+const activeJob = (overrides: Record<string, unknown> = {}) => ({
+  id: JOB,
+  storeId: "store",
+  adminId: "admin",
+  conversationId: CONVERSATION,
+  kind: "full",
+  status: "queued",
+  appliedAt: null,
+  undoneAt: null,
+  cancelRequestedAt: null,
+  ...overrides,
+});
+
+/** What the model would read: never an id, a uuid or the job's own status. */
+function expectNoIdForModel(forModel: Record<string, unknown> | undefined) {
+  expect(forModel).toBeDefined();
+  expect(forModel).not.toHaveProperty("revampId");
+  expect(forModel).not.toHaveProperty("existingRevampId");
+  expect(forModel).not.toHaveProperty("artifact");
+  expect(JSON.stringify(forModel)).not.toMatch(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+  );
+}
 
 const actor = (overrides: Partial<MinkActorContext> = {}) =>
   ({
@@ -214,6 +272,7 @@ beforeEach(() => {
     ok: true,
     job: { id: JOB, status: "queued" },
   });
+  h.findActiveRevampId.mockResolvedValue(null);
   h.cancelRevamp.mockResolvedValue({ id: JOB, status: "cancelled" });
   h.listConversationRevamps.mockResolvedValue([]);
   h.countRefinements.mockResolvedValue(0);
@@ -254,6 +313,20 @@ describe("the revamp tool declarations", () => {
     const text = startTool.declaration.description.toLowerCase();
     expect(text).toContain("categories that came with the theme");
     expect(text).toContain("ask in the same message");
+  });
+
+  it("★ marks start and refine as commit tools: their write is the job insert", () => {
+    expect(startTool.effect).toBe("commit");
+    expect(refineTool.effect).toBe("commit");
+    // The context read stays a read by being repeat safe.
+    expect(contextTool.effect).toBeUndefined();
+  });
+
+  it("★ says the chat's redesigns come with a state, not a status", () => {
+    expect(contextTool.declaration.description).toContain(
+      "newest first, with their state",
+    );
+    expect(contextTool.declaration.description).not.toContain("status");
   });
 
   it("gates them on Builder and drafting, and only the read is repeat safe", () => {
@@ -298,16 +371,16 @@ describe("get_storefront_revamp_context", () => {
     ]);
     const output = await contextTool.execute(actor(), {});
     expect(output.context).toEqual({ store: { name: "Lumen" }, blocker: null });
+    // ★ Plain words and flags: no job status and no timestamp reach the model.
     expect(output.revamps).toEqual([
       {
         id: JOB,
         kind: "full",
-        status: "ready",
+        state: "ready to review",
+        applied: false,
+        published: false,
+        undone: false,
         summary: "Warm and calm",
-        appliedAt: null,
-        publishedAt: null,
-        undoneAt: null,
-        createdAt: "2026-10-21T00:00:00.000Z",
       },
     ]);
     expect(h.listConversationRevamps).toHaveBeenCalledWith({
@@ -315,6 +388,58 @@ describe("get_storefront_revamp_context", () => {
       adminId: "admin",
       conversationId: CONVERSATION,
     });
+  });
+
+  it("★★ names every state in words a merchant can be told, never the job's status (25 Oct)", async () => {
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ id: "a1111111-1111-4111-8111-111111111111", status: "queued" }),
+      entry({ id: "a2222222-2222-4222-8222-222222222222", status: "running" }),
+      entry({
+        id: "a3333333-3333-4333-8333-333333333333",
+        status: "running",
+        cancelRequested: true,
+      }),
+      entry({
+        id: "a4444444-4444-4444-8444-444444444444",
+        status: "superseded",
+        appliedAt: "2026-10-21T00:00:00Z",
+        publishedAt: "2026-10-21T01:00:00Z",
+      }),
+      entry({
+        id: "a5555555-5555-4555-8555-555555555555",
+        status: "ready",
+        appliedAt: "2026-10-22T00:00:00Z",
+        undoneAt: "2026-10-22T01:00:00Z",
+      }),
+    ]);
+    const output = await contextTool.execute(actor(), {});
+    const revamps = output.revamps as Array<Record<string, unknown>>;
+    expect(revamps.map((revamp) => revamp.state)).toEqual([
+      "being made",
+      "being made",
+      "stopping",
+      "replaced by a newer version",
+      "ready to review",
+    ]);
+    expect(revamps[3]).toMatchObject({ applied: true, published: true });
+    // Applied and then undone: not on the store now.
+    expect(revamps[4]).toMatchObject({ applied: false, undone: true });
+    for (const revamp of revamps) {
+      expect(Object.keys(revamp)).not.toContain("status");
+      expect(Object.keys(revamp)).not.toContain("createdAt");
+    }
+    const text = JSON.stringify(revamps);
+    for (const word of ["queued", "running", "superseded", "cancelled"])
+      expect(text).not.toContain(word);
+
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ status: "failed" }),
+      entry({ status: "cancelled" }),
+    ]);
+    const ended = await contextTool.execute(actor(), {});
+    expect(
+      (ended.revamps as Array<Record<string, unknown>>).map((r) => r.state),
+    ).toEqual(["did not finish", "stopped"]);
   });
 
   it("★★ lists the photos a refinement can redraw, for the newest finished redesign (chat-2)", async () => {
@@ -414,11 +539,12 @@ describe("start_storefront_revamp", () => {
     const forModel = startTool.modelOutput?.(output);
     expect(forModel).toEqual({
       status: "started",
-      revampId: JOB,
+      cardShown: true,
       instruction:
         "Tell the merchant in one short sentence that the redesign has started and the card shows its progress. Do not describe the design.",
     });
     expect(JSON.stringify(forModel)).not.toMatch(/credit|budget/i);
+    expectNoIdForModel(forModel);
   });
 
   it("returns every argument problem at once as a tool input error", async () => {
@@ -439,11 +565,12 @@ describe("start_storefront_revamp", () => {
     const output = await startTool.execute(actor(), startArgs());
     expect(output).toEqual({
       status: "not_started",
+      cardShown: false,
       reason:
         "Choose a theme for your store first, under Online store, Storefront.",
-      instruction:
-        "Tell the merchant this in one short sentence, in plain words.",
+      instruction: RELAY,
     });
+    expect(startTool.artifact?.(output)).toBeUndefined();
     expect(h.claim).not.toHaveBeenCalled();
     expect(h.createRevampJob).not.toHaveBeenCalled();
   });
@@ -500,17 +627,23 @@ describe("start_storefront_revamp", () => {
     expect(h.createRevampJob).not.toHaveBeenCalled();
   });
 
-  it("points at a ready redesign this chat has not applied, unless asked to replace it", async () => {
-    h.listConversationRevamps.mockResolvedValue([
-      { id: JOB, kind: "full", status: "ready", appliedAt: null },
-    ]);
-    const blocked = await startTool.execute(actor(), startArgs());
-    expect(blocked.status).toBe("not_started");
-    expect(blocked.existingRevampId).toBe(JOB);
-    expect(blocked.instruction).toMatch(
-      /Point the merchant at the redesign card/,
-    );
+  it("★★ shows the card of a ready redesign this chat has not applied, unless asked to replace it", async () => {
+    h.listConversationRevamps.mockResolvedValue([entry({ status: "ready" })]);
+    const ready = await startTool.execute(actor(), startArgs());
+    expect(ready).toMatchObject({
+      status: "already_ready",
+      cardShown: true,
+      instruction: ALREADY_READY,
+    });
+    expect(startTool.artifact?.(ready)).toEqual({
+      type: "storefront_revamp",
+      revampId: JOB,
+      kind: "full",
+      status: "ready",
+    });
+    expectNoIdForModel(startTool.modelOutput?.(ready));
     expect(h.claim).not.toHaveBeenCalled();
+    expect(h.createRevampJob).not.toHaveBeenCalled();
 
     const replaced = await startTool.execute(
       actor(),
@@ -518,16 +651,123 @@ describe("start_storefront_revamp", () => {
     );
     expect(replaced.status).toBe("started");
 
+    // Applied, or applied and then undone: the chat may start afresh.
+    for (const done of [
+      { appliedAt: "2026-10-21T00:00:00Z" },
+      { appliedAt: "2026-10-21T00:00:00Z", undoneAt: "2026-10-22T00:00:00Z" },
+    ]) {
+      h.listConversationRevamps.mockResolvedValue([
+        entry({ status: "ready", ...done }),
+      ]);
+      expect((await startTool.execute(actor(), startArgs())).status).toBe(
+        "started",
+      );
+    }
+  });
+
+  it("★★ shows the card of a redesign this chat is still making, before it reads the arguments (25 Oct)", async () => {
+    // The barged-in run's redesign: a second start in the same chat gets its
+    // card, whatever the arguments, and never a second job.
+    h.listConversationRevamps.mockResolvedValue([entry({ status: "running" })]);
+    const output = await startTool.execute(actor(), {
+      brief: {},
+      products: [product({ sizes: [] })],
+    });
+    expect(output).toMatchObject({
+      status: "already_started",
+      cardShown: true,
+      instruction: ALREADY_STARTED,
+    });
+    expect(startTool.artifact?.(output)).toEqual({
+      type: "storefront_revamp",
+      revampId: JOB,
+      kind: "full",
+      status: "running",
+    });
+    const forModel = startTool.modelOutput?.(output);
+    expect(forModel).toEqual({
+      status: "already_started",
+      cardShown: true,
+      instruction: ALREADY_STARTED,
+    });
+    expectNoIdForModel(forModel);
+    // Nothing was guarded, claimed, inserted or kicked.
+    expect(h.reads).not.toContain("stores");
+    expect(h.claim).not.toHaveBeenCalled();
+    expect(h.createRevampJob).not.toHaveBeenCalled();
+    expect(h.kick).not.toHaveBeenCalled();
+
+    // ★ Even when asked to replace a ready one: the store holds one job.
     h.listConversationRevamps.mockResolvedValue([
-      {
-        id: JOB,
-        kind: "full",
-        status: "ready",
-        appliedAt: "2026-10-21T00:00:00Z",
-      },
+      entry({ status: "queued" }),
+      entry({ id: PARENT, status: "ready" }),
     ]);
-    const applied = await startTool.execute(actor(), startArgs());
-    expect(applied.status).toBe("started");
+    const replacing = await startTool.execute(
+      actor(),
+      startArgs({ replace_earlier: true }),
+    );
+    expect(replacing.status).toBe("already_started");
+    expect(startTool.artifact?.(replacing)).toMatchObject({
+      revampId: JOB,
+      status: "queued",
+    });
+  });
+
+  it("★ a refinement still being made wins over the older ready card it will replace", async () => {
+    // The usual state during any refinement of an unapplied redesign: the
+    // parent's card is replaced only once the refinement is ready (jobs.ts),
+    // so the card worth showing is the one with the progress.
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ kind: "refine", status: "running" }),
+      entry({ id: PARENT, status: "ready" }),
+    ]);
+    const output = await startTool.execute(actor(), startArgs());
+    expect(output).toMatchObject({
+      status: "already_started",
+      cardShown: true,
+      instruction: ALREADY_STARTED,
+    });
+    expect(startTool.artifact?.(output)).toEqual({
+      type: "storefront_revamp",
+      revampId: JOB,
+      kind: "refine",
+      status: "running",
+    });
+    expect(h.createRevampJob).not.toHaveBeenCalled();
+  });
+
+  it("says a redesign of this chat is still stopping, with no card", async () => {
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ status: "running", cancelRequested: true }),
+    ]);
+    const output = await startTool.execute(actor(), startArgs());
+    expect(output).toEqual({
+      status: "not_started",
+      cardShown: false,
+      reason: "The earlier redesign is still stopping. Try again in a minute.",
+      instruction: RELAY,
+    });
+    expect(startTool.artifact?.(output)).toBeUndefined();
+    expect(h.createRevampJob).not.toHaveBeenCalled();
+  });
+
+  it("★ a chat list it cannot read stops the start: it never goes ahead blind", async () => {
+    h.listConversationRevamps.mockRejectedValue(new Error("db"));
+    await expect(startTool.execute(actor(), startArgs())).rejects.toThrow("db");
+    expect(h.claim).not.toHaveBeenCalled();
+    expect(h.createRevampJob).not.toHaveBeenCalled();
+  });
+
+  it("reads no chat list outside a chat run", async () => {
+    const output = await startTool.execute(
+      actor({ runId: undefined }),
+      startArgs(),
+    );
+    expect(output.status).toBe("started");
+    expect(h.listConversationRevamps).not.toHaveBeenCalled();
+    expect(h.createRevampJob).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: null }),
+    );
   });
 
   it("refuses past the day's start limit", async () => {
@@ -653,20 +893,34 @@ describe("start_storefront_revamp", () => {
     });
   });
 
-  it("gives the start back when a redesign is already being made", async () => {
+  it("gives the start back when a redesign is already being made elsewhere, and shows no card", async () => {
     h.createRevampJob.mockResolvedValue({
       ok: false,
       reason: "active_exists",
       activeId: PARENT,
     });
-    const output = await startTool.execute(actor(), startArgs());
-    expect(output.reason).toBe(
-      "A redesign is already being made for this store; its card shows the progress.",
-    );
-    expect(output.existingRevampId).toBe(PARENT);
-    expect(h.release).toHaveBeenCalled();
+    // ★ Another chat's, or another admin's in this chat: the card's GET
+    //   answers only its requester, so no card can be shown for it.
+    for (const elsewhere of [
+      activeJob({ id: PARENT, conversationId: OTHER_CONVERSATION }),
+      activeJob({ id: PARENT, adminId: "another-admin" }),
+      activeJob({ id: PARENT, conversationId: null }),
+    ]) {
+      h.readRevampJob.mockResolvedValue(elsewhere);
+      h.release.mockClear();
+      const output = await startTool.execute(actor(), startArgs());
+      expect(output).toEqual({
+        status: "not_started",
+        cardShown: false,
+        reason: ELSEWHERE,
+        instruction: RELAY,
+      });
+      expect(startTool.artifact?.(output)).toBeUndefined();
+      expectNoIdForModel(startTool.modelOutput?.(output));
+      expect(h.release).toHaveBeenCalled();
+    }
+    expect(h.readRevampJob).toHaveBeenCalledWith(PARENT);
     expect(h.kick).not.toHaveBeenCalled();
-    expect(startTool.artifact?.(output)).toBeUndefined();
   });
 
   it("says an earlier redesign is still stopping, rather than pointing at its card", async () => {
@@ -675,6 +929,7 @@ describe("start_storefront_revamp", () => {
       reason: "active_exists",
       activeId: PARENT,
     });
+    // Any admin's: a stopping redesign holds the store's one place.
     h.readRevampJob.mockResolvedValue({
       id: PARENT,
       storeId: "store",
@@ -683,9 +938,9 @@ describe("start_storefront_revamp", () => {
     const output = await startTool.execute(actor(), startArgs());
     expect(output).toEqual({
       status: "not_started",
+      cardShown: false,
       reason: "The earlier redesign is still stopping. Try again in a minute.",
-      instruction:
-        "Tell the merchant this in one short sentence, in plain words.",
+      instruction: RELAY,
     });
     expect(h.readRevampJob).toHaveBeenCalledWith(PARENT);
     expect(h.release).toHaveBeenCalled();
@@ -697,10 +952,126 @@ describe("start_storefront_revamp", () => {
       cancelRequestedAt: "2026-10-22T00:00:00Z",
     });
     const other = await startTool.execute(actor(), startArgs());
-    expect(other.reason).toMatch(/already being made/);
+    expect(other.reason).toBe(ELSEWHERE);
     h.readRevampJob.mockRejectedValue(new Error("db"));
     const unreadable = await startTool.execute(actor(), startArgs());
-    expect(unreadable.reason).toMatch(/already being made/);
+    expect(unreadable.reason).toBe(ELSEWHERE);
+    expect(startTool.artifact?.(unreadable)).toBeUndefined();
+  });
+
+  it("★★ two runs of one chat racing to the insert: the loser shows the winner's card (25 Oct)", async () => {
+    // The loser read the chat before the winner's job existed, so it learns
+    // of it only when the store's active job refuses its insert.
+    h.createRevampJob.mockResolvedValue({
+      ok: false,
+      reason: "active_exists",
+      activeId: JOB,
+    });
+    h.readRevampJob.mockResolvedValue(activeJob());
+    const output = await startTool.execute(actor(), startArgs());
+    expect(output).toMatchObject({
+      status: "already_started",
+      cardShown: true,
+      instruction: ALREADY_STARTED,
+    });
+    expect(startTool.artifact?.(output)).toEqual({
+      type: "storefront_revamp",
+      revampId: JOB,
+      kind: "full",
+      status: "queued",
+    });
+    expectNoIdForModel(startTool.modelOutput?.(output));
+    // ★ Nothing came of this call: its start goes back, the runner is not
+    //   kicked for a job it did not make.
+    expect(h.release).toHaveBeenCalledTimes(1);
+    expect(h.kick).not.toHaveBeenCalled();
+
+    // The winner finished in between: its ready card.
+    h.readRevampJob.mockResolvedValue(activeJob({ status: "ready" }));
+    const ready = await startTool.execute(actor(), startArgs());
+    expect(ready.status).toBe("already_ready");
+    expect(startTool.artifact?.(ready)).toMatchObject({ status: "ready" });
+
+    // The winner ended in between: the store's place is free again.
+    h.readRevampJob.mockResolvedValue(activeJob({ status: "failed" }));
+    const ended = await startTool.execute(actor(), startArgs());
+    expect(ended).toMatchObject({
+      status: "not_started",
+      cardShown: false,
+      reason: "The earlier redesign has just ended. Try again now.",
+    });
+    expect(startTool.artifact?.(ended)).toBeUndefined();
+  });
+
+  it("★★ never hands the model an id, whatever the answer", () => {
+    // Defence in depth: an output carrying an id loses it before the model.
+    const forModel = startTool.modelOutput?.({
+      status: "not_started",
+      revampId: JOB,
+      existingRevampId: PARENT,
+      artifact: { type: "storefront_revamp", revampId: JOB },
+    });
+    expect(forModel).toEqual({ status: "not_started" });
+    expect(refineTool.modelOutput?.({ revampId: JOB, status: "x" })).toEqual({
+      status: "x",
+    });
+  });
+
+  it("★★ no refusal says a card is coming: a refusal attaches none (25 Oct)", async () => {
+    // The refusal that started this said "its card shows the progress" with
+    // no card attached, and the model passed the promise on.
+    const refusals: Array<[string, Record<string, unknown>]> = [];
+    const collect = async (
+      label: string,
+      tool: typeof startTool,
+      args: Record<string, unknown>,
+    ) => refusals.push([label, await tool.execute(actor(), args)]);
+
+    h.rows.stores = [{ settings: { themePending: true } }];
+    await collect("no theme", startTool, startArgs());
+    h.rows.stores = [{ settings: {} }];
+    h.claim.mockResolvedValueOnce({ ok: false });
+    await collect("daily limit", startTool, startArgs());
+    h.rows.mink_revamps = [{ id: PARENT }];
+    h.headroom.mockResolvedValueOnce({
+      period: "p",
+      planCap: 20,
+      remaining: 1,
+    });
+    await collect("credits", startTool, startArgs());
+    h.rows.mink_revamps = [];
+    h.createRevampJob.mockResolvedValue({
+      ok: false,
+      reason: "active_exists",
+      activeId: JOB,
+    });
+    for (const [label, job] of [
+      ["elsewhere", activeJob({ conversationId: OTHER_CONVERSATION })],
+      ["stopping", activeJob({ cancelRequestedAt: "2026-10-25T10:31:00Z" })],
+      ["ended", activeJob({ status: "failed" })],
+    ] as const) {
+      h.readRevampJob.mockResolvedValueOnce(job);
+      await collect(label, startTool, startArgs());
+    }
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ status: "running", cancelRequested: true }),
+    ]);
+    await collect("chat still stopping", startTool, startArgs());
+    h.listConversationRevamps.mockResolvedValue([]);
+    await collect("no parent", refineTool, {
+      instruction: "Make it warmer",
+      scope: { design: true },
+    });
+
+    expect(refusals).toHaveLength(8);
+    for (const [label, output] of refusals) {
+      expect(output.status, label).toBe("not_started");
+      expect(output.cardShown, label).toBe(false);
+      expect(output.instruction, label).toBe(RELAY);
+      expect(String(output.reason), label).not.toMatch(/\bcard\b/i);
+      expect(startTool.artifact?.(output), label).toBeUndefined();
+      expectNoIdForModel(startTool.modelOutput?.(output));
+    }
   });
 
   it("gives the start back when the job cannot be created", async () => {
@@ -803,10 +1174,15 @@ describe("★★ a stopped run never starts a redesign (B6)", () => {
     run.abort();
     await vi.advanceTimersByTimeAsync(1_000);
     insert.resolve({ ok: true, job: { id: JOB, status: "queued" } });
-    await expect(pending).resolves.toMatchObject({
-      response: { output: { status: "started", revampId: JOB } },
+    const response = await pending;
+    expect(response).toMatchObject({
+      response: { output: { status: "started", cardShown: true } },
       artifact: { type: "storefront_revamp", revampId: JOB },
     });
+    // The card carries the id; the model's answer never does.
+    expectNoIdForModel(
+      (response.response as { output?: Record<string, unknown> }).output,
+    );
     expect(h.kick).toHaveBeenCalledWith(JOB);
     expect(h.release).not.toHaveBeenCalled();
     expect(h.cancelRevamp).not.toHaveBeenCalled();
@@ -921,6 +1297,187 @@ describe("★★ a stopped run never starts a redesign (B6)", () => {
     expect(h.claim).not.toHaveBeenCalled();
     expect(h.createRevampJob).not.toHaveBeenCalled();
   });
+
+  // ★★ THE MERCHANT'S STOP (25 Oct 2026, lib/mink/run-stop.ts). Both tools
+  //    are `commit` tools: the run claims it has acted inside `commit`, just
+  //    before the job insert, with the claim the stream route passes. A stop
+  //    recorded first refuses that claim; one asked after it answers "acted".
+  describe("★★ the merchant's stop and the job insert: exactly one wins (25 Oct)", () => {
+    const refine = () => ({
+      name: "refine_storefront_revamp",
+      args: { instruction: "Make it warmer", scope: { design: true } },
+    });
+
+    it("★ claims after the budget read, just before the insert", async () => {
+      const order: string[] = [];
+      h.headroom.mockImplementation(async () => {
+        order.push("budget");
+        return { period: "p", planCap: 300, remaining: 50 };
+      });
+      h.createRevampJob.mockImplementation(async () => {
+        order.push("insert");
+        return { ok: true, job: { id: JOB, status: "queued" } };
+      });
+      const claimAct = vi.fn(async () => {
+        order.push("claim");
+      });
+      const registry = new MinkToolRegistry([startTool]);
+      const response = await registry.execute(actor(), call(), { claimAct });
+      expect(order).toEqual(["budget", "claim", "insert"]);
+      expect(response).toMatchObject({
+        response: { output: { status: "started", cardShown: true } },
+        artifact: { type: "storefront_revamp", revampId: JOB },
+      });
+      expect(h.kick).toHaveBeenCalledWith(JOB);
+    });
+
+    it("★★ a stop that won first: no job, the day's start given back, and the chat reads run_stopped", async () => {
+      const ready = [entry({ id: PARENT, status: "ready" })];
+      const registry = new MinkToolRegistry([startTool, refineTool]);
+      for (const [chat, asked] of [
+        [[], call()],
+        // A ready redesign is passed only when asked to replace it.
+        [ready, { ...call(), args: startArgs({ replace_earlier: true }) }],
+        [ready, refine()],
+      ] as const) {
+        h.listConversationRevamps.mockResolvedValue(chat);
+        h.release.mockClear();
+        const claimAct = vi.fn(async () => {
+          throw new MinkRunStoppedError();
+        });
+        const response = await registry.execute(actor(), asked, { claimAct });
+        expect(response, asked.name).toMatchObject({
+          response: { error: { code: "run_stopped" } },
+        });
+        expect(response.artifact, asked.name).toBeUndefined();
+        expect(claimAct, asked.name).toHaveBeenCalledTimes(1);
+        expect(h.release, asked.name).toHaveBeenCalledTimes(1);
+      }
+      expect(h.createRevampJob).not.toHaveBeenCalled();
+      expect(h.kick).not.toHaveBeenCalled();
+    });
+
+    it("★ a stop during the budget read wins at once: nothing is claimed or inserted", async () => {
+      const run = new AbortController();
+      const headroom = deferred<unknown>();
+      h.headroom.mockImplementation(() => headroom.promise);
+      const claimAct = vi.fn(async () => undefined);
+      const registry = new MinkToolRegistry([startTool]);
+      const pending = registry.execute(actor(), call(), {
+        signal: run.signal,
+        claimAct,
+      });
+      await vi.advanceTimersByTimeAsync(10);
+      run.abort(new MinkRunStoppedError());
+      await expect(pending).resolves.toMatchObject({
+        response: { error: { code: "run_stopped" } },
+      });
+      headroom.resolve({ period: "p", planCap: 300, remaining: 50 });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(claimAct).not.toHaveBeenCalled();
+      expect(h.createRevampJob).not.toHaveBeenCalled();
+      expect(h.release).toHaveBeenCalledTimes(1);
+      expect(h.kick).not.toHaveBeenCalled();
+    });
+
+    it("★★ showing this chat's redesign, or refusing before the insert, claims nothing: a stop still wins", async () => {
+      // The run has done nothing, so the merchant's stop must still be able
+      // to end it: only the insert is an act.
+      const claimAct = vi.fn(async () => undefined);
+      const registry = new MinkToolRegistry([startTool, refineTool]);
+      const outcomes: unknown[] = [];
+      const run = async (asked: {
+        name: string;
+        args: Record<string, unknown>;
+      }) => {
+        const response = await registry.execute(actor(), asked, { claimAct });
+        outcomes.push(
+          (response.response as { output?: Record<string, unknown> }).output
+            ?.status,
+        );
+      };
+
+      h.listConversationRevamps.mockResolvedValue([
+        entry({ status: "running" }),
+      ]);
+      await run(call());
+      await run(refine());
+      h.listConversationRevamps.mockResolvedValue([
+        entry({ status: "running", cancelRequested: true }),
+      ]);
+      await run(call());
+      h.listConversationRevamps.mockResolvedValue([entry({ status: "ready" })]);
+      await run(call());
+      h.listConversationRevamps.mockResolvedValue([]);
+      h.rows.stores = [{ settings: { themePending: true } }];
+      await run(call());
+      h.rows.stores = [{ settings: {} }];
+      h.claim.mockResolvedValueOnce({ ok: false });
+      await run(call());
+      await run(refine());
+
+      expect(outcomes).toEqual([
+        "already_started",
+        "already_started",
+        "not_started",
+        "already_ready",
+        "not_started",
+        "not_started",
+        "not_started",
+      ]);
+      expect(claimAct).not.toHaveBeenCalled();
+      expect(h.createRevampJob).not.toHaveBeenCalled();
+    });
+
+    it("★★ a redesign that already holds the store is found before anything is claimed: a stop of that answer still wins", async () => {
+      // Another chat's, a teammate's, or one still stopping: refused with no
+      // card. Found only by the refused insert, this answer came after the
+      // day's start and the run's act claim, so a Stop of it answered
+      // "acted" and the run was charged although nothing had started.
+      const claimAct = vi.fn(async () => undefined);
+      const registry = new MinkToolRegistry([startTool, refineTool]);
+      h.findActiveRevampId.mockResolvedValue(JOB);
+      for (const holder of [
+        activeJob({ conversationId: OTHER_CONVERSATION }),
+        activeJob({ adminId: "another-admin" }),
+        activeJob({ cancelRequestedAt: "2026-10-22T00:00:00Z" }),
+      ]) {
+        h.readRevampJob.mockResolvedValue(holder);
+        const response = await registry.execute(actor(), call(), { claimAct });
+        expect(response.response).toMatchObject({
+          output: { status: "not_started", cardShown: false },
+        });
+        expect(response.artifact).toBeUndefined();
+      }
+      // A refinement of this chat's ready redesign meets it the same way.
+      h.listConversationRevamps.mockResolvedValue([
+        entry({ id: PARENT, status: "ready" }),
+      ]);
+      h.readRevampJob.mockResolvedValue(
+        activeJob({ conversationId: OTHER_CONVERSATION }),
+      );
+      const refused = await registry.execute(actor(), refine(), { claimAct });
+      expect(refused.response).toMatchObject({
+        output: { status: "not_started", reason: ELSEWHERE },
+      });
+      // This chat's own (a run of it got there first): its card, unclaimed.
+      h.listConversationRevamps.mockResolvedValue([]);
+      h.readRevampJob.mockResolvedValue(activeJob());
+      const shown = await registry.execute(actor(), call(), { claimAct });
+      expect(shown.response).toMatchObject({
+        output: { status: "already_started", cardShown: true },
+      });
+      expect(shown.artifact).toMatchObject({ revampId: JOB });
+
+      expect(h.findActiveRevampId).toHaveBeenCalledWith("store");
+      expect(claimAct).not.toHaveBeenCalled();
+      // Nothing to give back: the day's start was never claimed.
+      expect(h.claim).not.toHaveBeenCalled();
+      expect(h.release).not.toHaveBeenCalled();
+      expect(h.createRevampJob).not.toHaveBeenCalled();
+      expect(h.kick).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("refine_storefront_revamp", () => {
@@ -932,7 +1489,9 @@ describe("refine_storefront_revamp", () => {
 
   it("builds on the newest finished redesign of the chat", async () => {
     h.listConversationRevamps.mockResolvedValue([
-      { id: JOB, kind: "refine", status: "queued", undoneAt: null },
+      // ★ Failed, not queued: one still being made answers with its card
+      //   (the store holds one active job, so no refinement could start).
+      { id: JOB, kind: "refine", status: "failed", undoneAt: null },
       {
         id: "44444444-4444-4444-8444-444444444444",
         kind: "full",
@@ -975,10 +1534,81 @@ describe("refine_storefront_revamp", () => {
       status: "queued",
     });
     expect(Object.keys(refineTool.modelOutput?.(output) ?? {}).sort()).toEqual([
+      "cardShown",
       "instruction",
-      "revampId",
       "status",
     ]);
+    expectNoIdForModel(refineTool.modelOutput?.(output));
+    // The chat's list is read once, for the building check and the parent.
+    expect(h.listConversationRevamps).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ shows the card of a redesign this chat is still making, before it looks for a parent", async () => {
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ kind: "refine", status: "queued" }),
+      entry({ id: PARENT, status: "ready" }),
+    ]);
+    const output = await refineTool.execute(actor(), refineArgs());
+    expect(output).toMatchObject({
+      status: "already_started",
+      cardShown: true,
+      instruction: ALREADY_STARTED_REFINE,
+    });
+    expect(refineTool.artifact?.(output)).toEqual({
+      type: "storefront_revamp",
+      revampId: JOB,
+      kind: "refine",
+      status: "queued",
+    });
+    expectNoIdForModel(refineTool.modelOutput?.(output));
+    expect(h.readRevampForActor).not.toHaveBeenCalled();
+    expect(h.claim).not.toHaveBeenCalled();
+    expect(h.createRevampJob).not.toHaveBeenCalled();
+
+    // A named parent changes nothing: a second job cannot start either way.
+    const named = await refineTool.execute(
+      actor(),
+      refineArgs({ revamp_id: PARENT }),
+    );
+    expect(named.status).toBe("already_started");
+
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ kind: "refine", status: "running", cancelRequested: true }),
+    ]);
+    const stopping = await refineTool.execute(actor(), refineArgs());
+    expect(stopping.reason).toBe(
+      "The earlier redesign is still stopping. Try again in a minute.",
+    );
+    expect(refineTool.artifact?.(stopping)).toBeUndefined();
+  });
+
+  it("★ a refinement that races another run of this chat to the insert shows that run's card", async () => {
+    h.listConversationRevamps.mockResolvedValue([
+      entry({ id: PARENT, status: "ready" }),
+    ]);
+    h.createRevampJob.mockResolvedValue({
+      ok: false,
+      reason: "active_exists",
+      activeId: JOB,
+    });
+    h.readRevampJob.mockResolvedValue(activeJob({ kind: "refine" }));
+    const output = await refineTool.execute(actor(), refineArgs());
+    expect(output).toMatchObject({
+      status: "already_started",
+      instruction: ALREADY_STARTED_REFINE,
+    });
+    expect(refineTool.artifact?.(output)).toMatchObject({
+      revampId: JOB,
+      kind: "refine",
+    });
+    expect(h.release).toHaveBeenCalledTimes(1);
+
+    h.readRevampJob.mockResolvedValue(
+      activeJob({ conversationId: OTHER_CONVERSATION }),
+    );
+    const elsewhere = await refineTool.execute(actor(), refineArgs());
+    expect(elsewhere.reason).toBe(ELSEWHERE);
+    expect(refineTool.artifact?.(elsewhere)).toBeUndefined();
   });
 
   it("takes a named redesign only when it is the requester's and finished", async () => {

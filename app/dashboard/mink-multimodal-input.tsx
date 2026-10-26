@@ -16,6 +16,7 @@ import {
   uploadMediaAsset,
 } from "@/app/actions/media-actions";
 import type { MediaAsset } from "@/lib/media/library-types";
+import { sendPageExitRequest } from "@/lib/http/page-exit-request";
 import {
   addReviewedMinkDocument,
   decodeMinkDocument,
@@ -255,7 +256,11 @@ export function MinkMultimodalInput({
    * for exactly this and cannot be cancelled by the unload — and because
    * `application/json` is not a CORS-simple content type, a cross-origin
    * beacon would need a preflight it cannot make, so the browser refuses one
-   * outright. That is a layer above the route's own same-origin check.
+   * outright. That is a layer above the route's own same-origin check. The
+   * beacon is still the first choice (lib/http/page-exit-request.ts); a
+   * same-origin keepalive fetch is sent only when the beacon is refused or
+   * throws, so one throwing beacon no longer skips the attachments after it,
+   * and the cross-site argument above (another site's page) holds for both.
    *
    * ★ GUARDED ON `persisted === false`, WHICH IS LOAD-BEARING. `pagehide` also
    * fires when the page goes into the back/forward cache — an ordinary mobile
@@ -268,7 +273,7 @@ export function MinkMultimodalInput({
       if (event.persisted) return;
       for (const attachment of attachmentsRef.current) {
         if (!attachment.asset) continue;
-        navigator.sendBeacon?.(
+        sendPageExitRequest(
           "/api/mink/media/discard",
           new Blob([JSON.stringify({ id: attachment.asset.id })], {
             type: "application/json",

@@ -103,7 +103,7 @@ export const POS_NAV: readonly PosNavItem[] = [
     key: "shift",
     href: "/pos/shift",
     label: "Drawer",
-    hint: "Open, count and close the till",
+    hint: "Open, count and close the cash drawer",
     // A cashier may LOOK — they need to know whether the drawer is open before
     // they can sell into it — and every mutating control on the screen is gated
     // again in pos-shift-actions. Mirrors the page's own redirect.

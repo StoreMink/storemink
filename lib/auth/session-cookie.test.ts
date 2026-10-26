@@ -127,8 +127,7 @@ describe("sessionCookieOptions", () => {
     expect(opts.domain).toBeUndefined();
   });
 
-  it("exposes a stable cookie name distinct from Supabase's", () => {
+  it("exposes the stable sm_session cookie name", () => {
     expect(SESSION_COOKIE).toBe("sm_session");
-    expect(SESSION_COOKIE.startsWith("sb-")).toBe(false);
   });
 });

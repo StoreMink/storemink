@@ -1092,7 +1092,7 @@ export async function reorderHelpCategories(
 // ─────────────────────────────── AI ────────────────────────────────────────
 
 // The help-writer system prompt lives in brand/tasks/help-article.md (deployed
-// app content, traced into the serverless bundle by next.config.ts alongside
+// app content, traced into the standalone server bundle by next.config.ts alongside
 // the other brand/tasks/*.md). Read at runtime; the fallback keeps the button
 // working if the file can't be read.
 const HELP_WRITER_FALLBACK = `You are a senior technical writer for StoreMink, an India-first no-code e-commerce store builder (like Shopify). You write clear, friendly, task-oriented help-centre articles for non-technical merchants.

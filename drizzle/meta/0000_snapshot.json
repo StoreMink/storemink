@@ -169,12 +169,6 @@
           "as": "PERMISSIVE",
           "for": "SELECT",
           "to": ["public"]
-        },
-        "Auth admin can read admins for token hook": {
-          "name": "Auth admin can read admins for token hook",
-          "as": "PERMISSIVE",
-          "for": "SELECT",
-          "to": ["supabase_auth_admin"]
         }
       },
       "isRLSEnabled": true
@@ -6194,12 +6188,6 @@
           "as": "PERMISSIVE",
           "for": "INSERT",
           "to": ["public"]
-        },
-        "Auth admin can read users for token hook": {
-          "name": "Auth admin can read users for token hook",
-          "as": "PERMISSIVE",
-          "for": "SELECT",
-          "to": ["supabase_auth_admin"]
         }
       },
       "isRLSEnabled": true

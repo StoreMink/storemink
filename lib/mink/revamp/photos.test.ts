@@ -3,6 +3,8 @@ import sharp from "sharp";
 import type { ImageCallUsage } from "@/lib/theme-studio/cost";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { logInfo, logWarn } from "@/lib/observability/logger";
+import { IMAGE_REVIEW_TRY_TIMEOUT_MS } from "@/lib/theme-studio/gemini-vertex";
+import { IMAGE_REQUEST_TIMEOUT_MS } from "@/lib/theme-studio/image-vertex";
 import {
   ZERO_IMAGE_USAGE,
   type ThemeImageRequest,
@@ -33,6 +35,7 @@ import { ImageRequestPool } from "@/lib/theme-studio/image-request-pool";
 import type { MinkActorContext } from "../types";
 import {
   REVAMP_ERROR_MESSAGES,
+  REVAMP_LIMITS,
   type RevampPhotoOutcome,
   type RevampRequest,
   type RevampShot,
@@ -57,6 +60,7 @@ import {
   REVAMP_UNCHECKED_PROBLEM,
   drawRevampPhotos,
   planRevampShots,
+  revampAdmissionDrain,
   revampAnchorLead,
   revampDrainingCapacity,
   revampImageDirection,
@@ -266,7 +270,11 @@ vi.mock("@/lib/theme-studio/image-models", async (importOriginal) => ({
 }));
 // Vertex must never be reached from a test. Both clients record the options
 // the photos step builds them with, and answer as an outage.
-vi.mock("@/lib/theme-studio/image-vertex", () => ({
+vi.mock("@/lib/theme-studio/image-vertex", async (importOriginal) => ({
+  // ★ The real per-try clock a shoot photo's admission is measured by (D2).
+  IMAGE_REQUEST_TIMEOUT_MS: (
+    await importOriginal<typeof import("@/lib/theme-studio/image-vertex")>()
+  ).IMAGE_REQUEST_TIMEOUT_MS,
   createVertexImageClient: (_config: unknown, options: unknown) => {
     h.vertexImageOptions.push(options as Record<string, unknown>);
     const client: ThemeStudioImageClient = {
@@ -599,7 +607,9 @@ function makeCtx(
     revampId: REVAMP,
     actor: { storeId: STORE } as MinkActorContext,
     signal,
-    deadline: Date.now() + 60_000,
+    // ★ The runner's own: a context given a drain closes its draws 95 s
+    //   before it (D2, `revampAdmissionDrain`).
+    deadline: Date.now() + REVAMP_LIMITS.runnerDeadlineMs,
     report,
     ...(photoHold ? { photoHold } : {}),
   };
@@ -1595,6 +1605,168 @@ describe("drawRevampPhotos", () => {
       expect(outcome(run, "hero-1")?.status).toBe("generated");
     });
 
+    describe("★★ no call the hard stop could cut off is admitted (D2)", () => {
+      /** When a call with this clock may last be admitted. */
+      const lastAdmission = (deadline: number, clockMs: number) =>
+        deadline +
+        REVAMP_LIMITS.deadlineGraceMs -
+        clockMs -
+        REVAMP_LIMITS.hardStopMarginMs;
+
+      it("★★ a photo check's 75 s clock fits after the drain: the drain itself admits it", () => {
+        const { ctx } = drainingCtx();
+        expect(
+          IMAGE_REVIEW_TRY_TIMEOUT_MS + REVAMP_LIMITS.hardStopMarginMs,
+        ).toBeLessThanOrEqual(REVAMP_LIMITS.deadlineGraceMs);
+        expect(revampAdmissionDrain(ctx, IMAGE_REVIEW_TRY_TIMEOUT_MS)).toBe(
+          ctx.draining,
+        );
+        // A step run on its own never drains.
+        expect(
+          revampAdmissionDrain(makeCtx().ctx, IMAGE_REQUEST_TIMEOUT_MS),
+        ).toBeUndefined();
+      });
+
+      it("★★ a shoot photo's 180 s clock does not fit the 90 s grace: its draws close 95 s before the drain", async () => {
+        vi.useFakeTimers();
+        try {
+          const { ctx, drain } = drainingCtx();
+          const closes = lastAdmission(ctx.deadline, IMAGE_REQUEST_TIMEOUT_MS);
+          expect(ctx.deadline - closes).toBe(95_000);
+          const draws = revampAdmissionDrain(ctx, IMAGE_REQUEST_TIMEOUT_MS)!;
+          await vi.advanceTimersByTimeAsync(closes - Date.now() - 1);
+          expect(draws.aborted).toBe(false);
+          await vi.advanceTimersByTimeAsync(1);
+          expect(draws.aborted).toBe(true);
+          // ★ The runner's own drain has not begun.
+          expect(drain.signal.aborted).toBe(false);
+          // Already past, it is closed at once; the drain closes it too.
+          expect(
+            revampAdmissionDrain(
+              { ...ctx, deadline: Date.now() },
+              IMAGE_REQUEST_TIMEOUT_MS,
+            )?.aborted,
+          ).toBe(true);
+          const early = drainingCtx();
+          const closing = revampAdmissionDrain(
+            early.ctx,
+            IMAGE_REQUEST_TIMEOUT_MS,
+          )!;
+          early.drain.abort();
+          expect(closing.aborted).toBe(true);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("★★ a draw still being drawn when the shoot's drain closes finishes and is kept; the rest are left for the next run, as at the drain", async () => {
+        vi.useFakeTimers();
+        try {
+          const hold = holdPort();
+          const { ctx, drain } = drainingCtx(hold.port);
+          // The shoot's drain closes a second from now.
+          const deadline =
+            Date.now() + 1_000 - lastAdmission(0, IMAGE_REQUEST_TIMEOUT_MS);
+          const seen: string[] = [];
+          const client: ThemeStudioImageClient = {
+            provider: "fake",
+            async generateImage(request) {
+              seen.push(request.briefId);
+              // On the wire when the shoot's drain closes.
+              if (request.briefId === "hero-1") {
+                await new Promise((resolve) => setTimeout(resolve, 2_000));
+              }
+              return {
+                kind: "ok",
+                bytes: new Uint8Array(Buffer.from(`img:${request.briefId}`)),
+                mediaType: "image/png",
+                usage: ZERO_IMAGE_USAGE,
+              };
+            },
+          };
+          const pending = drawRevampPhotos({ ...ctx, deadline }, input(), {
+            imageClient: client,
+            reviewer: null,
+            prepare,
+            concurrency: 1,
+          }).catch((e: unknown) => e);
+          await vi.advanceTimersByTimeAsync(2_000);
+          expect(await pending).toBeInstanceOf(RevampDrainedError);
+          expect(drain.signal.aborted).toBe(false);
+          // Nothing reached the image model after the hero.
+          expect(seen).toEqual(["anchor", "hero-1"]);
+          expect(savedSlots()).toEqual(
+            expect.arrayContaining(["anchor", "hero-1"]),
+          );
+          // ★ Never sent, never billed: the three left go back with the claim.
+          expect(h.events).toEqual([
+            "claim:5",
+            "record:5",
+            "record:clear",
+            "release:3",
+          ]);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("★ a draw the client held back once the shoot's drain closed is left for the next run, never cropped", async () => {
+        vi.useFakeTimers();
+        try {
+          const { ctx, drain } = drainingCtx();
+          const deadline =
+            Date.now() + 1_000 - lastAdmission(0, IMAGE_REQUEST_TIMEOUT_MS);
+          const client: ThemeStudioImageClient = {
+            provider: "fake",
+            async generateImage(request) {
+              if (request.briefId === "story-1") {
+                // Its turn came after the shoot's drain closed: never sent.
+                await new Promise((resolve) => setTimeout(resolve, 2_000));
+                return {
+                  kind: "error",
+                  code: "cancelled",
+                  usage: ZERO_IMAGE_USAGE,
+                };
+              }
+              return {
+                kind: "ok",
+                bytes: new Uint8Array(Buffer.from(`img:${request.briefId}`)),
+                mediaType: "image/png",
+                usage: ZERO_IMAGE_USAGE,
+              };
+            },
+          };
+          const pending = drawRevampPhotos(
+            { ...ctx, deadline },
+            { ...input(), plan: makePlan({ bindings: BINDINGS.slice(0, 3) }) },
+            { imageClient: client, reviewer: null, prepare, concurrency: 1 },
+          ).catch((e: unknown) => e);
+          await vi.advanceTimersByTimeAsync(2_000);
+          expect(await pending).toBeInstanceOf(RevampDrainedError);
+          expect(drain.signal.aborted).toBe(false);
+          expect(savedSlots()).not.toContain("story-1");
+          expect(h.saves.some((s) => s.review === "flagged")).toBe(false);
+          expect(h.claims).toEqual([3]);
+          expect(sum(h.releases)).toBe(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("★ claims nothing when the shoot's drain closed before the step began", async () => {
+        const { ctx } = drainingCtx();
+        const { client, calls } = makeClient();
+        const error = await drawRevampPhotos(
+          { ...ctx, deadline: Date.now() + 60_000 },
+          input(),
+          { imageClient: client, reviewer: null, prepare },
+        ).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(RevampDrainedError);
+        expect(calls).toHaveLength(0);
+        expect(h.claims).toEqual([]);
+      });
+    });
+
     describe("the Vertex clients", () => {
       const request: ThemeImageRequest = {
         purpose: "hero",
@@ -1834,6 +2006,8 @@ describe("drawRevampPhotos", () => {
         expect(h.vertexImageOptions[0]).toMatchObject({
           imageSize: "2K",
           thinkingLevel: ThinkingLevel.MEDIUM,
+          // ★★ D3: a draw the run's stop cuts off on the wire says so.
+          markStoppedInFlight: true,
         });
         // ★ Each 429 the review client waits out and tries again is counted
         //   against the review model (P0).
@@ -1889,6 +2063,58 @@ describe("drawRevampPhotos", () => {
           await expect(
             sleep(60_000, new AbortController().signal),
           ).resolves.toBe(false);
+        }
+      });
+
+      it("★★ D2: the image client is built on the shoot's drain: its turns and 429 waits end 95 s before the runner's drain, a check's at the drain", async () => {
+        vi.useFakeTimers();
+        try {
+          vi.stubEnv("MINK_REVAMP_PROVIDER", "vertex");
+          h.imageConfig = imageConfig;
+          h.vertexConfig = { projectId: "project", region: "global" };
+          h.sharedCapacity = {
+            run: (operation, signal) =>
+              operation({ signal, succeeded() {}, async rateLimited() {} }),
+          };
+          const drain = new AbortController();
+          const { ctx } = makeCtx();
+          // The mocked image client answers the anchor as an outage, so the
+          // step stops; only how it built its clients is under test.
+          await drawRevampPhotos({ ...ctx, draining: drain.signal }, input(), {
+            prepare,
+          }).catch(() => undefined);
+          const image = h.vertexImageOptions[0];
+          const capacity = image.capacity as ProviderCapacity;
+          const sleep = image.sleep as (
+            ms: number,
+            signal?: AbortSignal,
+          ) => Promise<boolean>;
+          const check = (
+            h.vertexReviewOptions[0].capacityAt as (
+              model: string,
+              location: string,
+            ) => ProviderCapacity
+          )("gemini-3.8-flash", "us");
+          const run = (on: ProviderCapacity) =>
+            on.run(async () => "sent", new AbortController().signal);
+          await expect(run(capacity)).resolves.toBe("sent");
+          // The shoot's drain closes, 95 s before the runner's.
+          await vi.advanceTimersByTimeAsync(ctx.deadline - 95_000 - Date.now());
+          expect(drain.signal.aborted).toBe(false);
+          await expect(run(capacity)).rejects.toMatchObject({
+            name: "AbortError",
+          });
+          await expect(
+            sleep(60_000, new AbortController().signal),
+          ).resolves.toBe(false);
+          // ★ A photo check's 75 s clock still fits: admitted until the drain.
+          await expect(run(check)).resolves.toBe("sent");
+          drain.abort();
+          await expect(run(check)).rejects.toMatchObject({
+            name: "AbortError",
+          });
+        } finally {
+          vi.useRealTimers();
         }
       });
 
@@ -3495,6 +3721,226 @@ describe("drawRevampPhotos", () => {
         reviews: seen.length,
       });
       expect(reported).toHaveLength(sent() + seen.length);
+    });
+
+    describe("★★ a draw the run's stop cuts off on the wire (B3, D3)", () => {
+      /**
+       * The client, with the run stopping while Google draws `briefId`.
+       * `late`: that draw's answer comes back only after the shoot has
+       * stopped waiting for it.
+       */
+      const stoppedWhileDrawing = (
+        briefId: string,
+        controller: AbortController,
+        reason: Error,
+        late = false,
+      ) => {
+        const drawing = makeClient(() => "ok", undefined, DRAW);
+        const client: ThemeStudioImageClient = {
+          provider: "fake",
+          async generateImage(request, signal) {
+            if (request.briefId !== briefId) {
+              return drawing.client.generateImage(request, signal);
+            }
+            // Sent, and still being drawn when the run stops.
+            controller.abort(reason);
+            if (late) await new Promise((resolve) => setTimeout(resolve, 0));
+            return {
+              kind: "error",
+              code: "cancelled",
+              usage: ZERO_IMAGE_USAGE,
+              timing: {
+                durationMs: 30_000,
+                capacityWaitMs: 0,
+                providerAttempts: 1,
+                stoppedInFlight: true,
+              },
+            };
+          },
+        };
+        return { client, sent: drawing.sent };
+      };
+
+      it("★★ keeps its photo spent and counts it as a call, since it may have been billed", async () => {
+        const controller = new AbortController();
+        // ★ The merchant's Stop (or the hard stop): the run still owns the
+        //   job, so its own clear of the claim lands. After a lost lease the
+        //   next run settles the claim from the stored photos instead.
+        const reason = new Error("revamp halted: cancelled");
+        const reported: RevampUsage[] = [];
+        const { client, sent } = stoppedWhileDrawing(
+          "story-1",
+          controller,
+          reason,
+        );
+        await expect(
+          drawRevampPhotos(
+            makeCtx(controller.signal).ctx,
+            input((usage) => reported.push(usage)),
+            { imageClient: client, reviewer: null, prepare, concurrency: 1 },
+          ),
+        ).rejects.toBe(reason);
+        expect(sent()).toBe(2);
+        // The anchor and the hero were drawn and the story was cut off on
+        // the wire: those three stay spent, the two never sent go back.
+        expect(h.claims).toEqual([5]);
+        expect(sum(h.releases)).toBe(2);
+        // ★ Counted as a call, priced from what came back (nothing), with no
+        //   429 or timeout of its own.
+        expect(reported).toContainEqual({ ...ZERO_REVAMP_USAGE, images: 1 });
+        expect(total(reported)).toMatchObject({ images: 3 });
+        expect(total(reported).calls).toBeUndefined();
+        // ★ Never a photograph: nothing was stored for it.
+        expect(savedSlots()).not.toContain("story-1");
+      });
+
+      it("★★ the anchor cut off on the wire keeps its photo spent too", async () => {
+        const controller = new AbortController();
+        const reason = new Error("cancelled");
+        const reported: RevampUsage[] = [];
+        const { client } = stoppedWhileDrawing("anchor", controller, reason);
+        await expect(
+          drawRevampPhotos(
+            makeCtx(controller.signal).ctx,
+            input((usage) => reported.push(usage)),
+            { imageClient: client, reviewer: null, prepare, concurrency: 1 },
+          ),
+        ).rejects.toBe(reason);
+        expect(h.claims).toEqual([5]);
+        // The anchor may have been billed; the four shots never started.
+        expect(sum(h.releases)).toBe(4);
+        expect(total(reported)).toMatchObject({ images: 1 });
+      });
+
+      it.each([
+        ["a shot", "story-1", 2, 3],
+        ["the anchor", "anchor", 4, 1],
+      ])(
+        "★★ %s whose answer comes back after the shoot stopped waiting for it is counted all the same",
+        async (_label, briefId, givenBack, images) => {
+          const controller = new AbortController();
+          const reason = new Error("revamp halted: cancelled");
+          const reported: RevampUsage[] = [];
+          const { client } = stoppedWhileDrawing(
+            briefId,
+            controller,
+            reason,
+            true,
+          );
+          await expect(
+            drawRevampPhotos(
+              makeCtx(controller.signal).ctx,
+              input((usage) => reported.push(usage)),
+              { imageClient: client, reviewer: null, prepare, concurrency: 1 },
+            ),
+          ).rejects.toBe(reason);
+          expect(h.claims).toEqual([5]);
+          expect(sum(h.releases)).toBe(givenBack);
+          expect(total(reported)).toMatchObject({ images });
+        },
+      );
+
+      describe("through the real image client (image-vertex.ts)", () => {
+        /** A provider answer carrying one JPEG. */
+        const answer = {
+          candidates: [
+            {
+              finishReason: "STOP",
+              content: {
+                parts: [
+                  {
+                    inlineData: {
+                      data: Buffer.from("jpeg").toString("base64"),
+                      mimeType: "image/jpeg",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usageMetadata: { promptTokenCount: 900, candidatesTokenCount: 1690 },
+        };
+        /**
+         * The redesign's photo client, real but for its send: Google never
+         * answers `briefId`, and the run stops `afterMs` after it was sent.
+         */
+        const realClient = async (
+          briefId: string,
+          controller: AbortController,
+          reason: Error,
+          afterMs: number,
+        ) => {
+          const { createVertexImageClient } = await vi.importActual<
+            typeof import("@/lib/theme-studio/image-vertex")
+          >("@/lib/theme-studio/image-vertex");
+          return createVertexImageClient(
+            {
+              projectId: "project",
+              location: "global",
+              modelKey: "gemini-nano-banana-2.1",
+              providerModel: "gemini-nano-banana-2.1",
+            },
+            {
+              imageSize: "2K",
+              thinkingLevel: ThinkingLevel.MEDIUM,
+              markStoppedInFlight: true,
+              pool: new ImageRequestPool(),
+              send: async (request) => {
+                if (request.briefId !== briefId) return answer as never;
+                setTimeout(() => controller.abort(reason), afterMs);
+                return new Promise<never>(() => {});
+              },
+            },
+          );
+        };
+
+        it("★★ the anchor cut off on the wire keeps its photo spent", async () => {
+          const controller = new AbortController();
+          const reason = new Error("revamp halted: cancelled");
+          const reported: RevampUsage[] = [];
+          await expect(
+            drawRevampPhotos(
+              makeCtx(controller.signal).ctx,
+              input((usage) => reported.push(usage)),
+              {
+                imageClient: await realClient("anchor", controller, reason, 5),
+                reviewer: null,
+                prepare,
+              },
+            ),
+          ).rejects.toBe(reason);
+          expect(h.claims).toEqual([5]);
+          expect(h.releases).toEqual([4]);
+          expect(total(reported)).toMatchObject({ images: 1 });
+        });
+
+        it("★★ so does the last shot of three drawn at once", async () => {
+          const controller = new AbortController();
+          const reason = new Error("revamp halted: cancelled");
+          const reported: RevampUsage[] = [];
+          await expect(
+            drawRevampPhotos(
+              makeCtx(controller.signal).ctx,
+              input((usage) => reported.push(usage)),
+              {
+                imageClient: await realClient(
+                  "category-shakes",
+                  controller,
+                  reason,
+                  30,
+                ),
+                reviewer: null,
+                prepare,
+                concurrency: 3,
+              },
+            ),
+          ).rejects.toBe(reason);
+          // The anchor and all four shots: none goes back.
+          expect(h.claims).toEqual([5]);
+          expect(sum(h.releases)).toBe(0);
+          expect(total(reported)).toMatchObject({ images: 5 });
+        });
+      });
     });
 
     it("★★ a run the deadline drains has reported what it paid for, and the next run reports only the rest", async () => {

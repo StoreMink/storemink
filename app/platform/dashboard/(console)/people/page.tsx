@@ -20,7 +20,7 @@ export const metadata = { title: "People · StoreMink Admin" };
 const KIND_CHIPS: { id: PersonKind | ""; label: string }[] = [
   { id: "", label: "Everyone" },
   { id: "admin", label: "Dashboard" },
-  { id: "pos", label: "Till" },
+  { id: "pos", label: "POS" },
 ];
 
 function date(iso: string): string {
@@ -71,7 +71,7 @@ export default async function PeoplePage({
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             Everyone who can sign in to a merchant store - dashboard admins and
-            till staff.
+            POS staff.
           </p>
         </div>
         <PeopleSearch initial={q} kind={kind} storeId={storeId} />
@@ -178,7 +178,7 @@ export default async function PeoplePage({
                             : "bg-indigo-50 text-indigo-700"
                         }`}
                       >
-                        {person.kind === "pos" ? "Till" : "Dashboard"}
+                        {person.kind === "pos" ? "POS" : "Dashboard"}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 capitalize text-slate-600">

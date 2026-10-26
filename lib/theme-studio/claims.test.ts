@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { THEME_DEFINITIONS } from "@/lib/themes";
+import { EXEMPLAR_THEMES } from "@/lib/themes/exemplars";
+import { defaultTemplates } from "@/lib/themes/templates";
 import type { ThemePackageV2 } from "./contracts";
-import { unsupportedClaimIssues } from "./claims";
+import { customerCopy, unsupportedClaimIssues } from "./claims";
 
 // A package is only read for its definition here; the rest is irrelevant.
 function pkgWith(mutate: (def: ThemePackageV2["definition"]) => void) {
@@ -82,6 +84,50 @@ describe("unsupported claims", () => {
       "clinical testing",
       "a certification",
     ]);
+  });
+
+  it("reads the page templates and the announcement bar as copy too", () => {
+    for (const theme of EXEMPLAR_THEMES)
+      expect(
+        unsupportedClaimIssues(
+          { definition: theme } as unknown as ThemePackageV2,
+          "",
+        ),
+        theme.id,
+      ).toEqual([]);
+    const pkg = pkgWith((def) => {
+      const templates = defaultTemplates(def.preset.design.layout);
+      templates.product.blocks.push({
+        type: "trust_row",
+        items: [{ icon: "star", label: "As seen in Vogue" }],
+      });
+      templates.collection.promoTiles.push({
+        afterIndex: 4,
+        heading: "Voted the best mugs",
+        body: "",
+        cta_label: "",
+        href: "/shop",
+        image_url: "",
+        image_alt: "",
+        theme: "dark",
+        background: "",
+      });
+      def.preset.templates = templates;
+      def.preset.announcement = { text: "Award-winning since 1998" };
+    });
+    const labels = unsupportedClaimIssues(pkg, "A calm ceramics shop.").map(
+      (m) => /claims ([^(]+) \(/.exec(m)?.[1],
+    );
+    expect(labels).toEqual([
+      "press coverage",
+      "a vote or poll result",
+      "an award",
+      "a founding year",
+    ]);
+    // A revision that keeps them has them as evidence, like any base copy.
+    expect(unsupportedClaimIssues(pkg, customerCopy(pkg).join("\n"))).toEqual(
+      [],
+    );
   });
 
   it("a revision's evidence includes the base copy, so an old claim is not re-flagged", () => {

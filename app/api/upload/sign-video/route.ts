@@ -11,7 +11,7 @@ import { storeUploadPath } from "@/lib/storage/paths";
 import { resolveUploadOwner } from "@/lib/storage/upload-owner";
 
 // Signed-URL flow for VIDEO uploads. Videos are far too big to proxy through
-// a serverless route, so instead:
+// the app server (Cloud Run caps an HTTP/1 request at 32 MiB), so instead:
 //   1. the client POSTs metadata here; we authenticate, rate-limit, validate;
 //   2. we mint a one-time v4 signed PUT URL for a random path in GCS;
 //   3. the client uploads the file DIRECTLY to Google Cloud Storage with it.

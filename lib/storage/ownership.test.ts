@@ -14,7 +14,7 @@ const OTHER = "store-2";
 const own = `https://storage.googleapis.com/bkt/stores/${STORE}/a.webp`;
 const foreign = `https://storage.googleapis.com/bkt/stores/${OTHER}/a.webp`;
 const legacy = "https://storage.googleapis.com/bkt/blog-covers/old.webp";
-const external = "https://xyz.supabase.co/storage/v1/object/public/m/a.webp";
+const external = "https://cdn.example.com/m/a.webp";
 
 describe("isForeignStoreImageUrl", () => {
   it("accepts this store's own object", () => {
@@ -32,8 +32,8 @@ describe("isForeignStoreImageUrl", () => {
   });
 
   // ★ Outside our bucket is NOT this rule's business: `deleteStorageUrls`
-  //   cannot resolve it to a path, and refusing it would break the legacy
-  //   Supabase-hosted media that still serves.
+  //   cannot resolve it to a path, and refusing it would break older media
+  //   still served from an external host.
   it("allows a URL outside our bucket", () => {
     expect(isForeignStoreImageUrl(STORE, external)).toBe(false);
   });

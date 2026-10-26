@@ -531,6 +531,10 @@ async function generate(
   const moreSections = themePromptFeatures(input.promptVersion).moreSections;
   const moreVariants = themePromptFeatures(input.promptVersion).moreVariants;
   const templatesFeature = themePromptFeatures(input.promptVersion).templates;
+  // v33+: the templates travel as one JSON string (prompt-features.ts).
+  const templatesJsonFeature = themePromptFeatures(
+    input.promptVersion,
+  ).templatesJson;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -841,10 +845,12 @@ async function generate(
           input.revision.basePackage,
           input.revision.baseIntent,
           fontPairings,
+          templatesJsonFeature,
         )
       : undefined,
     compactInitial ? input.messages : undefined,
     explicitStyles,
+    templatesJsonFeature,
   );
   if (explicitStyles)
     baseB += `\n${catalogueVarietyContext(input.facts, input.existingThemes ?? [])}`;
@@ -880,6 +886,7 @@ async function generate(
                 moreSections,
                 moreVariants,
                 templatesFeature,
+                templatesJsonFeature,
               )
             : compactInitial
               ? stageBInitialSystemPrompt(
@@ -891,6 +898,7 @@ async function generate(
                   moreSections,
                   moreVariants,
                   templatesFeature,
+                  templatesJsonFeature,
                 )
               : stageBSystemPrompt(
                   themePromptFeatures(input.promptVersion).nativeFraming,
@@ -901,6 +909,7 @@ async function generate(
                   moreSections,
                   moreVariants,
                   templatesFeature,
+                  templatesJsonFeature,
                 )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
@@ -916,6 +925,7 @@ async function generate(
           moreSections,
           moreVariants,
           templatesFeature,
+          templatesJsonFeature,
         ),
         effort: "high",
       },

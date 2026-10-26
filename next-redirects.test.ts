@@ -151,7 +151,6 @@ describe("the old Themes page redirect", () => {
     "pos.localhost:3000",
     `${LOCAL_DEV_ROOT}:3000`,
     `pos.${LOCAL_DEV_ROOT}`,
-    "storemink-git-main.vercel.app",
   ];
   const STORE_HOSTS = [
     `echos.${root}`,

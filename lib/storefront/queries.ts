@@ -54,7 +54,7 @@ export interface ProductCardRow {
   returnable: boolean;
   /**
    * Last change to something a VISITOR sees — not stock. The sitemap's lastmod
-   * source; see supabase/seo_01_product_content_timestamp.sql.
+   * source; maintained by the products_touch_content_updated_at trigger.
    */
   content_updated_at: string;
   /** When the product was created — the shop's "Newest" sort. */
@@ -153,7 +153,7 @@ export const getPublishedProducts = cache(
         if (rows.length === 0) return [];
 
         // Pricing-relevant variant fields for all listed products in one query,
-        // grouped in JS (replaces the PostgREST embedded `variants:(...)`).
+        // grouped in JS.
         const variantRows = await db
           .select({
             id: productVariants.id,
@@ -300,7 +300,7 @@ export const getBlogTaxonomyNames = cache(
 );
 
 // A published store_pages row for the storefront. Selects NAMED columns only
-// (the anon role can't read the draft `sections` column — see store_pages.sql)
+// (the anon role can't read the draft `sections` column)
 // and returns the live `published_sections`. `null` (incl. cached nulls, so a
 // 404 storm on junk URLs stays cheap) means "no such published page".
 export interface PublishedPage {
@@ -471,7 +471,7 @@ export const getPublishedPageSlugs = cache(
             // `sections` on every autosave debounce, so editing an UNPUBLISHED
             // draft advances it dozens of times while the public HTML is
             // unchanged. published_at moves only when the page actually goes
-            // live. Already anon-granted (supabase/store_pages.sql).
+            // live. The anon role may read this column.
             published_at: storePages.publishedAt,
             seo_noindex: storePages.seoNoindex,
           })

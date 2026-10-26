@@ -182,7 +182,7 @@ describe("blog-actions", () => {
     });
     vi.mocked(getServerUser).mockResolvedValue(serverUser);
     // The store's blog taxonomy — customer submissions are validated
-    // against these per-store lists (blog_taxonomy.sql).
+    // against these per-store lists (blog_categories / blog_tags).
     vi.mocked(fetchBlogTaxonomy).mockResolvedValue({
       categories: [{ id: "c1", name: "Recipes" }],
       tags: [{ id: "t1", name: "Indian Food" }],
@@ -317,8 +317,7 @@ describe("blog-actions", () => {
     const legacy = "https://storage.googleapis.com/bkt/blog-covers/old.webp";
     // Not in our bucket at all: `gcsPathFromUrl` returns null, so the sweep
     // already treats it as unmanaged and can never delete it.
-    const supabase =
-      "https://xyz.supabase.co/storage/v1/object/public/media/old.webp";
+    const external = "https://cdn.example.com/media/old.webp";
 
     it("createBlog accepts this store's own object", async () => {
       const r = await createBlog({ ...blogForm, cover_image_url: own });
@@ -338,7 +337,7 @@ describe("blog-actions", () => {
     });
 
     it("createBlog allows a URL outside our bucket, which the sweep never deletes", async () => {
-      const r = await createBlog({ ...blogForm, cover_image_url: supabase });
+      const r = await createBlog({ ...blogForm, cover_image_url: external });
       expect(r.error).toBeUndefined();
     });
 

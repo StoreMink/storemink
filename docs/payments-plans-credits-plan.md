@@ -9,14 +9,13 @@
 > questions in §8 were answered by the owner and are reflected in the code.
 > Pending manual steps before go-live:
 >
-> 1. Apply the new SQL to Supabase (in order): `plans_02_basic_and_expiry.sql`,
+> 1. Apply the new SQL (in order): `plans_02_basic_and_expiry.sql`,
 >    `ai_credits.sql`, `payment_providers.sql`, `payments_01_orders.sql`.
 > 2. Set env vars: `PAYMENT_CRED_KEY` (`openssl rand -base64 32`),
 >    `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` (platform account, credits
 >    only), and ensure `CRON_SECRET` is set (crons 401 without it).
-> 3. Vercel picks up the two new crons from `vercel.json` on deploy
->    (`/api/cron/plan-expiry` daily, `/api/cron/expire-pending-payments`
->    hourly).
+> 3. Create the two new Cloud Scheduler jobs (`/api/cron/plan-expiry` daily,
+>    `/api/cron/expire-pending-payments` hourly); see `docs/cron-jobs.md`.
 
 ---
 
@@ -28,7 +27,7 @@
 | Landing page | `app/platform/page.tsx` hardcodes **4 plans** (Free ₹0 / Starter ₹399 / Growth ₹999 / Pro B2B ₹2,499) — already drifted from the real catalog.                                                                                                                    |
 | AI metering  | `lib/ai/quota.ts` — `consumeAiQuota` reads `stores.plan`, meters via atomic `try_ai_generation` RPC + `ai_usage(store_id, period, used)` (brand_voice_01_schema.sql). Fails open. Called before Gemini in every AI action.                                        |
 | Checkout     | COD only. `placeOrder` writes `payment_method: "cash_on_delivery"`, `payment_status: "pending"`. Orders table already has `payment_method` / `payment_status` columns. Stock/coupon reserve + rollback machinery exists (`stock_status` reserved/released).       |
-| Cron         | One Vercel cron (daily `/api/cron/send-emails`). Multiple crons are supported.                                                                                                                                                                                    |
+| Cron         | One scheduled job (daily `/api/cron/send-emails`). Multiple jobs are supported.                                                                                                                                                                                   |
 | Secrets rule | ⚠ `stores.settings` is **anon-readable** (CODEBASE §5.9). Razorpay secrets must live in a service-role-only table (the `store_brand_profiles` pattern), never in settings.                                                                                        |
 
 ---
@@ -46,7 +45,7 @@
 - Remove/relax `isUpgrade`-only helpers where the console consumes them
   (operator may now set ANY plan — see 1.3).
 
-### 1.2 SQL — `supabase/plans_02_basic_and_expiry.sql`
+### 1.2 SQL — `plans_02_basic_and_expiry.sql`
 
 ```sql
 -- rename starter → basic + widen CHECK
@@ -76,7 +75,7 @@ alter table public.stores add column if not exists plan_expires_at timestamptz;
      Threaded through the ~5 plan read-sites: `lib/ai/quota.ts`,
      `lib/settings/resolve.ts`, product/staff/coupon cap checks in their
      actions, storefront badge logic.
-  2. **Durable flip (cron):** new `/api/cron/plan-expiry` (daily, vercel.json)
+  2. **Durable flip (cron):** new `/api/cron/plan-expiry` (daily, Cloud Scheduler)
      — flips expired stores to `free`, clears `plan_expires_at`, writes a
      `plan_events` row (`source: "system"`), busts `STORE_TAG`.
 - Console UI (stores-console): plan dialog = plan picker (all 3) + duration
@@ -109,7 +108,7 @@ plan include the AI generation counts (3 / 10 / 50 per month).
   Rationale: burn the expiring resource before the permanent one.
 - Credits are integers, per store, no expiry (owner requirement).
 
-### 2.2 SQL — `supabase/ai_credits.sql`
+### 2.2 SQL — `ai_credits.sql`
 
 ```text
 ai_credit_balances (store_id PK → stores, balance int NOT NULL DEFAULT 0 CHECK (balance >= 0), updated_at)
@@ -162,7 +161,7 @@ consumed (for UI copy). Still fails OPEN on transient RPC errors.
 The security-sensitive phase. Merchant connects their OWN Razorpay account;
 money settles directly with them (platform never touches order funds).
 
-### 3.1 Credential storage — `supabase/payment_providers.sql`
+### 3.1 Credential storage — `payment_providers.sql`
 
 ```text
 store_payment_providers (
@@ -218,7 +217,7 @@ store_payment_providers (
      Razorpay Order is created with the **server-computed total** (never the
      client's), `receipt = order_ref`, `notes = { order_id, store_id }`;
      `razorpay_order_id` stored on our order (new columns —
-     `supabase/payments_01_orders.sql`: `razorpay_order_id text`,
+     `payments_01_orders.sql`: `razorpay_order_id text`,
      `razorpay_payment_id text`, partial unique index on `razorpay_order_id`).
      RZP-order-creation failure → existing rollback chain (stock → order →
      coupon). Returns `{ orderId, orderRef, rzpOrderId, keyId, amountPaise }`.
@@ -314,9 +313,9 @@ service-role, audited):
 - **Env additions** (document in CODEBASE §7): `PAYMENT_CRED_KEY` (32-byte
   base64, credential encryption), `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`
   (platform account, credits only).
-- **vercel.json**: + `/api/cron/plan-expiry` (daily), +
+- **Cloud Scheduler**: + `/api/cron/plan-expiry` (daily), +
   `/api/cron/expire-pending-payments` (hourly). Cron routes must be protected
-  (Vercel cron header check / CRON_SECRET), matching send-emails.
+  (`Authorization: Bearer <CRON_SECRET>`), matching send-emails.
 - **CODEBASE.md**: new §18 (Payments/Channels), §15 rewrite (plans), §16
   update (credits), directory tree + actions list + SQL list additions —
   same-commit rule.

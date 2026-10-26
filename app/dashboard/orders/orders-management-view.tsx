@@ -514,9 +514,9 @@ export function OrdersManagementView({
                     : !supportsPos
                       ? "No orders have been placed yet."
                       : channel === "all"
-                        ? "Website orders and register sales will appear here."
+                        ? "Website orders and POS sales will appear here."
                         : channel === "pos"
-                          ? "Sales completed at the register will appear here."
+                          ? "Sales completed in POS will appear here."
                           : "Orders placed through your website will appear here."}
                 </p>
               </div>

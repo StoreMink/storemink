@@ -419,7 +419,7 @@ describe("inviteUser", () => {
         posAvailable: true,
       });
       const r = await inviteUser(posForm("cashier"));
-      expect(r.error).toMatch(/switch on point of sale/i);
+      expect(r.error).toMatch(/switch on POS/i);
       expect(posMocks.inviteStaff).not.toHaveBeenCalled();
     });
 

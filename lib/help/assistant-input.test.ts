@@ -22,6 +22,9 @@ describe("Help Assistant input", () => {
       /complete StoreMink/i,
     );
     expect(helpAssistantQuestionError("POS")).toBeNull();
+    // POS's old names still ask about POS (Help search reads them as POS).
+    for (const word of ["register", "registers", "till", "tills"])
+      expect(helpAssistantQuestionError(word), word).toBeNull();
     expect(helpAssistantQuestionError("inventory")).toBeNull();
     expect(helpAssistantQuestionError("login?")).toBeNull();
     expect(

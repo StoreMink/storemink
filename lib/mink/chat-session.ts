@@ -35,8 +35,16 @@ export const MINK_CHAT_RESUME_MS = 2 * 60 * 60 * 1000;
  */
 export const MINK_NEW_CHAT_TITLE = "New chat";
 
-/** Recent chats kept per admin and store; starting another prunes the oldest. */
-export const MINK_CONVERSATION_LIMIT = 10;
+/**
+ * ★★ A chat is kept this many days after it was last used (a message sent in
+ *   it, or opening it), then deleted, however many chats there are (owner's
+ *   decision, 25 Oct 2026; lib/mink/conversation-retention.ts). History lists
+ *   every chat from that period.
+ */
+export const MINK_CONVERSATION_RETENTION_DAYS = 90;
+
+/** Chats per History page: the sidebar loads the next page as it scrolls. */
+export const MINK_HISTORY_PAGE_SIZE = 30;
 
 const STORAGE_KEY = "storemink:mink-active-chat";
 
@@ -49,7 +57,8 @@ const STORAGE_KEY = "storemink:mink-active-chat";
  */
 export const MINK_CHAT_PARAM = "chat";
 
-const CHAT_ID_PATTERN =
+/** A chat id (or a message id) as the database writes it: a lower-case UUID. */
+export const CHAT_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 /**

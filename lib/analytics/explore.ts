@@ -355,7 +355,7 @@ export const REPORT_LIBRARY: LibraryReport[] = [
   {
     id: "sales-by-channel",
     title: "Sales by channel",
-    description: "Online store against point of sale.",
+    description: "Online store against POS.",
     category: "Sales",
     config: preset(
       "sales",

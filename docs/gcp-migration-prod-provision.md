@@ -1,8 +1,7 @@
 # Prod provisioning — command sequence
 
 > Copy-paste `gcloud` sequence to provision the **prod** GCP resources for the
-> cutover. Companion to [`gcp-migration-cutover-checklist.md`](gcp-migration-cutover-checklist.md)
-> (§1 Prep) and [`gcp-migration-phase4-cloud-run.md`](gcp-migration-phase4-cloud-run.md)
+> cutover. Companion to [`gcp-migration-phase4-cloud-run.md`](gcp-migration-phase4-cloud-run.md)
 > (build + deploy). **Run these only when you're ready to cut over** — a Cloud SQL
 > instance bills continuously once created.
 >
@@ -101,18 +100,16 @@ rather than losing everything since the nightly snapshot. If you provision again
 enable PITR at create time; turning it on later restarts the instance, because it
 switches on WAL archiving.
 
-**Then load the schema** (do it through the Auth Proxy as `postgres`, as on
-staging), in order:
+**Then load the schema.** There is no scripted fresh-database build
+(`docs/migrations.md` §7): the hand-applied SQL this step once listed predates the
+migration ledger and lives only in git history. Copy a running environment's schema
+instead (`scripts/db-local-sync.sh` shows the dump and restore, run as the
+`postgres` admin user, never as `app`), then give the login role its RLS
+memberships:
 
 ```bash
-# with a proxy running to $DB_CONN and psql as postgres:
-#   drizzle/manual/0000_compat_setup.sql   (pg_trgm + auth shim + app_user/app_service roles + grants)
-#   drizzle/manual/0001_schema.sql         (38 functions, 43 tables, 99 policies, 21 triggers)
-#   drizzle/manual/0002_postflight.sql     (drop auth.users FKs + regrant)
-#   supabase/phase6_01_uid_columns_to_text.sql   (uid columns -> text)
-# then give the login role its RLS memberships:
-#   gcloud sql users assign-roles app --instance=$DB_INSTANCE --type=BUILT_IN \
-#     --database-roles=app_user,app_service --revoke-existing-roles
+gcloud sql users assign-roles app --instance=$DB_INSTANCE --type=BUILT_IN \
+  --database-roles=app_user,app_service --revoke-existing-roles
 ```
 
 The role replacement is security-critical: Cloud SQL grants
@@ -205,8 +202,6 @@ Already provisioned in Phase 4 (`storemink` repo). No action.
   `DB_HOST=/cloudsql/$DB_CONN`) and `--set-secrets=…=<name>_PROD:latest`
   (see [phase-4 §6](gcp-migration-phase4-cloud-run.md)).
 - **Wildcard LB + cert**, then flip DNS, then crons → Cloud Scheduler.
-
-Then follow the **Cutover window** + **After** sections of the checklist.
 
 ```
 

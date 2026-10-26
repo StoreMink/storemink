@@ -114,6 +114,20 @@ describe("MinkVoiceBar", () => {
     expect(v.toggle).toHaveBeenCalledOnce();
   });
 
+  it("★ offers no Stop once the server refused it: the reply finishes, and End still works", () => {
+    // 25 Oct 2026: the run had already started something, so a Stop that
+    // cannot stop it is worse than none. The thread's status line says why.
+    const v = voice({ state: "waiting" });
+    const stop = vi.fn();
+    render(
+      <MinkVoiceBar voice={v} isReplying stopRefused onStopReply={stop} />,
+    );
+    expect(screen.queryByRole("button", { name: "Stop Mink AI" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
+    expect(v.toggle).toHaveBeenCalledOnce();
+    expect(stop).not.toHaveBeenCalled();
+  });
+
   it("renders a notice as an alert", () => {
     render(
       <MinkVoiceBar

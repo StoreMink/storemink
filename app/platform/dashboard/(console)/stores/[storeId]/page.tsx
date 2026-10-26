@@ -300,7 +300,7 @@ export default async function StoreDetailPage({
         <Stat
           label="Locations"
           value={store.counts.locations.toLocaleString("en-IN")}
-          detail={`${store.counts.admins} admins · ${store.counts.posStaff} till staff`}
+          detail={`${store.counts.admins} admins · ${store.counts.posStaff} POS staff`}
           icon={<MapPin className="h-4 w-4" />}
         />
       </section>
@@ -490,7 +490,7 @@ export default async function StoreDetailPage({
                             : "bg-indigo-50 text-indigo-700"
                         }`}
                       >
-                        {p.kind === "pos" ? "till" : "dashboard"}
+                        {p.kind === "pos" ? "POS" : "dashboard"}
                       </span>
                     </div>
                   </li>
@@ -500,7 +500,7 @@ export default async function StoreDetailPage({
             {people.length > 8 ? (
               <p className="mt-3 text-xs text-slate-500">
                 +{people.length - 8} more ({admins.length} dashboard,{" "}
-                {posStaff.length} till)
+                {posStaff.length} POS)
               </p>
             ) : null}
           </Card>

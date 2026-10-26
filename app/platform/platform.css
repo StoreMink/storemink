@@ -2477,6 +2477,15 @@
   display: block;
   border-radius: 20px 20px 0 0;
 }
+/* The drawn POS standing in for the product picture (pos/page.tsx), centred
+   in the frame with room under it for the two badges. */
+.posx-hero-art {
+  max-width: 640px;
+  margin: 44px auto 92px;
+}
+.posx-hero-art .sm-art {
+  font-size: 12px;
+}
 .posx-image-badge {
   position: absolute;
   bottom: 28px;

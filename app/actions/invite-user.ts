@@ -70,12 +70,12 @@ async function invitePosStaff(input: {
   // scopes to the host store, so a mismatch would file the invite elsewhere.
   const store = await getCurrentStore();
   if (store.id !== input.storeId) {
-    return { error: "Invite register staff from your own store's dashboard." };
+    return { error: "Invite POS staff from your own store's dashboard." };
   }
   if (!getPosState(store).posEnabled) {
     return {
       error:
-        "Switch on Point of Sale before inviting a manager or cashier. Dashboard roles can be invited now.",
+        "Switch on POS before inviting a manager or cashier. Dashboard roles can be invited now.",
     };
   }
 
@@ -175,7 +175,7 @@ export async function inviteUser(formData: FormData): Promise<InviteResult> {
     if (adminRows[0]) {
       return {
         error:
-          "This email already signs in to a StoreMink dashboard, and register staff can't. If they work here, remove them from Staff first; otherwise use a different email address.",
+          "This email already signs in to a StoreMink dashboard, and POS staff can't. If they work here, remove them from Staff first; otherwise use a different email address.",
       };
     }
     return invitePosStaff({
@@ -223,7 +223,7 @@ export async function inviteUser(formData: FormData): Promise<InviteResult> {
   if (posRows[0]) {
     return {
       error:
-        "This email belongs to register staff here. Remove them from Staff first, then invite them again with a dashboard role.",
+        "This email belongs to POS staff here. Remove them from Staff first, then invite them again with a dashboard role.",
     };
   }
 
@@ -308,9 +308,9 @@ export async function inviteUser(formData: FormData): Promise<InviteResult> {
   }
 
   // Mirror role + force_password_reset into the auth token as custom claims so
-  // the proxy can gate the new admin's first login (replaces the Postgres
-  // custom_access_token_hook). Best-effort: the admins row is authoritative for
-  // permission checks, so a claim hiccup only softens the proxy's fast-path.
+  // the proxy can gate the new admin's first login. Best-effort: the admins
+  // row is authoritative for permission checks, so a claim hiccup only softens
+  // the proxy's fast-path.
   await setUserClaims(uid, { role, forcePasswordReset: true }).catch((err) =>
     console.error("inviteUser setUserClaims error:", err),
   );

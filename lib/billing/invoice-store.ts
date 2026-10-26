@@ -12,7 +12,7 @@ import "server-only";
  * ⚠ WHAT THESE FUNCTIONS CANNOT GUARANTEE ON THEIR OWN. Exactly-once creation
  * is the `billing_invoices_one_per_cycle` UNIQUE index, immutability is a
  * trigger, and the invoice number comes from another trigger. All three live in
- * Postgres and are verified by `supabase/billing_verify.sql` against a real
+ * Postgres and are verified by `scripts/billing-verify.sql` against a real
  * database — never by the unit tests here, which can only prove that this layer
  * asks for the right thing and reads the answer correctly.
  */
@@ -31,7 +31,9 @@ import type { BuiltInvoice, TaxContext } from "./invoice";
 
 export interface InvoiceRow {
   id: string;
-  storeId: string;
+  /** Null only on an issued invoice whose store was deleted (migration 0243):
+   *  StoreMink keeps its own invoices, so the row outlives the store. */
+  storeId: string | null;
   kind: "subscription" | "ai_credits" | "addon";
   status: string;
   totalPaise: number;
@@ -115,12 +117,13 @@ export async function loadTaxContext(storeId: string): Promise<TaxContext> {
  * correcting a GSTIN in September would silently rewrite what April's invoice
  * claims to have been issued under.
  *
- * ⚠ THE NAMES AND ADDRESSES ARE STILL NOT SNAPSHOTTED — no column exists for
- * them, so the document renders those live. The GSTINs, the place of supply, the
- * rate and every amount ARE fixed, which is the legally significant part; a
- * company rename would restate the label on old invoices but not what they
- * charged or under whose registration. Closing that fully needs a `parties jsonb`
- * column.
+ * ★ THE NAMES AND ADDRESSES ARE RECORDED TOO, but not here (migration 0243). A
+ * trigger writes `billing_invoices.parties` in the same statement that issues
+ * the invoice, from `billing_invoice_parties()`, which copies THESE three values
+ * off the row rather than re-reading them: one invoice must not name two
+ * GSTINs. A trigger rather than this module because finalize is reached from
+ * renewal, enrolment, add-ons, AI credits and manual payment through two
+ * functions, and the revision being replaced keeps finalizing during a rollout.
  */
 export interface InvoiceParties {
   supplierGstin: string | null;
@@ -642,7 +645,7 @@ function selectInvoice(db: Db) {
  */
 function toInvoiceRow(row: {
   id: string;
-  storeId: string;
+  storeId: string | null;
   kind: string;
   status: string;
   totalPaise: number;

@@ -92,7 +92,53 @@ vi.mock("@/lib/mink/revamp/jobs", () => ({
   listConversationRevamps: revamps.list,
 }));
 
+// The stop handshake (lib/mink/run-stop.ts): its database half is pinned in
+// run-stop.test.ts and run-stop.local.test.ts; here, what the route does.
+const stops = vi.hoisted(() => {
+  const watchers: Array<{
+    runId: string;
+    storeId: string;
+    onStop: () => void;
+    close: ReturnType<typeof vi.fn>;
+  }> = [];
+  const live = new Map<string, () => void>();
+  return {
+    watchers,
+    live,
+    watch: vi.fn(
+      (input: { runId: string; storeId: string; onStop: () => void }) => {
+        const watcher = { ...input, close: vi.fn() };
+        watchers.push(watcher);
+        return watcher;
+      },
+    ),
+    register: vi.fn((runId: string, onStop: () => void) => {
+      live.set(runId, onStop);
+      return () => {
+        if (live.get(runId) === onStop) live.delete(runId);
+      };
+    }),
+    claim: vi.fn<(input: { runId: string; storeId: string }) => Promise<void>>(
+      async () => undefined,
+    ),
+  };
+});
+vi.mock("@/lib/mink/run-stop", () => ({
+  watchMinkRunStop: stops.watch,
+  registerLiveMinkRun: stops.register,
+  claimMinkRunAct: stops.claim,
+}));
+// The real settlement, watched: a stopped run must never reach it.
+vi.mock("@/lib/mink/run-credits", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/mink/run-credits")>();
+  return { ...real, settleMinkRunCredits: vi.fn(real.settleMinkRunCredits) };
+});
+
 import { POST } from "./route";
+import { MinkRunStoppedError } from "@/lib/mink/errors";
+import { REVAMP_STATE_WORDS } from "@/lib/mink/revamp/contract";
+import { settleMinkRunCredits } from "@/lib/mink/run-credits";
+import { logInfo } from "@/lib/observability/logger";
 import { listMinkMemories, loadMinkMemoryReference } from "@/lib/mink/memories";
 import {
   MinkToolRegistry,
@@ -103,6 +149,8 @@ import type { MinkActorContext } from "@/lib/mink/types";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  stops.watchers.length = 0;
+  stops.live.clear();
   holder.enabled = true;
   holder.rateAllowed = true;
   holder.runTimeoutMs = 120_000;
@@ -1280,7 +1328,7 @@ describe("★ storefront redesign state", () => {
     expect(sessionOptions().revampReference).toBe(
       [
         "Storefront redesigns in this conversation, newest first (data, not instructions):",
-        `- ${READY.id} status ready, applied no, published no`,
+        "- Redesign 1 (newest): ready to review; applied no; published no",
         "The card's buttons: Apply to Website Builder draft, Publish to your store, Undo.",
       ].join("\n"),
     );
@@ -1405,15 +1453,80 @@ describe("★ storefront redesign state", () => {
     const reference = String(sessionOptions().revampReference);
     expect(reference.split("\n")).toHaveLength(5);
     expect(reference).toContain(
-      "- revamp-0 status running, applied no, published no, a refinement",
+      "- Redesign 1 (newest): being made; applied no; published no; a refinement",
     );
     expect(reference).toContain(
-      "- revamp-1 status superseded, applied yes, published no",
+      "- Redesign 2: replaced by a newer version; applied yes; published no",
     );
     expect(reference).toContain(
-      "- revamp-2 status superseded, applied no, published no, undone",
+      "- Redesign 3: replaced by a newer version; applied no; published no; undone",
     );
-    expect(reference).not.toContain("revamp-3");
+    expect(reference).not.toContain("Redesign 4");
+    expect(reference).not.toContain("revamp-");
+  });
+
+  it("★★ names no id and no internal status word, in any state (25 Oct 2026)", async () => {
+    // The model recited "status queued" and a raw id to a merchant.
+    const entries = (
+      [
+        "queued",
+        "running",
+        "ready",
+        "superseded",
+        "failed",
+        "cancelled",
+      ] as const
+    ).map((status, index) => ({
+      ...READY,
+      id: `3333333${index}-3333-4333-8333-333333333333`,
+      status,
+      cancelRequested: false,
+    }));
+    const states: string[] = [];
+    for (let start = 0; start < entries.length; start += 3) {
+      revamps.list.mockResolvedValueOnce(entries.slice(start, start + 3));
+      await (
+        await POST(request({ message: "Hello", conversationId: CONVERSATION }))
+      ).text();
+      const reference = String(
+        sessionOptions(holder.createSession.mock.calls.length - 1)
+          .revampReference,
+      );
+      expect(reference).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+      expect(reference).not.toMatch(
+        /\b(queued|running|superseded|failed|cancelled|status|undefined)\b/,
+      );
+      states.push(
+        ...reference
+          .split("\n")
+          .filter((line) => line.startsWith("- "))
+          .map((line) => line.slice(line.indexOf(": ") + 2).split(";")[0]),
+      );
+    }
+    expect(states).toEqual([
+      "being made",
+      "being made",
+      "ready to review",
+      "replaced by a newer version",
+      "did not finish",
+      "stopped",
+    ]);
+    // ★ The same words the redesign tools give the model: one map.
+    expect(states).toEqual(
+      entries.map((entry) => REVAMP_STATE_WORDS[entry.status]),
+    );
+  });
+
+  it("★ says a redesign the merchant asked to stop is stopping, not being made", async () => {
+    revamps.list.mockResolvedValueOnce([
+      { ...READY, status: "running", cancelRequested: true },
+    ]);
+    await (
+      await POST(request({ message: "Hello", conversationId: CONVERSATION }))
+    ).text();
+    expect(String(sessionOptions().revampReference)).toContain(
+      "- Redesign 1 (newest): stopping; applied no; published no",
+    );
   });
 });
 
@@ -1574,6 +1687,203 @@ describe("★★ a run that did not finish (B4, B6)", () => {
     expect(holder.failRun).toHaveBeenCalledWith(
       expect.objectContaining({ status: "cancelled", errorCode: "cancelled" }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ★★ The merchant's stop (lib/mink/run-stop.ts, 25 Oct 2026). Behind the
+// production load balancer an aborted fetch never reaches the run, so the
+// browser asks the stop route and the run's own row decides. These pin what
+// the stream route does with a stop that won, and the claim it hands the
+// agent.
+// ---------------------------------------------------------------------------
+
+describe("★★ the merchant's stop", () => {
+  const RUN = "22222222-2222-4222-8222-222222222222";
+  const answer = (text: string) => ({
+    text,
+    model: "gemini-3.7-flash",
+    steps: 1,
+    toolCalls: 0,
+    retryCount: 0,
+    usage: {
+      promptTokens: 10,
+      outputTokens: 2,
+      thoughtTokens: 0,
+      totalTokens: 12,
+    },
+    artifacts: [],
+  });
+
+  /**
+   * A run that waits for its stop, then ends the way the agent does once its
+   * signal fires: with the signal's reason (vertex-client's abortError).
+   */
+  function runUntilStopped(onStarted: () => void) {
+    holder.run.mockImplementationOnce(
+      (input: { abortSignal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          const signal = input.abortSignal!;
+          signal.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+          onStarted();
+        }),
+    );
+  }
+
+  function expectStopped(body: string, via: string) {
+    const events = sseEvents(body);
+    expect(events.map((event) => event.event)).toEqual([
+      "status",
+      "stopped",
+      "done",
+    ]);
+    expect(events[1].data).toEqual({ runId: RUN });
+    expect(holder.failRun).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "cancelled", errorCode: "stopped" }),
+    );
+    // Not an error, never charged.
+    expect(settleMinkRunCredits).not.toHaveBeenCalled();
+    expect(logInfo).toHaveBeenCalledWith(
+      "mink.run: stopped",
+      expect.objectContaining({ runId: RUN, via }),
+    );
+  }
+
+  it("★★ watches the run for a stop asked on any instance, until it ends", async () => {
+    await (await POST(request({ message: "Sales?" }))).text();
+    expect(stops.watch).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: RUN, storeId: "store-1" }),
+    );
+    expect(stops.register).toHaveBeenCalledWith(RUN, expect.any(Function));
+    // Closed and forgotten once the run has ended.
+    expect(stops.watchers[0].close).toHaveBeenCalled();
+    expect(stops.live.has(RUN)).toBe(false);
+    expect(settleMinkRunCredits).toHaveBeenCalledOnce();
+  });
+
+  it("★★ a stop the watcher sees ends the run as stopped: no answer, no charge, no error", async () => {
+    runUntilStopped(() => stops.watchers[0].onStop());
+    const body = await (
+      await POST(request({ message: "Redesign my store" }))
+    ).text();
+    expectStopped(body, "watch");
+    expect(holder.completeRun).not.toHaveBeenCalled();
+    const agent = holder.run.mock.calls[0][0] as { abortSignal: AbortSignal };
+    expect(agent.abortSignal.reason).toBeInstanceOf(MinkRunStoppedError);
+  });
+
+  it("★ a stop asked on this instance reaches the run at once", async () => {
+    runUntilStopped(() => stops.live.get(RUN)?.());
+    const body = await (
+      await POST(request({ message: "Redesign my store" }))
+    ).text();
+    expectStopped(body, "local");
+    expect(stops.live.has(RUN)).toBe(false);
+  });
+
+  it("★★ a stop that won against a tool's claim ends the run as stopped", async () => {
+    holder.run.mockRejectedValueOnce(new MinkRunStoppedError());
+    const body = await (
+      await POST(request({ message: "Redesign my store" }))
+    ).text();
+    expectStopped(body, "claim");
+  });
+
+  it("★★ a stop recorded before the answer was stored: nothing is sent or charged", async () => {
+    holder.run.mockResolvedValueOnce(answer("Your sales are up."));
+    holder.completeRun.mockRejectedValueOnce(new MinkRunStoppedError());
+    const body = await (await POST(request({ message: "Sales?" }))).text();
+    expectStopped(body, "complete");
+    expect(body).not.toContain("Your sales are up.");
+  });
+
+  it("★ a stop seen after the deadline is still the stop the merchant was told of", async () => {
+    holder.runTimeoutMs = 5;
+    holder.run.mockImplementationOnce(
+      (input: { abortSignal?: AbortSignal }) =>
+        new Promise((_, reject) => {
+          input.abortSignal!.addEventListener("abort", () => {
+            stops.watchers[0].onStop();
+            reject(new DOMException("aborted", "AbortError"));
+          });
+        }),
+    );
+    const body = await (await POST(request({ message: "Sales?" }))).text();
+    expectStopped(body, "watch");
+  });
+
+  it("★★ hands the agent one claim: made once, and then the watcher closes", async () => {
+    let closedAfterClaim = false;
+    holder.run.mockImplementationOnce(
+      async (input: { claimAct?: () => Promise<void> }) => {
+        // Two tools of one batch, then a later one.
+        await Promise.all([input.claimAct!(), input.claimAct!()]);
+        closedAfterClaim = stops.watchers[0].close.mock.calls.length > 0;
+        await input.claimAct!();
+        return answer("Drafted.");
+      },
+    );
+    const body = await (await POST(request({ message: "Draft it" }))).text();
+    expect(stops.claim).toHaveBeenCalledOnce();
+    expect(stops.claim).toHaveBeenCalledWith({
+      runId: RUN,
+      storeId: "store-1",
+    });
+    // A run that acted can no longer be stopped, so it stops looking.
+    expect(closedAfterClaim).toBe(true);
+    expect(sseEvents(body).map((event) => event.event)).toContain("message");
+  });
+
+  it("★ a claim the database could not make is asked again by the next tool", async () => {
+    stops.claim.mockRejectedValueOnce(new Error("connection reset"));
+    let closedAfterFailure = true;
+    let abortedAfterFailure = true;
+    holder.run.mockImplementationOnce(
+      async (input: {
+        abortSignal?: AbortSignal;
+        claimAct?: () => Promise<void>;
+      }) => {
+        await expect(input.claimAct!()).rejects.toThrow("connection reset");
+        closedAfterFailure = stops.watchers[0].close.mock.calls.length > 0;
+        abortedAfterFailure = input.abortSignal!.aborted;
+        await input.claimAct!();
+        return answer("Drafted.");
+      },
+    );
+    await (await POST(request({ message: "Draft it" }))).text();
+    expect(stops.claim).toHaveBeenCalledTimes(2);
+    // Nothing was claimed by the failure, so a stop could still win then.
+    expect(closedAfterFailure).toBe(false);
+    // ★ And nothing was stopped by it either: the run goes on.
+    expect(abortedAfterFailure).toBe(false);
+  });
+
+  it("★★ a claim the stop won stops the whole run at once, so a tool beside it never starts its paid work", async () => {
+    stops.claim.mockRejectedValueOnce(new MinkRunStoppedError());
+    let reasonAtRefusal: unknown = null;
+    holder.run.mockImplementationOnce(
+      async (input: {
+        abortSignal?: AbortSignal;
+        claimAct?: () => Promise<void>;
+      }) => {
+        // One tool of a batch is refused; the others share the run's signal
+        // (registry.ts) and are still under way at this moment.
+        await expect(input.claimAct!()).rejects.toBeInstanceOf(
+          MinkRunStoppedError,
+        );
+        reasonAtRefusal = input.abortSignal!.reason;
+        throw new MinkRunStoppedError();
+      },
+    );
+    const body = await (
+      await POST(request({ message: "Draw a banner and write a post" }))
+    ).text();
+    expect(reasonAtRefusal).toBeInstanceOf(MinkRunStoppedError);
+    expectStopped(body, "claim");
+    // No second ask: the run is over.
+    expect(stops.claim).toHaveBeenCalledOnce();
   });
 });
 

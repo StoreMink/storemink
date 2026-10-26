@@ -16,7 +16,7 @@ export const metadata = marketingMetadata({
   path: "/products/orders-inventory",
   title: "Orders & inventory",
   description:
-    "Every order and every shelf in one view: online, counter, pickup and enquiry orders, stock per location with transfers, returns and Shiprocket fulfilment.",
+    "Every order and every shelf in one view: online, POS, pickup and enquiry orders, stock per location with transfers, returns and Shiprocket fulfilment.",
 });
 
 export default function OrdersInventoryPage() {
@@ -29,7 +29,7 @@ export default function OrdersInventoryPage() {
             Every order. Every location. <em>One clear view.</em>
           </>
         }
-        lead="Website orders, counter sales, pickups and enquiries land in one list. Stock lives per shelf, so your site never sells what the shop has already sold."
+        lead="Website orders, POS sales, pickups and enquiries land in one list. Stock lives per shelf, so your site never sells what the shop has already sold."
         secondary={{ href: POS_URL, text: "Explore Point of Sale" }}
       />
 
@@ -46,10 +46,10 @@ export default function OrdersInventoryPage() {
           art={<OrderFlowArt />}
           tone="lilac"
         >
-          A register sale and a website order are the same kind of thing to the
+          A POS sale and a website order are the same kind of thing to the
           dashboard: they share customers, invoices and reports. The difference
-          is shown, never hidden, so a counter sale is never mistaken for a
-          parcel to pack.
+          is shown, never hidden, so a sale at the counter is never mistaken for
+          a parcel to pack.
         </FeatureRow>
         <FeatureRow
           label="Inventory"
@@ -72,7 +72,7 @@ export default function OrdersInventoryPage() {
           label="Channels"
           title="Sell on every channel, with one catalogue."
           points={[
-            "Online orders, counter sales, pickups and enquiries",
+            "Online orders, POS sales, pickups and enquiries",
             "Wholesale and quote-based selling alongside retail",
             "Customer groups with their own pricing and offers",
           ]}

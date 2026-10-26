@@ -65,7 +65,10 @@ import {
   type ThemeImageReview,
   type ThemeImageReviewInput,
 } from "@/lib/theme-studio/image-review";
-import { createVertexImageClient } from "@/lib/theme-studio/image-vertex";
+import {
+  IMAGE_REQUEST_TIMEOUT_MS,
+  createVertexImageClient,
+} from "@/lib/theme-studio/image-vertex";
 import { resolveThemeStudioModel } from "@/lib/theme-studio/models";
 import {
   ZERO_USAGE,
@@ -828,10 +831,17 @@ export async function drawRevampPhotos(
     }
   }
 
-  // ★ Past the deadline nothing new is drawn (jobs-4), so nothing is claimed
-  //   either: the shots still missing are the next run's, and claiming them
-  //   only to give them all back is two writes for nothing.
-  if (toDraw.length > 0 && ctx.draining?.aborted) {
+  // ★★ The shoot's own drain (D2): a draw's 180 s clock outlasts the runner's
+  //   grace, so draws stop being admitted while that clock still fits before
+  //   the hard stop, 95 s before the deadline drains the step.
+  const drawsDrain =
+    toDraw.length > 0
+      ? revampAdmissionDrain(ctx, IMAGE_REQUEST_TIMEOUT_MS)
+      : ctx.draining;
+  // ★ Past it nothing new is drawn (jobs-4), so nothing is claimed either:
+  //   the shots still missing are the next run's, and claiming them only to
+  //   give them all back is two writes for nothing.
+  if (toDraw.length > 0 && drawsDrain?.aborted) {
     throw new RevampDrainedError();
   }
 
@@ -1624,14 +1634,34 @@ export async function drawRevampPhotos(
 
   // 6. Draw.
   let result: ThemeImageRunResult | null = null;
+  /**
+   * ★★ The draws asked and not answered yet (D3). A stop ends the engine's
+   *   wait for a draw before the draw itself answers, and only its answer
+   *   says whether the stop cut it off on the wire (`ledger.cutOff`), so a
+   *   stop counts what was drawn once these are in. The image client ends
+   *   each one at the stop, so this costs no real wait.
+   */
+  const drawsInFlight = new Set<Promise<ThemeImageResult>>();
+  const tracked =
+    (
+      draw: ThemeStudioImageClient["generateImage"],
+    ): ThemeStudioImageClient["generateImage"] =>
+    (request, signal) => {
+      const answer = draw(request, signal);
+      drawsInFlight.add(answer);
+      const done = () => drawsInFlight.delete(answer);
+      void answer.then(done, done);
+      return answer;
+    };
   let released = false;
   const release = async () => {
     if (released || claimed === 0) return;
     released = true;
+    if (ctx.signal.aborted) await Promise.allSettled(drawsInFlight);
     let used = 0;
     if (anchorCost > 0 && anchorWasDrawn(ledger, result)) used += 1;
     for (const outcome of ledger.settled.values()) {
-      if (wasDrawn(outcome)) used += 1;
+      if (wasDrawn(outcome, ledger)) used += 1;
     }
     // ★ The record is cleared first; when it cannot be, another runner owns
     //   the job and settles the claim from the record instead.
@@ -1642,15 +1672,15 @@ export async function drawRevampPhotos(
       // ★ Picked inside the try: a misconfigured image model throws, and the
       //   photos claimed above must go back when it does.
       const provided =
-        options.imageClient ?? defaultImageClient(provider, ctx.draining);
+        options.imageClient ?? defaultImageClient(provider, drawsDrain);
       /** Draws asked per brief in this invocation: which attempt a refusal was. */
       const drawAttempts = new Map<string, number>();
       const client: ThemeStudioImageClient = {
         provider: provided.provider,
-        generateImage: async (request, signal) => {
+        generateImage: tracked(async (request, signal) => {
           const attempt = (drawAttempts.get(request.briefId) ?? 0) + 1;
           drawAttempts.set(request.briefId, attempt);
-          if (ctx.draining?.aborted) {
+          if (drawsDrain?.aborted) {
             drained = true;
             // Never sent, so never billed: given back with the claim.
             return {
@@ -1660,6 +1690,9 @@ export async function drawRevampPhotos(
             };
           }
           const answer = await provided.generateImage(request, signal);
+          // ★★ One the run's stop cut off on the wire keeps its photo spent
+          //   (D3, `stoppedInFlight`).
+          if (stoppedInFlight(answer)) ledger.cutOff.add(request.briefId);
           // ★★ Counted the moment it returns (L2-F), whatever becomes of
           //   the picture: refused by its review, unusable, or the step
           //   stopped before storing it; with the tries it met that got no
@@ -1677,17 +1710,18 @@ export async function drawRevampPhotos(
             // ★ Why it is drawn again (P0): the image model declined it.
             noteRedraw(checkKeyOf(request.briefId), attempt, [REFUSED_PROBLEM]);
           }
-          // A draw the client held back once the drain began (its permit or
-          // its retry came too late, `revampDrainingCapacity`) is left too.
+          // A draw the client held back once the shoot's drain began (its
+          // permit or its retry came too late, `revampDrainingCapacity`) is
+          // left too.
           if (
             answer.kind === "error" &&
             answer.code === "cancelled" &&
-            ctx.draining?.aborted
+            drawsDrain?.aborted
           ) {
             drained = true;
           }
           return answer;
-        },
+        }),
       };
       const reviewer = pickReviewer();
       result = await runSlotImageGeneration(
@@ -1927,8 +1961,11 @@ export async function drawRevampPhotos(
       ctx.signal.throwIfAborted();
     }
     if (drained) {
-      // ★ The checks in flight finish (they are paid for); the drain has
-      //   already ended every wait.
+      // ★ The checks in flight and the parked photos' checks finish (they
+      //   are paid for, and a check's 75 s clock fits before the hard stop).
+      //   The runner's drain ends their waits; when only the shoot's own
+      //   drain has closed (D2), a parked photo's waits can go on until the
+      //   runner's drain, at most 95 s later, and the hand-over with them.
       await Promise.allSettled(settling.values());
       await release();
       await flushChecks();
@@ -2517,8 +2554,9 @@ function shapeOf(card: unknown): ThemeImageDirection["shape"] {
 
 /**
  * The image client: Vertex with the shared provider capacity, or the fake.
- * `draining` is the runner's deadline drain (jobs-4): the Vertex client then
- * sends no attempt that gets its permit, or its 429 retry, after it began.
+ * `draining` is the shoot's drain (jobs-4; D2, `revampAdmissionDrain`, 95 s
+ * before the runner's): the Vertex client then sends no attempt that gets its
+ * permit, or its 429 retry, after it began.
  * ★★ Owner, 25 Oct 2026: Nano Banana 2.1 (image-models.ts) draws a
  * redesign's photos at "2K" with MEDIUM thinking.
  */
@@ -2552,6 +2590,8 @@ function defaultImageClient(
   return createVertexImageClient(config, {
     imageSize: "2K",
     thinkingLevel: ThinkingLevel.MEDIUM,
+    // ★★ A draw the run's stop cuts off on the wire says so (D3).
+    markStoppedInFlight: true,
     capacity: revampDrainingCapacity(
       sharedProviderCapacity(
         config.projectId,
@@ -2680,6 +2720,49 @@ function notSentAtDeadline(): Error {
 }
 
 /**
+ * ★★ THE DRAIN FOR A GOOGLE CALL WITH THIS PER-TRY CLOCK (D2). A call is
+ *   admitted only while its whole clock and `REVAMP_LIMITS.hardStopMarginMs`
+ *   fit before the runner's hard stop (`ctx.deadline` plus `deadlineGraceMs`),
+ *   so the hard stop never cuts off a call Google may already have drawn and
+ *   billed. A 75 s clock (a photo check, a studio photo) fits after the
+ *   drain, so the drain itself is the answer; a shoot photo's 180 s clock
+ *   (IMAGE_REQUEST_TIMEOUT_MS) is longer than the 90 s grace, so its draws
+ *   stop being admitted 95 s before the drain. A call this drain refuses is
+ *   refused exactly as at the drain (never sent, nothing billed, the step
+ *   hands over). Absent with no drain: a step run on its own never drains.
+ *   ★ Its timer is unref'd and cleared by the drain.
+ */
+export function revampAdmissionDrain(
+  ctx: Pick<RevampStepContext, "deadline" | "draining">,
+  clockMs: number,
+): AbortSignal | undefined {
+  const draining = ctx.draining;
+  if (!draining) return undefined;
+  if (draining.aborted) return draining;
+  const closesAt =
+    ctx.deadline +
+    REVAMP_LIMITS.deadlineGraceMs -
+    clockMs -
+    REVAMP_LIMITS.hardStopMarginMs;
+  if (closesAt >= ctx.deadline) return draining;
+  const closed = new AbortController();
+  const reason = new Error(
+    "Not admitted: the call could still be on the wire at the redesign's hard stop.",
+  );
+  const left = closesAt - Date.now();
+  if (left <= 0) {
+    closed.abort(reason);
+  } else {
+    const timer = setTimeout(() => closed.abort(reason), left);
+    timer.unref?.();
+    draining.addEventListener("abort", () => clearTimeout(timer), {
+      once: true,
+    });
+  }
+  return AbortSignal.any([draining, closed.signal]);
+}
+
+/**
  * The clients' 429 wait, ending when the drain begins as well as when the run
  * stops: the retry after it would not be sent (`revampDrainingCapacity`), so
  * waiting it out would only hold back the hand-over. ★ Shared with the
@@ -2718,6 +2801,11 @@ interface Ledger {
   blocked: Set<string>;
   /** This invocation drew the anchor (its photo allowance was used). */
   anchorDrawn: boolean;
+  /**
+   * Briefs (shot ids, "anchor") a draw of which the run's own stop cut off on
+   * the wire (`stoppedInFlight`, D3): it may have been billed.
+   */
+  cutOff: Set<string>;
 }
 
 function emptyLedger(): Ledger {
@@ -2732,12 +2820,15 @@ function emptyLedger(): Ledger {
     small: new Set(),
     blocked: new Set(),
     anchorDrawn: false,
+    cutOff: new Set(),
   };
 }
 
 /**
- * Failures that provably made no picture: the run's own stop, and a
- * provider that turned the request away for its rate before drawing.
+ * Failures that provably made no picture: a provider that turned the request
+ * away for its rate before drawing, and the run's own stop before the request
+ * left. ★★ A stop that cut a draw off on the wire is not one (B3, D3): it may
+ *   have been billed (`stoppedInFlight`).
  */
 const NOT_DRAWN_CODES: ReadonlySet<string> = new Set([
   "cancelled",
@@ -2745,17 +2836,41 @@ const NOT_DRAWN_CODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether a slot outcome came from a picture the provider may have made, so
- * its photo stays counted against the limits. A refusal draws nothing.
+ * ★★ A draw the run's own stop cut off on the wire (D3, robustness audit
+ *   B3): sent, never refused with 429, unanswered when the run stopped
+ *   (image-vertex.ts `markStoppedInFlight`). Google may have drawn and billed
+ *   it, so it is counted as a call and its photo stays spent, as products.ts
+ *   counts the same case. The merchant is never charged for it: the card
+ *   charges only photographs a page shows (assemble.ts). ⚠ Only while the
+ *   stopping run still owns the job (the merchant's Stop, the hard stop, the
+ *   lease watchdog) and its clear of the claim lands: after a lost lease, a
+ *   crash or a clear that fails, the next run settles the claim from the
+ *   stored photos (photo-hold.ts), so a cut-off draw, which stored none, is
+ *   given back, and after a lost lease or a crash its usage is not recorded.
  */
-function wasDrawn(outcome: SlotOutcome): boolean {
+function stoppedInFlight(answer: ThemeImageResult): boolean {
+  return (
+    answer.kind === "error" &&
+    answer.code === "cancelled" &&
+    answer.timing?.stoppedInFlight === true
+  );
+}
+
+/**
+ * Whether a slot outcome came from a picture the provider may have made, so
+ * its photo stays counted against the limits. A refusal draws nothing; a
+ * stop draws nothing unless it cut a draw off on the wire (`ledger.cutOff`).
+ */
+function wasDrawn(outcome: SlotOutcome, ledger: Ledger): boolean {
   switch (outcome.status) {
     case "generated":
     case "rejected":
     case "unusable":
       return true;
     case "failed":
-      return !NOT_DRAWN_CODES.has(outcome.code);
+      return (
+        !NOT_DRAWN_CODES.has(outcome.code) || ledger.cutOff.has(outcome.slotId)
+      );
     case "refused":
     case "skipped":
       return false;
@@ -2774,7 +2889,8 @@ function anchorWasDrawn(
   ledger: Ledger,
   result: ThemeImageRunResult | null,
 ): boolean {
-  if (ledger.anchorDrawn) return true;
+  // ★ An anchor the run's stop cut off on the wire may have been billed (D3).
+  if (ledger.anchorDrawn || ledger.cutOff.has(ANCHOR_SLOT)) return true;
   const failure = result?.anchorFailure;
   if (!failure) return false;
   if (failure.kind === "rejected") return true;
@@ -3108,15 +3224,25 @@ function recropCause(problems: readonly string[]): FallbackCause | null {
  * What one draw cost, or null when it cost nothing (L2-F). ★ The rule the
  * photo allowance already uses (`wasDrawn`): a call never sent (no provider
  * attempt), a 429 that outlasted its retries (refused before the model ran)
- * and a cancelled call (stopped before its answer, which carried no usage)
- * are not counted; every other answer is a paid or possibly paid image,
- * a refusal and an outage included, priced from the usage it returned, at
- * the rates of the model that drew it, its thinking included (Nano Banana
- * 2.1 bills it, 25 Oct 2026; cost.ts).
+ * and a call cancelled before its request left are not counted; every other
+ * answer is a paid or possibly paid image, a refusal, an outage and a draw
+ * the run's stop cut off on the wire (D3) included, priced from the usage it
+ * returned (none for a cut-off one, as for a timeout), at the rates of the
+ * model that drew it, its thinking included (Nano Banana 2.1 bills it,
+ * 25 Oct 2026; cost.ts). ⚠ So the job's estimated cost leaves out what an
+ *   unanswered draw may have been billed; products.ts prices every draw,
+ *   answered or not, at its flat estimate
+ *   (PRODUCT_PHOTO_ESTIMATED_COST_MICRO_USD).
  */
 function drawCallUsage(answer: ThemeImageResult): RevampUsage | null {
   if (answer.timing?.providerAttempts === 0) return null;
-  if (answer.kind === "error" && NOT_DRAWN_CODES.has(answer.code)) return null;
+  if (
+    answer.kind === "error" &&
+    NOT_DRAWN_CODES.has(answer.code) &&
+    !stoppedInFlight(answer)
+  ) {
+    return null;
+  }
   return {
     inputTokens: answer.usage.inputTokens,
     outputTokens: answer.usage.outputTokens,
@@ -3131,6 +3257,11 @@ function drawCallUsage(answer: ThemeImageResult): RevampUsage | null {
  * The tries of one draw that got no answer (P0): every try before the last
  * was a 429 (the image client tries again after nothing else), and the last
  * was one too when the draw ended rate-limited, or ran out of its clock.
+ * ⚠ A last try refused with 429 whose retry the stop or a drain then ended
+ *   reads as cancelled, and that one 429 is not counted: the client does not
+ *   say which try it was, and `providerAttempts` rises before the send, so it
+ *   cannot be inferred (products.ts counts each 429 as it comes). StoreMink's
+ *   own metric only: no allowance or charge reads it.
  */
 function drawCallCounts(answer: ThemeImageResult): RevampCallCounts {
   const code = answer.kind === "error" ? answer.code : null;

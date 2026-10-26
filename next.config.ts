@@ -12,14 +12,12 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ["localtest.me", "*.localtest.me"],
   // Self-contained server bundle (.next/standalone) for the Cloud Run container
   // (GCP migration Phase 4). Copies only the traced node_modules + a minimal
-  // server.js, so the runtime image stays small. Ignored by Vercel (which uses
-  // its own build adapter), so this is safe to keep on during the transition.
+  // server.js, so the runtime image stays small.
   output: "standalone",
-  // AI copy actions and Mink read their Markdown prompts at runtime via fs. On serverless
-  // hosts (e.g. Vercel) a function only bundles files Next.js traces, and a
-  // runtime readFile path isn't traced automatically — force these prompt sources
-  // into every server trace. This also puts them in .next/standalone for Cloud
-  // Run. Harmless on Node hosts.
+  // AI copy actions and Mink read their Markdown prompts at runtime via fs.
+  // Next.js copies only traced files into .next/standalone, and a runtime
+  // readFile path isn't traced automatically, so force these prompt sources
+  // into every server trace for the Cloud Run image.
   outputFileTracingIncludes: {
     // ★★ `@img/**` IS SHARP'S NATIVE LIBRARY, and tracing misses it on its
     // own: sharp's `.node` binding dlopens `libvips-cpp.so` from a sibling
@@ -346,7 +344,6 @@ function platformHostPattern(): string {
     "pos\\.localhost",
     devRoot,
     `pos\\.${devRoot}`,
-    ".+\\.vercel\\.app",
     root,
     `(?:www|app|pos|themes)\\.${root}`,
   ];

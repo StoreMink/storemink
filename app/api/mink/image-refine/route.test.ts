@@ -67,7 +67,7 @@ describe("POST /api/mink/image-refine", () => {
     expect(input.deadlineAt).toBeLessThan(before + maxDuration * 1_000);
   });
 
-  it("★ a merchant who leaves stops it", async () => {
+  it("★ the request's own signal still reaches the refine (locally; behind the load balancer it never fires, which is why the browser sends a stop)", async () => {
     const leaving = new AbortController();
     holder.refine.mockImplementationOnce(
       async (input: { signal: AbortSignal }) => {
@@ -84,6 +84,35 @@ describe("POST /api/mink/image-refine", () => {
       request({ url: URL_OK, spec: "product" }, { signal: leaving.signal }),
     );
     expect(response.status).toBe(504);
+  });
+
+  it("★★ passes the browser's stop token through", async () => {
+    const token = "3f2b8c1e-9a4d-4e6f-8b2a-1c3d5e7f9a0b";
+    const response = await POST(
+      request({ url: URL_OK, spec: "product", stopToken: token }),
+    );
+    expect(response.status).toBe(200);
+    expect(holder.refine.mock.calls[0][0]).toMatchObject({ stopToken: token });
+  });
+
+  it("★ a tab without a token passes none (the server makes one)", async () => {
+    await POST(request({ url: URL_OK, spec: "product" }));
+    const input = holder.refine.mock.calls[0][0] as Record<string, unknown>;
+    expect(input.stopToken).toBeUndefined();
+  });
+
+  it("★ refuses a malformed stop token before anything runs", async () => {
+    for (const stopToken of ["not-a-token", 42, null, ""]) {
+      const response = await POST(
+        request({ url: URL_OK, spec: "product", stopToken }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error:
+          "This refine couldn't be started. Reload the page and try again.",
+      });
+    }
+    expect(holder.refine).not.toHaveBeenCalled();
   });
 
   it("refuses an unknown slot before anything runs", async () => {

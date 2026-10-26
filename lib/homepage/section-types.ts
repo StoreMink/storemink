@@ -695,9 +695,9 @@ export interface RichTextConfig {
 /**
  * Merchant-authored HTML/CSS/JS. SECURITY: rendered ONLY inside a sandboxed
  * iframe (sandbox="allow-scripts allow-popups", srcDoc, never
- * allow-same-origin) — Supabase auth cookies are httpOnly:false and scoped to
- * .storemink.com, so inline merchant JS could hijack sessions valid on every
- * store and the platform. See custom-code-frame.tsx.
+ * allow-same-origin): the session cookie is scoped to .storemink.com, so
+ * same-origin merchant JS could act as the signed-in visitor on every store and
+ * the platform. See custom-code-frame.tsx.
  */
 export interface CustomCodeConfig {
   html: string;

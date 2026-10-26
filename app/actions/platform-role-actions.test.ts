@@ -94,12 +94,12 @@ describe("platform role actions", () => {
       expect(result.slug).toBe("content-editor-3");
     });
 
-    it("refuses a name that is a register role", async () => {
+    it("refuses a name that is a POS role", async () => {
       const result = await createPlatformRole({
         ...validForm,
         name: "Cashier",
       });
-      expect(result.error).toMatch(/register role/i);
+      expect(result.error).toMatch(/POS role/i);
       expect(dbHolder.current.calls.insert).toHaveLength(0);
     });
 

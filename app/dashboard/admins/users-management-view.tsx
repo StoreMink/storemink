@@ -254,8 +254,8 @@ export function UsersManagementView({
         <div>
           <h1>Staff</h1>
           <p>
-            Everyone who works in your store, on the dashboard or at the
-            register. Each person has one of the roles StoreMink defines.
+            Everyone who works in your store, on the dashboard or in POS. Each
+            person has one of the roles StoreMink defines.
           </p>
         </div>
         {canManage && canInvite && (
@@ -462,11 +462,11 @@ export function UsersManagementView({
             <DialogDescription>
               {actionType === "delete" &&
                 (selected?.kind === "pos"
-                  ? "Are you sure you want to remove this person? Their register sign-in will be deleted. This cannot be undone."
+                  ? "Are you sure you want to remove this person? Their POS login will be deleted. This cannot be undone."
                   : "Are you sure you want to remove this user? This cannot be undone.")}
               {actionType === "role" &&
                 (selected?.kind === "pos"
-                  ? "Select a new register role for this person."
+                  ? "Select a new POS role for this person."
                   : "Select a new role for this user.")}
               {actionType === "locations" &&
                 (selected?.kind === "pos"
@@ -477,7 +477,7 @@ export function UsersManagementView({
                 (isInactive(selected)
                   ? "This person will regain access."
                   : selected.kind === "pos"
-                    ? "This person will no longer be able to sign in at the register."
+                    ? "This person will no longer be able to sign in to POS."
                     : "This user will lose access immediately.")}
             </DialogDescription>
           </DialogHeader>
@@ -549,7 +549,7 @@ export function UsersManagementView({
                   </p>
                 ) : (
                   <p className="text-[12.5px] text-[var(--dash-text-3)]">
-                    To put this person on the register instead, remove them from
+                    To give this person POS access instead, remove them from
                     Staff first, then invite them again as a Manager or Cashier.
                   </p>
                 )}

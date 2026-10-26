@@ -34,6 +34,8 @@ export const minkProductImportTools: MinkTool[] = [
     permission,
     available: (actor) => actor.draftingEnabled === true,
     timeoutMs: 12000,
+    // A checkpoint read: it writes nothing, so it never claims the run.
+    effect: "read",
     artifact: (output) =>
       output.artifact as Extract<MinkArtifact, { type: "product_import" }>,
     async execute(actor, args) {

@@ -129,6 +129,33 @@ export interface InvoiceAddress {
   postalCode?: string;
 }
 
+/** One party on an issued invoice, as recorded when it was issued. */
+export interface RecordedInvoiceParty {
+  name: string | null;
+  gstin: string | null;
+  /** NUMERIC GST state code; for the customer it is the place of supply. */
+  stateCode: string | null;
+  address: InvoiceAddress;
+}
+
+/**
+ * Who an issued invoice is from and to: `billing_invoices.parties`, written
+ * once by a trigger in the statement that issues the invoice (migration 0243).
+ *
+ * ★ A RECORD, NOT A LOOKUP. Deleting a store removes its billing account and
+ * its business details, and StoreMink keeps the invoice for GST; without this
+ * the document could no longer say who it was issued to. Not to be confused
+ * with `InvoiceParties` in `invoice-store.ts`, which is only the GSTIN trio
+ * stamped on the row's own columns.
+ */
+export interface RecordedInvoiceParties {
+  version: 1;
+  /** When it was taken: the issue time, or 0243's backfill for an older one. */
+  capturedAt: string | null;
+  supplier: RecordedInvoiceParty;
+  customer: RecordedInvoiceParty & { email: string | null };
+}
+
 /** One row of a merchant's invoice history. */
 export interface InvoiceSummary {
   id: string;
@@ -153,7 +180,8 @@ export interface InvoiceLineView {
 /**
  * One issued invoice, as the printable document renders it.
  *
- * ★ The tax figures and identifiers come from the invoice's OWN row — see
+ * ★ The tax figures and identifiers come from the invoice's OWN row, and the
+ * names and addresses from what was recorded when it was issued — see
  * `lib/billing/invoice-history.ts` for why that distinction is load-bearing.
  */
 export interface InvoiceDocument {

@@ -30,7 +30,7 @@ function absolute(siteUrl: string, path: string): string {
 }
 
 // Resolve an image reference to an absolute URL, or null if unusable. Uploaded
-// media is already an absolute Supabase URL; theme-bundled imagery is a
+// media is already an absolute URL (GCS); theme-bundled imagery is a
 // site-relative /public path — both must be absolute in structured data, so we
 // prefix the store origin for the latter. Anything else (empty, protocol-less,
 // data: URIs) is dropped.

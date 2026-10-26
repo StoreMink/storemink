@@ -59,7 +59,7 @@ beforeEach(() => {
   });
   vi.mocked(callGemini).mockResolvedValue({
     text: JSON.stringify({
-      answer: "Open the register and take payment.",
+      answer: "Open POS and take payment.",
       steps: ["Open Sell.", "Select Take payment."],
       notes: ["Review the total before completing the sale."],
       sourceSlugs: [DOCUMENT.slug, "invented-guide"],
@@ -109,7 +109,7 @@ describe("askHelpAssistant", () => {
     expect(result).toEqual({
       success: true,
       data: {
-        answer: "Open the register and take payment.",
+        answer: "Open POS and take payment.",
         steps: ["Open Sell.", "Select Take payment."],
         notes: ["Review the total before completing the sale."],
         sources: [

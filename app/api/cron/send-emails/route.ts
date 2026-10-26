@@ -18,13 +18,12 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //                                after() missed, and rows whose retry is due)
 //
 // One route, because they share a trigger, a secret, and a self-chaining
-// pattern — and because the cron plan allows few schedules (Vercel Hobby caps
-// crons at one/day), so a single entry point that drains everything is more
-// reliable than two half-fed ones.
+// pattern, so a single entry point that drains everything is more reliable
+// than several half-fed ones.
 //
 // Driven three ways:
 //   1. Cloud Scheduler once per minute as the reliable heartbeat. This cadence
-//      is required by Phase 5E scheduled campaigns; vercel.json is inert in prod.
+//      is required by Phase 5E scheduled campaigns.
 //   2. Self-chaining: if work remains after a run, kick another via after() so
 //      a large campaign (or a burst of notifications) drains in minutes rather
 //      than on the cron cadence.
@@ -32,8 +31,8 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //      SMS or a WhatsApp message calls triggerEmailWorker(), so "new order"
 //      goes out in seconds.
 //
-// Auth: requires `Authorization: Bearer <CRON_SECRET>`. Vercel Cron is
-// configured to send this header. Set CRON_SECRET in the environment.
+// Auth: requires `Authorization: Bearer <CRON_SECRET>`. The Cloud Scheduler
+// job sends this header. Set CRON_SECRET in the environment.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

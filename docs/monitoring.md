@@ -5,7 +5,8 @@ with the owner's approval. Until then there were no alert policies, no uptime
 checks and no notification channels in production or staging (robustness
 audit, 23 Oct). Five Theme Studio alerts (16 to 20) were defined on 25 Oct
 2026 (Theme Studio plan P6) and are applied after the Theme Studio release
-with the owner's OK (step A1).
+with the owner's OK (step A1). Alert 10 (Google AI refusals) was made quieter
+on 25 Oct 2026, also with the owner's OK.
 
 Everything below lives in the **storemink-prod** project, carries the label
 `managed-by=storemink-alerts`, and emails one channel named **"StoreMink owner
@@ -27,7 +28,9 @@ exact filter of any policy. How to run it is at the end of this page.
 ## How an alert behaves
 
 - A metric alert opens an incident when its condition holds and closes it when
-  the condition stops holding, or after 30 minutes with no data.
+  the condition stops holding, or after 30 minutes with no data, and emails
+  both times. Alert 10 is the exception: it emails only when it opens, and
+  closes itself after an hour with no data.
 - A log-based alert (marked **log** below) fires on a matching log entry,
   emails at most once an hour, and closes itself after 30 minutes.
 - Severity is one of WARNING, ERROR or CRITICAL. CRITICAL means shoppers,
@@ -155,21 +158,33 @@ They feed the last alert below ("Uptime: a StoreMink page is down").
 
 ### 10. Google AI: a model refusing more than 30% of calls (WARNING)
 
-- **Fires when**, for one Gemini model at one location, over 15 minutes, more
-  than 30% of calls came back refused (429) or abandoned after a stall (499),
-  **and** there were at least 10 calls in those 15 minutes (Vertex AI
-  `model_invocation_count`, grouped by model and location).
-- **Means** Google's shared pool is busy. It is not our quota, refused calls
-  are not billed, and it usually passes within the hour. Mink chat fails over
-  to gemini-3.5-flash in Mumbai; redesign photos and Theme Studio wait and
-  retry. From the next release, Generate with AI, WhatsApp answers and the
+- **Fires when**, for one Gemini model at one location, more than 30% of the
+  last 30 minutes' calls came back refused (429) or cut off by our side (499),
+  there were at least 20 calls in those 30 minutes, **and** both stayed true
+  for 15 minutes in a row (one PromQL condition over Vertex AI
+  `model_invocation_count`, grouped by model and location). It emails once
+  when it opens and not when it closes.
+- **Means** for 429s, Google's shared pool is busy. It is not our quota,
+  refused calls are not billed, and it usually passes within the hour. Mink
+  chat fails over to gemini-3.5-flash in Mumbai; redesign photos and Theme
+  Studio wait and retry. Generate with AI, WhatsApp answers and the
   attachment reader fail over to the same model, and chat images and Refine
-  ask again twice at the same location. The 499s are calls our own stall
-  watchdog gave up on.
+  ask again twice at the same location. 499s are calls our side cut off: a
+  per-try clock (redesign and Theme Studio photos 180 s, studio product
+  photos 75 s, chat images 45 s, Refine 60 s, storefront personalisation
+  45 s for the whole call), a stopped job, or, for the text models, Mink
+  chat's stall watchdog.
 - **Check first** Vertex AI, Model Garden metrics for the model named in the
-  alert.
-- **Why this threshold** the 10-call minimum stops one refusal in three calls
-  from emailing anyone.
+  alert, split by response code: mostly 429 is Google, a cluster of 499 is us.
+- **Why this threshold** a redesign makes about 20 image calls in 15 minutes,
+  so one call moves the share by 2 to 4 points. The first version (15
+  minutes, at least 10 calls, no hold time, two conditions, emails on close)
+  opened and closed several times an hour and sent two emails each way. On
+  25 Oct 2026, 16:05 to 16:35 IST, gemini-nano-banana-2.1 had 42 calls, 12
+  refused (all 429, no 499) while a redesign finished normally; this rule
+  stays quiet on that afternoon (the 30-minute share peaked at 30.4% for one
+  five-minute reading) and still emails once for a quarter hour of real
+  refusals.
 
 ### 11. Mink chat: the fallback model refused (ERROR, log)
 
@@ -443,6 +458,10 @@ python3 -I scripts/prod-monitoring.py
 
 # Create whatever is missing, then list the owner-approved policies.
 python3 -I scripts/prod-monitoring.py --apply --email <alert address>
+
+# Change one existing policy to match the script: preview, then write.
+python3 -I scripts/prod-monitoring.py --update "<display name>"
+python3 -I scripts/prod-monitoring.py --update "<display name>" --apply
 ```
 
 - It writes only to storemink-prod: the channel, the three uptime checks, the
@@ -450,11 +469,17 @@ python3 -I scripts/prod-monitoring.py --apply --email <alert address>
   A1). It reads only configuration (channels,
   checks, policies, log metrics) and metric descriptors, never time series,
   log entries or secrets.
-- It is idempotent by display name: an existing channel (matched by its
-  address), check, counter or policy is left alone. So it never updates or
-  deletes anything. To change a threshold, change the policy in Cloud
-  Monitoring and the script together, or delete the policy and re-run.
-  Renaming a policy in the script creates a second one.
+- `--apply` is idempotent by display name: an existing channel (matched by
+  its address), check, counter or policy is left alone, so it never updates or
+  deletes anything. To change a policy, change it in the script, preview with
+  `--update "<display name>"` (reads the live policy and prints each field
+  that would change; writes nothing), then run it again with `--apply`. That
+  replaces the policy's conditions, combiner, alert strategy, documentation,
+  severity, labels and on/off flag, keeps its notification channels and
+  display name, needs no `--email`, and reads the policy back to confirm.
+  Replacing conditions closes any incident open on the old ones, so update
+  while the alert is quiet. Renaming a policy in the script creates a second
+  one.
 - A policy whose metric does not exist yet is skipped and reported; the run
   then exits with status 2. If `gcloud` has no valid login it stops before
   touching anything.

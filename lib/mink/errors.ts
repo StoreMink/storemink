@@ -47,3 +47,18 @@ export class MinkToolTimeoutError extends Error {
     this.name = "MinkToolTimeoutError";
   }
 }
+
+/**
+ * The merchant stopped this reply and the stop won: it was recorded on the
+ * run's row before the run did anything (lib/mink/run-stop.ts). Thrown by the
+ * claim a side-effecting tool makes first, by `completeMinkRun`, and as the
+ * run's abort reason once the stop is seen. ★ The run then ends `cancelled`
+ * with code `stopped`: no answer stored, nothing charged, nothing written.
+ * Never shown to the merchant as an error: the browser asked for it.
+ */
+export class MinkRunStoppedError extends Error {
+  constructor() {
+    super("This reply was stopped.");
+    this.name = "MinkRunStoppedError";
+  }
+}

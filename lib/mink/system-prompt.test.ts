@@ -607,12 +607,20 @@ describe("★★ a storefront redesign asks little, starts once and names the ca
     );
   });
 
-  it("answers a started redesign in one sentence and refines in the merchant's words", () => {
+  it("★★ answers in one sentence that follows the tool's own answer, and refines in the merchant's words (25 Oct 2026)", () => {
+    // A refused start used to be answered "the redesign has started and the
+    // card shows its progress", promising a card that was never attached.
     const prompt = render(...TOOLS);
     expect(prompt).toContain(
+      "After start_storefront_revamp or refine_storefront_revamp returns, answer in ONE short sentence that follows its instruction",
+    );
+    expect(prompt).toContain("say it started only if its status is started");
+    expect(prompt).toContain("mention the card only if cardShown is true");
+    expect(prompt).toContain("if it did not start, give its reason");
+    expect(prompt).toContain("Do not describe the design.");
+    expect(prompt).not.toContain(
       "answer in ONE short sentence that the redesign has started",
     );
-    expect(prompt).toContain("do not describe the design");
     expect(prompt).toContain(
       "call refine_storefront_revamp with the merchant's own words",
     );
@@ -643,6 +651,59 @@ describe("★★ a storefront redesign asks little, starts once and names the ca
     const template = getMinkSystemPromptTemplate();
     expect(template).not.toContain("propose_storefront_personalization");
     expect(template).not.toContain("get_storefront_personalization_context");
+  });
+});
+
+describe("★★ an answer never recites an internal id or a tool's status word (25 Oct 2026)", () => {
+  // A merchant was read a redesign's raw id and the job's own status words
+  // ("status queued", "superseded"), which every tool result used to carry.
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const RULE =
+    "Never write an internal id (such as a redesign's or a draft's) unless the merchant asks for one, and never an internal job status from a tool result (such as queued, running, superseded, not_started or already_started): say what it means, such as being made, ready to review or stopped.";
+
+  it("is part of the style rule every run carries, with no tool at all", () => {
+    expect(renderMinkSystemInstruction(actor, [])).toContain(RULE);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("get_sales_summary")]),
+    ).toContain(RULE);
+    // Right after the rule that keeps tools and behind-the-scenes talk out.
+    expect(getMinkSystemPromptTemplate()).toContain(
+      `what you did behind the scenes unless asked. ${RULE}`,
+    );
+  });
+
+  it("★ names whose ids it means, so SKUs, order references and codes are still quoted", () => {
+    // The same prompt tells Mink to keep SKUs and codes exactly as they
+    // appear; an unscoped "never write an id" would collide with that.
+    const template = getMinkSystemPromptTemplate();
+    expect(template).toContain("such as a redesign's or a draft's");
+    expect(template).toContain(
+      "Keep StoreMink's own labels, product names, SKUs, codes and dashboard paths exactly as they appear",
+    );
+  });
+
+  it("★ is the one rule about ids, and its status words are a job's, never a StoreMink label", () => {
+    // An older rule allowed an id the merchant needs and this one said
+    // never: two answers to one question. And an order's own status
+    // (pending, shipped) is a StoreMink label, kept exactly as it appears.
+    const template = getMinkSystemPromptTemplate();
+    expect(template).not.toContain("Do not expose internal IDs");
+    expect(template.match(/internal id/gi)).toHaveLength(1);
+    expect(template).toContain("an internal job status from a tool result");
+    expect(template).not.toContain("a tool result's status word");
   });
 });
 

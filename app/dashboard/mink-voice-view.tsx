@@ -56,12 +56,18 @@ export function minkVoiceCaption(
 export function MinkVoiceBar({
   voice,
   isReplying,
+  stopRefused = false,
   onStopReply,
   columnClass = "",
 }: {
   voice: MinkVoiceMode;
   /** Mink is still producing the written answer. */
   isReplying: boolean;
+  /**
+   * The server refused a Stop: the reply finishes, so Stop is not offered
+   * (the thread's status line says why), as in the composer.
+   */
+  stopRefused?: boolean;
   onStopReply: () => void;
   /** The thread's column, so the bar lines up with the messages above it. */
   columnClass?: string;
@@ -131,7 +137,7 @@ export function MinkVoiceBar({
               className={`w-full ${speaking ? "text-[#1a1a1a]" : "text-[#6d4dff]"}`}
             />
           </div>
-          {isReplying ? (
+          {isReplying && !stopRefused ? (
             <button
               type="button"
               onClick={onStopReply}

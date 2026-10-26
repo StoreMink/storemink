@@ -7,6 +7,7 @@ import {
   eq,
   ilike,
   inArray,
+  isNull,
   notInArray,
   or,
   sql,
@@ -28,6 +29,8 @@ import {
   aiUsage,
   blogComments,
   blogs,
+  billingInvoices,
+  billingReconciliationItems,
   billingSubscriptions,
   cardColors,
   categories,
@@ -630,15 +633,15 @@ export async function getStoreAudit(
   }
 }
 
-// Any managed media public URL — Supabase (…/object/public/media/…) OR Google
-// Cloud Storage (storage.googleapis.com/<bucket>/…), since a store's media may
-// straddle both during the Phase 3 migration. Historical GCS media was not
-// always store-prefixed, so scrape every URL from the store's rows before they
-// cascade. GCS objects are deleted; legacy Supabase URLs are counted and shown
-// to the operator because this GCS-only app no longer has credentials that can
-// delete those external objects.
+// Any media public URL in Google Cloud Storage (storage.googleapis.com/<bucket>/…).
+// Historical GCS media was not always store-prefixed, so scrape every URL from
+// the store's rows before they cascade; deleteStorageUrls deletes what is in
+// our bucket and counts the rest for the operator. A URL ends at a backslash:
+// the rows are scanned as JSON, which writes an HTML attribute's quote as \"
+// and a newline as \n, and URL parsing would read that backslash as a slash
+// and ask to delete `<path>/`, an object that never exists.
 const MEDIA_URL_RE =
-  /https?:\/\/[^"'\s)]*(?:\/object\/public\/media\/|storage\.googleapis\.com\/[^/"'\s)]+\/)[^"'\s)]+/g;
+  /https?:\/\/[^"'\s)\\]*storage\.googleapis\.com\/[^/"'\s)\\]+\/[^"'\s)\\]+/g;
 
 // Every store-scoped table that can hold an uploaded image (product/variant
 // galleries, category tiles, blog covers+bodies, both generations of builder
@@ -667,7 +670,10 @@ const MEDIA_TABLES = [
 
 // PERMANENTLY delete a store and everything belonging to it (platform
 // superadmin only). Irreversible. Every store-scoped table FKs stores(id) with
-// ON DELETE CASCADE, so one DELETE removes all DB rows; we additionally purge
+// ON DELETE CASCADE, so one DELETE removes all DB rows, except StoreMink's own
+// invoices to the merchant and their payment attempts, which are kept with
+// store_id NULL (migration 0243, ON DELETE SET NULL), and its open
+// reconciliation items, detached in the same transaction; we additionally purge
 // the store's uploaded media, custom-domain control-plane resources, its
 // sign-in hosts in Identity Platform's authorized-domain list and login
 // accounts that are no longer attached to any other StoreMink role (none of
@@ -760,7 +766,8 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
     return { error: "Could not delete the store. Please try again." };
   }
 
-  // Delete the store — FK ON DELETE CASCADE wipes every store-scoped row.
+  // Delete the store — FK ON DELETE CASCADE wipes every store-scoped row except
+  // StoreMink's own invoices (below).
   //
   // ★★ WITH THE CHECKS DEFERRED TO COMMIT. order_items → products and the
   // Mink publication/campaign → approval/draft foreign keys refuse to let a
@@ -786,10 +793,86 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   // storefront_events (16.8 ms per order at 211k events, measured), so a
   // store with tens of thousands of orders can pass even 5 minutes, and the
   // operator sees "Could not delete the store" with nothing deleted.
+  //
+  // ★★ STOREMINK'S OWN INVOICES TO THIS MERCHANT ARE KEPT (owner's decision,
+  // 25 Oct 2026). GST requires them, the series is gapless, and Terms section
+  // 13 and Privacy section 7 say so: billing_invoices and
+  // billing_payment_attempts are ON DELETE SET NULL (migration 0243), so the
+  // cascade leaves every issued invoice, its lines and its attempts in place
+  // with store_id NULL and the parties it recorded when it was issued.
+  // ★ A DRAFT IS NOT AN INVOICE (no number, never issued), so drafts are
+  // deleted here, first, in this transaction, and their lines and attempts go
+  // with them. One kind of draft is kept: one with a payment that may have
+  // reached the gateway (an order id, and not failed or cancelled), because
+  // that attempt is the only record of money StoreMink may have taken;
+  // reconciliation flags it if the payment was captured
+  // (lib/billing/reconcile.ts). ★ An issued invoice cannot be deleted at all
+  // (billing_invoices_keep_issued, migration 0245), so a wrong predicate here
+  // fails the purge instead of removing a GST document.
+  //
+  // ★ OPEN MONEY QUESTIONS ARE KEPT TOO. An open or "needs chasing"
+  // reconciliation item can be the only record of a payment (an amount
+  // mismatch's observed amount lives nowhere else), so it is detached
+  // (store_id NULL, marked storeDeleted with the store's name) instead of
+  // cascading. A closed one is history and goes with the store.
+  // ★ A PAID AI CREDIT PURCHASE WHOSE RECEIPT NEVER ISSUED has no invoice to
+  // keep and no payment attempt, and its purchase row cascades, so it is filed
+  // as an open orphan_payment item first: the payment ids and the amount
+  // survive for whoever settles the missing receipt. ⚠ A PENDING purchase is
+  // not filed (an abandoned checkout is never reaped and would bury the
+  // queue), and a purchase row behind an ISSUED receipt still cascades: the
+  // kept invoice no longer links to its Razorpay ids. Keeping
+  // ai_credit_purchases needs a migration (owner's decision).
+  let unissuedReceipts = 0;
   try {
     await withService(async (db) => {
       await db.execute(sql`set local statement_timeout = '5min'`);
       await db.execute(sql`set constraints all deferred`);
+      await db
+        .update(billingReconciliationItems)
+        .set({
+          storeId: null,
+          detail: sql`${billingReconciliationItems.detail} || jsonb_build_object('storeDeleted', true, 'storeName', (select s.name from public.stores s where s.id = ${storeId}))`,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(
+          and(
+            eq(billingReconciliationItems.storeId, storeId),
+            inArray(billingReconciliationItems.status, [
+              "open",
+              "manual_review",
+            ]),
+          ),
+        );
+      const filed = await db.execute(sql`
+        insert into public.billing_reconciliation_items
+          (store_id, kind, status, provider_payment_id, provider_order_id,
+           expected_paise, detail)
+        select null, 'orphan_payment', 'open', p.rzp_payment_id, p.rzp_order_id,
+               p.amount_inr::bigint * 100,
+               jsonb_build_object(
+                 'note', 'AI credit purchase paid, receipt never issued',
+                 'storeDeleted', true,
+                 'storeName', s.name,
+                 'credits', p.credits)
+          from public.ai_credit_purchases p
+          join public.stores s on s.id = p.store_id
+          join public.billing_invoices i on i.id = p.invoice_id
+         where p.store_id = ${storeId}
+           and p.status = 'paid'
+           and i.finalized_at is null
+        on conflict do nothing
+        returning id`);
+      unissuedReceipts = filed.rows.length;
+      await db
+        .delete(billingInvoices)
+        .where(
+          and(
+            eq(billingInvoices.storeId, storeId),
+            isNull(billingInvoices.finalizedAt),
+            sql`not exists (select 1 from public.billing_payment_attempts a where a.invoice_id = ${billingInvoices.id} and a.provider_order_id is not null and a.state not in ('failed', 'cancelled'))`,
+          ),
+        );
       await db.delete(stores).where(eq(stores.id, storeId));
     });
   } catch (err) {
@@ -933,6 +1016,11 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
       `Kept ${keptInUse.length === 1 ? "1 login" : `${keptInUse.length} logins`} that another store or the operator console still uses (${keptInUse.join(
         ", ",
       )}). Signing up with ${keptInUse.length === 1 ? "that email" : "those emails"} reuses the existing account.`,
+    );
+  }
+  if (unissuedReceipts > 0) {
+    notes.push(
+      `${unissuedReceipts === 1 ? "1 paid AI credit purchase has" : `${unissuedReceipts} paid AI credit purchases have`} no issued receipt. ${unissuedReceipts === 1 ? "It is" : "They are"} now in Billing & tax > Reconciliation, so the payment is not lost.`,
     );
   }
   return notes.length

@@ -101,9 +101,10 @@ guarded-action slice now include:
   history, redacted tool telemetry and an append-only raw token ledger;
 - an abortable streaming client integrated with the existing Home prompt,
   drawer and expanded view, with tool progress, Stop, Retry and safe errors;
-- a store/admin-scoped ten-conversation sidebar that restores the newest
-  successful transcript after refresh, supports confirmed deletion, and
-  atomically removes the oldest thread when an eleventh is created;
+- a store/admin-scoped conversation sidebar that lists every chat used in
+  the last 90 days, a page at a time and searchable, continues the tab's own
+  chat after a refresh, and supports confirmed deletion; a chat is retired
+  90 days after its last use (2026-10-26);
 - a resizable side panel with a browser-local width preference, the same purple
   robot identity as Help Centre Mink, an auto-growing multiline composer, and a
   safe ChatGPT-style React renderer for headings, lists, tables, code, emphasis
@@ -683,14 +684,19 @@ Target protocol:
    separate visual blocks.
 
 The flag-enabled `useMinkAi` path now uses an abortable streaming client;
-closing the drawer does not cancel a run, while explicit Stop does. The
+closing the drawer does not cancel a run. An explicit Stop asks the server
+(`POST /api/mink/runs/[runId]/stop`, 2026-10-25), which stops a reply that
+has not acted yet and lets one that has started something finish, because
+behind the production load balancer an aborted fetch never reaches Cloud
+Run. The
 flag-disabled path deliberately retains the timed canned response.
 
 The current alpha implements the abortable transport with coarser
 `status`/`tool`/`message`/`usage`/`done` events and one final assistant message.
-It creates and commits the run before returning completion, retains the newest
-ten conversations per actor/store, restores the latest thread after refresh,
-and treats explicit Stop as cancellation. Delta rendering, background
+It creates and commits the run before returning completion, keeps each
+conversation 90 days after its last use (no count cap), continues the tab's
+own thread after refresh, and treats a Stop the server confirmed as a
+cancellation. Delta rendering, background
 continuation and approval-required events remain later work.
 
 ## 11. Model routing policy

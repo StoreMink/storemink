@@ -20,8 +20,9 @@
 //
 // Pure module (no server/React imports) so it is the single formatting authority
 // shared by server actions, client components, and tests — mirrors
-// lib/inventory/status.ts. The SQL backfill (supabase/identifiers_02_backfill.sql)
-// re-implements the same Luhn + format and is cross-checked against these vectors.
+// lib/inventory/status.ts. The database functions sm_luhn() / sm_sku() /
+// sm_variant_sku() / sm_order_ref() re-implement the same Luhn + format and are
+// cross-checked against these vectors.
 // ---------------------------------------------------------------------------
 
 export const SKU_PREFIX = "SKU";

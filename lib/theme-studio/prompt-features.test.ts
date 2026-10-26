@@ -23,6 +23,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreSections: false,
     moreVariants: false,
     templates: false,
+    templatesJson: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -42,6 +43,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreSections: false,
     moreVariants: false,
     templates: false,
+    templatesJson: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -61,6 +63,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreSections: true,
     moreVariants: true,
     templates: true,
+    templatesJson: true,
   });
   expect(themePromptFeatures("theme-studio-v33")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
@@ -133,4 +136,11 @@ it("adds the page templates only from v32, so v31 requests replay unchanged", ()
   expect(themePromptFeatures("theme-studio-v31").templates).toBe(false);
   expect(themePromptFeatures("theme-studio-v32").templates).toBe(true);
   expect(themePromptFeatures("theme-studio-v32").moreVariants).toBe(true);
+});
+
+it("writes the templates as a JSON string only from v33, so v32 requests replay unchanged", () => {
+  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v33");
+  expect(themePromptFeatures("theme-studio-v32").templatesJson).toBe(false);
+  expect(themePromptFeatures("theme-studio-v33").templatesJson).toBe(true);
+  expect(themePromptFeatures("theme-studio-v33").templates).toBe(true);
 });

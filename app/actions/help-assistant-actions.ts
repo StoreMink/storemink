@@ -169,7 +169,7 @@ function validHistory(value: unknown): HelpAssistantTurn[] {
 const CONTEXTUAL_FOLLOW_UP =
   /\b(again|it|its|that|this|them|then|next|previous|same)\b/i;
 const SELF_CONTAINED_HELP_TOPIC =
-  /\b(accounts?|admins?|analytics|api|barcode|billing|blog|branding|cash|checkout|cod|colors?|coupons?|currency|customers?|delivery|discounts?|dns|domains?|email|enquir(?:y|ies)|fulfilment|gst|inventory|invoices?|locations?|login|marketing|media|navigation|notifications?|orders?|password|payments?|permissions?|pickup|plans?|polic(?:y|ies)|pos|products?|refunds?|register|reports?|returns?|roles?|sales?|seo|settings|shipping|shop|signup|sku|staff|stock|storefront|tax|team|themes?|upi|users?|variants?|website)\b/i;
+  /\b(accounts?|admins?|analytics|api|barcode|billing|blog|branding|cash|checkout|cod|colors?|coupons?|currency|customers?|delivery|discounts?|dns|domains?|email|enquir(?:y|ies)|fulfilment|gst|inventory|invoices?|locations?|login|marketing|media|navigation|notifications?|orders?|password|payments?|permissions?|pickup|plans?|polic(?:y|ies)|pos|products?|refunds?|registers?|reports?|returns?|roles?|sales?|seo|settings|shipping|shop|signup|sku|staff|stock|storefront|tax|team|themes?|tills?|upi|users?|variants?|website)\b/i;
 
 function retrievalQuery(message: string, history: HelpAssistantTurn[]): string {
   const priorUserQuestion = history

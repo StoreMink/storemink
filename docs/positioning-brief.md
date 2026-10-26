@@ -61,7 +61,7 @@ the foundation, not the limit of the promise.
 
 ## Messaging pillars (headline → proof)
 
-- **"Build what's yours."** → turn an idea into a distinctive brand and a
+- **"Build What's Yours."** → turn an idea into a distinctive brand and a
   functioning business without giving up ownership or identity.
 - **"One system behind it."** → commerce and operations stay connected as the
   business adds channels, people and locations.
@@ -85,7 +85,11 @@ Not a marketplace. Every "no" sharpens the "yes."
 
 ## Selected tagline
 
-**Build what's yours.**
+**Build What's Yours.**
+
+Always followed by the descriptive line **AI-Powered Commerce, Made Simple with
+Mink AI.** wherever the brand is introduced (owner, 26 Oct 2026): StoreMink /
+Build What's Yours. / AI-Powered Commerce, Made Simple with Mink AI.
 
 ## Short description
 

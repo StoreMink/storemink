@@ -1153,11 +1153,11 @@ export async function downgradeExpired(
  * Z-report explains itself.
  */
 const NON_PAYMENT_NOTE =
-  "Closed automatically: the store was downgraded to the Free plan for non-payment, which turns off Point of Sale. Cash was not counted, so this shift records no variance.";
+  "Closed automatically: the store was downgraded to the Free plan for non-payment, which turns off POS. Cash was not counted, so this shift records no variance.";
 const BOOKED_CHANGE_NOTE =
-  "Closed automatically: at its renewal the store moved to a plan without Point of Sale, as booked. Cash was not counted, so this shift records no variance.";
+  "Closed automatically: at its renewal the store moved to a plan without POS, as booked. Cash was not counted, so this shift records no variance.";
 const CANCELLED_NOTE =
-  "Closed automatically: the store's cancelled subscription ended, which turns off Point of Sale. Cash was not counted, so this shift records no variance.";
+  "Closed automatically: the store's cancelled subscription ended, which turns off POS. Cash was not counted, so this shift records no variance.";
 
 async function closeOpenShifts(
   db: Db,

@@ -37,6 +37,34 @@ const inr = (paise: number | null) =>
     ? "-"
     : `₹${(paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+/**
+ * Whose money it is. ★ A DELETED STORE IS NOT ONE TO ATTRIBUTE: deleteStore
+ * detaches the store's open items, and the sweep files a payment captured
+ * after the deletion, both marked `storeDeleted` in `detail`. Pointing the
+ * operator at attribution there sends them looking for a store that is gone.
+ */
+function storeLabel(item: ReconciliationItem): string {
+  if (item.storeName) return item.storeName;
+  const detail = asRecord(item.detail);
+  if (detail.storeDeleted === true) {
+    const name =
+      typeof detail.storeName === "string" ? detail.storeName.trim() : "";
+    return name ? `${name} (store deleted)` : "store deleted";
+  }
+  return "no store - needs attributing";
+}
+
+/** The sweep's own one-line reason, when it left one. */
+function itemNote(item: ReconciliationItem): string | null {
+  const note = asRecord(item.detail).note;
+  return typeof note === "string" && note.trim() ? note.trim() : null;
+}
+
 const fmt = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleString("en-GB", {
@@ -89,13 +117,17 @@ export function ReconciliationQueue({
                 <span className="text-sm font-semibold text-[#111827]">
                   {KIND_LABEL[item.kind] ?? item.kind}
                 </span>
-                {/* ★ A null store is legitimate and is itself the problem — an
-                    orphan payment nobody can attribute. Say so rather than
-                    rendering a blank. */}
+                {/* ★ A null store is legitimate and is itself the problem: an
+                    orphan payment nobody can attribute, or one whose store was
+                    deleted. Say which rather than rendering a blank. */}
                 <span className="text-sm text-[#5b6472]">
-                  {item.storeName ?? "no store - needs attributing"}
+                  {storeLabel(item)}
                 </span>
               </div>
+
+              {itemNote(item) && (
+                <p className="mt-1 text-sm text-[#5b6472]">{itemNote(item)}</p>
+              )}
 
               {item.expectedPaise !== null && item.observedPaise !== null && (
                 <p className="mt-1.5 text-sm text-[#111827]">

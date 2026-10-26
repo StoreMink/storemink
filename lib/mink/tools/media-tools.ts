@@ -104,6 +104,11 @@ const generateStorefrontImage: MinkTool = {
   available,
   timeoutMs: MEDIA_TOOL_TIMEOUT_MS,
   runBudgetMs: MEDIA_TOOL_RUN_BUDGET_MS,
+  // ★ The run claims it has acted inside `commit`, just before the Media row
+  //   and the charged draft (run-stop.ts): a stop during the draw still wins,
+  //   the draw is abandoned and nothing is stored or charged. StoreMink keeps
+  //   the cost of a draw Google billed (owner's decision, 25 Oct 2026).
+  effect: "commit",
   artifact(output) {
     const proposal = output.proposal as MinkArtifact | undefined;
     return proposal?.type === "media_image_proposal" ? proposal : undefined;

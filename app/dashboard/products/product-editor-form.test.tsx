@@ -4,6 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ProductEditorForm } from "./product-editor-form";
 import { updateProduct } from "@/app/actions/product-actions";
 import { storeMinkProductPrefill } from "@/lib/mink/product-prefill";
+import { sendPageExitRequest } from "@/lib/http/page-exit-request";
+import {
+  resetImageRefinesForTests,
+  startImageRefine,
+} from "@/components/ui/image-refine-registry";
 import type { Product } from "./page";
 
 vi.mock("@/components/ui/image-upload", () => ({
@@ -30,6 +35,9 @@ vi.mock("@/components/ui/image-upload", () => ({
   ),
 }));
 vi.mock("@/lib/storage/uploads", () => ({ uploadImage: vi.fn() }));
+vi.mock("@/lib/http/page-exit-request", () => ({
+  sendPageExitRequest: vi.fn(),
+}));
 vi.mock("@/app/actions/media-actions", () => ({
   getMediaPickerPage: vi.fn(async ({ tab }: { tab: string }) => ({
     items:
@@ -368,5 +376,69 @@ describe("Mink prefill", () => {
     );
     // Taken once: a second editor opened on the same URL starts blank.
     expect(sessionStorage.getItem("storemink:mink-prefill:product")).toBeNull();
+  });
+});
+
+describe("★★ Refine with Mink AI in the product editor", () => {
+  // ★ A refine of a photo the product no longer holds is stopped (a stop
+  //   charges nothing unless the charge came first): removing a gallery
+  //   photo while it refines must not leave the merchant paying for it.
+  it("★★ removing a gallery photo that is being refined stops its refine, and only that one", () => {
+    const removed = "https://storage.googleapis.com/b/stores/s/uploads/g1.jpg";
+    const kept = "https://storage.googleapis.com/b/stores/s/uploads/g2.jpg";
+    const tokens = new Map<string, string>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+        if (String(input) === "/api/mink/image-refine") {
+          const body = JSON.parse(String(init.body)) as {
+            url: string;
+            stopToken: string;
+          };
+          tokens.set(body.url, body.stopToken);
+          // Still refining: it never answers here.
+          return new Promise<Response>(() => {});
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ outcome: "stopped" })),
+        );
+      }),
+    );
+    try {
+      render(
+        <ProductEditorForm
+          product={{ ...product, images: [removed, kept] }}
+          categories={[
+            {
+              id: "category-1",
+              name: "Coffee",
+              slug: "coffee",
+              status: "active",
+            },
+          ]}
+          taxClasses={[]}
+          onClose={vi.fn()}
+          onSaved={vi.fn()}
+        />,
+      );
+      for (const sourceUrl of [removed, kept]) {
+        startImageRefine({
+          scope: "product:product-1",
+          pathname: "/dashboard/products",
+          spec: "product",
+          sourceUrl,
+        });
+      }
+      const [first] = screen.getAllByAltText("Gallery image");
+      fireEvent.click(first.parentElement!.querySelector("button")!);
+      expect(sendPageExitRequest).toHaveBeenCalledOnce();
+      expect(sendPageExitRequest).toHaveBeenCalledWith(
+        "/api/mink/image-refine/stop",
+        JSON.stringify({ stopToken: tokens.get(removed) }),
+      );
+    } finally {
+      resetImageRefinesForTests();
+      vi.unstubAllGlobals();
+    }
   });
 });

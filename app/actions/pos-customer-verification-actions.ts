@@ -178,7 +178,7 @@ export async function confirmCustomerPhoneVerification(input: {
   if (!target?.found || !target.phone) {
     return {
       error:
-        "This order has no valid customer mobile number. It can't be verified at the till.",
+        "This order has no valid customer mobile number. It can't be verified in POS.",
     };
   }
 

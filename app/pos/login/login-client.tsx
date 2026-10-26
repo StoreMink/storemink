@@ -181,9 +181,9 @@ export function PosLoginClient({
           </div>
           <h1 className="mt-4 text-lg font-semibold">Set up this device</h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
-            Your sign-in is correct. For security the register only runs on a
-            device the store owner has approved - enter a pairing code from
-            Dashboard → POS → Devices to set this one up.
+            Your sign-in is correct. For security POS only runs on a device the
+            store owner has approved - enter a pairing code from Dashboard → POS
+            → Devices to set this one up.
           </p>
 
           <input
@@ -240,7 +240,7 @@ export function PosLoginClient({
     <div className="flex min-h-screen items-center justify-center p-6">
       <div className="w-full max-w-xs">
         <div className="mb-6 text-center">
-          <div className="text-lg font-semibold">Point of Sale</div>
+          <div className="text-lg font-semibold">POS</div>
           {locationName && (
             <div className="mt-1 flex items-center justify-center gap-1.5 text-sm text-[var(--pos-ink-2)]">
               <MapPin className="h-4 w-4" strokeWidth={2} />

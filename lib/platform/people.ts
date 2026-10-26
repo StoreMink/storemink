@@ -163,7 +163,7 @@ export async function listPlatformPeople(
       `);
 
       // ★ THE CHIP COUNTS IGNORE THE KIND FILTER, and that is the point: they
-      // are counted under `narrowing` alone, so selecting "Till staff" still
+      // are counted under `narrowing` alone, so selecting "POS" still
       // shows how many dashboard admins the same search would return. Counting
       // them under the full filter would make every unselected chip read zero,
       // which is a dead end rather than a filter.

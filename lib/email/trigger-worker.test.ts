@@ -45,9 +45,9 @@ describe("triggerEmailWorker", () => {
   });
 
   // REGRESSION. This used to read NEXT_PUBLIC_APP_URL directly and return early
-  // when it was unset. The cron heartbeat is DAILY, so that silently turned
+  // when it was unset. The cron heartbeat was DAILY then, so that silently turned
   // every "instant" email into a wait of up to 24 hours in any environment that
-  // hadn't set that one variable — Cloud Run sets no VERCEL_URL either.
+  // hadn't set that one variable.
   it("still kicks the worker when NEXT_PUBLIC_APP_URL is unset", async () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
 

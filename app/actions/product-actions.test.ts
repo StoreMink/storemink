@@ -113,7 +113,7 @@ const validForm = {
   category_id: "cat-1",
   base_price: 500,
   selling_price: 400,
-  image_url: "https://x.com/object/public/media/img.png",
+  image_url: "https://x.com/media/img.png",
   images: [],
   status: "draft" as const,
   featured: false,
@@ -521,7 +521,7 @@ describe("product-actions", () => {
     // image URLs gathered before the delete.
     // Selects: #1 the product's images, #2 its variants' images.
     it("purges referenced image files after deleting the row", async () => {
-      const url = "https://x.com/object/public/media/p.png";
+      const url = "https://x.com/media/p.png";
       dbHolder.current = makeDbMock({
         selectQueue: [[{ image_url: url, images: [] }], []],
       });

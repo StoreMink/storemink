@@ -28,7 +28,7 @@ import { rateLimit } from "@/lib/rate-limit";
 // Every supported task consumes credits; the included cap comes from the
 // store's plan (null = unlimited → no metering at all). Once the cycle's
 // allowance is spent, purchased/granted top-up credits
-// (supabase/ai_credits.sql, never expire) are consumed as the fallback —
+// (ai_credit_balances / ai_credit_ledger, never expire) are consumed as the fallback —
 // the expiring resource burns before the permanent one.
 //
 // Counting is atomic via the try_ai_generation / try_spend_ai_credit functions

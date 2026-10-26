@@ -16,10 +16,16 @@ interface Condition {
   displayName: string;
   conditionMatchedLog?: { filter: string };
   conditionThreshold?: { filter: string };
+  conditionPrometheusQueryLanguage?: {
+    query: string;
+    duration: string;
+    evaluationInterval: string;
+  };
 }
 interface Policy {
   displayName: string;
   severity: string;
+  combiner: string;
   conditions: Condition[];
   documentation: { content: string };
   userLabels: Record<string, string>;
@@ -61,9 +67,34 @@ function filterOf(policy: Policy): string {
   return (
     condition.conditionMatchedLog?.filter ??
     condition.conditionThreshold?.filter ??
+    condition.conditionPrometheusQueryLanguage?.query ??
     ""
   );
 }
+
+/** The script run with arguments that must stop before any network call. */
+function refusedOffline(args: string[]): string {
+  try {
+    python([
+      "-c",
+      [
+        "import runpy, subprocess, sys, urllib.request",
+        "def refuse(*a, **k):",
+        "    raise SystemExit('reached the network: ' + repr(a[:1]))",
+        "urllib.request.urlopen = refuse",
+        "subprocess.run = refuse",
+        `sys.argv = ${JSON.stringify([SCRIPT, ...args])}`,
+        `runpy.run_path(${JSON.stringify(SCRIPT)}, run_name="__main__")`,
+      ].join("\n"),
+    ]);
+  } catch (error) {
+    const failed = error as { stderr?: string; stdout?: string };
+    return `${failed.stdout ?? ""}${failed.stderr ?? ""}`;
+  }
+  throw new Error("expected the script to stop");
+}
+
+const GOOGLE_AI = "Google AI: a model refusing more than 30% of calls";
 
 // The 15 applied on 23 Oct 2026, in the order the script creates them.
 const APPLIED_23_OCT = [
@@ -197,6 +228,58 @@ describe("prod-monitoring.py", () => {
     expect(filterOf(schedule)).toBe(
       'resource.type="cloud_scheduler_job" AND (resource.labels.job_id="storemink-theme-studio-runs" OR resource.labels.job_id="storemink-theme-studio-qa") AND log_id("cloudscheduler.googleapis.com/executions") AND severity>=ERROR',
     );
+  });
+
+  it("★ the Google AI alert is one PromQL condition: a 30-minute share above 30% with at least 20 calls, held 15 minutes, emailing only when it opens (owner, 25 Oct 2026)", () => {
+    const google = policies().find(
+      (p) => p.displayName === GOOGLE_AI,
+    ) as Policy;
+    // One condition, so one incident and one email per opening (the two
+    // threshold conditions it replaced opened two of each).
+    expect(google.conditions).toHaveLength(1);
+    expect(google.combiner).toBe("OR");
+    const rule = google.conditions[0].conditionPrometheusQueryLanguage;
+    expect(rule).toBeDefined();
+    expect(rule?.duration).toBe("900s");
+    expect(rule?.evaluationInterval).toBe("60s");
+    const query = rule?.query ?? "";
+    expect(query).toContain(
+      "aiplatform_googleapis_com:publisher_online_serving_model_invocation_count",
+    );
+    expect(query).toContain(
+      'monitored_resource="aiplatform.googleapis.com/PublisherModel"',
+    );
+    expect(query).toContain('response_code=~"429|499"');
+    // The ratio and the volume gate, both per model and location, both over
+    // the same 30 minutes.
+    expect(query).toMatch(/\) > 0\.3 and on \(model_user_id, location\) \(/);
+    expect(query).toMatch(/>= 20\)$/);
+    expect(query.match(/\[30m\]/g)).toHaveLength(3);
+    expect(query.match(/sum by \(model_user_id, location\)/g)).toHaveLength(3);
+    expect(google.alertStrategy).toEqual({
+      autoClose: "3600s",
+      notificationPrompts: ["OPENED"],
+    });
+    expect(google.severity).toBe("WARNING");
+    // The email says 499s are ours, not a chat stall watchdog's.
+    expect(google.documentation.content).toContain("cut off by our side (499)");
+    expect(google.documentation.content).toContain("once when it starts");
+  });
+
+  it("keeps every other metric alert's strategy as it was applied on 23 Oct", () => {
+    for (const policy of policies()) {
+      if (policy.displayName === GOOGLE_AI) continue;
+      if (policy.conditions[0].conditionMatchedLog) continue;
+      expect(policy.alertStrategy, policy.displayName).toEqual({
+        autoClose: "1800s",
+      });
+    }
+  });
+
+  it("★ --update refuses a name the script does not define before it reads anything", () => {
+    const out = refusedOffline(["--update", "Google AI: no such policy"]);
+    expect(out).toContain("--update names no policy this script defines");
+    expect(out).not.toContain("reached the network");
   });
 
   it("brackets every OR (the Logging query language binds OR tighter than AND)", () => {

@@ -1805,6 +1805,26 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
         status: "ready",
         summary: "A warm store for candles.",
       });
+      // ★ Whether a stop was asked, read in the same query as a real boolean
+      //   (the chat tools compare it with `=== true`): a claimed job keeps
+      //   running after Stop until its runner notices.
+      expect(entries.map((entry) => entry.cancelRequested)).toEqual([
+        false,
+        false,
+      ]);
+      await claimRevampJob(second.id);
+      await cancelRevamp(store.actor, second.id);
+      const stopping = await listConversationRevamps({
+        storeId: store.actor.storeId,
+        adminId: ADMIN,
+        conversationId: store.conversationId,
+      });
+      expect(stopping[0]).toMatchObject({
+        id: second.id,
+        status: "running",
+        cancelRequested: true,
+      });
+      expect(stopping[1].cancelRequested).toBe(false);
       expect(
         await listConversationRevamps({
           storeId: store.actor.storeId,

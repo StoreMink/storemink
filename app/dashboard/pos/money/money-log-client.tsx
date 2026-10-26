@@ -116,7 +116,7 @@ export function MoneyLogClient({
             {/* Empty is the GOOD state here, and it should read that way rather
                 than as a broken page. */}
             Nothing yet. Discounts, price overrides, refunds and cash movements
-            at the till appear here.
+            in POS appear here.
           </div>
         ) : (
           <div className="overflow-x-auto">

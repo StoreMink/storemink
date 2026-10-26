@@ -1,14 +1,14 @@
-// The Cloud SQL data layer (GCP migration Phase 5). Replaces the Supabase
-// client factories with Drizzle over a pg Pool, enforcing the 2A tenancy model:
+// The Cloud SQL data layer (GCP migration Phase 5): Drizzle over a pg Pool,
+// enforcing the 2A tenancy model:
 // every query runs inside a transaction that SETs LOCAL the DB role (and, for
 // user requests, the app.current_user_id GUC the RLS shim reads). Because
 // SET LOCAL is transaction-scoped, identity can NEVER leak across pooled
 // connections.
 //
-// Three scoped runners map 1:1 onto the old Supabase clients:
-//   withService  → app_service (BYPASSRLS)  ~ createAdminClient()
-//   withUser     → app_user + GUC (RLS)     ~ createClient() (cookie, signed-in)
-//   withAnon     → app_user, no GUC (RLS)   ~ createPublicClient() (storefront)
+// Three scoped runners:
+//   withService  → app_service (BYPASSRLS)  server work across tenants
+//   withUser     → app_user + GUC (RLS)     a signed-in caller (session cookie)
+//   withAnon     → app_user, no GUC (RLS)   the public storefront
 //
 // Connection config comes from env: locally DB_HOST=127.0.0.1:DB_PORT via the
 // Cloud SQL Auth Proxy; on Cloud Run DB_HOST=/cloudsql/<INSTANCE_CONNECTION_NAME>
@@ -339,7 +339,7 @@ async function runScoped<T>(
 
 /**
  * Service-role scope: BYPASSRLS. Tenant scoping is the caller's responsibility
- * (explicit `.eq(store_id, …)`), exactly as the Supabase service client worked.
+ * (an explicit store_id filter).
  */
 export function withService<T>(fn: (db: Db) => Promise<T>): Promise<T> {
   return runScoped("app_service", null, fn);

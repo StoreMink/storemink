@@ -27,8 +27,12 @@ language). Mink:
    needs, for up to four hours from its first run (section 4.3). The
    merchant can keep working or leave. While it is being made, the card
    offers Stop. A chat reply that is stopped or interrupted after the revamp
-   started does not stop it: the card stays in the chat, and a tab that
-   stopped reading the reply fetches it (section 4.3). When the card is
+   started does not stop it: Stop and a voice barge-in ask the server first,
+   which answers "acted" once the reply has inserted the revamp's job, so
+   the reply finishes with its card ("Mink has already started this, so it
+   will finish."), and a tab whose reply was cut off by the network fetches
+   the card (section 4.3). A Stop that reaches the server before the job
+   insert wins, and then no revamp starts. When the card is
    ready, a notification opens the chat that holds it (section 11).
 3. When the build is finished and its checks have run (the card lists each
    one as passed or not; a failed check does not hold the card back), the
@@ -340,15 +344,35 @@ invocation's deadline comes.
 The runner claims the lease (`lease_until = now() + 5 min`), renews it every
 60 s, runs steps until its own deadline (18 minutes inside a 1,200 second
 route), writes each step's output before the next, and fences every write on
-the lease token: a lost lease aborts the work in flight, and nothing is
-written after the lease is gone. At the deadline the step drains: it starts
-no new paid call (a photo draw, or a check of a shoot photo, still waiting
-for its turn stops waiting and is never sent), lets the calls in flight
-finish and be stored, and is
-stopped 90 s later if it is still running (`REVAMP_DEADLINE_GRACE_MS`). The
-runner then hands over:
-it gives the lease back and kicks the next invocation. ⚠ A provider call that
-runs past the 90 s can still be cut off and paid for again.
+the lease token: a lost lease (a renewal answering that the job is no longer
+this invocation's) aborts the work in flight, and nothing is written after
+the lease is gone. A renewal that throws (a database error, such as the
+pool's 5 s wait running out) says nothing about the lease: it is logged with
+a closed code (`mink.revamp: lease renewal failed`: revamp id, attempt,
+code, never the SQL) and tried again at the next tick, and a watchdog armed
+from the start of the last renewal that succeeded (or from just before the
+claim) stops the work 5 s before the lease could lapse
+(`REVAMP_LEASE_MARGIN_MS`, `mink.revamp: lease could lapse, stopping`),
+parked for 60 s and counted as a failure, as a throw used to be at once. The
+card step's own renewal right before the charge still stops on a throw, so
+no card is made without reading the Stop flag. At the deadline the step
+drains: it starts no new paid call (a photo draw, or a check of a shoot
+photo, still waiting for its turn stops waiting and is never sent), lets the
+calls in flight finish and be stored, and is stopped 90 s later if it is
+still running (`REVAMP_LIMITS.deadlineGraceMs`, `REVAMP_DEADLINE_GRACE_MS`
+in runner.ts). No image call can still be on the wire then: one is admitted
+only while its own per-try clock and 5 s (`REVAMP_LIMITS.hardStopMarginMs`)
+fit before that stop, so a photo check or a studio photo (75 s) is admitted
+until the drain, and a shoot photo (180 s, longer than the grace) only until
+95 s before it (`revampAdmissionDrain`, photos.ts). A draw refused there is
+refused as at the drain (never sent, nothing billed, its photo given back),
+and the shoot hands over once the draws in flight end and the checks of any
+parked photo have finished, which can take until the drain. The runner then
+hands over: it gives the lease back and kicks the next invocation. ⚠ The
+planner and its compile repairs are not held to that rule yet: each is
+admitted until the drain on a 6 minute cap (`REVAMP_PLANNER_TIMEOUT_MS`,
+site-planner.ts), so one admitted late can still be cut off by the hard stop
+and paid for again.
 
 The requester's authority is rebuilt from the database at every claim
 (`actor.ts`): a requester who lost drafting or Builder manage ends the job as
@@ -436,12 +460,15 @@ never gives it back.
   is being made. You can follow it here." or "Your storefront redesign is
   ready. You can review it here."), marked `interrupted: true`. The stream
   route sends it before its error while the merchant is still watching. A
-  tab that stopped reading first (Stop pressed there, or the reply cut off)
-  and saw the start or refine tool called with no answer asks for the chat
+  tab that stopped reading first (the reply cut off by the network, or a
+  refused Stop whose reply then broke) and saw the start or refine tool
+  called with no answer asks for the chat
   again after 1.5, 4, 10, 30 and 70 s until a card saved under that run is
   there, then shows it after its question (`awaitKeptCard` in
   `app/dashboard/mink-ai.ts`; the record can wait a minute for a tool's
-  write). History, a reload and the ready notification show it too. The
+  write). A Stop the server confirmed won before the run's first side
+  effect, so no revamp exists and nothing is asked for. History, a reload
+  and the ready notification show it too. The
   merchant stops a revamp with Stop on its card (the Stop paragraph above),
   which gives the free revamp back. A run that succeeded is untouched. A
   chat run that has stopped never starts a revamp (section 11).
@@ -998,7 +1025,20 @@ pressed in our own facility") are fine.
   (`photos_unavailable`). What a step claims is held on the job row
   (`result.photoHold`) before it draws, so when a runner dies the next one,
   or the sweep for a finished job, gives back only what was never drawn; a
-  photo parked for its review counts as drawn.
+  photo parked for its review counts as drawn. A draw cut off after its
+  request was sent counts as drawn too while the run that stopped it still
+  owns the job (the merchant's Stop, the hard stop or the lease watchdog)
+  and its own clear of the claim lands: Google may have drawn and billed
+  it, so its photo stays spent and it is counted as an image in the job's
+  usage, as a studio photo is. A draw that was never sent, or that Google
+  refused with 429 on every try, is given back and not counted; one the
+  model refused on every attempt is given back too, though its call is
+  counted. After a lost lease or a crash, or when the stopping run cannot
+  clear its claim, the next run settles the claim from the stored photos
+  instead: a cut-off draw stored none, so its photo is given back, and
+  after a lost lease or a crash its usage is not recorded. The merchant is
+  never charged for a cut-off draw: the card charges only photographs a
+  page shows.
 - Each image is cropped to its slot's frame and compressed
   (`prepareSlotImage`: WebP, never enlarged; at most 500 KiB, 1000 KiB for a
   frame 16:9 or wider; never narrower than 800 px) and stored the moment it
@@ -1075,7 +1115,12 @@ pressed in our own facility") are fine.
   tries, each try with its own 75 second clock, while one more whole
   attempt fits before the hand-over; otherwise it is left for the next run.
   A refusal, a timeout or a 5xx is never asked again here, since the last
-  two may have been billed.
+  two may have been billed. A studio photo the run's own stop cut off on
+  the wire stays spent and counted for the same reason while that run
+  still owns the job (after a lost lease or a crash the next run gives its
+  photo back, as for the shoot); one the service refused with 429, or that
+  never left, is not, even when the stop lands while that 429 is being
+  shared with the others on the model.
 - Every studio photo is checked against the merchant's own photo before it
   is stored: the Theme Studio reviewer is shown both and asked whether it is
   the same item, with no added words. A problem means one redraw with the
@@ -1278,52 +1323,93 @@ merchant's working upload or a product photo is never replaced.
 ## 11. The chat
 
 - Tools: `get_storefront_revamp_context` (Builder view, read, repeat safe):
-  the store's context, the chat's redesigns (id, kind, status, summary,
-  applied, published, undone, created) and, for the one a refinement would
-  build on, its photos (id, where, what each shows);
-  `start_storefront_revamp` (drafting + Builder manage, not repeat safe);
-  `refine_storefront_revamp` (same). The personalisation tools left the
-  model's registry; their card and Apply route stay for existing drafts.
+  the store's context, the chat's redesigns (id, kind, a plain state: "being
+  made", "stopping", "ready to review", "replaced by a newer version", "did
+  not finish" or "stopped"; whether it is applied, published and undone;
+  summary; never the job's status or a timestamp) and, for the one a
+  refinement would build on, its photos (id, where, what each shows). The id
+  is there only because a refinement may name one, and the prompt forbids
+  writing it in an answer unless the merchant asks for one.
+  `start_storefront_revamp` (drafting + Builder manage, not repeat safe,
+  `effect: "commit"`); `refine_storefront_revamp` (same). The
+  personalisation tools left the model's registry; their card and Apply
+  route stay for existing drafts.
 - A revamp state reference is added to every turn of a conversation that
-  has one: the newest three redesigns, each with its id, status, whether it
-  was applied, published, undone and whether it is a refinement, then the
-  card's button names, marked as data, not instructions. Flags only: no
+  has one: the newest three redesigns, numbered from the newest, each with
+  its plain state, whether it was applied and published, whether it is a
+  refinement and whether it was undone (no id and no job status word), then
+  the card's button names, marked as data, not instructions. Flags only: no
   stored summary, so nothing a model wrote earlier comes back as an
   instruction.
+- What a start or refinement tells the model: `status` (`started`,
+  `already_started`, `already_ready` or `not_started`), `cardShown` (true
+  exactly when the redesign's card goes with the answer), an `instruction`
+  saying what to tell the merchant in one short sentence, and a refusal's
+  `reason`. Never an id, a credit figure or the job's own status; those are
+  on the card (`withoutArtifact` also drops `revampId` and
+  `existingRevampId`). Every refusal tells the model not to say a card is
+  shown.
+- This chat's redesign first (25 Oct 2026). Before any argument is read,
+  both tools read the chat's redesigns (the requester's own; a list that
+  cannot be read stops the start). One still being made answers
+  `already_started` with its card ("A redesign started earlier in this chat
+  is still being made, and its card is shown with this answer."; a
+  refinement is told the merchant can ask for changes once it is ready),
+  or, when its Stop was asked, "The earlier redesign is still stopping. Try
+  again in a minute." A start in a chat with a ready card nobody applied
+  or undid answers `already_ready` with that card (apply it, publish it or
+  ask for changes), unless `replace_earlier` is true. The store's one
+  active job is read before the day's start or the run's act is claimed,
+  and again when it refuses the insert (two runs of one chat racing, as
+  after a voice barge-in): one asked to stop, whoever started it, gets the
+  stopping refusal; this requester's in this chat answers with its card
+  (`already_started`, `already_ready` if it finished in between, or "The
+  earlier redesign has just ended. Try again now." if it ended); any other
+  gets "A redesign is already being made for this store in another chat,
+  yours or a teammate's. A new one can start once that one is finished."
+  with no card, because the card's GET answers only its requester.
 - Guards, each decided before the job exists (both tools unless named): no
   theme yet ("Choose a theme for your store first, under Online store,
   Storefront."), Categories manage for category changes, Products manage
-  for products, a photo the store does not own, the plan's product cap, the
-  day's starts (6 per store, claimed before the job and released when no
-  job comes of it or when the redesign fails), refinements per redesign (10,
-  refine), a refinement with no finished redesign to build on (refine), a
-  ready, unapplied revamp in
-  the conversation (start: a new start only with `replace_earlier: true`;
-  the refusal tells the model to point at the card), a paid start below the
-  card's fixed floor (section 6), one active revamp per store, and a store
-  whose earlier revamp is still stopping (Stop was pressed on its card, or a
-  late start was withdrawn, and its runner has not stopped yet), which is
-  told to try again in a minute ("The earlier redesign is still stopping.
-  Try again in a minute."). The model never sees a credit figure, only
-  whether the revamp started; the tools return their output without the
-  card's artifact.
+  for products, a photo the store does not own (an input error the model
+  must fix; it is never fetched), the plan's product cap, a refinement with
+  no finished redesign to build on (refine, checked before its arguments),
+  refinements per redesign (10, refine), the day's starts (6 per store,
+  claimed before the job and released when no job comes of it or when the
+  redesign fails), a paid start below the card's fixed floor (section 6),
+  and one active revamp per store (above). The model never sees a credit
+  figure, only whether the revamp started.
 - A revamp started by a chat run that then fails or is stopped is kept,
   and the run's failure record saves its card to the chat (section 4.3). A
   tool whose run has stopped never starts one: `queueRevamp` refuses before
   it claims the day's start, the job insert is the registry's `commit`, the
   runner is kicked only after the commit returns, and a job whose insert
   landed after the commit grace (the chat had already said the tool took
-  too long) is cancelled at once and its start given back. The run's own
-  stop (its deadline, the merchant leaving) reaches the tool, because the
-  stream route passes the run's signal to every tool call.
-- A conversation that holds a revamp still being made, or a ready card
-  (applied or not), is never deleted (`MINK_LIVE_REVAMP_STATUSES`: queued,
-  running, ready): the History delete refuses it with a 409
-  (`conversation_has_redesign`) and says why ("This chat holds your
-  storefront redesign card, so it cannot be deleted. Stop the redesign from
-  its card first if it is still being made."), and the prune of old
-  conversations skips it. Deleting it would take the card's draft with the
-  conversation's runs.
+  too long) is cancelled at once and its start given back. Both tools are
+  `commit` tools (`effect`, `lib/mink/tools/registry.ts`): the run's act
+  claim (`claimMinkRunAct`, `lib/mink/run-stop.ts`) is made inside
+  `commit`, after the budget read and just before the insert. A Stop the
+  merchant asked for that was recorded first refuses the claim: no job, the
+  day's start given back, and the tool answers `run_stopped`; a Stop asked
+  after the claim answers "acted", and the redesign goes ahead with its
+  card in the answer. Showing this chat's redesign, and every refusal,
+  claim nothing, so a Stop still wins over them. The run's own stop (its
+  deadline, the merchant's Stop, the merchant leaving where the platform
+  reports it, which behind the production load balancer it never does)
+  reaches the tool, because the stream route passes the run's signal to
+  every tool call.
+- A conversation whose redesign, or a refinement of one, is still being
+  made (queued or running, `buildingRevampOfConversation`) is never
+  deleted: the History delete refuses it with a 409
+  (`conversation_has_redesign`) and says why ("A storefront redesign from
+  this chat is still being made. Wait for it to finish, or stop it from
+  its card, then delete this chat."), and the 90-day sweep skips it. A
+  chat with a ready card can be deleted (owner's decision, 26 Oct 2026):
+  a redesign nobody applied is stripped (its interview words, email,
+  snapshot, plan and raw error go; a ready one becomes `superseded`, so
+  its card can no longer be applied or undone from the chat), and an
+  applied one stays whole with the runs and drafts behind it
+  (`retireMinkConversation`, CODEBASE.md "Mink chat history").
 - A chat run a dead server left running (still running 15 minutes after it
   started and after its latest tool call started, `MINK_STALE_RUN_MS`) is
   closed as failed (`run_abandoned`) through the same failure record, by the
@@ -1366,6 +1452,14 @@ merchant's working upload or a product photo is never replaced.
   a superseded card that was applied keeps its review, Publish and Undo
   under a note that a newer version exists. Undo asks first ("Undo this
   redesign?", "Keep the redesign" or "Undo the redesign").
+- One card per redesign in a thread: a later answer carrying the same
+  redesign's card (a start or refine met with `already_started` or
+  `already_ready`, or History holding both) shows one line, "Your
+  storefront redesign card is above.", and a **Show it** button that
+  scrolls to the first card and focuses it (`revampIdsShownBefore` in
+  `dashboard-chat.tsx`, `revamp-card-<revampId>` in `mink-artifacts.tsx`).
+  A repeat inside one answer is treated the same. So a thread has one set
+  of Apply, Publish and Undo buttons and one status poll per redesign.
 - Notification: `mink.revamp_ready` (in-app, to the requester only, section
   builder, pointing at the chat that holds the card,
   `/dashboard?chat=<conversation id>` (`revampReadyUrl`; `/dashboard` when
@@ -1441,8 +1535,22 @@ Oct 2026: no guide quotes a card's failure sentence (section 4.3), so
 opening the chat at its newest message is what the guide already says it
 does. The same holds for the fixes of 25 Oct 2026: a permanent photo
 failure shows a sentence already in the closed list, and a chat opened in
-the panel or the full view starts at its newest message. ⚠ 0235 and 0239
-are applied to `storemink_local` only (24 Oct 2026).
+the panel or the full view starts at its newest message. 0235 and 0239
+reached production with the 25 Oct 2026 deploy.
+
+Migration `20261026_0246_mink_stop_help` rewrites the general Mink guide's
+two Stop sentences in place after the stop handshake: Stop stops a reply
+that has not started anything, and nothing is created; a reply that has
+already started something, such as a storefront redesign, finishes and its
+card appears in the chat; only a reply that fails, no longer one that is
+stopped, discards an unseen proposal (the redesign exception of 0239 still
+follows it). Migration `20261026_0251_mink_chat_history_help` replaces the
+website guide's sentence on the chat that holds a redesign's card: it can
+be deleted except while the redesign or a new version of it is being made,
+and deleting it, or leaving it unused for 90 days, removes the card, while
+anything already applied or published stays. The safety net, one card per
+redesign in a thread and the runner fixes of 26 Oct 2026 need no edit: no
+merchant step changes, and the 0239 sentences still hold.
 
 The uniqueness wave (24 Oct 2026, section 5: distinct by default, palette
 honesty, the homepage structures and the redo memory) needs no Help edit
@@ -1480,7 +1588,9 @@ memory and no check).
   survive, four identical real errors fail the job, and a job past its
   ceiling is refused and failed as `run_ceiling`; and that the redo memory
   reads only this store's ready or superseded compiled plans, newest first,
-  never the job asking.
+  never the job asking. `jobs.local` also reads a chat's redesigns with one
+  Stopped while its runner holds it (`cancelRequested` true, a real
+  boolean).
 - Live: `npm run revamp:live-check` (`scripts/revamp-live-check.ts`,
   `scripts/revamp-live-fixtures.ts`) sets up four made-up shops in the local
   database (Kesar Ghani, mustard oil on Vitrine, a fashion theme; Crumb and

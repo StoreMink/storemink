@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
+import * as chatSession from "./chat-session";
 import {
+  CHAT_ID_PATTERN,
   clearMinkActiveChat,
   isMinkChatStale,
   MINK_CHAT_PARAM,
   MINK_CHAT_RESUME_MS,
+  MINK_CONVERSATION_RETENTION_DAYS,
+  MINK_HISTORY_PAGE_SIZE,
   minkChatHref,
   readMinkActiveChat,
   readMinkChatParam,
@@ -134,5 +138,27 @@ describe("★★ the dashboard address that opens a chat (B20)", () => {
   it("★ an address that is not a chat id is never written into a link", () => {
     expect(minkChatHref("https://evil.example/x")).toBe("/dashboard");
     expect(minkChatHref(`${ID}&next=/admin`)).toBe("/dashboard");
+  });
+});
+
+describe("how long chats are kept and how History pages them", () => {
+  it("★ keeps a chat 90 days after its last use, with no count limit", () => {
+    expect(MINK_CONVERSATION_RETENTION_DAYS).toBe(90);
+    // The ten-chat cap is gone, not merely raised.
+    expect("MINK_CONVERSATION_LIMIT" in chatSession).toBe(false);
+  });
+
+  it("pages History 30 chats at a time", () => {
+    expect(MINK_HISTORY_PAGE_SIZE).toBe(30);
+  });
+
+  it("knows a chat id as the database writes one", () => {
+    expect(CHAT_ID_PATTERN.test("0b1d4e2a-6c3f-4a5b-9c7d-1e2f3a4b5c6d")).toBe(
+      true,
+    );
+    expect(CHAT_ID_PATTERN.test("0B1D4E2A-6C3F-4A5B-9C7D-1E2F3A4B5C6D")).toBe(
+      false,
+    );
+    expect(CHAT_ID_PATTERN.test("not-a-chat")).toBe(false);
   });
 });

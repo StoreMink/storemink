@@ -27,6 +27,14 @@ vi.mock("@/lib/mink/persistence", () => ({
   MINK_STALE_RUN_SWEEP_LIMIT: 20,
   closeStaleMinkRuns: closeStale,
 }));
+const closeStopped = vi.fn();
+vi.mock("@/lib/mink/run-stop", () => ({
+  closeStoppedMinkRuns: closeStopped,
+}));
+const sweepStages = vi.fn();
+vi.mock("@/lib/mink/refine-stages", () => ({
+  sweepRefineStages: sweepStages,
+}));
 
 describe("Mink workflow cron", () => {
   const original = process.env.CRON_SECRET;
@@ -37,6 +45,10 @@ describe("Mink workflow cron", () => {
     reconcile.mockReset().mockResolvedValue(0);
     sweepRevamps.mockReset().mockResolvedValue({ kicked: 1, failed: 0 });
     closeStale.mockReset().mockResolvedValue({ closed: 2, failed: 0 });
+    closeStopped.mockReset().mockResolvedValue({ closed: 1, failed: 0 });
+    sweepStages
+      .mockReset()
+      .mockResolvedValue({ published: 1, deleted: 2, failed: 0 });
     runStudio.mockReset().mockResolvedValue({
       claimed: 1,
       succeeded: 1,
@@ -222,10 +234,88 @@ describe("Mink workflow cron", () => {
     expect(body.staleRuns).toBeNull();
   });
 
+  it("★ closes chat runs the merchant stopped whose server went away, before the stale sweep", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://storemink.com/api/cron/mink-workflows", {
+        headers: { authorization: "Bearer cron-secret" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(closeStopped).toHaveBeenCalledTimes(1);
+    // A run both stopped and stale is recorded as the stop it was.
+    expect(closeStopped.mock.invocationCallOrder[0]).toBeLessThan(
+      closeStale.mock.invocationCallOrder[0],
+    );
+    expect((await response.json()).stoppedRuns).toEqual({
+      closed: 1,
+      failed: 0,
+    });
+  });
+
+  it("★ a stopped-run sweep failure is logged and never fails merchant workflows", async () => {
+    closeStopped.mockRejectedValueOnce(new Error("stopped sweep down"));
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://storemink.com/api/cron/mink-workflows", {
+        headers: { authorization: "Bearer cron-secret" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(runWorker).toHaveBeenCalledOnce();
+    expect(closeStale).toHaveBeenCalledOnce();
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.stoppedRuns).toBeNull();
+    expect(body.staleRuns).toEqual({ closed: 2, failed: 0 });
+  });
+
+  it("★ publishes or clears Refine stages, and reports them", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://storemink.com/api/cron/mink-workflows", {
+        headers: { authorization: "Bearer cron-secret" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(sweepStages).toHaveBeenCalledTimes(1);
+    expect((await response.json()).refineStages).toEqual({
+      published: 1,
+      deleted: 2,
+      failed: 0,
+    });
+    // ★ LAST: the only pass that waits on storage, so a storage stall never
+    //   delays the database backstops.
+    for (const pass of [runStudio, closeStopped, closeStale, sweepRevamps]) {
+      expect(pass.mock.invocationCallOrder[0]).toBeLessThan(
+        sweepStages.mock.invocationCallOrder[0],
+      );
+    }
+  });
+
+  it("★ a Refine stage sweep failure is logged and never fails merchant workflows", async () => {
+    sweepStages.mockRejectedValueOnce(new Error("bucket unreachable"));
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request("https://storemink.com/api/cron/mink-workflows", {
+        headers: { authorization: "Bearer cron-secret" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(runWorker).toHaveBeenCalledOnce();
+    expect(closeStale).toHaveBeenCalledOnce();
+    const body = await response.json();
+    expect(body.ok).toBe(true);
+    expect(body.refineStages).toBeNull();
+    expect(body.staleRuns).toEqual({ closed: 2, failed: 0 });
+  });
+
   it("is not reached without the cron bearer token", async () => {
     const { GET } = await import("./route");
     await GET(new Request("https://storemink.com/api/cron/mink-workflows"));
     expect(sweepRevamps).not.toHaveBeenCalled();
     expect(closeStale).not.toHaveBeenCalled();
+    expect(closeStopped).not.toHaveBeenCalled();
+    expect(sweepStages).not.toHaveBeenCalled();
   });
 });

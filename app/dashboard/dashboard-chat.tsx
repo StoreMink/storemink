@@ -9,7 +9,6 @@ import {
   FileText,
   LoaderCircle,
   Maximize2,
-  MessageSquare,
   MessageSquarePlus,
   Minimize2,
   MoreHorizontal,
@@ -24,6 +23,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -47,11 +47,14 @@ import {
 import {
   ASSISTANT_NAME,
   type MinkConversationSummary,
+  type MinkMessage,
   type MinkPendingAttachment,
   type MinkPreparedSend,
   type MinkRunStep,
 } from "./mink-ai";
 import { MinkMark } from "./mink-mark";
+import { MinkEarlierMessages } from "./mink-earlier-messages";
+import { MinkHistorySidebar } from "./mink-history-sidebar";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
 import { MinkVoiceBar } from "./mink-voice-view";
 import { MinkArtifacts } from "./mink-artifacts";
@@ -107,6 +110,32 @@ export function latestMinkUserMessageId(
     if (message?.role === "user") return message.id;
   }
   return null;
+}
+
+const NO_REVAMPS: ReadonlySet<string> = new Set();
+
+/**
+ * For each message, the storefront redesigns whose card an earlier message
+ * in the thread already shows; that message points back to the card instead
+ * of showing a second one (MinkArtifacts). ★ One redesign can reach a thread
+ * twice: the answer that started it, and a later start or refine answered
+ * with the same card because it is still being made. A set is shared until a
+ * message adds to it, so a long thread costs one set per redesign.
+ */
+export function revampIdsShownBefore(
+  messages: ReadonlyArray<Pick<MinkMessage, "artifacts">>,
+): ReadonlySet<string>[] {
+  const shownBefore: ReadonlySet<string>[] = [];
+  let shown = NO_REVAMPS;
+  for (const message of messages) {
+    shownBefore.push(shown);
+    for (const artifact of message.artifacts ?? []) {
+      if (artifact.type !== "storefront_revamp") continue;
+      if (!shown.has(artifact.revampId))
+        shown = new Set([...shown, artifact.revampId]);
+    }
+  }
+  return shownBefore;
 }
 
 /** How much of the viewport the anchored question is allowed to keep. */
@@ -215,12 +244,12 @@ export function DashboardChat({
     closeChat,
     toggleExpand,
     messages,
-    conversations,
     activeConversationId,
     activeConversationTitle,
     input,
     setInput,
     isReplying,
+    stopRefused = false,
     isHistoryLoading,
     deletingConversationId,
     statusText,
@@ -237,6 +266,8 @@ export function DashboardChat({
     addressOpens,
     loadConversation,
     deleteConversation,
+    conversations,
+    refreshConversations,
     submitFeedback,
     memoryPrompt,
     saveMemorySuggestion,
@@ -523,6 +554,59 @@ export function DashboardChat({
     startNewChat();
   }, [followNewestMessage, startNewChat]);
 
+  // ★ R14: after a choice the sidebar closes wherever it covers the chat: the
+  // side panel always, and the full view on a phone, where it used to stay
+  // open over the chat just chosen. On a wide full view it stays beside it.
+  const closeHistoryAfterChoice = useCallback(() => {
+    if (!isOverlay || !minkHistoryStartsOpen(window.innerWidth))
+      setHistoryOpen(false);
+  }, [isOverlay]);
+
+  // ★ R17: stable, so History's memoised rows are not rendered again while
+  // an answer streams.
+  const chooseConversation = useCallback(
+    (
+      conversation: MinkConversationSummary,
+      options: { revealMessageId?: string },
+    ) => {
+      // ★ Every chat chosen opens at its newest message. A search result's
+      // match, once loaded, is scrolled to two frames after the thread's own
+      // scroll (mink-earlier-messages.tsx), so it wins; one too far back to
+      // load opens here rather than where the last chat was left.
+      followNewestMessage();
+      setShowJumpToLatest(false);
+      void (options.revealMessageId
+        ? loadConversation(conversation.id, {
+            revealMessageId: options.revealMessageId,
+          })
+        : loadConversation(conversation.id));
+      closeHistoryAfterChoice();
+    },
+    [followNewestMessage, loadConversation, closeHistoryAfterChoice],
+  );
+
+  const newConversationFromHistory = useCallback(() => {
+    startFreshChat();
+    closeHistoryAfterChoice();
+  }, [startFreshChat, closeHistoryAfterChoice]);
+
+  // ★ A row's redesign flag is as old as the list it came in: a redesign card
+  // that became ready after History's first page was last read would get the
+  // plain sentence, although the delete takes that card with it. So History's
+  // first page is read again as the dialog opens, and the dialog reads the
+  // flag from the chat's row as History now has it (`deleteRow`).
+  const askToDelete = useCallback(
+    (conversation: MinkConversationSummary) => {
+      setDeleteFailure(null);
+      setDeleteTarget(conversation);
+      void refreshConversations();
+    },
+    [setDeleteFailure, setDeleteTarget, refreshConversations],
+  );
+  const deleteRow = deleteTarget
+    ? (conversations.find((row) => row.id === deleteTarget.id) ?? deleteTarget)
+    : null;
+
   const chooseSkill = useCallback(
     (skill: MinkSkill) => {
       setInput(skill.prompt);
@@ -586,13 +670,22 @@ export function DashboardChat({
     composerRef.current?.focus();
   }, [input]);
 
+  // A redesign's card shows once in the thread; later mentions point to it.
+  const revampsShownBefore = useMemo(
+    () => revampIdsShownBefore(messages),
+    [messages],
+  );
+
   if (!isChatOpen) return null;
   if (isOverlay !== isExpanded) return null;
 
+  // ★ Stop ASKS the server (`useMinkAi().cancel`), and is not offered once it
+  // refused: the run had already started something, so a Stop that cannot
+  // stop it is worse than none. The status line says why.
   const stopReply = (
     <button
       type="button"
-      onClick={cancel}
+      onClick={() => void cancel()}
       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
       aria-label="Stop Mink AI"
     >
@@ -600,10 +693,14 @@ export function DashboardChat({
     </button>
   );
   // A photo or a file on its own is a message too, as in ChatGPT and Claude.
-  const sendButton = (hasAttachments: boolean) => (
+  // `waiting`: a reply Stop could not stop is finishing; the next message
+  // goes once it has.
+  const sendButton = (hasAttachments: boolean, waiting = false) => (
     <button
       type="submit"
-      disabled={(!input.trim() && !hasAttachments) || isHistoryLoading}
+      disabled={
+        waiting || (!input.trim() && !hasAttachments) || isHistoryLoading
+      }
       className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
       aria-label="Send message"
     >
@@ -736,27 +833,11 @@ export function DashboardChat({
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {historyOpen && !voiceChat.enabled && (
-          <ConversationSidebar
-            conversations={conversations}
-            activeConversationId={activeConversationId}
+          <MinkHistorySidebar
             isOverlay={isOverlay}
-            isReplying={isReplying}
-            isHistoryLoading={isHistoryLoading}
-            deletingConversationId={deletingConversationId}
-            onNewConversation={() => {
-              startFreshChat();
-              if (!isOverlay) setHistoryOpen(false);
-            }}
-            onSelect={(conversation) => {
-              followNewestMessage();
-              setShowJumpToLatest(false);
-              void loadConversation(conversation.id);
-              if (!isOverlay) setHistoryOpen(false);
-            }}
-            onDelete={(conversation) => {
-              setDeleteFailure(null);
-              setDeleteTarget(conversation);
-            }}
+            onNewConversation={newConversationFromHistory}
+            onSelect={chooseConversation}
+            onDelete={askToDelete}
           />
         )}
 
@@ -830,6 +911,7 @@ export function DashboardChat({
                 }}
                 className="mink-message-scroll h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4"
               >
+                <MinkEarlierMessages />
                 <div className={`${columnClass} space-y-4`}>
                   {messages.map((message, index) =>
                     message.role === "user" ? (
@@ -866,6 +948,7 @@ export function DashboardChat({
                             artifacts={message.artifacts ?? []}
                             onPrompt={sendFromChat}
                             promptDisabled={isReplying || isHistoryLoading}
+                            shownRevampIds={revampsShownBefore[index]}
                           />
                           {index === latestAssistantIndex &&
                           !isReplying &&
@@ -968,7 +1051,8 @@ export function DashboardChat({
             <MinkVoiceBar
               voice={voiceChat}
               isReplying={isReplying}
-              onStopReply={cancel}
+              stopRefused={stopRefused}
+              onStopReply={() => void cancel()}
               columnClass={columnClass}
             />
           ) : null}
@@ -1159,7 +1243,11 @@ export function DashboardChat({
                         {attach}
                         <div className="flex items-center gap-2">
                           {voice}
-                          {isReplying ? stopReply : sendButton(hasAttachments)}
+                          {isReplying
+                            ? stopRefused
+                              ? sendButton(hasAttachments, true)
+                              : stopReply
+                            : sendButton(hasAttachments)}
                         </div>
                       </div>
                     )}
@@ -1203,8 +1291,9 @@ export function DashboardChat({
                   id="mink-delete-description"
                   className="mt-1 text-sm leading-5 text-[#5c5f62]"
                 >
-                  “{deleteTarget.title}” and its messages will be permanently
-                  deleted.
+                  {deleteRow?.hasRedesignCard
+                    ? `“${deleteTarget.title}” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.`
+                    : `“${deleteTarget.title}” and its messages will be permanently deleted. Changes you approved or published from this chat stay in your store.`}
                 </p>
                 {deleteFailure && (
                   <p
@@ -1905,130 +1994,4 @@ function isRenderableMinkMediaUrl(value: string) {
   } catch {
     return false;
   }
-}
-
-function ConversationSidebar({
-  conversations,
-  activeConversationId,
-  isOverlay,
-  isReplying,
-  isHistoryLoading,
-  deletingConversationId,
-  onNewConversation,
-  onSelect,
-  onDelete,
-}: {
-  conversations: MinkConversationSummary[];
-  activeConversationId: string | null;
-  isOverlay: boolean;
-  isReplying: boolean;
-  isHistoryLoading: boolean;
-  deletingConversationId: string | null;
-  onNewConversation: () => void;
-  onSelect: (conversation: MinkConversationSummary) => void;
-  onDelete: (conversation: MinkConversationSummary) => void;
-}) {
-  return (
-    <aside
-      aria-label="Mink AI conversations"
-      className={
-        isOverlay
-          ? "absolute inset-y-0 left-0 z-40 flex w-[min(320px,100%)] shrink-0 flex-col overscroll-contain border-r border-[#e7e7e7] bg-[#f7f7f8] shadow-xl md:static md:z-auto md:w-72 md:shadow-none"
-          : "absolute inset-y-0 left-0 z-40 flex w-[min(300px,100%)] flex-col overscroll-contain border-r border-[#e7e7e7] bg-[#f7f7f8] shadow-xl"
-      }
-    >
-      <div className="p-3">
-        <button
-          type="button"
-          onClick={onNewConversation}
-          disabled={isReplying}
-          className="flex w-full items-center gap-2 rounded-xl border border-[#dedede] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#1a1a1a] shadow-sm transition-colors hover:border-[#cfc4ff] hover:bg-[#fbfaff] disabled:opacity-50"
-        >
-          <MessageSquarePlus className="h-4 w-4 text-[#6d4dff]" />
-          New conversation
-        </button>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-        <div className="flex h-8 items-center justify-between px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8c9196]">
-          <span>Recent</span>
-          {isHistoryLoading && (
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          )}
-        </div>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-          {conversations.map((conversation) => {
-            const selected = conversation.id === activeConversationId;
-            const deleting = deletingConversationId === conversation.id;
-            return (
-              <div
-                key={conversation.id}
-                className={`group relative rounded-xl transition-colors ${
-                  selected
-                    ? "bg-[#eee9ff]"
-                    : "hover:bg-[#ededee] focus-within:bg-[#ededee]"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelect(conversation)}
-                  disabled={isReplying || deleting}
-                  aria-current={selected ? "page" : undefined}
-                  className="flex w-full items-start gap-2.5 rounded-xl px-3 py-2.5 pr-10 text-left disabled:opacity-50"
-                >
-                  <MessageSquare
-                    className={`mt-0.5 h-4 w-4 shrink-0 ${
-                      selected ? "text-[#6d4dff]" : "text-[#8c9196]"
-                    }`}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-[#1a1a1a]">
-                      {conversation.title}
-                    </span>
-                    <span className="mt-0.5 block text-[11px] text-[#8c9196]">
-                      {formatConversationDate(conversation.lastMessageAt)}
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(conversation)}
-                  disabled={isReplying || deleting}
-                  aria-label={`Delete ${conversation.title}`}
-                  title="Delete conversation"
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-[#8c9196] transition hover:bg-white hover:text-[#b42318] focus:opacity-100 disabled:opacity-40 ${
-                    selected
-                      ? "opacity-100"
-                      : "opacity-0 group-hover:opacity-100"
-                  }`}
-                >
-                  {deleting ? (
-                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              </div>
-            );
-          })}
-          {conversations.length === 0 && !isHistoryLoading && (
-            <div className="px-3 py-5 text-center text-xs leading-5 text-[#8c9196]">
-              Your recent conversations will appear here.
-            </div>
-          )}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function formatConversationDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Recent";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
 }

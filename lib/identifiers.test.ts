@@ -11,9 +11,8 @@ import {
 } from "./identifiers";
 
 describe("luhnCheckDigit", () => {
-  // The canonical vectors from the spec — these MUST match the SQL sm_luhn()
-  // used by the backfill (supabase/identifiers_02_backfill.sql), so both paths
-  // produce identical codes for the same numbers.
+  // The canonical vectors from the spec — these MUST match the database's
+  // sm_luhn(), so both paths produce identical codes for the same numbers.
   it("computes the documented check digits", () => {
     expect(luhnCheckDigit("10010001")).toBe(5); // store 1001, product 0001
     expect(luhnCheckDigit("10011000")).toBe(6); // store 1001, order 1000
@@ -55,7 +54,7 @@ describe("format generators (exact strings from the spec)", () => {
 
   it("credit note reference", () => {
     // Same grammar as an order ref, different prefix — so the SQL mirror
-    // sm_credit_note_ref() in returns_04_credit_notes.sql produces this too.
+    // sm_credit_note_ref() in the database produces this too.
     // 1001 + 0001 has Luhn check 5 (the vector above).
     expect(formatCreditNoteRef(1001, 1)).toBe("CRN100100015");
     expect(formatCreditNoteRef(1001, 1000)).toBe("CRN100110006");
@@ -65,14 +64,14 @@ describe("format generators (exact strings from the spec)", () => {
   // CAUGHT IT (verified against staging 2026-08-03).
   //
   // Postgres `lpad('12345', 4, '0')` returns '1234' — it truncates as well as
-  // pads. Every formatter in identifiers_04_triggers.sql padded to exactly 4,
+  // pads. Every SQL formatter (sm_sku, sm_variant_sku, sm_order_ref) padded to exactly 4,
   // so a store's 10,000th order/product silently lost a digit:
   //     sm_order_ref(1001,  1000) = ORD100110006
   //     sm_order_ref(1001, 10000) = ORD100110006   ← the same string
   // `(store_id, sku)` is UNIQUE, so the 10,000th product FAILED TO INSERT;
   // order_ref isn't, so orders quietly shared a customer-visible reference.
-  // Fixed by supabase/identifiers_05_no_truncate.sql. These assertions are
-  // what its migration-time guard checks itself against.
+  // Fixed in the database: sm_pad() grows past its width instead of
+  // truncating. These assertions pin the same vectors.
   it("★ codes GROW past their pad width — they never truncate", () => {
     expect(formatOrderRef(1001, 12345)).toBe("ORD1001123452");
     expect(formatSku(1001, 12345)).toBe("SKU1001123452");

@@ -22,6 +22,8 @@ vi.mock("next/cache", () => ({
     },
 }));
 
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import {
   getHelpCategories,
   getHelpCategoryBySlug,
@@ -32,6 +34,8 @@ import {
   getPopularHelpArticles,
   getRelatedHelpArticles,
   getPublishedHelpArticleParams,
+  searchHelpArticles,
+  withPosSynonym,
 } from "./queries";
 
 const category = {
@@ -189,4 +193,88 @@ describe("Help reads across cold starts and cache misses", () => {
       expect(results.size).toBe(0);
     },
   );
+});
+
+// ★ THE GUIDES SAY POS, PEOPLE STILL TYPE "REGISTER" OR "TILL". Since the POS
+// rename (26 Oct 2026) no guide uses either word for POS, so without this a
+// search for "register" found the DLT, signup and newsletter guides and no POS
+// guide at all.
+describe("Help search reads register and till as POS", () => {
+  it.each([
+    ["register", "POS"],
+    ["Register", "POS"],
+    ["registers", "POS"],
+    ["cash register", "POS"],
+    ["till", "POS"],
+    ["tills", "POS"],
+    ["lock the register", "lock the POS"],
+    ["register staff", "POS staff"],
+    // The guides and the category said "Point of Sale" until the rename too.
+    ["point of sale", "POS"],
+    ["Point of Sale settings", "POS settings"],
+    ["point-of-sale", "POS"],
+  ])("reads %j as %j", (query, expected) => {
+    expect(withPosSynonym(query)).toBe(expected);
+  });
+
+  it.each([
+    "registered customers",
+    "registration",
+    "DLT registration",
+    "GST registration",
+    "POS",
+    "sales point",
+  ])("leaves %j alone", (query) => {
+    expect(withPosSynonym(query)).toBeNull();
+  });
+
+  type FakeQuery = {
+    select: () => FakeQuery;
+    from: () => FakeQuery;
+    innerJoin: () => FakeQuery;
+    where: (condition: SQL) => FakeQuery;
+    orderBy: () => FakeQuery;
+    limit: () => Promise<unknown[]>;
+  };
+
+  async function searchParams(query: string): Promise<unknown[]> {
+    const conditions: SQL[] = [];
+    const db: FakeQuery = {
+      select: () => db,
+      from: () => db,
+      innerJoin: () => db,
+      where: (condition) => {
+        conditions.push(condition);
+        return db;
+      },
+      orderBy: () => db,
+      limit: async () => [],
+    };
+    withAnon.mockImplementation(async (read: (fake: FakeQuery) => unknown) =>
+      read(db),
+    );
+    await searchHelpArticles(query);
+    expect(conditions).toHaveLength(1);
+    return new PgDialect().sqlToQuery(conditions[0]).params;
+  }
+
+  it("searches the words typed AND the POS reading of them", async () => {
+    const params = await searchParams("lock the register");
+    expect(params).toContain("lock the register");
+    expect(params).toContain("lock the POS");
+  });
+
+  it("adds nothing to a query without the old words", async () => {
+    const params = await searchParams("GST registration");
+    expect(params).toContain("GST registration");
+    expect(params).not.toContain("POS");
+  });
+
+  // Without it, "point of sale" ranked one POS guide of 17, second, behind
+  // the sales analytics guide (local Help, after 0253).
+  it("searches the old name as POS too", async () => {
+    const params = await searchParams("point of sale");
+    expect(params).toContain("point of sale");
+    expect(params).toContain("POS");
+  });
 });

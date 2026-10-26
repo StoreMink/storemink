@@ -1,23 +1,21 @@
-// Firebase session-cookie helpers (GCP migration Phase 6). The session model
-// that replaces Supabase's SSR cookies:
+// Firebase session-cookie helpers (GCP migration Phase 6). The session model:
 //
 //   sign-in (client) → Firebase ID token → POST /api/auth/session
 //     → mintSessionCookie() verifies the ID token + mints a ~14-day session
 //       cookie, set httpOnly/Secure/Domain=.storemink.com (spans platform +
-//       every store subdomain, exactly like the old Supabase cookie).
+//       every store subdomain).
 //   every request → verifySessionCookie() decodes it (uid, email, phone, and
 //     the role / force_password_reset custom claims) with NO network call after
 //     warmup, so it's cheap enough for the Node-runtime proxy.
 //
-// DORMANT until Identity Platform is configured: when the Admin SDK isn't set
-// up, mint/verify return null and callers keep using the live Supabase path.
+// When the Admin SDK isn't configured, mint/verify return null: POST
+// /api/auth/session answers 401 and every request reads as signed out.
 
 import { cookieDomainForHost } from "@/lib/store/host";
 import { getFirebaseAdminAuth } from "./firebase-admin";
 import { SESSION_COOKIE } from "./constants";
 
-/** Cross-subdomain session cookie name (distinct from Supabase's sb-* cookies
- *  so both can coexist during the migration). */
+/** Cross-subdomain session cookie name. */
 export { SESSION_COOKIE };
 
 // Firebase session cookies max out at 14 days.
@@ -104,8 +102,7 @@ export async function verifySessionCookie(
   }
 }
 
-/** httpOnly cookie options scoped to share across platform + store subdomains,
- *  mirroring the old Supabase `.storemink.com` cookie behaviour. */
+/** httpOnly cookie options scoped to share across platform + store subdomains. */
 export function sessionCookieOptions(host: string | null | undefined): {
   httpOnly: true;
   secure: boolean;

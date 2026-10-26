@@ -1,15 +1,14 @@
 # Scheduled jobs (Cloud Scheduler)
 
-**`vercel.json` does not drive anything.** Production runs on Cloud Run, where
-Vercel's `crons` block is inert. It is kept only as a record of the intended
-schedules. The real driver is **Cloud Scheduler in `storemink-prod`,
-`asia-south1`**.
+Every scheduled job runs in **Cloud Scheduler in `storemink-prod`,
+`asia-south1`**, and this file is the record of what each schedule should be.
+Nothing in the repository drives a schedule.
 
 ## The gap this documents
 
 Between the Cloud Run cutover and **2026-07-30**, `storemink-prod` had **zero**
 Cloud Scheduler jobs in **any** region — verified by sweeping every location.
-`docs/gcp-migration-cutover-checklist.md` listed `Crons → Cloud Scheduler` and
+The go-live checklist listed `Crons → Cloud Scheduler` and
 the box was never ticked. So for the whole period after the cutover, none of the
 three scheduled jobs ran.
 
@@ -375,6 +374,17 @@ reports `revamps`. On dev, which has no scheduler, a stalled revamp moves
 when its card's status poll kicks it, or when a runner that turned its kick
 away finishes and kicks the oldest waiting one.
 
+★ **It also closes Mink chat runs whose Stop their server never saw
+(2026-10-25).** The merchant's Stop is recorded on the run's row
+(`POST /api/mink/runs/[runId]/stop`, `lib/mink/run-stop.ts`), and the
+instance answering the run sees it within about two seconds. A run still
+running three minutes after its Stop lost its instance: `closeStoppedMinkRuns`
+closes at most 20 a tick, oldest first, through the stream route's own
+failure record as cancelled with code `stopped` (never charged). It runs just
+before the dead-run pass below, so a run that is both is recorded as the
+stop it was, is isolated (`mink workflow cron: stopped run sweep failed`)
+and reports `stoppedRuns` (`{closed, failed}`, or null when the pass failed).
+
 ★ **It also closes Mink chat runs a dead server left running (2026-10-24,
 robustness audit B7).** `closeStaleMinkRuns` (`lib/mink/persistence.ts`)
 closes at most 20 a tick, oldest first: runs still "running" 15 minutes after
@@ -389,6 +399,26 @@ Its query reads `mink_runs` across every store, so it uses the partial index
 migration `20261024_0240`), which holds only running runs in the sweep's own
 order and stays small as the table grows (on 200,083 runs locally: 15.7 ms
 before, 0.09 ms after).
+
+★ **It also publishes or clears Refine stages (2026-10-26).** A Refine with
+Mink AI result is staged in the private bucket until it is paid for
+(`lib/mink/refine-stages.ts`). `sweepRefineStages` lists only THIS database's
+prefix (`refine-stage/{DB_NAME}/`: dev and staging share one database and one
+bucket, and a laptop uses that bucket with `storemink_local`, so no
+environment ever decides another's stages), skips stages younger than five
+minutes (a stage without a creation time is left, with one warning a pass),
+and decides at most twenty a tick with `abandonRefineStage`: a paid photo
+whose publish failed is published to the store's `refined/` folder (unless
+the merchant has since deleted it from the Media Library, when only its
+stage is deleted), and a stage nobody paid for (or can ever pay for) is
+deleted. Its ten-second budget covers every storage call, the listing's
+included, each cut at what is left of it, and it runs LAST in the
+heartbeat, after the database passes, because it is the only one that waits
+on storage. It is isolated (a failure is logged as
+`mink workflow cron: refine stage sweep failed` and never fails the tick)
+and reports `refineStages` (`{published, deleted, failed}`, or null when
+the pass failed). Dev has no scheduler: there a deferred publish waits
+until the route is run by hand.
 
 ★★ **IT ALSO CARRIES THE MINK CREDIT RECONCILER (2026-09-21), and that is
 deliberately not a job of its own.** `settleMinkRunCredits` runs after the run
@@ -601,9 +631,8 @@ service account first; see `docs/seo-indexing.md`.
 > next minute heartbeat drains them. Future campaign rows are excluded from the
 > worker's remaining count, so this cadence does not self-chain while waiting.
 
-> **⚠ Timezone is `Etc/UTC`, not IST.** The cron expressions were lifted verbatim
-> from `vercel.json`, where they were always UTC. Re-creating them in
-> `Asia/Kolkata` would shift every job by 5h30m.
+> **⚠ Timezone is `Etc/UTC`, not IST.** The cron expressions are written in
+> UTC. Re-creating them in `Asia/Kolkata` would shift every job by 5h30m.
 
 ## Recreating them
 
@@ -813,18 +842,28 @@ because there was nothing to list. The job reported green throughout.
 Three tables grew without bound because their retention policy was written down
 and never wired to anything:
 
-| Table                            | Window                   | Why                                                                                                                                                            |
-| -------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `notifications`                  | 90 days                  | A read inbox row is history.                                                                                                                                   |
-| `activity_events`                | 365 days                 | The audit trail, so it gets the longest life.                                                                                                                  |
-| `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.                                                           |
-| `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                                                                                   |
-| `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain.                                                      |
-| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.                                                           |
-| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows.                                                      |
-| `ai_quota_refunds`               | 90 days                  | One row per Generate with AI take that was given back, kept so a second refund of the same take gives nothing; a take is refunded only inside its own request. |
+| Table                            | Window                   | Why                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notifications`                  | 90 days                  | A read inbox row is history.                                                                                                                                                                                                                                                                                                                                                                |
+| `activity_events`                | 365 days                 | The audit trail, so it gets the longest life.                                                                                                                                                                                                                                                                                                                                               |
+| `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.                                                                                                                                                                                                                                                                                        |
+| `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                                                                                                                                                                                                                                                                                                                |
+| `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain.                                                                                                                                                                                                                                                                                   |
+| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.                                                                                                                                                                                                                                                                                        |
+| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows.                                                                                                                                                                                                                                                                                   |
+| `ai_quota_refunds`               | 90 days                  | One row per Generate with AI take that was given back, kept so a second refund of the same take gives nothing; a take is refunded only inside its own request.                                                                                                                                                                                                                              |
+| `mink_refine_requests`           | 30 days                  | One row per Refine with Mink AI request: the browser's stop and the charge claim; it decides only while its refine runs.                                                                                                                                                                                                                                                                    |
+| `mink_conversations`             | 90 days after last use   | A Mink AI chat is kept 90 days after the merchant last sent a message in it or opened it, then retired: deleted, or reduced when it holds the record of an approved or published change (its words go, the record stays while the store exists). A chat is retired only when both its expiry and its last message are 90 days old; never one with a reply running or a redesign being made. |
 
-`supabase/email_logs.sql` documented the 90-day intent and even carries an
+For `mink_conversations`, `deleted` in the response counts chats retired
+(deleted or reduced), and the log line `mink.retention: batch` gives healed,
+stripped, deleted, reduced, skipped and failed per batch (each batch first
+moves forward the expiry of chats a revision without the 90-day rule used,
+and strips redesigns nobody applied whose chat is already gone). A chat
+whose retirement failed is marked and skipped for 7 days
+(`mink.retention: chat not retired`, ids only).
+
+`email_logs.sql` documented the 90-day intent and even carries an
 `email_logs_created_idx` built "for retention sweeps". `pruneNotifications` had
 the right windows and a docstring saying it was "called by the daily cron".
 **Nothing called it** — a grep returned the definition and nothing else. So
@@ -868,7 +907,7 @@ Behaviour worth knowing before you read a response:
 >
 > Both tables' `(store_id, created_at)` composite indexes cannot serve a sweep
 > that filters on `created_at` **alone**, so each has a plain `created_at`
-> index in its own file, `supabase/retention_01_prune_indexes.sql` (an
+> index in its own file, `retention_01_prune_indexes.sql` (an
 > applied `CREATE TABLE IF NOT EXISTS` file is never edited). Without it the
 > sweep works but seq-scans, which is precisely the cost that matters once
 > the table is big enough to need pruning. (Until 2026-10-25 this note said

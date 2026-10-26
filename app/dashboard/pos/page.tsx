@@ -3,7 +3,7 @@ import { getCurrentStore } from "@/lib/store/resolve";
 import { getPosState, getStoreLocations } from "@/lib/pos/locations";
 import { PosOverviewClient } from "./pos-overview-client";
 
-export const metadata = { title: "Point of Sale" };
+export const metadata = { title: "POS" };
 
 export default async function PosPage() {
   const access = await requireSectionAccess("pos", "view");

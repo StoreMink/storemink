@@ -103,12 +103,11 @@ to `PLATFORM_URL` whenever `getCurrentStoreOrNull()` is null. So
 `zzz-not-a-store.storemink.com/robots.txt` returns `Allow: /` plus the apex's
 `Host`/`Sitemap`.
 
-**P3. `vercel.json` crons do not run.** Production is Cloud Run
-(`server: Google Frontend`, no `x-vercel-*` headers) and the repo contains **no
-Cloud Scheduler definition** — only the recipe at
-`docs/gcp-migration-phase4-cloud-run.md:162`, and
-`docs/gcp-migration-cutover-checklist.md:136` (`- [ ] Crons → Cloud Scheduler`)
-is **unchecked**. This is listed here because it blocks the SEO cron in §4 — but
+**P3. The scheduled jobs did not run.** Production is Cloud Run
+(`server: Google Frontend`), and at the time the repo held **no Cloud Scheduler
+definition**: only the recipe in `docs/gcp-migration-phase4-cloud-run.md` §9, and
+the go-live checklist's `Crons → Cloud Scheduler` item was **unchecked** (fixed
+2026-07-30; `docs/cron-jobs.md` is the record). This is listed here because it blocks the SEO cron in §4 — but
 if those jobs were never created, `send-emails` is dead and the **entire
 notification/email queue has been silently stalled** (CODEBASE.md §24). Verify
 this before anything else in this document.
@@ -333,7 +332,7 @@ revalidate onto the next visitor.
 Two subtleties that make the naive fix wrong:
 
 - **`products.updated_at` is bumped by `_recompute_stock_aggregate` on every
-  sale** (`supabase/products_categories.sql:128-131`). Shipping it raw claims a
+  sale** (`products_categories.sql:128-131`). Shipping it raw claims a
   content change per purchase — nearly as untruthful as `now`. Add a column bumped
   only by `product-actions` writes, or exclude the stock-aggregate path from the
   trigger. Also `getPublishedProducts` (`queries.ts:113-141`) selects no

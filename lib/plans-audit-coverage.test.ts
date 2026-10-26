@@ -5,7 +5,7 @@ import { execFileSync } from "child_process";
 // COVERAGE GUARD — every plan_events write uses a source the DB will accept.
 //
 // `plan_events.source` is CHECK-constrained to ('operator', 'billing',
-// 'system') by supabase/plans_01_schema.sql. `stores.plan_source` is a
+// 'system') by the plan_events_source_check constraint. `stores.plan_source` is a
 // DIFFERENT vocabulary — ('comp', 'paid', 'trial') — and the two sit two lines
 // apart in the code that writes them.
 //
@@ -21,7 +21,7 @@ import { execFileSync } from "child_process";
 // writer and the same outage.
 // ---------------------------------------------------------------------------
 
-/** The values supabase/plans_01_schema.sql permits. Keep in step with the SQL. */
+/** The values plan_events_source_check permits. Keep in step with the constraint. */
 const ALLOWED_SOURCES = ["operator", "billing", "system"];
 
 /**

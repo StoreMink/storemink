@@ -24,7 +24,7 @@ import {
 // Website-builder page actions.
 //
 // All reads/writes use the SERVICE scope because the draft `sections` column
-// is revoked from anon+authenticated at the DB layer (see store_pages.sql) —
+// is revoked from anon+authenticated at the DB layer (store_pages column grants) —
 // RLS/column grants can't be the gate here. So getManagerUserId("builder") IS
 // the trust boundary, and every query is explicitly scoped by store_id (the
 // service scope bypasses RLS). Never select or return draft `sections` to a

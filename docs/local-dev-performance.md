@@ -241,14 +241,14 @@ A native Homebrew `postgresql@17` cluster, **not** a container. Docker Desktop o
 Colima would add a Linux VM of roughly 2 GB on a machine already using 10.4 GB of
 12 GB swap, which costs more than the round trips it saves.
 
-| Item      | Value                                                                  |
-| --------- | ---------------------------------------------------------------------- |
-| Server    | PostgreSQL 17.10 (Homebrew), `vector 0.8.0` available                  |
-| Port      | **5544**                                                               |
-| Database  | `storemink_local`, owner `postgres`                                    |
-| Login     | `app`, member of `app_user`, `app_service`, and the Supabase-era roles |
-| Auth      | `trust` for local and 127.0.0.1 (the cluster's existing `pg_hba.conf`) |
-| Footprint | ~16 MB idle                                                            |
+| Item      | Value                                                                                                          |
+| --------- | -------------------------------------------------------------------------------------------------------------- |
+| Server    | PostgreSQL 17.10 (Homebrew), `vector 0.8.0` available                                                          |
+| Port      | **5544**                                                                                                       |
+| Database  | `storemink_local`, owner `postgres`                                                                            |
+| Login     | `app`, member of `app_user`, `app_service` and the legacy policy roles `anon`, `authenticated`, `service_role` |
+| Auth      | `trust` for local and 127.0.0.1 (the cluster's existing `pg_hba.conf`)                                         |
+| Footprint | ~16 MB idle                                                                                                    |
 
 ★ **Port 5544, not 5432.** This Mac already runs EDB PostgreSQL 15, 16 and 17
 from `/Library/PostgreSQL/` on ports 5432–5434 as the system `postgres` user.
@@ -279,11 +279,9 @@ schema would look perfect and the data would be quietly missing.
 ★ **A dump, not replayed SQL, and that is deliberate.** The
 `drizzle/migrations/manifest.json` baseline is a _verification_ baseline: it
 asserts that fifteen tables and a list of columns exist. It does not create
-anything, so `db:migrate` cannot build a database from empty. Replaying the 153
-`supabase/*.sql` files cannot either — this document's own §15b notes record
-their apply-order dependencies (`billing_03` must exist before `billing_02`'s
-function is called) and the files edited after being applied, which re-run as
-silent no-ops. A dump is provably the schema that is actually deployed.
+anything, so `db:migrate` cannot build a database from empty, and the schema
+before that baseline was applied by hand and survives only in git history. A
+dump is provably the schema that is actually deployed.
 
 ★ **The restore tolerates errors on purpose.** A Cloud SQL dump carries `GRANT`s
 to roles that exist only there (`cloudsqladmin` and friends). Those lines failing

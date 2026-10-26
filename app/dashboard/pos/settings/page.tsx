@@ -18,12 +18,12 @@ export default async function PosSettingsPage() {
     <div className="dash-page-enter">
       <header className="dash-page-header">
         <h1>POS Settings</h1>
-        <p>How the register behaves for your staff.</p>
+        <p>How POS behaves for your staff.</p>
       </header>
 
       <div className="mt-6 max-w-2xl">
         <FeatureToggles
-          title="Point of Sale"
+          title="POS"
           plan={plan}
           initialSettings={settings}
           canManage={access.can("pos", "manage")}

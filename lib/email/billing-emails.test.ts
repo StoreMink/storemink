@@ -336,7 +336,7 @@ describe("renewalOverdueTemplate: `attempted` must be truthful", () => {
     const e = renewalOverdueTemplate({ ...base, attempted: true });
     expect(e.subject).toBe("Payment overdue: your Pro plan ends in 48 hours");
     expect(e.html).toContain("09 Nov, 12:00 IST");
-    expect(e.html).toContain("point of sale");
+    expect(e.html).toContain("including POS");
   });
 
   it("★ only says we couldn't collect when a charge was attempted", () => {

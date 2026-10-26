@@ -8,8 +8,7 @@ import { isStoreOwnedObjectPath } from "@/lib/storage/paths";
 //    store, so an in-bucket URL is not ownership; but a URL outside the bucket
 //    is harmless here, because `deleteStorageUrls` cannot resolve it to a path
 //    and already treats it as unmanaged. Refusing everything external would
-//    only break the legacy Supabase-hosted media CODEBASE records as serving
-//    until the backfill.
+//    only break older media hosted outside our bucket that rows still use.
 //
 // ★ WHY A WRITE IS GUARDED AT ALL, when the sweep is scoped too: the sweep's
 //   scope protects the OTHER store's file, and this protects the merchant

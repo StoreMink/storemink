@@ -375,8 +375,10 @@ export const LEGACY_PRODUCT_DETAIL_ENUM = [
 /** v32 (plan Phase 2e): the product and collection page templates
  * (lib/themes/templates.ts). Top level like `fontPairing`, so a targeted
  * repair never edits it; the compiler normalises it into preset.templates.
- * Every block carries every field (a closed schema), unused ones empty. */
-const TEMPLATES_SCHEMA: Schema = obj({
+ * Every block carries every field (a closed schema), unused ones empty.
+ * ★ Only v32 requests send it now: `stageBSchemaFor` puts it back in the
+ * v32 twin, where v33 sends the same templates as a JSON string. */
+export const TEMPLATES_SCHEMA: Schema = obj({
   product: obj({
     gallery: enumOf(PRODUCT_GALLERIES),
     blocks: {
@@ -428,10 +430,15 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   // compiler resolves it into design.fonts; it is never stored. Top level,
   // not under design, so it is not offered as a repair target.
   fontPairing: nullable(enumOf(FONT_PAIRING_KEYS)),
-  templates: TEMPLATES_SCHEMA,
+  // v33: the page templates as one JSON string, the way a section's config
+  // is carried. The v32 object (TEMPLATES_SCHEMA) pushed the revision
+  // schemas past what Vertex accepts; the compiler parses this and names
+  // every value the object used to enforce. Same position as v32's
+  // `templates`, so the v32 twin puts the object back in its place.
+  templatesJson: str,
   // v32 (plan Phase 2c's last chrome candidate): the announcement bar above
   // the header, one line and an optional site path; "" for text means none.
-  // Top level like `templates`, so it is never a repair target.
+  // Top level like the templates, so it is never a repair target.
   announcement: obj({ text: str, href: str }),
   features: { type: "array", items: enumOf(THEME_STUDIO_FEATURES) },
   brand: obj({ primaryColor: hex, tagline: str, blurb: str }),
@@ -759,13 +766,14 @@ export function stageASchemaFor(
   return twin;
 }
 
-/** The pre-v32 shape of a Stage B schema: no top-level `templates` or
- * `announcement`, and design.layout.productDetail without "stacked".
- * Matched by value like the other twins; the initial schemas carry no layout
- * enum and lose only the objects. */
+/** The pre-v32 shape of a Stage B schema: no top-level templates (as JSON
+ * or as the v32 object) or `announcement`, and design.layout.productDetail
+ * without "stacked". Matched by value like the other twins; the initial
+ * schemas carry no layout enum and lose only the fields. */
 function withoutTemplates(schema: Schema): Schema {
   const twin = structuredClone(schema);
   const properties = twin.properties as Record<string, Schema>;
+  delete properties.templatesJson;
   delete properties.templates;
   delete properties.announcement;
   twin.required = Object.keys(properties);
@@ -785,10 +793,31 @@ function withoutTemplates(schema: Schema): Schema {
   return twin;
 }
 
+/** The v32 shape of a Stage B schema: the page templates as the closed
+ * object v32 sent (TEMPLATES_SCHEMA), in `templatesJson`'s place among the
+ * properties and in `required`, so a persisted v32 request is rebuilt byte
+ * for byte. */
+function withTemplatesObject(schema: Schema): Schema {
+  const twin = structuredClone(schema);
+  twin.properties = Object.fromEntries(
+    Object.entries(twin.properties as Record<string, Schema>).map(
+      ([key, value]) =>
+        key === "templatesJson"
+          ? ["templates", structuredClone(TEMPLATES_SCHEMA)]
+          : [key, value],
+    ),
+  );
+  twin.required = (twin.required as string[]).map((key) =>
+    key === "templatesJson" ? "templates" : key,
+  );
+  return twin;
+}
+
 /** The schema a run of this prompt revision sends: the current one, or a
  * twin without font pairings (pre-v25), without the nested-block sections
  * (pre-v29), the v30 sections, the v31 layout variants and/or the v32
- * templates, whichever the revision predates. */
+ * templates, or with the v32 templates object instead of v33's JSON string,
+ * whichever the revision predates. */
 export function stageBSchemaFor(
   schema: Schema,
   fontPairings: boolean,
@@ -796,16 +825,21 @@ export function stageBSchemaFor(
   moreSections = true,
   moreVariants = true,
   templates = true,
+  templatesJson = true,
 ): Schema {
-  if (fontPairings && nestedBlocks && moreSections && moreVariants && templates)
+  // A request without templates has neither shape of them, so the JSON flag
+  // only counts alongside `templates` (one twin per real shape).
+  const asJson = templates && templatesJson;
+  if (fontPairings && nestedBlocks && moreSections && moreVariants && asJson)
     return schema;
   const index = STAGE_B_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage B schema.");
-  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}:${templates}`;
+  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}:${templates}:${asJson}`;
   let twin = STAGE_B_TWINS.get(key);
   if (!twin) {
     twin = schema;
     if (!templates) twin = withoutTemplates(twin);
+    else if (!asJson) twin = withTemplatesObject(twin);
     if (!nestedBlocks || !moreSections)
       twin = withSectionTypes(
         twin,

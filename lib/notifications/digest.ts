@@ -10,27 +10,20 @@
 // event its own deadline and quietly degrade back into one email per event —
 // the exact thing digests exist to prevent.
 //
-// DUE ≠ SENT. A row is sent by the next worker run after it comes due, and the
-// cron heartbeat is currently DAILY (Vercel Hobby caps crons at once/day — see
-// the same note on the payments reaper, §18). In practice most runs are
-// triggered by an instant email being enqueued, which drains every due row
-// including digests. So daily digests are punctual (see the hour below) and
-// HOURLY digests are best-effort until the worker can run hourly — which comes
-// free with Cloud Scheduler at the Cloud Run cutover.
+// DUE ≠ SENT. A row is sent by the next worker run after it comes due. Cloud
+// Scheduler runs /api/cron/send-emails every minute (docs/cron-jobs.md), and
+// an instant email being enqueued also kicks the worker, so hourly and daily
+// digests leave within about a minute of coming due.
 // ---------------------------------------------------------------------------
 
 import type { Digest } from "./events";
 
 /**
- * The hour (UTC) a daily digest becomes DUE.
- *
- * Deliberately 23:00, an hour before the `/api/cron/send-emails` heartbeat at
- * 00:00 UTC (vercel.json): a row is only SENT by the next worker run after it
- * comes due, so a slot dated after the cron would wait an entire extra day.
- * Landing just before it means the digest goes out at ~00:00 UTC — 05:30 IST,
- * which for an India-first product is the merchant's morning summary.
- *
- * ⚠ If the cron schedule moves, move this with it.
+ * The hour (UTC) a daily digest becomes DUE: 23:00 UTC, 04:30 IST, the
+ * merchant's morning summary for an India-first product. Cloud Scheduler
+ * drains the queue every minute, so the digest leaves within about a minute.
+ * (23 was chosen when the worker ran once a day at 00:00 UTC; moving it now is
+ * a product decision, not a scheduling one.)
  */
 export const DAILY_DIGEST_HOUR_UTC = 23;
 

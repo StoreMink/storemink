@@ -564,6 +564,16 @@ inherits staging's database, Firebase project, bucket and every secret name.
 > trigger may still override a default; the triggers' own values were not read
 > for this table (that needs a production read).
 
+> **`_DOMAIN_LB_IP` is also the client-IP anchor.** Besides the address
+> merchants point their A record at, it is how `lib/client-ip.ts` finds each
+> visitor's address: the `X-Forwarded-For` entry before the rightmost copy of
+> it. If the forwarding rule's address changes, or an IPv6 frontend is added,
+> change this value (and, for IPv6, the code) in the same release. Without a
+> matching anchor the code falls back to the FIRST entry, the rule before
+> 26 Oct 2026: every visitor still has a key of their own, but a caller can
+> forge it and sidestep the per-IP limits. The web service then logs
+> `client-ip: X-Forwarded-For does not end in DOMAIN_LB_IP` once per instance.
+
 > **THEME_STUDIO_BUILD_ID needs no trigger value.** The deploy step sets it to
 > Cloud Build's built-in `COMMIT_SHA` (Theme Studio plan P3), so a
 > settings-only revision, or a re-run of the same commit, no longer makes
@@ -699,6 +709,14 @@ Search Console via ADC — grant it access to the property once (see
 > database if `_DB_NAME` is wrong. Before onboarding real customers, either
 > split staging back onto its own instance or add a restricted `app_staging`
 > role (own secret + a `_DB_USER` substitution) so this is impossible.
+
+> **Only two Cloud SQL secrets should exist**: `CLOUDSQL_PROD_APP_PW` and
+> `CLOUDSQL_PROD_POSTGRES_PW`, because staging and production are two databases
+> in one instance. A third is a mistake, not a new environment; the
+> `CLOUDSQL_STAGING_*` pair was deleted on 2026-09-02 after a dead `postgres`
+> secret cost a failed migration run. A durable backup of the deleted
+> `storemink-staging` instance is at
+> `~/storemink-backups/old_staging_storemink_2026-07-22.sql`.
 
 The Firebase `apiKey` and app id are public (they ship in the client bundle) —
 not secrets. Real secrets (`DB_PASSWORD`, `CRON_SECRET`) come from Secret Manager

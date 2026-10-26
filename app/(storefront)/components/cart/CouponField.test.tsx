@@ -6,7 +6,7 @@ import { render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 
 // CartProvider pulls the storefront coupon validator (a "use server" module);
-// mock it so we drive the apply-coupon path without a network/Supabase round-trip.
+// mock it so we drive the apply-coupon path without a network/database round-trip.
 vi.mock("@/app/actions/coupon-actions", () => ({
   validateCoupon: vi.fn(),
   getAvailableStorefrontCoupons: vi.fn().mockResolvedValue([]),

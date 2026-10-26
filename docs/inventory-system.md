@@ -45,7 +45,7 @@
 ## 2. Current state (what exists today)
 
 - `product_variants` already has `stock integer NOT NULL DEFAULT 0` and `sku`
-  (`supabase/products_categories.sql`). The storefront already respects it:
+  (`products_categories.sql`). The storefront already respects it:
   `product-detail-client.tsx` derives `outOfStock` and caps quantity from
   `selectedVariant.stock`.
 - **Simple (variant‑less) products have NO stock field** — `products` has none,
@@ -55,14 +55,14 @@
   group Workspace). The nav slot + role gating are ready; the page does not exist.
 - **`placeOrder` does not touch stock** (`app/actions/checkout-actions.ts`).
 - Orders already have a `cancelled` status; `order_items.variant_id` references
-  `product_variants(id) ON DELETE RESTRICT` (`supabase/orders_table.sql`).
+  `product_variants(id) ON DELETE RESTRICT` (`orders_table.sql`).
 - **Blocker:** `replaceVariants` in `app/actions/product-actions.ts` **deletes all
   variants and re‑inserts** on every product save. Its comment ("Variants aren't
   referenced by orders yet, so this is safe") is now false — orders reference
   variants, and this would churn variant ids and overwrite stock. Must be fixed
   before inventory can be trusted (Phase 0).
 - Proven precedent to reuse: the atomic coupon counter
-  (`supabase/coupon_usage_rpc.sql` — `increment_coupon_usage` /
+  (`coupon_usage_rpc.sql` — `increment_coupon_usage` /
   `decrement_coupon_usage`) and the reserve→confirm→release flow already wired
   into `placeOrder`.
 
@@ -93,7 +93,7 @@
 
 ## 4. Data model
 
-### 4.1 Stock fields on products & variants — `supabase/inventory.sql` (new, idempotent)
+### 4.1 Stock fields on products & variants — `inventory.sql` (new, idempotent)
 
 ```sql
 -- products = the simple‑product / default SKU
@@ -120,7 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_variants_stock     ON product_variants (store_id,
 - A line item's SKU = variant (if `variant_id`) else product.
 - `low_stock_threshold` null ⇒ fall back to the store default (§7).
 
-### 4.2 Ledger — `stock_movements` (in `supabase/inventory.sql`)
+### 4.2 Ledger — `stock_movements` (in `inventory.sql`)
 
 ```sql
 CREATE TABLE IF NOT EXISTS stock_movements (
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS stock_movements (
   balance_after integer NOT NULL,          -- running balance snapshot (audit)
   order_id      uuid REFERENCES orders(id) ON DELETE SET NULL,
   note          text,
-  created_by    uuid REFERENCES auth.users(id) ON DELETE SET NULL,  -- null = system/checkout
+  created_by    text,                      -- admin uid; null = system/checkout
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_stock_movements_sku
@@ -160,7 +160,7 @@ Add a `SELECT` policy scoped by `is_store_admin(store_id)` (mirror
 
 ---
 
-## 5. Atomic operations — `supabase/inventory_rpc.sql` (new)
+## 5. Atomic operations — `inventory_rpc.sql` (new)
 
 All `SECURITY DEFINER`, `SET search_path = ''`, granted to `authenticated,
 service_role`. Same shape/rationale as `coupon_usage_rpc.sql`.
@@ -295,8 +295,8 @@ getMovements(productId, variantId, page, locationId) // authorized, location-fil
   category, image.
 - Pagination via `app/dashboard/lib/list-params.ts` (as orders/coupons pages do).
 - Input validation: integer, bounded; reject non‑`inventory`‑managers.
-- Reads may use the RLS user client; **writes call the RPCs via
-  `createAdminClient()`** after the permission check.
+- Reads may run under `withUser` (RLS); **writes call the RPCs under
+  `withService`** after the permission check.
 
 ---
 
@@ -338,8 +338,8 @@ Sell against `available` (= `stock` now):
 - **Privacy:** the cached catalog query exposes an `in_stock` boolean plus the
   exact count **only** when `stock ≤ threshold` (so competitors can't scrape exact
   inventory), gated by `showStockCounts`.
-- **Optional realtime**: subscribe to `stock` on the PDP (Supabase Realtime,
-  already used for blogs) for live counts on hot items.
+- **Optional live counts**: push `stock` changes to the PDP for hot items (needs
+  the LISTEN/NOTIFY → SSE service in `docs/notifications.md` §5).
 
 ---
 
@@ -421,8 +421,8 @@ CI gates unchanged: `lint`, `typecheck`, `test`, `prettier`, `build`.
 
 ### Phase 1 — Backend correctness
 
-- **New** `supabase/inventory.sql` (columns + `stock_movements` + RLS + indexes).
-- **New** `supabase/inventory_rpc.sql` (`reserve_stock`, `release_stock`, `adjust_stock`).
+- **New** `inventory.sql` (columns + `stock_movements` + RLS + indexes).
+- **New** `inventory_rpc.sql` (`reserve_stock`, `release_stock`, `adjust_stock`).
 - **New** `app/actions/inventory-actions.ts` + `.test.ts`.
 - **Modify** `app/actions/checkout-actions.ts` (reserve stock; combined rollback).
 - **Modify** `app/actions/checkout-actions.test.ts`.

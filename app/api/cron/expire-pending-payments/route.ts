@@ -22,9 +22,8 @@ import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 // v1 has no merchant webhooks (reconcile-on-read instead), so this scheduled
 // job is the safety net for shoppers who paid but never triggered
 // confirmOnlinePayment, and for orders whose payment simply never happened.
-// It runs DAILY on the Vercel Hobby plan (which caps crons at once/day); it's
-// only a backstop, since the success page reconciles a real payment instantly.
-// On Vercel Pro, bump the vercel.json schedule back to hourly.
+// Cloud Scheduler runs it hourly at :30 (docs/cron-jobs.md); it's only a
+// backstop, since the success page reconciles a real payment instantly.
 //
 // For each razorpay order pending longer than the grace window:
 //   1. Ask Razorpay first — a CAPTURED payment means the money was taken:
@@ -47,7 +46,7 @@ import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 // Independent of the payment work below: the sweep runs even when there are no
 // pending orders, and a failure in one must not skip the other.
 //
-// Auth: `Authorization: Bearer <CRON_SECRET>` (Vercel Cron sends it).
+// Auth: `Authorization: Bearer <CRON_SECRET>` (Cloud Scheduler sends it).
 
 export const runtime = "nodejs";
 export const maxDuration = 300;

@@ -90,12 +90,12 @@ function EmptyHistory({
         {online
           ? "Shop online and your delivery orders will appear here."
           : supportsPos && supportsPickup
-            ? "Counter purchases linked to your account and orders collected from a shop will appear here."
+            ? "In-store purchases linked to your account and orders collected from a shop will appear here."
             : supportsPickup
               ? "Choose store pickup at checkout and your collection order will appear here."
               : supportsPos
                 ? "Ask the cashier to attach your customer account so your store receipt appears here."
-                : "Your earlier counter purchases and collection orders will stay available here."}
+                : "Your earlier in-store purchases and collection orders will stay available here."}
       </p>
       {(online || supportsPickup) && (
         <Link href="/shop" className={styles.cta}>

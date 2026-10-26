@@ -7,7 +7,7 @@ import {
 
 const SOURCE = {
   title: "Process an in-store sale",
-  excerpt: "Add items and complete checkout from the StoreMink register.",
+  excerpt: "Add items and complete checkout in StoreMink POS.",
   categoryTitle: "Point of Sale",
 };
 

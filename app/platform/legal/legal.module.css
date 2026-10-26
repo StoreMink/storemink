@@ -65,6 +65,19 @@
   margin: 0 0 14px;
 }
 
+/* The policies carry long bulleted lists. Tailwind's preflight strips list
+   bullets, padding and margins, and .smh zeroes list margins, so without these
+   rules every item runs into the next as one block of text. */
+.body :global(ul) {
+  list-style: disc;
+  padding-left: 1.4em;
+  margin: 0 0 14px;
+}
+
+.body :global(li) {
+  margin: 0 0 8px;
+}
+
 .body :global(strong) {
   color: #111827;
   font-weight: 600;

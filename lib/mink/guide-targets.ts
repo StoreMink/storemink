@@ -53,7 +53,7 @@ export const MINK_GUIDE_TARGETS = {
   invite_staff: {
     destination: "staff",
     label: "Invite user",
-    hint: "Sends a dashboard or register invitation by email.",
+    hint: "Sends a dashboard or POS invitation by email.",
     text: "^invite",
     role: "button",
   },

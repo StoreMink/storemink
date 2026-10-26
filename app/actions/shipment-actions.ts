@@ -230,7 +230,7 @@ export async function getOrderLogisticsView(
   const { order, lines } = await orderForShipment(storeId, orderId);
   if (!order) return { error: "Order not found." };
   if (order.salesChannel === "pos") {
-    return { error: "POS sales are completed at the register." };
+    return { error: "POS sales are completed in store." };
   }
 
   const fulfilmentId =

@@ -417,6 +417,64 @@ describe("ChatGPT-style Mink attachments", () => {
     );
   });
 
+  // ★ One beacon that THROWS (older Chromium refused a JSON Blob with a
+  // SecurityError) used to stop the loop, so every later upload stayed in
+  // the Media Library. Now that one goes as a keepalive fetch instead.
+  it("a beacon that throws for one upload still sends the next, and that one goes by keepalive fetch", async () => {
+    let calls = 0;
+    const beacon = vi.fn<(url: string, body?: BodyInit | null) => boolean>(
+      () => {
+        calls += 1;
+        if (calls === 1) throw new DOMException("refused", "SecurityError");
+        return true;
+      },
+    );
+    vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon });
+    media.upload
+      .mockResolvedValueOnce({
+        asset: { id: "asset-1", url: SAVED_URL, filename: "a.png" },
+      })
+      .mockResolvedValueOnce({
+        asset: { id: "asset-2", url: SAVED_URL, filename: "b.png" },
+      });
+    render(
+      <LiveComposer initial="Use these" canSaveMedia onSubmit={vi.fn()} />,
+    );
+    const files = ["a.png", "b.png"].map((name) => {
+      const file = new File(["source"], name, { type: "image/png" });
+      Object.defineProperty(file, "arrayBuffer", {
+        value: async () => new TextEncoder().encode("source").buffer,
+      });
+      return file;
+    });
+    fireEvent.change(screen.getByLabelText("Choose image or document"), {
+      target: { files },
+    });
+    await waitFor(() => expect(media.upload).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: "View b.png" });
+    const keepalive = vi.fn(async () => new Response(null));
+    vi.stubGlobal("fetch", keepalive);
+
+    fireEvent(
+      window,
+      Object.assign(new Event("pagehide"), { persisted: false }),
+    );
+    expect(beacon).toHaveBeenCalledTimes(2);
+    expect(keepalive).toHaveBeenCalledOnce();
+    expect(keepalive).toHaveBeenCalledWith("/api/mink/media/discard", {
+      method: "POST",
+      body: beacon.mock.calls[0][1],
+      keepalive: true,
+      credentials: "same-origin",
+    });
+    const ids = await Promise.all(
+      beacon.mock.calls.map(async ([, body]) =>
+        JSON.parse(await (body as Blob).text()),
+      ),
+    );
+    expect(ids).toEqual([{ id: "asset-1" }, { id: "asset-2" }]);
+  });
+
   it("dismisses attachment errors after a few seconds", async () => {
     vi.useFakeTimers();
     try {

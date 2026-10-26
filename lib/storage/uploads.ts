@@ -76,7 +76,8 @@ const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50 MB
 /**
  * Uploads a video and returns its public URL.
  *
- * Videos are too large to proxy through a serverless route, so this uses the
+ * Videos are too large to proxy through the app server (Cloud Run caps a
+ * request at 32 MiB), so this uses the
  * signed-URL flow: the server (/api/upload/sign-video) authenticates + validates
  * and mints a one-time v4 signed PUT URL; the file then goes DIRECTLY to Google
  * Cloud Storage.

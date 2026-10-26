@@ -284,6 +284,12 @@ export interface RevampConversationEntry {
   publishedAt: string | null;
   undoneAt: string | null;
   createdAt: string;
+  /**
+   * Stop was asked for and its runner has not stopped yet. ★ Read with the
+   * list, so the chat tools tell "still being made" from "still stopping"
+   * without a second read.
+   */
+  cancelRequested: boolean;
 }
 
 type RawRevampRow = typeof minkRevamps.$inferSelect;
@@ -561,7 +567,14 @@ async function insertUnderStoreLock(
   return { ok: true, job: parsed.row };
 }
 
-async function findActiveRevampId(storeId: string): Promise<string | null> {
+/**
+ * The store's one active revamp, if any. ★ Read by the chat tools before
+ * they claim anything (storefront-revamp-tools.ts `queueRevamp`); the insert
+ * above still decides a race under the store's lock.
+ */
+export async function findActiveRevampId(
+  storeId: string,
+): Promise<string | null> {
   const rows = await withService((db) =>
     db
       .select({ id: minkRevamps.id })
@@ -1716,6 +1729,7 @@ export async function listConversationRevamps(input: {
         summary: sql<
           string | null
         >`coalesce(${minkRevamps.result} -> 'stored' ->> 'summary', ${minkRevamps.plan} -> 'plan' ->> 'summary')`,
+        cancelRequested: sql<boolean>`${minkRevamps.cancelRequestedAt} is not null`,
       })
       .from(minkRevamps)
       .where(
@@ -1741,6 +1755,7 @@ export async function listConversationRevamps(input: {
         publishedAt: stamp(row.publishedAt),
         undoneAt: stamp(row.undoneAt),
         createdAt: stamp(row.createdAt) ?? EPOCH,
+        cancelRequested: row.cancelRequested === true,
       },
     ];
   });

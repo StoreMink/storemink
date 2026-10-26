@@ -35,6 +35,9 @@ export function generateStaticParams() {
   return LEGAL_DOCS.map((d) => ({ slug: d.slug }));
 }
 
+// ★ THE DATE IS INDIA'S DATE. Cloud Run sets no TZ, so without an explicit
+// zone the server formats in UTC, and a version published before 05:30 IST
+// would show the day before it took effect in India.
 function formatDate(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
@@ -43,6 +46,7 @@ function formatDate(iso: string): string {
         day: "numeric",
         month: "long",
         year: "numeric",
+        timeZone: "Asia/Kolkata",
       });
 }
 

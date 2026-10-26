@@ -59,13 +59,12 @@ describe("parseHost", () => {
     });
   });
 
-  // Local dev + Vercel previews render the platform (which falls back to
-  // WholeSip), so day-to-day work is unchanged.
-  it("treats localhost and vercel previews as the platform", () => {
+  // Local dev renders the platform (which falls back to WholeSip), so
+  // day-to-day work is unchanged.
+  it("treats localhost as the platform", () => {
     expect(parseHost("localhost").type).toBe("platform");
     expect(parseHost("localhost:3000").type).toBe("platform");
     expect(parseHost("127.0.0.1").type).toBe("platform");
-    expect(parseHost("my-app-abc123.vercel.app").type).toBe("platform");
   });
 
   // `{slug}.localhost` is the escape hatch for testing multi-tenant routing

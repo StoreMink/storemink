@@ -2,8 +2,8 @@
  * records do to a storefront revamp: a failed or stopped chat run KEEPS the
  * revamp it started and saves its card (B4, which replaced money-3's
  * cancellation), a run a dead server left running is closed through the same
- * record (B7), and neither the conversation prune nor the History delete
- * reaches a conversation whose revamp is still live (money-5). Run with
+ * record (B7), a new chat deletes nothing, and the History delete never
+ * reaches a conversation whose revamp is still being made (money-5). Run with
  * MINK_REVAMP_LOCAL_TEST=1; the fixed loopback database keeps it away from
  * Cloud SQL, and everything happens inside one transaction that is rolled back.
  *
@@ -869,20 +869,35 @@ describe.skipIf(!enabled)(
     });
 
     // -------------------------------------------------------------------------
-    // money-5: the prune and the History delete keep a live revamp's chat.
+    // money-5: a new chat deletes nothing; the History delete keeps a chat
+    // whose revamp is still being made, and retires the rest
+    // (conversation-retire.ts; conversation-retention.local.test.ts has the
+    // rest of the rules).
     // -------------------------------------------------------------------------
 
-    describe("pruning and deleting conversations", () => {
+    describe("starting and deleting conversations", () => {
       async function fillHistory(count: number) {
         for (let i = 1; i <= count; i += 1) await conversation(i);
       }
 
-      it("★ never prunes a conversation whose redesign card is ready, and a new chat still starts", async () => {
-        // The oldest of eleven conversations holds the card.
+      async function chatCount(): Promise<number> {
+        return Number(
+          (
+            await client.query(
+              "select count(*) as n from mink_conversations where store_id = $1",
+              [storeId],
+            )
+          ).rows[0].n,
+        );
+      }
+
+      it("★ a new chat deletes nothing, however many chats exist", async () => {
+        // The oldest of fifteen conversations holds a ready card.
         const oldest = await conversation(48);
         const oldRun = await run(oldest, "succeeded");
         const { revampId, draftId } = await readyRevamp(oldest, oldRun);
-        await fillHistory(9);
+        await fillHistory(14);
+        expect(await chatCount()).toBe(15);
 
         const started = await startMinkRun({
           actor: actorFor(undefined),
@@ -891,77 +906,38 @@ describe.skipIf(!enabled)(
         });
 
         expect(started.conversationId).not.toBe(oldest);
-        expect(
-          (
-            await client.query(
-              "select id from mink_conversations where id = $1",
-              [oldest],
-            )
-          ).rows,
-        ).toHaveLength(1);
+        expect(await chatCount()).toBe(16);
         expect(await revampRow(revampId)).toMatchObject({
           status: "ready",
           draft_id: draftId,
         });
       });
 
-      it("never prunes a conversation whose redesign is still being made", async () => {
-        const oldest = await conversation(48);
-        const oldRun = await run(oldest, "succeeded");
-        const job = await revamp(oldest, oldRun);
-        await fillHistory(9);
-
-        await startMinkRun({
-          actor: actorFor(undefined),
-          message: "How many orders today?",
-          model: "fixture",
-        });
-
-        expect(await revampRow(job.id)).toMatchObject({
-          status: "queued",
-          origin_run_id: oldRun,
-          conversation_id: oldest,
-        });
-      });
-
-      it("still prunes a conversation whose redesign was cancelled", async () => {
-        const oldest = await conversation(48);
-        const oldRun = await run(oldest, "succeeded");
-        const job = await revamp(oldest, oldRun);
-        await client.query(
-          "update mink_revamps set status = 'cancelled', error_code = 'cancelled', finished_at = now() where id = $1",
-          [job.id],
-        );
-        await fillHistory(9);
-
-        await startMinkRun({
-          actor: actorFor(undefined),
-          message: "How many orders today?",
-          model: "fixture",
-        });
-
-        expect(
-          (
-            await client.query(
-              "select id from mink_conversations where id = $1",
-              [oldest],
-            )
-          ).rows,
-        ).toHaveLength(0);
-      });
-
-      it("★ refuses to delete a conversation whose redesign card is ready, with a reason", async () => {
+      it("★ deletes a conversation whose redesign card is ready: the card goes with it, stripped", async () => {
         const chat = await conversation();
         const chatRun = await run(chat, "succeeded");
         const { revampId } = await readyRevamp(chat, chatRun);
 
         await expect(
           deleteMinkConversation(actorFor(undefined), chat),
-        ).rejects.toMatchObject({
-          code: "conversation_has_redesign",
-          status: 409,
+        ).resolves.toBe("deleted");
+
+        expect(
+          (
+            await client.query(
+              "select id from mink_conversations where id = $1",
+              [chat],
+            )
+          ).rows,
+        ).toHaveLength(0);
+        expect(await revampRow(revampId)).toMatchObject({
+          status: "superseded",
+          draft_id: null,
+          conversation_id: null,
+          requester_email: null,
+          plan: null,
+          request: { kind: "full" },
         });
-        expect((await revampRow(revampId)).status).toBe("ready");
       });
 
       it("refuses to delete a conversation whose redesign is still being made", async () => {
@@ -977,7 +953,7 @@ describe.skipIf(!enabled)(
         });
       });
 
-      it("deletes a conversation whose redesign failed", async () => {
+      it("deletes a conversation whose redesign failed, stripping the redesign", async () => {
         const chat = await conversation();
         const chatRun = await run(chat, "succeeded");
         const job = await revamp(chat, chatRun);
@@ -999,6 +975,12 @@ describe.skipIf(!enabled)(
             )
           ).rows,
         ).toHaveLength(0);
+        expect(await revampRow(job.id)).toMatchObject({
+          status: "failed",
+          error_code: "model_unavailable",
+          error_detail: null,
+          request: { kind: "full" },
+        });
       });
     });
   },

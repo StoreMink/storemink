@@ -497,11 +497,7 @@ describe("ensureAuthorizedDomain", () => {
   });
 
   it("★ never adds a shared-hosting suffix (acme.eu.org must not authorise eu.org)", async () => {
-    for (const domain of [
-      "acme.eu.org",
-      "myshop.vercel.app",
-      "acme.is-a.dev",
-    ]) {
+    for (const domain of ["acme.eu.org", "myshop.github.io", "acme.is-a.dev"]) {
       const calls = stubConfig(PLATFORM);
       await ensureAuthorizedDomain(domain);
       expect(calls[1]!.body, domain).toEqual({

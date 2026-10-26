@@ -116,8 +116,9 @@ export async function storeAdminRecipients(
 }
 
 /**
- * StoreMink platform operators. Keyed by lowercased email — see the note on
- * the notifications RLS policy in supabase/notifications_01_schema.sql.
+ * StoreMink platform operators. Keyed by lowercased email, because
+ * platform_admins lists operators by email, not by login uid; the notifications
+ * RLS policies match operator rows on lower(auth.email()).
  */
 export async function operatorRecipients(db: Db): Promise<Recipient[]> {
   const rows = await db

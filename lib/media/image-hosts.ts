@@ -2,7 +2,7 @@
 // next.config.ts. Client-safe.
 //
 // ★ A PRODUCT PHOTO CAN LIVE ANYWHERE. Rows written before the GCS migration
-//   still point at the old Supabase host, a CSV import can name any https
+//   still point at an older host, a CSV import can name any https
 //   image, and theme seeds use site paths. next/image THROWS on a host that is
 //   not configured, which takes the whole page down, so a URL outside the list
 //   is rendered `unoptimized` (a plain request for the original file).

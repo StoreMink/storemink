@@ -13,6 +13,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { headers } from "next/headers";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { withAnon, withService } from "@/lib/db/client";
+import { clientIpOrNull } from "@/lib/client-ip";
 import { legalAcceptances, legalDocuments } from "@/drizzle/schema";
 import { logError } from "@/lib/observability/logger";
 import { LEGAL_CONTENT, type LegalContent } from "./content";
@@ -185,10 +186,8 @@ export async function recordSignupConsent(ctx: ConsentContext): Promise<void> {
   let userAgent: string | null = null;
   try {
     const h = await headers();
-    ip =
-      h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      h.get("x-real-ip") ||
-      null;
+    // The address our load balancer saw, never one the caller wrote.
+    ip = clientIpOrNull(h);
     userAgent = h.get("user-agent");
   } catch {
     // No request scope (a script, a test) — the row is still worth writing.

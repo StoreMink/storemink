@@ -972,9 +972,8 @@ async function fanOut(
     await db.insert(notifications).values(rows).onConflictDoNothing();
   }
   if (mail.length > 0) {
-    // Enqueue only — sending happens in the worker. See the header of
-    // supabase/notifications_02_email_queue.sql for why a Resend call must
-    // never sit on a checkout's code path.
+    // Enqueue only: sending happens in the worker, so a Resend outage can
+    // never slow or fail the checkout or status change that emitted this.
     await db.insert(notificationEmailQueue).values(mail).onConflictDoNothing();
   }
   if (sms.length > 0) {

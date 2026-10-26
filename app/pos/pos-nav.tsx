@@ -199,7 +199,7 @@ export function PosNav({
           <button
             type="button"
             onClick={() => setOpen(true)}
-            aria-label="Open the register menu"
+            aria-label="Open the POS menu"
             aria-expanded={open}
             className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--pos-ink)] transition-colors hover:bg-[var(--pos-surface-2)] hover:text-[var(--pos-ink)]"
           >
@@ -215,7 +215,7 @@ export function PosNav({
             )}
           </button>
           <span className="truncate text-base font-semibold">
-            {activeItem?.label ?? "Register"}
+            {activeItem?.label ?? "POS"}
           </span>
           <span className="ml-auto flex min-w-0 items-center gap-3 truncate pr-1 text-xs text-[var(--pos-ink-2)]">
             <span className="flex min-w-0 items-center gap-1.5 truncate">
@@ -250,13 +250,13 @@ export function PosNav({
             className="absolute inset-0 h-full w-full bg-black/60"
           />
           <nav
-            aria-label="Register"
+            aria-label="POS"
             className="absolute inset-y-0 left-0 flex w-[280px] max-w-[85vw] flex-col border-r border-[var(--pos-border)] bg-[var(--pos-surface)] shadow-2xl"
           >
             <div className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--pos-border)] pl-4 pr-2">
               <span className="flex items-center gap-2 font-semibold">
                 <ScanLine className="h-5 w-5" strokeWidth={2} />
-                Register
+                POS
               </span>
               <button
                 type="button"
@@ -320,7 +320,7 @@ export function PosNav({
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--pos-surface-2)] py-3 text-sm font-semibold transition-colors hover:bg-[var(--pos-surface-3)] disabled:opacity-50"
                 >
                   <LogOut className="h-4 w-4" strokeWidth={2} />
-                  Lock the register
+                  Lock POS
                 </button>
               ) : (
                 <Link

@@ -55,6 +55,11 @@
 import path from "node:path";
 import process from "node:process";
 import { loadManifest } from "./db-migrations-core.mjs";
+import {
+  COUNTER_AS_FEATURE,
+  OLD_POS_WORD,
+  POINT_OF_SALE,
+} from "./pos-wording.mjs";
 
 /**
  * Violations that predate this linter. Their SQL cannot be edited -- every one
@@ -677,23 +682,158 @@ export const GRANDFATHERED_LONG_DASH = new Set([
   "20261008_0176_whatsapp_notify_help",
 ]);
 
+/**
+ * The same dash spelled another way: an en dash (U+2013), or either dash as an
+ * HTML entity (&mdash; &ndash; &#8212; &#8211; &#x2014; &#x2013;). They render
+ * as the dashes the owner's rule forbids, but a pattern written for the em dash
+ * character let 0008 (en dashes in ranges) and 0079 and 0080 (five &mdash; in
+ * the plan guide) through. 20261026_0254 rewrote 0008's; the plan guide's are
+ * removed by the Help edit that rewrites its billing paragraphs. So every Help
+ * migration AFTER 0254 may not PUBLISH these spellings, while quoting one as
+ * text to remove ($old$) stays legal until none is left; the audit reads the
+ * served rows for all of them.
+ */
+export const DASH_LOOKALIKE_CLEANUP_ID =
+  "20261026_0254_help_pos_and_dash_followups";
+const EM = String.fromCodePoint(0x2014);
+const EN = String.fromCodePoint(0x2013);
+const EM_DASH = `.{0,30}${EM}.{0,30}`;
+const DASH_LOOKALIKE = `.{0,30}(?:${EN}|&[mn]dash;|&#(?:8212|8211|x201[34]);).{0,30}`;
+
 export const LONG_DASH_RULE = {
   name: "long-dash",
-  pattern: /.{0,30}—.{0,30}/,
+  pattern: new RegExp(`${EM_DASH}|${DASH_LOOKALIKE}`, "i"),
   message:
-    'uses an em dash. StoreMink copy never does: write " - ", a comma or a colon instead, and "-" in a table cell that means "not included".',
+    'uses an em dash or an en dash, or one written as an HTML entity (&mdash;, &ndash;). StoreMink copy never does: write " - ", a comma or a colon instead, "to" in a range ("10 to 30 minutes"), and "-" in a table cell that means "not included".',
 };
 
-export function lintLongDashes(migration) {
+export function lintLongDashes(migration, { lookalikes = true } = {}) {
   if (GRANDFATHERED_LONG_DASH.has(migration.id)) return [];
   if (!touchesHelpContent(migration.sql)) return [];
   if (parseAllowMarkers(migration.sql).has(LONG_DASH_RULE.name)) return [];
-  const hit = withoutSqlComments(migration.sql).match(LONG_DASH_RULE.pattern);
+  // The em dash anywhere, quotes included: 0184 left none to remove.
+  let hit = withoutSqlComments(migration.sql).match(new RegExp(EM_DASH));
+  if (!hit && lookalikes)
+    hit = [publishedText(migration.sql), ...shortHelpValues(migration.sql)]
+      .join("\n\n")
+      .match(new RegExp(DASH_LOOKALIKE, "i"));
   if (!hit) return [];
   return [
     {
       rule: LONG_DASH_RULE.name,
       message: LONG_DASH_RULE.message,
+      sample: hit[0].trim(),
+    },
+  ];
+}
+
+/**
+ * ★ POS, NEVER "REGISTER" OR "TILL" (owner's rule, 26 Oct 2026).
+ *
+ * The in-person selling feature is "POS" in everything a merchant, their staff
+ * or a shopper reads, and the Help Centre counts as the app: "register" reads
+ * like signing up, and "till" is a second name for the same thing.
+ * 20261026_0253 rewrote every guide; every Help migration AFTER it, in manifest
+ * order, is held to the same words, the way the em dash rule works. Text being
+ * removed ($old$) is not published, so a later cleanup still passes.
+ *
+ * BANNED BY DEFAULT, with the same word list as the product's own guard
+ * (scripts/pos-wording.mjs): every whole word register(s) or till(s) fails
+ * unless it is a meaning the owner kept: registering a number, entity or DLT
+ * template, signing up, or "till" before a date ("valid till 31 March").
+ * "registered" and "registration" are other words and never match. A list of
+ * banned phrase shapes missed 6 of the 136 sentences 0253 removed ("there is no
+ * till override", "instead of my register"). "Point of Sale" is matched except
+ * as the one introduction "POS (point of sale)" and the point-of-sale URL;
+ * "counter" only as the feature's name, never the physical counter.
+ *
+ * A title is often shorter than the 30 characters publishedText reads in
+ * single quotes, so the value a statement assigns to a title, description,
+ * excerpt or SEO field is read whatever its length (shortHelpValues):
+ * `SET title = 'Point of Sale'` fails like its dollar-quoted twin.
+ *
+ * app/pos-wording-coverage.test.ts holds the product's own text to the rule.
+ */
+export const POS_WORDING_ID = "20261026_0253_pos_wording";
+export const POS_WORDING_RULE = {
+  name: "pos-wording",
+  pattern: new RegExp(
+    [OLD_POS_WORD.source, POINT_OF_SALE.source, COUNTER_AS_FEATURE.source].join(
+      "|",
+    ),
+    "i",
+  ),
+  message:
+    'calls POS a "register", a "till", "Point of Sale" or "the counter". Write POS: "in POS", "a POS sale", "POS staff", "POS device", "sign in to POS". Other meanings stay: signing up, GST or DLT registration, "till" meaning until, the physical counter.',
+};
+
+const READER_FIELDS = String.raw`(?:title|description|excerpt|seo_title|seo_description)`;
+
+/**
+ * The single-quoted values a Help statement gives what a reader sees, however
+ * short: `SET title = 'POS'`, the new text of `replace(title, ..., 'POS')`,
+ * and the text values of an INSERT (slugs, statuses and icon names are not
+ * text). A WHERE that finds a row by its old title publishes nothing.
+ */
+export function shortHelpValues(sql) {
+  const values = [];
+  const unquote = (literal) => literal.split("''").join("'");
+  for (const statement of sqlStatements(sql)) {
+    // Dollar-quoted text is publishedText's; '' keeps replace()'s shape.
+    const sqlOnly = withoutSqlComments(statement).replace(
+      /\$([a-zA-Z_][a-zA-Z0-9_]*|)\$[\s\S]*?\$\1\$/g,
+      "''",
+    );
+    if (
+      /^\s*update\s+(?:public\.)?help_(?:articles|categories)\b/i.test(sqlOnly)
+    ) {
+      // Found on a copy with the quoted text blanked, so a "where" inside a
+      // value cannot end the SET clause early.
+      const blanked = sqlOnly.replace(/'(?:[^']|'')*'/g, (q) =>
+        "'".padEnd(q.length - 1, "x").concat("'"),
+      );
+      const clause = blanked.match(/\bset\b([\s\S]*?)(?:\bwhere\b|;|$)/di)
+        ?.indices?.[1];
+      const set = clause ? sqlOnly.slice(clause[0], clause[1]) : "";
+      for (const m of set.matchAll(
+        new RegExp(String.raw`\b${READER_FIELDS}\s*=\s*'((?:[^']|'')*)'`, "gi"),
+      ))
+        values.push(unquote(m[1]));
+      for (const m of set.matchAll(
+        new RegExp(
+          String.raw`\breplace\(\s*${READER_FIELDS}\s*,\s*'(?:[^']|'')*'\s*,\s*'((?:[^']|'')*)'\s*\)`,
+          "gi",
+        ),
+      ))
+        values.push(unquote(m[1]));
+    } else if (
+      /^\s*insert\s+into\s+(?:public\.)?help_(?:articles|categories)\b/i.test(
+        sqlOnly,
+      )
+    ) {
+      for (const m of sqlOnly.matchAll(/'((?:[^']|'')*)'/g)) {
+        const value = unquote(m[1]);
+        if (/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/.test(value)) continue;
+        values.push(value);
+      }
+    }
+  }
+  return values;
+}
+
+export function lintPosWording(migration) {
+  if (!touchesHelpContent(migration.sql)) return [];
+  if (parseAllowMarkers(migration.sql).has(POS_WORDING_RULE.name)) return [];
+  const text = [
+    publishedText(migration.sql),
+    ...shortHelpValues(migration.sql),
+  ].join("\n\n");
+  const hit = text.match(POS_WORDING_RULE.pattern);
+  if (!hit) return [];
+  return [
+    {
+      rule: POS_WORDING_RULE.name,
+      message: POS_WORDING_RULE.message,
       sample: hit[0].trim(),
     },
   ];
@@ -784,6 +924,8 @@ export async function lintManifest(manifestPath) {
   const failures = [];
   let checked = 0;
   let afterDashCleanup = false;
+  let afterDashLookalikes = false;
+  let afterPosWording = false;
   for (const migration of manifest.migrations) {
     const touches = touchesHelpContent(migration.sql);
     if (touches) checked += 1;
@@ -792,11 +934,16 @@ export async function lintManifest(manifestPath) {
       ...(touches ? lintVerifyContract(migration) : []),
       ...lintUnwitnessedEdits(migration),
       ...lintIndexTimestamps(migration),
-      ...(afterDashCleanup ? lintLongDashes(migration) : []),
+      ...(afterDashCleanup
+        ? lintLongDashes(migration, { lookalikes: afterDashLookalikes })
+        : []),
+      ...(afterPosWording ? lintPosWording(migration) : []),
     ]) {
       failures.push({ id: migration.id, file: migration.file, ...finding });
     }
     if (migration.id === LONG_DASH_CLEANUP_ID) afterDashCleanup = true;
+    if (migration.id === DASH_LOOKALIKE_CLEANUP_ID) afterDashLookalikes = true;
+    if (migration.id === POS_WORDING_ID) afterPosWording = true;
   }
   failures.push(...lintStaleQuotes(manifest.migrations));
   return { checked, total: manifest.migrations.length, failures };

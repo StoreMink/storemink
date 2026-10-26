@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Settings, LogOut } from "lucide-react";
 import { endSession } from "@/lib/auth/firebase-client";
+import { stopAllImageRefines } from "@/components/ui/image-refine-registry";
 import { useEffect, useRef, useState } from "react";
 
 function getDisplayName(
@@ -88,6 +89,10 @@ export function TopbarProfile({
   }, []);
 
   async function handleSignOut() {
+    // ★ A Refine with Mink AI still running is stopped FIRST, while the
+    //   session still exists: endSession clears it, and a stop sent after
+    //   that would arrive signed out. Waits only when a refine is live.
+    await stopAllImageRefines({ waitMs: 1_500 });
     await endSession();
     router.push("/auth/login");
     router.refresh();

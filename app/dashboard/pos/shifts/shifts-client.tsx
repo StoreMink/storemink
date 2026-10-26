@@ -83,7 +83,7 @@ export function ShiftsClient({
             {/* Empty is ordinary for a store that has not opened a drawer yet,
                 and should read that way rather than as a failure. */}
             <p className="text-sm">
-              No shifts yet. They appear here once a till opens one.
+              No shifts yet. They appear here once one is opened in POS.
             </p>
           </div>
         ) : (

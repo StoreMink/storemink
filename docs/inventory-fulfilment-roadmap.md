@@ -269,7 +269,7 @@ the physical count, which is what the dashboard and POS want.
 
 ### Phase F — Pickup (click & collect) — **DONE**
 
-**Shipped:** `supabase/locations_05_pickup.sql` (fulfilment_type /
+**Shipped:** `locations_05_pickup.sql` (fulfilment_type /
 pickup_location_id / pickup_status / pickup_expires_at / collected_at /
 collected_by on `orders`, three CHECKs, the queue index);
 `lib/fulfilment/pickup.ts` (`pickupLocationsFor` — capability + plan + stock,

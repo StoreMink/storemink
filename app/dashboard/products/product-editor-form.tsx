@@ -34,6 +34,8 @@ import {
 import { uploadImage } from "@/lib/storage/uploads";
 import { Button } from "@/components/ui/button";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { ImageRefineScope } from "@/components/ui/image-refine-context";
+import { releaseImageRefines } from "@/components/ui/image-refine-registry";
 import { ImageSourceMenu } from "@/components/ui/image-source-menu";
 import { MediaLibraryPicker } from "../components/media-library-picker";
 import { NumberField } from "@/components/ui/number-field";
@@ -578,6 +580,18 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
           ? f.images.map((u) => (u === previous ? next : u))
           : [...f.images, next],
       }));
+    // ★ Refine with Mink AI: a refine of a photo the product no longer holds
+    //   (a gallery image removed from the thumbnails while it refines) is
+    //   stopped; closing the editor stops the rest (the scope below).
+    const refineScope = `product:${product?.id ?? "new"}`;
+    useEffect(() => {
+      releaseImageRefines(
+        (refine) =>
+          refine.scope === refineScope &&
+          refine.sourceUrl !== form.image_url &&
+          !form.images.includes(refine.sourceUrl),
+      );
+    }, [refineScope, form.image_url, form.images]);
 
     // ── Variant helpers ────────────────────────────────────────
     const addVariant = () =>
@@ -1022,57 +1036,59 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               icon={ImageIcon}
               tint="violet"
             >
-              <div className="space-y-4">
-                <div>
-                  <label className={labelClass}>Primary image</label>
-                  {/* Keyed by the photo so a pick from the library shows here:
-                      the upload box reads its preview once, on mount. */}
-                  <ImageUpload
-                    key={`primary:${form.image_url || "none"}`}
-                    folder="product-images"
-                    spec={photoSpec}
-                    defaultImage={form.image_url || undefined}
-                    onUploadSuccess={(url) => set("image_url", url)}
-                    onChooseFromLibrary={() => setLibraryFor("primary")}
-                  />
-                </div>
+              <ImageRefineScope id={refineScope} releaseOnUnmount>
+                <div className="space-y-4">
+                  <div>
+                    <label className={labelClass}>Primary image</label>
+                    {/* Keyed by the photo, so a pick from the library starts a
+                      fresh box (the box also follows `defaultImage` now). */}
+                    <ImageUpload
+                      key={`primary:${form.image_url || "none"}`}
+                      folder="product-images"
+                      spec={photoSpec}
+                      defaultImage={form.image_url || undefined}
+                      onUploadSuccess={(url) => set("image_url", url)}
+                      onChooseFromLibrary={() => setLibraryFor("primary")}
+                    />
+                  </div>
 
-                <div>
-                  <label className={labelClass}>Gallery (extra images)</label>
-                  {form.images.length > 0 && (
-                    <div className="mb-2 flex flex-wrap gap-2">
-                      {form.images.map((url) => (
-                        <div
-                          key={url}
-                          className="relative h-16 w-16 overflow-hidden rounded-md border border-[#e5e7eb]"
-                        >
-                          <Image
-                            src={url}
-                            unoptimized={!canOptimizeImage(url)}
-                            alt="Gallery image"
-                            fill
-                            className="object-cover"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeGalleryImage(url)}
-                            className="absolute right-0.5 top-0.5 rounded bg-black/70 p-0.5 text-white hover:bg-red-500"
+                  <div>
+                    <label className={labelClass}>Gallery (extra images)</label>
+                    {form.images.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        {form.images.map((url) => (
+                          <div
+                            key={url}
+                            className="relative h-16 w-16 overflow-hidden rounded-md border border-[#e5e7eb]"
                           >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <ImageUpload
-                    folder="product-images"
-                    spec={photoSpec}
-                    onUploadSuccess={addGalleryImage}
-                    onReplace={replaceGalleryImage}
-                    onChooseFromLibrary={() => setLibraryFor("gallery")}
-                  />
+                            <Image
+                              src={url}
+                              unoptimized={!canOptimizeImage(url)}
+                              alt="Gallery image"
+                              fill
+                              className="object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeGalleryImage(url)}
+                              className="absolute right-0.5 top-0.5 rounded bg-black/70 p-0.5 text-white hover:bg-red-500"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <ImageUpload
+                      folder="product-images"
+                      spec={photoSpec}
+                      onUploadSuccess={addGalleryImage}
+                      onReplace={replaceGalleryImage}
+                      onChooseFromLibrary={() => setLibraryFor("gallery")}
+                    />
+                  </div>
                 </div>
-              </div>
+              </ImageRefineScope>
               {libraryFor && (
                 <MediaLibraryPicker
                   open
@@ -1319,8 +1335,8 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                           }}
                         />
                         <p className={hintClass}>
-                          The supplier barcode on the packaging - what the
-                          register scans.
+                          The supplier barcode on the packaging - what you scan
+                          in POS.
                         </p>
                       </div>
                     </div>

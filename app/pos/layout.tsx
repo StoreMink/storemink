@@ -10,7 +10,7 @@ import { IdleLock } from "./idle-lock";
 import { PosNav } from "./pos-nav";
 import "./pos.css";
 
-export const metadata = { title: "Register · Point of Sale" };
+export const metadata = { title: "POS" };
 
 // The POS app shell. Lives OUTSIDE the (storefront) route group, so it gets only
 // the root layout — its own chrome, no storefront header/footer. Gates on an
@@ -29,9 +29,7 @@ export default async function PosLayout({
     return (
       <div className="pos-root flex min-h-screen items-center justify-center p-6">
         <div className="max-w-sm text-center">
-          <h1 className="text-lg font-semibold">
-            Point of Sale isn&apos;t available
-          </h1>
+          <h1 className="text-lg font-semibold">POS isn&apos;t available</h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
             This store hasn&apos;t enabled POS. A store owner can turn it on
             from the dashboard.

@@ -235,8 +235,8 @@ export function RegisterClient({
             You&apos;re all set, {name}
           </h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
-            Your {role} account is ready. Sign in at your shop&apos;s register
-            with <span className="text-[var(--pos-ink)]">{email}</span> and your
+            Your {role} account is ready. Sign in to POS at your shop with{" "}
+            <span className="text-[var(--pos-ink)]">{email}</span> and your
             8-digit PIN.
           </p>
           {/* <p className="mt-5 rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-4 py-3 text-left text-sm text-[var(--pos-ink-2)]">

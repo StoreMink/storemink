@@ -16,13 +16,18 @@ import { MINK_CHAT_PARAM, readMinkChatParam } from "@/lib/mink/chat-session";
 import {
   useMinkAi,
   type MinkConversationSummary,
+  type MinkEarlierStatus,
+  type MinkHistorySearch,
+  type MinkHistoryStatus,
   type MinkMemoryPrompt,
   type MinkMessage,
   type MinkPreparedSend,
+  type MinkRevealTarget,
   type MinkRunStep,
   type MinkUiError,
 } from "./mink-ai";
 import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
+import type { MinkStopResult } from "@/lib/mink/run-stop-types";
 import type { MinkSkill } from "@/lib/mink/skills";
 import type { MinkHighlight } from "@/lib/mink/guide-targets";
 import { MinkSpotlight } from "./mink-spotlight";
@@ -46,14 +51,44 @@ interface ChatContextType {
   // Home "Ask anything…" box → open the chat in full view AND send the
   // message, in a new chat (see lib/mink/chat-session).
   startExpandedChat: (message: string) => void;
+  /** Mink AI is switched on for this store (History's search shows only then). */
+  enabled: boolean;
   // The shared Mink AI conversation (one thread across the Home box + panel).
   messages: MinkMessage[];
+  /** History: every chat loaded so far, newest activity first. */
   conversations: MinkConversationSummary[];
+  /** History has more chats to load as the sidebar scrolls. */
+  hasMoreConversations: boolean;
+  /** History's own loading and failures, shown in the sidebar. */
+  historyStatus: MinkHistoryStatus;
+  /** History's first page again (Try again after it failed). */
+  refreshConversations: () => Promise<void>;
+  loadMoreConversations: () => Promise<void>;
+  /** The History search field's words (kept while the sidebar is closed). */
+  historySearchText: string;
+  setHistorySearchText: (text: string) => void;
+  /** The current search and its results; null shows the plain list. */
+  historySearch: MinkHistorySearch | null;
+  searchConversations: () => Promise<void>;
+  loadMoreSearchResults: () => Promise<void>;
+  /** The open chat has messages before those shown. */
+  hasEarlierMessages: boolean;
+  earlierStatus: MinkEarlierStatus;
+  loadEarlierMessages: () => Promise<void>;
+  /** The message a search result opened the chat onto, until scrolled to. */
+  revealTarget: MinkRevealTarget | null;
+  clearRevealTarget: () => void;
   activeConversationId: string | null;
   activeConversationTitle: string | null;
   input: string;
   setInput: (value: string) => void;
   isReplying: boolean;
+  /**
+   * The server refused a Stop (the run had already started something, or
+   * the answer could not be had): the reply finishes and Stop is not offered;
+   * `statusText` says why.
+   */
+  stopRefused: boolean;
   isHistoryLoading: boolean;
   deletingConversationId: string | null;
   statusText: string | null;
@@ -82,7 +117,11 @@ interface ChatContextType {
    * reads the files as its first step. False when it could not be taken.
    */
   sendPrepared: (prepared: MinkPreparedSend) => boolean;
-  cancel: () => void;
+  /**
+   * Asks the server to stop the reply and resolves with its answer; the
+   * stream is let go only on `stopped` (see `useMinkAi`).
+   */
+  cancel: () => Promise<MinkStopResult>;
   retry: () => void;
   reset: () => void;
   /** Leaves the open chat for a new, empty one; History keeps it. */
@@ -92,7 +131,11 @@ interface ChatContextType {
    * (`?chat=`); the chat view meets each one at its newest message.
    */
   addressOpens: number;
-  loadConversation: (id: string) => Promise<void>;
+  /** `revealMessageId`: a search result's match, which the chat opens onto. */
+  loadConversation: (
+    id: string,
+    options?: { revealMessageId?: string },
+  ) => Promise<void>;
   deleteConversation: (id: string) => Promise<MinkUiError | null>;
   submitFeedback: (input: {
     runId: string;
@@ -448,13 +491,29 @@ export function useChat() {
       closeChat: () => {},
       toggleExpand: () => {},
       startExpandedChat: () => {},
+      enabled: false,
       messages: [],
       conversations: [],
+      hasMoreConversations: false,
+      historyStatus: { loadingMore: false, error: null, failed: null },
+      refreshConversations: async () => {},
+      loadMoreConversations: async () => {},
+      historySearchText: "",
+      setHistorySearchText: () => {},
+      historySearch: null,
+      searchConversations: async () => {},
+      loadMoreSearchResults: async () => {},
+      hasEarlierMessages: false,
+      earlierStatus: { loading: false, error: null },
+      loadEarlierMessages: async () => {},
+      revealTarget: null,
+      clearRevealTarget: () => {},
       activeConversationId: null,
       activeConversationTitle: null,
       input: "",
       setInput: () => {},
       isReplying: false,
+      stopRefused: false,
       isHistoryLoading: false,
       deletingConversationId: null,
       statusText: null,
@@ -470,7 +529,8 @@ export function useChat() {
       minkCredits: null,
       send: () => {},
       sendPrepared: () => false,
-      cancel: () => {},
+      // Nothing runs outside a provider, so there is nothing to stop.
+      cancel: async (): Promise<MinkStopResult> => ({ outcome: "finished" }),
       retry: () => {},
       reset: () => {},
       startNewChat: () => {},

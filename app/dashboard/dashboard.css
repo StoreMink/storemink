@@ -200,6 +200,24 @@
   }
 }
 
+/* ★★ The builder's own top bar (Back, Save, undo, Publish) sits UNDER the
+   dashboard topbar unless this rule exists. `.dash-content` is `relative z-10`
+   (layout.tsx), a stacking context, so the builder's fixed z-40 only counts
+   inside it, while the topbar is `relative z-40` (dashboard-topbar.tsx, raised
+   on 2026-08-23 so its search results overlay the page). Both bars are 56px
+   tall, so from that day to 2026-10-25 the topbar covered the builder's whole
+   top bar at every width and the builder had no visible Publish button.
+   While the builder is mounted the topbar drops back into the page's normal
+   stacking order, so the builder's full-screen canvas covers it; the Mink
+   panel (z-45 below) and dialogs (z-50) stay above both. The canvas covers
+   the topbar's Mink AI button too, so the builder's own top bar carries one
+   (builder-client.tsx; builder-mink-button.test.tsx). An unlayered rule,
+   so it beats Tailwind's `z-40` utility. Guarded by
+   app/dashboard/builder/builder-stacking.test.ts. */
+.dashboard-frame:has(.sm-builder) .dash-topbar {
+  z-index: auto;
+}
+
 /* Builder is a fixed canvas inside .dash-content, so an in-flow chat column
    cannot move it aside. Float the existing shared panel above that canvas at
    desktop widths too. Keep dialog layers above the panel and leave Builder

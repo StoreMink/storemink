@@ -415,7 +415,7 @@ function storeSamples(): EmailSample[] {
 
 function announcementSamples(): EmailSample[] {
   const body =
-    "<p>You can now sell in person with the new register. It shares stock, customers and offers with your online store.</p><ul><li>Scan barcodes with any phone camera</li><li>Split a payment across cash and UPI</li></ul>";
+    "<p>You can now sell in person with StoreMink POS. It shares stock, customers and offers with your online store.</p><ul><li>Scan barcodes with any phone camera</li><li>Split a payment across cash and UPI</li></ul>";
   return [
     {
       id: "announcement-feature",
@@ -423,9 +423,9 @@ function announcementSamples(): EmailSample[] {
       label: "Product update",
       ...renderAnnouncementEmail({
         brand: platformBrand(),
-        subject: "Meet the StoreMink register",
+        subject: "Meet StoreMink POS",
         bodyHtml: body,
-        ctaLabel: "Try the register",
+        ctaLabel: "Try POS",
         ctaUrl: "https://storemink.com/pos",
         category: "feature",
         preferencesUrl: `${STORE_URL}/dashboard/settings/account`,

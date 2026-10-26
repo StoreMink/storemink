@@ -98,7 +98,7 @@ export interface Product {
   barcode: string | null;
   tax_class_id: string | null;
   hsn_code: string | null;
-  // Return policy (returns_01_product_policy.sql)
+  // Return policy (products.returnable)
   returnable: boolean;
   return_window_days: number | null;
   requires_shipping: boolean;

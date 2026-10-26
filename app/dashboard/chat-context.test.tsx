@@ -469,3 +469,124 @@ describe("★★ a dashboard address that names a chat opens it (B20)", () => {
     expect(chat.current?.addressOpens).toBe(1);
   });
 });
+
+describe("★★ Stop asks the server, through the provider (25 Oct 2026)", () => {
+  const RUN_ID = "33333333-3333-4333-8333-333333333333";
+  const STOP_URL = `/api/mink/runs/${RUN_ID}/stop`;
+  const chat = { current: null as ReturnType<typeof useChat> | null };
+  function Probe() {
+    const value = useChat();
+    useEffect(() => {
+      chat.current = value;
+    });
+    return null;
+  }
+
+  /**
+   * The reply names its run and keeps writing; the stop route answers that
+   * the run already started something.
+   */
+  function stub() {
+    const encoder = new TextEncoder();
+    const fetch = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === "/api/mink/conversations")
+          return Response.json({ conversations: [] });
+        if (url === STOP_URL) return Response.json({ outcome: "acted" });
+        if (url === "/api/mink/stream")
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encoder.encode(
+                    `event: status\ndata: ${JSON.stringify({ runId: RUN_ID })}\n\n`,
+                  ),
+                );
+                init?.signal?.addEventListener("abort", () =>
+                  controller.error(new DOMException("Aborted", "AbortError")),
+                );
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          );
+        return new Response(null, { status: 404 });
+      },
+    );
+    vi.stubGlobal("fetch", fetch);
+    return fetch;
+  }
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+    chat.current = null;
+  });
+
+  it("outside a provider History is empty and every history action is safe to call", async () => {
+    render(<Probe />);
+    const value = chat.current!;
+    expect(value.enabled).toBe(false);
+    expect(value.conversations).toEqual([]);
+    expect(value.hasMoreConversations).toBe(false);
+    expect(value.historyStatus).toEqual({
+      loadingMore: false,
+      error: null,
+      failed: null,
+    });
+    expect(value.historySearchText).toBe("");
+    expect(value.historySearch).toBeNull();
+    expect(value.hasEarlierMessages).toBe(false);
+    expect(value.earlierStatus).toEqual({ loading: false, error: null });
+    expect(value.revealTarget).toBeNull();
+    value.setHistorySearchText("coupon");
+    value.clearRevealTarget();
+    await expect(value.refreshConversations()).resolves.toBeUndefined();
+    await expect(value.loadMoreConversations()).resolves.toBeUndefined();
+    await expect(value.searchConversations()).resolves.toBeUndefined();
+    await expect(value.loadMoreSearchResults()).resolves.toBeUndefined();
+    await expect(value.loadEarlierMessages()).resolves.toBeUndefined();
+    await expect(
+      value.loadConversation("chat", { revealMessageId: "message" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("outside a provider there is nothing to stop: Stop answers finished and is never refused", async () => {
+    render(<Probe />);
+    expect(chat.current?.stopRefused).toBe(false);
+    await expect(chat.current?.cancel()).resolves.toEqual({
+      outcome: "finished",
+    });
+  });
+
+  it("★★ the voice loop and the Stop button share one stop, and a refusal reaches the chat", async () => {
+    const fetch = stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(loop.input).not.toBeNull());
+    expect(loop.input?.cancel).toBe(chat.current?.cancel);
+    expect(chat.current?.stopRefused).toBe(false);
+    act(() => chat.current?.send("Redesign my store"));
+    await waitFor(() => expect(chat.current?.isReplying).toBe(true));
+    let answer: unknown;
+    await act(async () => {
+      answer = await loop.input?.cancel();
+    });
+    expect(answer).toEqual({ outcome: "acted" });
+    // Refused: the reply finishes, Stop is not offered, the status says why.
+    await waitFor(() => expect(chat.current?.stopRefused).toBe(true));
+    expect(chat.current?.isReplying).toBe(true);
+    expect(chat.current?.statusText).toBe(
+      "Mink has already started this, so it will finish.",
+    );
+    // Pressed again (the button after the voice loop): asked once.
+    await act(async () => {
+      await chat.current?.cancel();
+    });
+    expect(
+      fetch.mock.calls.filter(([input]) => String(input) === STOP_URL),
+    ).toHaveLength(1);
+  });
+});
