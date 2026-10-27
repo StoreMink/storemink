@@ -1,17 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Square, X } from "lucide-react";
+import { Mic, MicOff, Square, X } from "lucide-react";
 import { MinkMark } from "./mink-mark";
 import { MinkWaveform } from "./mink-waveform";
 import type { MinkVoiceMode } from "./mink-voice-mode";
 
 /**
- * What voice chat is doing, in the merchant's words. Transcription counts as
- * thinking: the microphone has closed and Mink is working out what was said.
+ * What voice chat is doing, in the merchant's words. Transcription is
+ * distinct from waiting for the answer.
  */
 export function minkVoiceStatus(
-  voice: Pick<MinkVoiceMode, "state" | "mic">,
+  voice: Pick<MinkVoiceMode, "state" | "mic"> &
+    Partial<Pick<MinkVoiceMode, "muted">>,
 ): string {
   switch (voice.state) {
     case "speaking":
@@ -21,8 +22,9 @@ export function minkVoiceStatus(
     case "sending":
       return "Sending…";
     case "listening":
+      if (voice.muted) return "Microphone muted";
       if (voice.mic === "starting") return "Starting microphone…";
-      if (voice.mic === "transcribing") return "Thinking…";
+      if (voice.mic === "transcribing") return "Transcribing…";
       return "Listening…";
     default:
       return "";
@@ -30,7 +32,7 @@ export function minkVoiceStatus(
 }
 
 /**
- * The line under the status: what Mink is saying right now (its spoken words
+ * The expandable caption: what Mink is saying right now (its spoken words
  * are not part of the written answer in the thread), or, while a transcript
  * waits to be sent, the words that were heard.
  */
@@ -86,7 +88,7 @@ export function MinkVoiceBar({
       role="region"
       aria-label="Voice chat with Mink"
       data-testid="mink-voice-bar"
-      className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
+      className="mink-composer-footer shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.stopPropagation();
@@ -106,60 +108,91 @@ export function MinkVoiceBar({
             {voice.notice}
           </p>
         ) : null}
-        <div className="flex min-w-0 items-center gap-3 rounded-3xl border border-[#e5e5e5] bg-white px-3 py-2.5 shadow-sm">
-          <MinkMark size="sm" />
-          <div className="min-w-0 flex-1">
-            <p
-              role="status"
-              aria-live="polite"
-              className="text-xs font-semibold text-[#5b3fd0]"
-            >
-              {status}
-            </p>
-            {caption ? (
-              <p
-                className="truncate text-xs text-[#5c5f62]"
-                title={caption.text}
+        <div className="rounded-3xl border border-[#e5e5e5] bg-white p-3 shadow-sm">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 basis-32 items-center gap-2">
+              <MinkMark size="sm" />
+              <div className="min-w-0 flex-1">
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="text-sm font-semibold text-[#5b3fd0]"
+                >
+                  {status}
+                </p>
+                <p className="mt-0.5 text-xs text-[#65616c]">
+                  {voice.muted
+                    ? "Mic off · Replies stay on"
+                    : speaking
+                      ? "You can interrupt by speaking"
+                      : "Voice conversation"}
+                </p>
+              </div>
+            </div>
+            <div className="hidden w-16 shrink-0 @lg:block">
+              <MinkWaveform
+                levelRef={voice.levelRef}
+                live={voice.mic === "open" && !voice.muted}
+                className="w-full text-[#6d4dff]"
+              />
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <button
+                type="button"
+                onClick={voice.toggleMute}
+                aria-label={
+                  voice.muted ? "Unmute microphone" : "Mute microphone"
+                }
+                aria-pressed={voice.muted}
+                title={voice.muted ? "Unmute microphone" : "Mute microphone"}
+                className={`inline-flex h-11 w-11 items-center justify-center rounded-full border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] ${voice.muted ? "border-[#dfd3ff] bg-[#f4efff] text-[#5b3fd0]" : "border-[#e5e5e5] text-[#454149] hover:bg-[#f6f6f6]"}`}
               >
-                <span className="font-medium text-[#1a1a1a]">
-                  {caption.who}:
-                </span>{" "}
+                {voice.muted ? (
+                  <MicOff className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <Mic className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
+              {isReplying && !stopRefused ? (
+                <button
+                  type="button"
+                  onClick={onStopReply}
+                  aria-label="Stop Mink AI"
+                  title="Stop Mink AI"
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-[#e5e5e5] text-[#1a1a1a] hover:bg-[#f6f6f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff]"
+                >
+                  <Square className="h-4 w-4 fill-current" aria-hidden="true" />
+                </button>
+              ) : null}
+              <button
+                ref={endRef}
+                type="button"
+                aria-label="Stop voice chat"
+                title="End voice chat"
+                onClick={() => voice.toggle()}
+                className="inline-flex h-11 items-center gap-1.5 rounded-full bg-[#1a1a1a] px-3 text-sm font-medium text-white hover:bg-[#333] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+                End
+              </button>
+            </div>
+          </div>
+          {caption ? (
+            <details className="mt-2 border-t border-[#eeebf2] pt-1">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 text-xs text-[#65616c] focus-visible:outline-[#6d4dff]">
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-semibold">{caption.who}:</span>{" "}
+                  {caption.text}
+                </span>
+                <span className="shrink-0 font-medium text-[#5b3fd0]">
+                  Captions
+                </span>
+              </summary>
+              <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words pb-2 text-sm leading-6 text-[#343038]">
                 {caption.text}
               </p>
-            ) : null}
-          </div>
-          {/* Off in a narrow panel: the status says the same, and the
-              buttons need the room. */}
-          <div className="hidden w-20 shrink-0 @md:block @lg:w-28">
-            <MinkWaveform
-              levelRef={voice.levelRef}
-              live={voice.mic === "open"}
-              className={`w-full ${speaking ? "text-[#1a1a1a]" : "text-[#6d4dff]"}`}
-            />
-          </div>
-          {isReplying && !stopRefused ? (
-            <button
-              type="button"
-              onClick={onStopReply}
-              aria-label="Stop Mink AI"
-              title="Stop Mink AI"
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full border border-[#e5e5e5] bg-white px-3 text-sm pointer-coarse:h-11 pointer-coarse:min-w-11 font-medium text-[#1a1a1a] transition hover:bg-[#f6f6f6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff]"
-            >
-              <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-              <span className="hidden @md:inline">Stop</span>
-            </button>
+            </details>
           ) : null}
-          <button
-            ref={endRef}
-            type="button"
-            aria-label="Stop voice chat"
-            title="End voice chat"
-            onClick={() => voice.toggle()}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-[#1a1a1a] px-3.5 text-sm pointer-coarse:h-11 font-medium text-white transition hover:bg-[#333] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-            End
-          </button>
         </div>
       </div>
     </div>

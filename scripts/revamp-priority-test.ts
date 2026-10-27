@@ -1,86 +1,42 @@
 /**
- * The owner-approved Priority PayGo test on storemink-staging (speed plan,
- * decision 1, 23 Oct 2026). Google's shared pay-as-you-go pool refuses a large
- * share of our model calls with 429 RESOURCE_EXHAUSTED, which is most of why a
- * Mink storefront redesign takes 48 to 72 minutes. One pass measures whether
- * Priority PayGo (two request headers, about 1.8 times the price) is admitted
- * where Standard is refused, and whether the us or eu endpoint is quieter for
- * photo checks.
+ * Staging-only capacity probe. Dry run is the default and reads no credentials,
+ * loads no environment files and calls no service.
  *
- *   npm run revamp:priority-test
- *       Dry run, the default: prints the plan, the request every call sends
- *       and the cost at list prices. Calls nothing.
- *   npm run revamp:priority-test -- --live --yes --label=evening [--out=<dir>]
- *       One pass of 152 calls, about 30 minutes (the evening pass of 23 Oct
- *       took 31.7) and about $6.43 at list prices on Nano Banana 2.1 (about
- *       $11.57 on the 23 Oct models; the dry run prints the current
- *       estimate). --live without --yes refuses; the two flags are the
- *       consent.
+ * npm run revamp:priority-test -- --max-usd=8 --label=capacity
+ * Add --live --yes only after the owner approves that spend. Supply staging
+ * project variables and ADC through the execution environment, never .env files.
  *
- * One pass is two stages. First the spacing ladder, alone (owner, 23 Oct):
- *   the photo model, global          12 Standard photos, three each 60, 40,
- *                                    30 and 15 s apart, widest first
- * so the photo model's busy-hour limit is measured against the spacing, with
- * nothing else running. Once its last answer is in, the pass, the arms
- * alternating call by call within a lane:
- *   Theme Studio's photo, global     10 Standard + 10 Priority photos, 2K, HIGH
- *   Mink's photo, global             10 Standard + 10 Priority photos, 2K,
- *                                    MINIMAL
- *   Mink's photo, us, eu             10 Standard photos each, 2K, MINIMAL
- *   gemini-3.8-flash, global         20 Standard + 20 Priority photo checks
- *   gemini-3.8-flash, us and eu      20 Standard photo checks each
- * ★★ The photo model is gemini-nano-banana-2.1, the one image model for every
- *    picture since 25 Oct 2026 (owner); the 23 Oct passes drew with
- *    gemini-3-pro-image (Theme Studio's) and gemini-3.1-flash-image
- *    (Mink's), whose prices this file still knows.
- * Standard sends no tier header, as production does today. Run one pass in
- * each measured busy hour (about 18:30 and about 03:30 IST), the second with
- * --lead=priority so neither arm always opens a pair. Every refusal keeps
- * Google's whole error body, and the quota it names when it names one: the
- * shared pool's 429 says only "Resource has been exhausted (e.g. check
- * quota).", a project quota's names its metric.
+ * Defaults: 54 calls. Separate Standard and Priority ladders run alone, each
+ * with twelve real redesign requests at 60, 40, 30 and 15 second spacing.
+ * Then twenty paired redesign draws alternate arms at 40 second spacing, with
+ * ten US Standard photo checks as a control. Redesign draws use the production
+ * prompt builder, 2K MEDIUM and a fixed JPEG anchor. Historical lanes are opt-in.
  *
- * Options: --max-usd=<n> (default 15, at most 25) is the pass's budget;
- * --gap=<seconds> (default 15) between starts in a two-arm lane, twice that in
- * a one-arm lane, so every arm on every endpoint starts once per two gaps;
- * --max-in-flight=<n> (default and at most 6) across all lanes;
- * --lead=standard|priority (default standard); --label=<name> (default pass);
- * --out=<dir> (default <os tmpdir>/revamp-priority-test) receives
- * priority-test-<label>-<UTC stamp>.json (every call, rewritten as each one
- * ends), a short .md summary beside it and the returned photos in a -images
- * folder beside them.
- *
- * ★★ IT NEVER TOUCHES PRODUCTION. Every call names THEME_STUDIO_GCP_PROJECT_ID,
- *    else GCP_PROJECT_ID (Theme Studio's own precedence), and that must be
- *    storemink-staging. Any project variable containing "prod" is refused,
- *    and so is GOOGLE_VERTEX_BASE_URL, which would send every call somewhere
- *    other than the endpoints under test. No database, no bucket: nothing but
- *    the model calls and the files under --out.
- * ★★ ONE ATTEMPT PER CALL, NEVER A RETRY. What is measured is how often Google
- *    admits a request, so the SDK's retries are off and a 429 is recorded, not
- *    waited out. A 429 bills nothing: Google charges only for a 200.
- * ★★ THE REQUESTS ARE PRODUCTION'S, COPIED, NOT IMPORTED: image-vertex.ts pulls
- *    in the shared capacity pool and its database, which a measurement must not
- *    touch. Every copy cites its file and line, and
- *    scripts/revamp-priority-test.test.ts compares them with the live modules,
- *    so a production change cannot leave this measuring an old request.
- * ★ PACED BY START TIME, never by the previous answer, so Google's own latency
- *   and refusals cannot set the pace being measured. A lane the in-flight
- *   limit delays keeps its spacing from its own last start.
- * ★ THE BUDGET IS CHECKED BEFORE EVERY START: a call starts only while the
- *   spend so far, plus the ceiling of every call in flight, plus its own
- *   ceiling, stays within --max-usd. A call that does not fit waits for the
- *   calls in flight to answer (each answer swaps its ceiling for its cost);
- *   one that still does not fit with nothing in flight stops the pass. Spend
- *   is priced from each answer's own tokens at the tier Google says served
- *   it, image tokens at the image rate and text and thinking at the text
- *   rate; a call that timed out counts at its ceiling, since it may have run
- *   and been billed.
- * ★ EVERY CALL IS COUNTED AGAINST STAGING'S QUOTA: the run sets
- *   GOOGLE_CLOUD_QUOTA_PROJECT to the project, so a developer's ADC quota
- *   project (storemink-prod on 23 Oct) is not sent as x-goog-user-project.
+ * --lanes=<comma-separated lane ids>|all|none selects non-ladder lanes.
+ * --ladders=standard,priority|standard|priority|none selects isolated ladders.
+ * --gap=<seconds> changes pass spacing (one-arm lanes use twice that gap).
+ * --lead=standard|priority changes paired arm order. --max-in-flight=<1..6>
+ * limits concurrency; --max-usd=<0..25> reserves conservative usage envelopes
+ * before admission, including unknown-cost calls. These are local list-price
+ * safeguards, not a Cloud Billing spending limit. No retries; 180 s per call.
+ * --out=<directory> receives JSON, Markdown and returned photos, named with
+ * --label=<name>. Every result retains trafficType, usage and refusal details.
+ * No database or bucket is used. Production projects and endpoint overrides
+ * are refused. Priority headers exist only in the explicit Priority arm.
  */
-import { loadEnvConfig } from "@next/env";
+import { createHash } from "node:crypto";
+import {
+  buildAssetRequest,
+  type ThemeImageDirection,
+} from "../lib/theme-studio/image-prompt";
+import {
+  PRIORITY_HEADERS,
+  SERVED_AS_PRIORITY,
+} from "../lib/theme-studio/priority-paygo";
+export {
+  PRIORITY_HEADERS,
+  SERVED_AS_PRIORITY,
+} from "../lib/theme-studio/priority-paygo";
 import {
   GoogleGenAI,
   HarmBlockThreshold,
@@ -107,8 +63,7 @@ import { ratesFor } from "../lib/theme-studio/cost";
 
 export const STAGING_PROJECT = "storemink-staging";
 export const DEFAULT_MAX_USD = 15;
-/** ★ The owner approved about $24 for the two passes (23 Oct 2026), so no
- *  single pass may be given more than this, whatever --max-usd says. */
+/** Tool ceiling only; it does not authorize any spend. */
 export const MAX_USD_CEILING = 25;
 export const DEFAULT_GAP_SECONDS = 15;
 /** At most this many calls in flight across every lane (the owner's limit). */
@@ -130,16 +85,6 @@ export const CALL_TIMEOUT_MS = 180_000;
  * ⚠ The SDK's own `serviceTier` config is deliberately not used: it is sent in
  * the request body, which that page does not document for Vertex.
  */
-export const PRIORITY_HEADERS: Readonly<Record<string, string>> = {
-  "X-Vertex-AI-LLM-Request-Type": "shared",
-  "X-Vertex-AI-LLM-Shared-Request-Type": "priority",
-};
-
-/** `usageMetadata.trafficType` of a call served as Priority (same page).
- *  ON_DEMAND is the Standard pool: on a Priority call it means Google
- *  downgraded it for want of spare capacity and billed the Standard price. */
-export const SERVED_AS_PRIORITY = "ON_DEMAND_PRIORITY";
-
 export type Arm = "standard" | "priority";
 export type VertexLocation = "global" | "us" | "eu";
 export type ModelId =
@@ -172,6 +117,8 @@ export interface Lane {
   /** A photo's thinking level, as the call it copies states it: Theme
    *  Studio's HIGH (worker.ts imageClientFor), Mink's MINIMAL. */
   thinking?: ThinkingLevel;
+  /** The redesign request uses the real prompt builder and one JPEG anchor. */
+  redesign?: boolean;
   /** ★ Set only on the spacing ladder: its calls start at these seconds from
    *  the ladder's start instead of at a fixed spacing, and the ladder runs
    *  alone before the pass. */
@@ -220,6 +167,32 @@ const BOTH_ARMS: readonly Arm[] = ["standard", "priority"];
 
 export const LANES: readonly Lane[] = [
   {
+    id: "priority-ladder@global",
+    kind: "photo",
+    model: PHOTO_MODEL,
+    location: "global",
+    arms: ["priority"],
+    perArm: 12,
+    offsetSeconds: 0,
+    aspectRatio: "4:5",
+    thinking: ThinkingLevel.MEDIUM,
+    redesign: true,
+    startsSeconds: ladderStartsSeconds(),
+  },
+  {
+    id: "redesign-photo@global",
+    kind: "photo",
+    model: PHOTO_MODEL,
+    location: "global",
+    arms: BOTH_ARMS,
+    perArm: 10,
+    offsetSeconds: 0,
+    aspectRatio: "4:5",
+    thinking: ThinkingLevel.MEDIUM,
+    redesign: true,
+  },
+
+  {
     id: "photo-ladder@global",
     kind: "photo",
     model: PHOTO_MODEL,
@@ -228,7 +201,8 @@ export const LANES: readonly Lane[] = [
     perArm: LADDER_GAPS_SECONDS.length * LADDER_CALLS_PER_GAP,
     offsetSeconds: 0,
     aspectRatio: "4:5",
-    thinking: ThinkingLevel.HIGH,
+    thinking: ThinkingLevel.MEDIUM,
+    redesign: true,
     startsSeconds: ladderStartsSeconds(),
   },
   {
@@ -297,7 +271,7 @@ export const LANES: readonly Lane[] = [
     model: "gemini-3.8-flash",
     location: "us",
     arms: ["standard"],
-    perArm: 20,
+    perArm: 10,
     offsetSeconds: 9,
   },
   {
@@ -346,12 +320,45 @@ export function laneSpacingMs(lane: Lane, gapSeconds: number): number {
   return Math.round((lane.arms.length > 1 ? 1 : 2) * gapSeconds * 1000);
 }
 
+/** Budget/slot delays must move the ladder forward, never cause catch-up bursts. */
+export function nextStartMs(
+  call: Pick<PlannedCall, "lane" | "plannedAtMs" | "ladderGapSeconds">,
+  stageStartedAt: number,
+  previousStartedAt: number,
+  gapSeconds: number,
+): number {
+  const spacing =
+    call.ladderGapSeconds === null
+      ? laneSpacingMs(laneOf(call.lane), gapSeconds)
+      : call.ladderGapSeconds * 1000;
+  return Math.max(
+    stageStartedAt + call.plannedAtMs,
+    previousStartedAt + spacing,
+  );
+}
+
+/** Every stage leaves the widest-rung gap from prior starts in its pools. */
+export function stageReadyAtMs(
+  now: number,
+  previousStarts: readonly number[],
+): number {
+  return Math.max(now + 3_000, ...previousStarts.map((at) => at + 60_000));
+}
+
 export function buildPlan(
   gapSeconds: number = DEFAULT_GAP_SECONDS,
   lead: Arm = "standard",
+  selection?: { lanes: readonly string[]; ladders: readonly Arm[] },
 ): PlannedCall[] {
   const calls: Omit<PlannedCall, "seq">[] = [];
   for (const lane of LANES) {
+    if (
+      selection &&
+      (lane.startsSeconds
+        ? !selection.ladders.includes(lane.arms[0])
+        : !selection.lanes.includes(lane.id))
+    )
+      continue;
     const spacing = laneSpacingMs(lane, gapSeconds);
     const stage = laneStage(lane);
     const arms =
@@ -378,12 +385,20 @@ export function buildPlan(
       });
     }
   }
-  const order = new Map(LANES.map((lane, position) => [lane.id, position]));
+  const order = new Map(
+    LANES.map((lane, position) => [
+      lane.id,
+      lane.startsSeconds ? (lane.arms[0] === "standard" ? -2 : -1) : position,
+    ]),
+  );
   const stageOrder = (stage: Stage) => (stage === "ladder" ? 0 : 1);
   return calls
     .sort(
       (a, b) =>
         stageOrder(a.stage) - stageOrder(b.stage) ||
+        (a.stage === "ladder" && b.stage === "ladder"
+          ? (order.get(a.lane) ?? 0) - (order.get(b.lane) ?? 0)
+          : 0) ||
         a.plannedAtMs - b.plannedAtMs ||
         (order.get(a.lane) ?? 0) - (order.get(b.lane) ?? 0),
     )
@@ -657,6 +672,49 @@ export function checkConfig(): GenerateContentConfig {
   };
 }
 
+export const REDESIGN_DIRECTION: ThemeImageDirection = {
+  themeName: "Capacity demonstration",
+  summary: "A quiet natural workshop",
+  industries: ["home-and-living"],
+  moodKeywords: ["warm", "natural"],
+  paletteDirection: "",
+  density: "balanced",
+  shape: "soft",
+  palette: {
+    page: "#f5efe6",
+    surface: "#ffffff",
+    ink: "#27242d",
+    accent: "#6d4dff",
+  },
+};
+export const REDESIGN_SUBJECTS = [
+  "A sunlit empty worktable with linen and natural stone surfaces",
+  "An empty airy workshop with a wooden bench and soft window light",
+  "A close view of natural wood grain beside folded raw linen",
+  "A quiet studio corner with warm plaster and a stone worktop",
+] as const;
+let anchorJpeg: string | undefined;
+export function redesignAnchor(): string {
+  return (anchorJpeg ??= readFileSync(
+    join(process.cwd(), "scripts/fixtures/revamp-capacity-anchor.jpg"),
+  ).toString("base64"));
+}
+export function redesignPhotoRequest(subject: number, aspectRatio = "4:5") {
+  return buildAssetRequest(
+    REDESIGN_DIRECTION,
+    "content",
+    {
+      id: "capacity-probe",
+      purpose: "A storefront content photograph",
+      subject: REDESIGN_SUBJECTS[subject % REDESIGN_SUBJECTS.length],
+      artDirection: "Warm natural daylight, restrained props and soft shadows",
+      aspectRatio,
+      goods: { kind: "none" },
+    },
+    [{ role: "anchor", mediaType: "image/jpeg", base64: redesignAnchor() }],
+  );
+}
+
 /** The exact request one planned call sends. */
 export function requestFor(
   call: Pick<PlannedCall, "kind" | "model" | "lane" | "subject">,
@@ -666,9 +724,28 @@ export function requestFor(
   if (call.kind === "photo") {
     const subject = PHOTO_SUBJECTS[call.subject % PHOTO_SUBJECTS.length];
     const lane = laneOf(call.lane);
+    const redesign = lane.redesign
+      ? redesignPhotoRequest(call.subject, lane.aspectRatio)
+      : null;
     return {
       model: call.model,
-      contents: [{ role: "user", parts: [{ text: photoPrompt(subject) }] }],
+      contents: [
+        {
+          role: "user",
+          parts: redesign
+            ? [
+                { text: redesign.prompt },
+                { text: "ANCHOR:" },
+                {
+                  inlineData: {
+                    mimeType: redesign.references[0].mediaType,
+                    data: redesign.references[0].base64,
+                  },
+                },
+              ]
+            : [{ text: photoPrompt(subject) }],
+        },
+      ],
       config: {
         ...photoConfig(
           lane.aspectRatio ?? "1:1",
@@ -872,23 +949,22 @@ export function expectedUsage(model: ModelId): Usage {
   }
 }
 
-/**
- * ★ The most one call is assumed to cost, for the budget guard: a 2.1 or a
- * Pro photo billed twice over as image (in case the thought draft were
- * billed too) plus 2,000 tokens of thinking; the largest Flash photo answer
- * measured (8,400 image tokens where 1,680 were expected, 27 Sep) plus 2,000
- * of thinking; a check with 16,000 tokens of thinking. Ceilings drawn from
- * what has been seen, not hard bounds: production sends no output limit, so
- * neither does this.
+/** Conservative reservation, not an output setting or a billing guarantee.
+ * Nano Banana 2.1 documents a 32,768 output-token maximum; reserve twice that
+ * at the highest (image) rate, plus 16K input, to cover modality/draft ambiguity.
+ * https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/nano-banana-2-1
+ * Checks reserve 64K candidate and 64K thinking tokens plus 32K input.
+ * A timeout or transport failure retains the reservation because usage is
+ * unknown. Actual usage replaces it only when the response reports usage.
  */
 export function ceilingUsage(model: ModelId): Usage {
   switch (model) {
     case "gemini-nano-banana-2.1":
       return {
-        input: 2_000,
-        output: 3_360,
-        imageOutput: 3_360,
-        thinking: 2_000,
+        input: 16_000,
+        output: 65_536,
+        imageOutput: 65_536,
+        thinking: 0,
         cached: 0,
       };
     case "gemini-3-pro-image":
@@ -909,24 +985,28 @@ export function ceilingUsage(model: ModelId): Usage {
       };
     case "gemini-3.8-flash":
       return {
-        input: 2 * checkInputTokens(),
-        output: 2_000,
-        thinking: 16_000,
+        input: 32_000,
+        output: 65_536,
+        thinking: 65_536,
         cached: 0,
       };
   }
 }
 
-type Priced = Pick<PlannedCall, "model" | "location" | "arm">;
+type Priced = Pick<PlannedCall, "model" | "location" | "arm"> &
+  Partial<Pick<PlannedCall, "lane" | "subject">>;
+
+function usageFor(call: Priced): Usage {
+  const usage = expectedUsage(call.model);
+  if (call.lane && laneOf(call.lane).redesign) {
+    const photo = redesignPhotoRequest(call.subject ?? 0);
+    return { ...usage, input: Math.ceil(photo.prompt.length / 4) + 1120 };
+  }
+  return usage;
+}
 
 export function callExpectedUsd(call: Priced, at: Date = new Date()): number {
-  return usageCostUsd(
-    call.model,
-    call.location,
-    call.arm,
-    expectedUsage(call.model),
-    at,
-  );
+  return usageCostUsd(call.model, call.location, call.arm, usageFor(call), at);
 }
 
 export function callCeilingUsd(call: Priced, at: Date = new Date()): number {
@@ -985,7 +1065,21 @@ export function estimatePlan(
     standardUsd,
     priorityUsd,
     lastStartSeconds: lastStart("pass"),
-    ladderLastStartSeconds: lastStart("ladder"),
+    ladderLastStartSeconds: [
+      ...new Set(
+        plan.filter((call) => call.stage === "ladder").map((call) => call.lane),
+      ),
+    ].reduce(
+      (total, lane) =>
+        total +
+        Math.max(
+          0,
+          ...plan
+            .filter((call) => call.lane === lane)
+            .map((call) => call.plannedAtMs / 1000),
+        ),
+      0,
+    ),
     lanes: [...lanes.values()],
   };
 }
@@ -1563,6 +1657,13 @@ export function answeredRecord(
     httpStatus: 200,
     trafficType: facts.trafficType,
     usage: facts.usage,
+    possiblyBilledUsd:
+      response.usageMetadata &&
+      (facts.usage.input > 0 ||
+        facts.usage.output > 0 ||
+        facts.usage.thinking > 0)
+        ? 0
+        : callCeilingUsd(base, at),
     finishReason: facts.finishReason,
     modelVersion: facts.modelVersion,
     responseId: facts.responseId,
@@ -1622,7 +1723,9 @@ export function answeredRecord(
   };
 }
 
-/** The record of a call that failed, timed out or was abandoned. */
+/** Only known admission/validation failures release a reservation. In
+ * particular HTTP 499 CANCELLED can follow a long inference and reports no
+ * usage, so retain its ceiling just as for a timeout or transport failure. */
 export function failedRecord(
   base: CallRecord,
   error: unknown,
@@ -1635,9 +1738,10 @@ export function failedRecord(
     ...base,
     ...facts,
     possiblyBilledUsd:
-      facts.outcome === "timeout" || facts.outcome === "cancelled"
-        ? callCeilingUsd(base, at)
-        : 0,
+      facts.httpStatus !== null &&
+      [400, 401, 403, 404, 429].includes(facts.httpStatus)
+        ? 0
+        : callCeilingUsd(base, at),
   };
 }
 
@@ -1841,7 +1945,11 @@ export interface PassOptions {
 export interface PassResults {
   tool: "revamp-priority-test";
   /** 2 from 23 Oct: the ladder, per-pool spacing and whole error bodies. */
-  version: 2;
+  version: 2 | 3;
+  requestProfiles?: Record<
+    string,
+    { sha256: string; thinking: string | null; anchorSha256: string | null }
+  >;
   label: string;
   project: string;
   startedAt: string;
@@ -1900,36 +2008,31 @@ function groupLabel(group: GroupSummary): string {
 
 /** The ladder's own section: each rung, then what the rungs settle. */
 function ladderMarkdown(records: readonly CallRecord[]): string[] {
-  const rungs = ladderRungs(records);
-  if (!rungs.length) return [];
-  const ladder = records.filter(
-    (r) => r.stage === "ladder" && r.outcome === "ok",
-  );
-  const model = ladder[0]?.model ?? PHOTO_MODEL;
-  const photosAtGlobal = records.filter(
-    (r) =>
-      r.kind === "photo" &&
-      r.model === model &&
-      r.location === "global" &&
-      r.outcome === "ok",
-  );
-  return [
-    "## Spacing ladder",
-    "",
-    `${model} at global, Standard, run alone before the pass, widest spacing first.`,
-    "",
-    "| Spacing | Calls | 200 | 429 | Measured spacing p50 | Quota named |",
-    "| --- | --- | --- | --- | --- | --- |",
-    ...rungs.map(
-      (rung) =>
-        `| ${rung.gapSeconds} s | ${rung.started} of ${rung.planned} | ${rung.ok} | ${rung.rateLimited} | ${seconds(rung.measuredGapP50Ms)} | ${rung.quotasNamed.length ? rung.quotasNamed.join("; ") : "-"} |`,
-    ),
-    "",
-    `- Most photos admitted within 60 s: ${mostStartsWithin(ladder)} in the ladder, ${mostStartsWithin(photosAtGlobal)} across the whole pass at global (every lane and arm).`,
-    "- Three or more admitted inside 60 s means a 2-a-minute project quota does not bind.",
-    "- A 429 that names a quota is a project quota, which a quota increase raises. 429s that name none and fade as the spacing widens are the shared pool's busy-hour gate: the narrowest rung with none is where the photo pacer can settle.",
-    "",
-  ];
+  return (["standard", "priority"] as const).flatMap((arm) => {
+    const selected = records.filter(
+      (r) => r.stage === "ladder" && r.arm === arm,
+    );
+    const rungs = ladderRungs(selected);
+    if (!rungs.length) return [];
+    const admitted = selected.filter((r) => r.outcome === "ok");
+    return [
+      `## Spacing ladder: ${arm}`,
+      "",
+      `${PHOTO_MODEL} at global, ${arm === "standard" ? "Standard" : "Priority"}, run alone before the pass, widest spacing first.`,
+      "",
+      "| Planned spacing | Calls | 200 | 429 | Measured spacing p50 | Quota named |",
+      "| --- | --- | --- | --- | --- | --- |",
+      ...rungs.map(
+        (rung) =>
+          `| ${rung.gapSeconds} s | ${rung.started} of ${rung.planned} | ${rung.ok} | ${rung.rateLimited} | ${seconds(rung.measuredGapP50Ms)} | ${rung.quotasNamed.length ? rung.quotasNamed.join("; ") : "-"} |`,
+      ),
+      "",
+      `- Most photos admitted within 60 s: ${mostStartsWithin(admitted)} in the ladder.`,
+      "- Three samples per rung cannot establish a safe sustained rate. Repeat at another hour and inspect trafficType before changing production capacity settings.",
+      "- A named quota is evidence to investigate that quota. An unnamed 429 alone does not establish its cause; preserve the error details for Google.",
+      "",
+    ];
+  });
 }
 
 /** The short markdown written beside the results. */
@@ -1978,8 +2081,8 @@ export function summaryMarkdown(results: PassResults): string {
     `# Priority PayGo test: ${results.label}`,
     "",
     `- Project ${results.project}. Started ${utcAndIst(results.startedAt)}${minutes === null ? ", still running" : `, ${minutes.toFixed(1)} min`}.`,
-    `- ${started} of ${planned} calls started${skipped ? `, ${skipped} skipped (${results.stoppedBy === "budget" ? "the budget" : "interrupted"})` : ""}. The spacing ladder ran first; then one start every ${gapSeconds} s in a two-arm lane and ${gapSeconds * 2} s in a one-arm lane, at most ${maxInFlight} in flight, ${lead} leading each pair.`,
-    `- Spend at list prices: about ${usd(results.spentUsd)}, of which ${usd(results.possiblyBilledUsd)} is calls that timed out and may have been billed. Budget ${usd(maxUsd)}.`,
+    `- ${started} of ${planned} calls started${skipped ? `, ${skipped} skipped (${results.stoppedBy === "budget" ? "the budget" : "interrupted"})` : ""}. The selected spacing ladders ran separately first; then a minimum ${gapSeconds} s gap within a two-arm lane and ${gapSeconds * 2} s within a one-arm lane, at most ${maxInFlight} in flight, ${lead} leading each pair.`,
+    `- Spend at list prices: about ${usd(results.spentUsd)}, of which ${usd(results.possiblyBilledUsd)} reserves calls with unknown usage. Budget ${usd(maxUsd)}.`,
     `- 429 refusals: ${refusals}. ${quotas.length ? `The quotas they named: ${quotas.join("; ")}.` : "None named a quota."} Every refusal's whole body is in the JSON (errorBody, errorDetails).`,
     "",
     "| Model | Endpoint | Arm | Calls | 200 | 429 | 429 share | Timeouts | Other | 200s p50 / p95 | 429 held p50 | Served as Priority | Photo sizes | Cost | Most 200s in 60 s |",
@@ -2030,6 +2133,42 @@ export function callLine(record: CallRecord): string {
   return parts.join("  ");
 }
 
+/** Each ladder runs alone and drains before the next stage starts. */
+export function executionStages(plan: readonly PlannedCall[]): Lane[][] {
+  const selected = new Set(plan.map((call) => call.lane));
+  const ladders = ["standard", "priority"].flatMap((arm) =>
+    LANES.filter(
+      (lane) =>
+        selected.has(lane.id) && lane.startsSeconds && lane.arms[0] === arm,
+    ).map((lane) => [lane]),
+  );
+  const pass = LANES.filter(
+    (lane) => selected.has(lane.id) && !lane.startsSeconds,
+  );
+  return [...ladders, ...(pass.length ? [pass] : [])];
+}
+export function requestProfiles(plan: readonly PlannedCall[]) {
+  return Object.fromEntries(
+    [...new Set(plan.map((call) => call.lane))].map((lane) => {
+      const request = requestFor(plan.find((call) => call.lane === lane)!);
+      return [
+        lane,
+        {
+          sha256: createHash("sha256")
+            .update(JSON.stringify(request))
+            .digest("hex"),
+          thinking: request.config?.thinkingConfig?.thinkingLevel ?? null,
+          anchorSha256: laneOf(lane).redesign
+            ? createHash("sha256")
+                .update(Buffer.from(redesignAnchor(), "base64"))
+                .digest("hex")
+            : null,
+        },
+      ];
+    }),
+  );
+}
+
 /** What the dry run prints, and the live run before it starts. */
 export function planText(
   plan: readonly PlannedCall[],
@@ -2047,8 +2186,9 @@ export function planText(
     `and is read back from usageMetadata.trafficType (${SERVED_AS_PRIORITY} = served as Priority, ON_DEMAND = Standard).`,
     "",
   ];
-  for (const lane of LANES) {
+  for (const lane of executionStages(plan).flat()) {
     const laneCalls = plan.filter((call) => call.lane === lane.id);
+    if (!laneCalls.length) continue;
     const arms = lane.arms
       .map(
         (arm) =>
@@ -2069,8 +2209,9 @@ export function planText(
     usd(callCeilingUsd({ model, location: "global", arm }, at));
   lines.push(
     "",
-    `The spacing ladder runs first and alone: ${LADDER_CALLS_PER_GAP} photos at each of ${LADDER_GAPS_SECONDS.join(", ")} s apart, widest first. Its last call is due ${(estimate.ladderLastStartSeconds / 60).toFixed(1)} min in, and the pass starts once its last answer is in.`,
-    `Photos: 2K asked, 4:5 (Pro) and 3:4 (Flash), JPEG at quality 95, no people (ALLOW_NONE), prominent people blocked, four harm filters at BLOCK_LOW_AND_ABOVE (image-vertex.ts:84-108). One of ${PHOTO_SUBJECTS.length} still-life subjects per pair, no reference image.`,
+    `The spacing ladders run first, separately and alone: ${LADDER_CALLS_PER_GAP} photos at each of ${LADDER_GAPS_SECONDS.join(", ")} s apart, widest first. Their combined scheduled starts span ${(estimate.ladderLastStartSeconds / 60).toFixed(1)} min plus answer drains; the pass waits for both.`,
+    `Redesign photos: Nano Banana 2.1 at global, 2K MEDIUM, JPEG quality 95, production prompt builder, no people and one fixed JPEG ANCHOR reference. Both arms receive identical content. Optional historical lanes keep their labelled settings.`,
+    `Reference SHA-256: ${createHash("sha256").update(Buffer.from(redesignAnchor(), "base64")).digest("hex")}.`,
     `Checks: the photo reviewer's request (image-review.ts, prompt ${CHECK_PROMPT_VERSION}): HIGH thinking, ULTRA_HIGH media resolution, the JSON schema, no output ceiling; a 128 x 128 WebP plays CANDIDATE and ANCHOR. About ${checkInputTokens().toLocaleString("en-US")} input tokens each.`,
     "Every refusal keeps Google's whole error body and the quota it names, if any.",
     "",
@@ -2085,7 +2226,12 @@ export function planText(
 // Options and the environment.
 // ---------------------------------------------------------------------------
 
+export const DEFAULT_PROBE_GAP_SECONDS = 40;
+export const DEFAULT_PROBE_LANES = ["redesign-photo@global", "check@us"];
+
 export interface Options {
+  lanes: string[];
+  ladders: Arm[];
   help: boolean;
   live: boolean;
   maxUsd: number;
@@ -2098,6 +2244,8 @@ export interface Options {
 
 const FLAGS = ["--live", "--yes", "--help"] as const;
 const VALUES = [
+  "--lanes=",
+  "--ladders=",
   "--max-usd=",
   "--gap=",
   "--max-in-flight=",
@@ -2128,14 +2276,45 @@ export function readOptions(
   const live = argv.includes("--live");
   const yes = argv.includes("--yes");
   if (live && !yes)
-    return "A live pass calls paid models in storemink-staging (about $6.43 at list prices). Re-run with --live --yes.";
+    return "A live pass calls paid models in storemink-staging. Re-run with --live --yes.";
   if (yes && !live)
     return "--yes is the consent for --live; pass both or neither.";
+  const passIds = LANES.filter((lane) => !lane.startsSeconds).map(
+    (lane) => lane.id,
+  );
+  const selected = (
+    raw: string | null,
+    defaults: string[],
+    allowed: string[],
+  ): string[] | null => {
+    if (raw === null) return [...defaults];
+    if (raw === "none") return [];
+    if (raw === "all") return [...allowed];
+    const entries = raw.split(",").map((entry) => entry.trim());
+    return entries.every((entry) => allowed.includes(entry)) &&
+      new Set(entries).size === entries.length
+      ? entries
+      : null;
+  };
+  const lanes = selected(value("--lanes="), DEFAULT_PROBE_LANES, passIds);
+  const ladders = selected(
+    value("--ladders="),
+    ["standard", "priority"],
+    ["standard", "priority"],
+  );
+  if (!lanes)
+    return `--lanes must name unique pass lanes: ${passIds.join(", ")}, all or none.`;
+  if (!ladders)
+    return "--ladders must name standard, priority, standard,priority, all or none.";
+  if (!lanes.length && !ladders.length)
+    return "Select at least one lane or ladder.";
   const options: Options = {
+    lanes,
+    ladders: ladders as Arm[],
     help: argv.includes("--help"),
     live,
     maxUsd: number("--max-usd=", DEFAULT_MAX_USD),
-    gapSeconds: number("--gap=", DEFAULT_GAP_SECONDS),
+    gapSeconds: number("--gap=", DEFAULT_PROBE_GAP_SECONDS),
     maxInFlight: number("--max-in-flight=", MAX_IN_FLIGHT),
     lead: (value("--lead=") || "standard") as Arm,
     label: (value("--label=") || "pass").toLowerCase(),
@@ -2146,7 +2325,7 @@ export function readOptions(
     options.maxUsd <= 0 ||
     options.maxUsd > MAX_USD_CEILING
   )
-    return `--max-usd must be more than 0 and at most ${MAX_USD_CEILING} (the owner approved about $24 for two passes).`;
+    return `--max-usd must be more than 0 and at most ${MAX_USD_CEILING} (tool safety ceiling; each live spend needs approval).`;
   if (
     !Number.isFinite(options.gapSeconds) ||
     options.gapSeconds < 5 ||
@@ -2331,7 +2510,8 @@ async function runPass(
   const records = plan.map(pendingRecord);
   const results: PassResults = {
     tool: "revamp-priority-test",
-    version: 2,
+    version: 3,
+    requestProfiles: requestProfiles(plan),
     label: options.label,
     project,
     startedAt: at.toISOString(),
@@ -2455,12 +2635,11 @@ async function runPass(
   // `t0` is the start of the lane's stage: the ladder's, or the pass's once
   // the ladder has finished.
   const runLane = async (lane: Lane, t0: number) => {
-    const spacing = laneSpacingMs(lane, options.gapSeconds);
     let lastStart = Number.NEGATIVE_INFINITY;
     for (const call of plan.filter((candidate) => candidate.lane === lane.id)) {
       const record = records[call.seq - 1];
       record.plannedAt = new Date(t0 + call.plannedAtMs).toISOString();
-      const due = Math.max(t0 + call.plannedAtMs, lastStart + spacing);
+      const due = nextStartMs(call, t0, lastStart, options.gapSeconds);
       if (!(await sleepUntil(due, stop.signal))) continue;
       await slots.acquire();
       if (stop.signal.aborted) {
@@ -2524,17 +2703,29 @@ async function runPass(
   console.log(
     `Live pass "${options.label}": ${plan.length} calls, writing ${base}.json`,
   );
-  // ★ The ladder runs alone, and the pass waits for its last answer: a Pro
-  //   photo in the pass would otherwise sit between two rungs and change the
-  //   spacing being measured.
-  const ladderLanes = LANES.filter((lane) => laneStage(lane) === "ladder");
-  const passLanes = LANES.filter((lane) => laneStage(lane) === "pass");
-  const ladderT0 = Date.now() + 3_000;
-  await Promise.all(ladderLanes.map((lane) => runLane(lane, ladderT0)));
-  await drain();
+  // Each ladder runs alone, drains, and leaves a full widest-rung gap
+  // before the next one, so concurrent work cannot occupy its rungs.
+  const stages = executionStages(plan);
+  for (const stage of stages.filter((group) => group[0]?.startsSeconds)) {
+    if (stop.signal.aborted) break;
+    // Leave at least the widest rung since the preceding photo start.
+    // Draining answers alone can leave a short gap before the Priority ladder.
+    const previous = poolStarts.get(`${stage[0].model}@${stage[0].location}`);
+    const t0 = stageReadyAtMs(
+      Date.now(),
+      previous === undefined ? [] : [previous],
+    );
+    await runLane(stage[0], t0);
+    await drain();
+  }
+  const passLanes = stages.find((group) => !group[0]?.startsSeconds) ?? [];
   if (!stop.signal.aborted) {
     console.log("The spacing ladder is done; the pass starts.");
-    const passT0 = Date.now() + 3_000;
+    const priorStarts = passLanes.flatMap((lane) => {
+      const at = poolStarts.get(`${lane.model}@${lane.location}`);
+      return at === undefined ? [] : [at];
+    });
+    const passT0 = stageReadyAtMs(Date.now(), priorStarts);
     await Promise.all(passLanes.map((lane) => runLane(lane, passT0)));
   }
   await drain();
@@ -2561,7 +2752,6 @@ async function runPass(
 }
 
 async function main(): Promise<number> {
-  loadEnvConfig(process.cwd(), true, { info: () => {}, error: () => {} });
   const options = readOptions(process.argv.slice(2));
   if (typeof options === "string") {
     console.error(options);
@@ -2573,7 +2763,7 @@ async function main(): Promise<number> {
     );
     return 0;
   }
-  const problems = environmentProblems(process.env);
+  const problems = options.live ? environmentProblems(process.env) : [];
   if (problems.length) {
     console.error(
       [
@@ -2583,8 +2773,10 @@ async function main(): Promise<number> {
     );
     return 2;
   }
-  const project = targetProject(process.env) ?? STAGING_PROJECT;
-  const plan = buildPlan(options.gapSeconds, options.lead);
+  const project = options.live
+    ? (targetProject(process.env) ?? STAGING_PROJECT)
+    : STAGING_PROJECT;
+  const plan = buildPlan(options.gapSeconds, options.lead, options);
   const now = new Date();
   const estimate = estimatePlan(plan, now);
   console.log(
@@ -2597,13 +2789,6 @@ async function main(): Promise<number> {
   //   production's quota at its busy hour and measure it instead.
   //   GOOGLE_CLOUD_QUOTA_PROJECT overrides it (googleauth.js:287); a value
   //   other than staging was refused above.
-  process.env.GOOGLE_CLOUD_QUOTA_PROJECT = project;
-  const quota = adcQuotaProject(process.env);
-  if (quota && quota !== project) {
-    console.log(
-      `Note: your Application Default Credentials carry quota project "${quota}"; this run sends ${project} instead (GOOGLE_CLOUD_QUOTA_PROJECT), so every call is counted against ${project}'s quota.`,
-    );
-  }
   console.log(planText(plan, estimate, options, project, now));
   if (estimate.expectedUsd > options.maxUsd) {
     console.error(
@@ -2613,9 +2798,16 @@ async function main(): Promise<number> {
   }
   if (!options.live) {
     console.log(
-      `\nDry run: no model was called. To spend about ${usd(estimate.expectedUsd)}: npm run revamp:priority-test -- --live --yes --label=<name> [--out=<dir>]`,
+      `\nDry run: no model was called. Paid execution requires owner approval. Keep the selected lanes, ladders, gap and budget unchanged when adding --live --yes.`,
     );
     return 0;
+  }
+  process.env.GOOGLE_CLOUD_QUOTA_PROJECT = project;
+  const quota = adcQuotaProject(process.env);
+  if (quota && quota !== project) {
+    console.log(
+      `Note: your Application Default Credentials carry quota project "${quota}"; this run sends ${project} instead (GOOGLE_CLOUD_QUOTA_PROJECT), so every call is counted against ${project}'s quota.`,
+    );
   }
   return runPass(options, project, plan, estimate);
 }

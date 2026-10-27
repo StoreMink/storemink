@@ -30,7 +30,18 @@ const holder = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/db/client", () => ({
-  withService: vi.fn((fn: any) => Promise.resolve(fn(holder.db!.db))),
+  withService: vi.fn((fn: any) => {
+    const db = holder.db!.db;
+    return Promise.resolve(
+      fn({
+        ...db,
+        execute: (query: any) =>
+          sqlText(query).includes("app.mink_revamp_recovery")
+            ? Promise.resolve({ rows: [] })
+            : db.execute(query),
+      }),
+    );
+  }),
 }));
 vi.mock("@/lib/mink/config", () => ({
   getMinkConfig: vi.fn(() => ({ enabled: holder.enabled })),
@@ -58,6 +69,7 @@ import {
   type RevampRequest,
   type RevampStoredPlan,
 } from "./contract";
+import { REVAMP_RECOVERY_CEILING_MS } from "./pacing-policy";
 import {
   REVAMP_RUN_CEILING_MS,
   cancelRevamp,
@@ -555,7 +567,7 @@ describe("the lease", () => {
     // ★ And refuses a job past its ceiling, with failures still under the
     //   limit.
     const where = sqlText(holder.db.calls.where[0]);
-    expect(where).toContain("NOT (CASE WHEN jsonb_typeof(");
+    expect(where).toContain("NOT (CASE WHEN ");
     expect(where).toContain(" < ");
     expect(sqlParamValues(holder.db.calls.where[0])).toContain(
       REVAMP_RUN_CEILING_MS,
@@ -2511,7 +2523,7 @@ describe("keeping a job moving", () => {
     expect(where).toContain("coalesce(");
     expect(where).toContain("interval '1 millisecond'");
     // ★ A job past its ceiling is settled, never kicked (B8).
-    expect(where).toContain("NOT (CASE WHEN jsonb_typeof(");
+    expect(where).toContain("NOT (CASE WHEN ");
     expect(sqlParamValues(holder.db.calls.where[0])).toContain(
       REVAMP_RUN_CEILING_MS,
     );
@@ -2558,8 +2570,14 @@ describe("keeping a job moving", () => {
     expect(stalled).toContain(
       "AND NOT (CASE WHEN jsonb_typeof(result -> 'firstClaimedAt')",
     );
+    // ★ The ceiling that applies is the row's: the longer one for a
+    //   recoverable job, the legacy one for the rest.
+    expect(exhausted).toContain("CASE WHEN result -> 'recoveryVersion'");
     expect(sqlParamValues(holder.db.calls.execute[0])).toContain(
       REVAMP_RUN_CEILING_MS,
+    );
+    expect(sqlParamValues(holder.db.calls.execute[0])).toContain(
+      REVAMP_RECOVERY_CEILING_MS,
     );
     // A made card is finished whichever limit ended its job.
     expect(sqlText(holder.db.calls.where[0])).toContain("'firstClaimedAt'");

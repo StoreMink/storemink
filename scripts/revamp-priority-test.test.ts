@@ -15,7 +15,10 @@ import {
   themeImageReviewContent,
   themeImageReviewSystem,
 } from "../lib/theme-studio/image-review";
-import { themeImageConfig } from "../lib/theme-studio/image-vertex";
+import {
+  themeImageConfig,
+  themeImageParts,
+} from "../lib/theme-studio/image-vertex";
 import {
   CALL_TIMEOUT_MS,
   CHECK_BRIEF,
@@ -23,6 +26,12 @@ import {
   CHECK_PROMPT_VERSION,
   CHECK_SCHEMA,
   DEFAULT_MAX_USD,
+  DEFAULT_PROBE_LANES,
+  executionStages,
+  nextStartMs,
+  stageReadyAtMs,
+  requestProfiles,
+  redesignPhotoRequest,
   ERROR_BODY_MAX,
   LADDER_CALLS_PER_GAP,
   LADDER_GAPS_SECONDS,
@@ -315,8 +324,8 @@ describe("the Priority arm", () => {
 describe("the plan", () => {
   const plan = buildPlan();
 
-  it("is 152 calls in the owner's split", () => {
-    expect(plan).toHaveLength(152);
+  it("retains 174 selectable calls including historical lanes", () => {
+    expect(plan).toHaveLength(174);
     const counted = (lane: string, arm: string) =>
       plan.filter((c) => c.lane === lane && c.arm === arm).length;
     expect(counted("photo-ladder@global", "standard")).toBe(12);
@@ -329,7 +338,7 @@ describe("the plan", () => {
     expect(counted("mink-photo@eu", "standard")).toBe(10);
     expect(counted("check@global", "standard")).toBe(20);
     expect(counted("check@global", "priority")).toBe(20);
-    expect(counted("check@us", "standard")).toBe(20);
+    expect(counted("check@us", "standard")).toBe(10);
     expect(counted("check@eu", "standard")).toBe(20);
     expect(
       plan.filter((c) => c.location !== "global" && c.arm === "priority"),
@@ -345,7 +354,9 @@ describe("the plan", () => {
         lane.thinking,
       ]),
     ).toEqual([
-      ["photo-ladder@global", ThinkingLevel.HIGH],
+      ["priority-ladder@global", ThinkingLevel.MEDIUM],
+      ["redesign-photo@global", ThinkingLevel.MEDIUM],
+      ["photo-ladder@global", ThinkingLevel.MEDIUM],
       ["studio-photo@global", ThinkingLevel.HIGH],
       ["mink-photo@global", ThinkingLevel.MINIMAL],
       ["mink-photo@us", ThinkingLevel.MINIMAL],
@@ -357,8 +368,10 @@ describe("the plan", () => {
     expect(plan.map((c) => c.seq)).toEqual(plan.map((_, i) => i + 1));
     const ladder = plan.filter((c) => c.stage === "ladder");
     expect(ladder.map((c) => c.seq)).toEqual(ladder.map((_, i) => i + 1));
-    for (const stage of ["ladder", "pass"] as const) {
-      const calls = plan.filter((c) => c.stage === stage);
+    for (const lanes of executionStages(plan)) {
+      const calls = plan.filter((c) =>
+        lanes.some((lane) => lane.id === c.lane),
+      );
       for (let i = 1; i < calls.length; i++)
         expect(calls[i].plannedAtMs).toBeGreaterThanOrEqual(
           calls[i - 1].plannedAtMs,
@@ -374,7 +387,7 @@ describe("the plan", () => {
     expect(ladderStartsSeconds()).toEqual([
       0, 60, 120, 160, 200, 240, 270, 300, 330, 345, 360, 375,
     ]);
-    const ladder = plan.filter((c) => c.stage === "ladder");
+    const ladder = plan.filter((c) => c.lane === "photo-ladder@global");
     expect(ladder).toHaveLength(12);
     expect(ladder.map((c) => c.ladderGapSeconds)).toEqual([
       60, 60, 60, 40, 40, 40, 30, 30, 30, 15, 15, 15,
@@ -402,13 +415,36 @@ describe("the plan", () => {
         .every((c) => c.ladderGapSeconds === null),
     ).toBe(true);
     expect(requestFor(ladder[0]).config).toEqual(
-      photoConfig("4:5", ThinkingLevel.HIGH),
+      photoConfig("4:5", ThinkingLevel.MEDIUM),
     );
     // ★ A live run keeps each lane this far from its own last start, so any
     //   spacing but 0 here would quietly widen the 15 s rung to 30 s.
     const ladderLane = LANES.find((lane) => lane.id === "photo-ladder@global")!;
     expect(laneSpacingMs(ladderLane, 15)).toBe(0);
     expect(laneSpacingMs(ladderLane, 60)).toBe(0);
+  });
+
+  it("preserves each rung after a slow response or budget wait without catch-up bursts", () => {
+    const ladder = plan.filter(
+      (call) => call.lane === "priority-ladder@global",
+    );
+    const t0 = 1_000_000;
+    expect(nextStartMs(ladder[0], t0, -Infinity, 40)).toBe(t0);
+    // The second start waited until 118 s for budget; the third still needs 60 s.
+    expect(nextStartMs(ladder[2], t0, t0 + 118_000, 40)).toBe(t0 + 178_000);
+    // Moving to the 40 s rung after another delay still leaves the full 40 s.
+    expect(nextStartMs(ladder[3], t0, t0 + 300_000, 40)).toBe(t0 + 340_000);
+    expect(nextStartMs(ladder[9], t0, t0 + 600_000, 40)).toBe(t0 + 615_000);
+    const paired = plan.find((call) => call.lane === "redesign-photo@global")!;
+    const control = plan.find((call) => call.lane === "check@us")!;
+    expect(nextStartMs(paired, t0, t0 + 600_000, 40)).toBe(t0 + 640_000);
+    expect(nextStartMs(control, t0, t0 + 600_000, 40)).toBe(t0 + 680_000);
+  });
+
+  it("isolates the paired stage from the last ladder start, including immediate refusals", () => {
+    expect(stageReadyAtMs(1_000_000, [])).toBe(1_003_000);
+    expect(stageReadyAtMs(1_000_000, [999_500, 950_000])).toBe(1_059_500);
+    expect(stageReadyAtMs(1_000_000, [800_000])).toBe(1_003_000);
   });
 
   it("alternates the arms within a lane, a pair sharing one subject, one start per gap", () => {
@@ -446,11 +482,11 @@ describe("the plan", () => {
     expect(flipped.slice(0, 12).every((c) => c.stage === "ladder")).toBe(true);
   });
 
-  it("costs about $6.43 at list prices on Nano Banana 2.1 (about $11.57 on the 23 Oct models), within the default budget and two passes within $24", () => {
+  it("estimates every selected lane within the tool budget", () => {
     const estimate = estimatePlan(plan, new Date("2026-10-23T12:00:00Z"));
-    expect(estimate.calls).toBe(152);
-    expect(estimate.expectedUsd).toBeGreaterThan(6);
-    expect(estimate.expectedUsd).toBeLessThan(7);
+    expect(estimate.calls).toBe(174);
+    expect(estimate.expectedUsd).toBeGreaterThan(8);
+    expect(estimate.expectedUsd).toBeLessThan(10);
     expect(estimate.expectedUsd).toBeLessThan(DEFAULT_MAX_USD);
     // The owner approved about $24 for the evening and the night pass.
     expect(2 * estimate.expectedUsd).toBeLessThan(24);
@@ -461,7 +497,7 @@ describe("the plan", () => {
     // The pass's last call is due 6 + 39 x 15 = 591 s after the pass starts;
     // the ladder's at 375 s after it starts.
     expect(estimate.lastStartSeconds).toBe(591);
-    expect(estimate.ladderLastStartSeconds).toBe(375);
+    expect(estimate.ladderLastStartSeconds).toBe(750);
   });
 
   it("prints the plan with both headers and no long dash", () => {
@@ -481,13 +517,53 @@ describe("the plan", () => {
     expect(text).toContain(
       "at 0, 60, 120, 160, 200, 240, 270, 300, 330, 345, 360, 375 s",
     );
-    expect(text).toContain("The spacing ladder runs first and alone");
-    expect(text).toContain("152 calls");
+    expect(text).toContain(
+      "The spacing ladders run first, separately and alone",
+    );
+    expect(text).toContain("174 calls");
     expect(text).not.toMatch(LONG_DASHES);
   });
 });
 
 describe("one call's request", () => {
+  it("uses the real MEDIUM redesign prompt, anchor parts and config for both arms", () => {
+    const calls = buildPlan(40, "standard", {
+      lanes: ["redesign-photo@global"],
+      ladders: ["standard", "priority"],
+    });
+    for (const call of calls) {
+      const real = redesignPhotoRequest(call.subject);
+      expect(requestFor(call).contents).toEqual([
+        { role: "user", parts: themeImageParts(real) },
+      ]);
+      expect(requestFor(call).config).toEqual(
+        themeImageConfig(real, {
+          model: PHOTO_MODEL,
+          imageSize: "2K",
+          thinkingLevel: ThinkingLevel.MEDIUM,
+        }),
+      );
+    }
+    const pairs = calls.filter((call) => call.stage === "pass");
+    for (let i = 0; i < pairs.length; i += 2)
+      expect(requestFor(pairs[i])).toEqual(requestFor(pairs[i + 1]));
+    const profiles = requestProfiles(calls);
+    expect(profiles["redesign-photo@global"].thinking).toBe(
+      ThinkingLevel.MEDIUM,
+    );
+    expect(profiles["redesign-photo@global"].anchorSha256).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+    expect(profiles["photo-ladder@global"]).toEqual(
+      profiles["priority-ladder@global"],
+    );
+    const source = readFileSync(
+      path.join(process.cwd(), "lib/mink/revamp/photos.ts"),
+      "utf8",
+    );
+    expect(source).toContain("thinkingLevel: ThinkingLevel.MEDIUM");
+  });
+
   it("draws a pair's subject in its lane's frame, at its lane's thinking", () => {
     const studio = requestFor(call({ subject: 3 }));
     expect(studio.model).toBe("gemini-nano-banana-2.1");
@@ -1211,6 +1287,60 @@ describe("a failed call", () => {
     expect(timedOut.possiblyBilledUsd).toBeCloseTo(callCeilingUsd(base), 9);
     expect(failedRecord(base, refusal, false, false).possiblyBilledUsd).toBe(0);
   });
+  it("reserves unknown HTTP 499 cancellation costs rather than counting them as free", () => {
+    const base = record({ arm: "priority" });
+    for (const status of [408, 409, 499, 500, 503, 504]) {
+      expect(
+        failedRecord(
+          base,
+          Object.assign(new Error("usage unknown"), { status }),
+          false,
+          false,
+        ).possiblyBilledUsd,
+      ).toBe(callCeilingUsd(base));
+    }
+    for (const status of [400, 401, 403, 404, 429]) {
+      expect(
+        failedRecord(
+          base,
+          Object.assign(new Error("not admitted"), { status }),
+          false,
+          false,
+        ).possiblyBilledUsd,
+      ).toBe(0);
+    }
+  });
+
+  it("keeps a reservation when a response cannot establish usage", () => {
+    const base = record({ arm: "priority" });
+    const ceiling = callCeilingUsd(base);
+    expect(
+      failedRecord(base, new Error("connection reset"), false, false)
+        .possiblyBilledUsd,
+    ).toBe(ceiling);
+    expect(
+      failedRecord(
+        base,
+        Object.assign(new Error("unavailable"), { status: 503 }),
+        false,
+        false,
+      ).possiblyBilledUsd,
+    ).toBe(ceiling);
+    for (const usageMetadata of [undefined, {}]) {
+      expect(
+        answeredRecord(base, response({ usageMetadata })).record
+          .possiblyBilledUsd,
+      ).toBe(ceiling);
+    }
+    expect(
+      answeredRecord(
+        base,
+        response({
+          usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 100 },
+        }),
+      ).record.possiblyBilledUsd,
+    ).toBe(0);
+  });
 });
 
 describe("the summary", () => {
@@ -1523,12 +1653,46 @@ describe("options and the environment", () => {
       help: false,
       live: false,
       maxUsd: DEFAULT_MAX_USD,
-      gapSeconds: 15,
+      gapSeconds: 40,
+      lanes: DEFAULT_PROBE_LANES,
+      ladders: ["standard", "priority"],
       maxInFlight: MAX_IN_FLIGHT,
       lead: "standard",
       label: "pass",
       out: "/tmp/out",
     });
+  });
+
+  it("filters without accidentally selecting or merging other work", () => {
+    const opts = readOptions([]);
+    if (typeof opts === "string") throw new Error(opts);
+    const selected = buildPlan(opts.gapSeconds, opts.lead, opts);
+    expect(selected).toHaveLength(54);
+    expect(estimatePlan(selected).expectedUsd).toBeLessThan(8);
+    expect(
+      executionStages(selected).map((lanes) => lanes.map((lane) => lane.id)),
+    ).toEqual([
+      ["photo-ladder@global"],
+      ["priority-ladder@global"],
+      DEFAULT_PROBE_LANES,
+    ]);
+    expect(
+      buildPlan(40, "standard", { lanes: ["check@us"], ladders: [] }),
+    ).toHaveLength(10);
+    expect(readOptions(["--lanes=none", "--ladders=priority"])).toMatchObject({
+      lanes: [],
+      ladders: ["priority"],
+    });
+    expect(readOptions(["--lanes=none", "--ladders=none"])).toMatch(
+      /at least one/,
+    );
+    for (const args of [
+      ["--lanes=unknown"],
+      ["--lanes=check@us,check@us"],
+      ["--ladders=both"],
+    ]) {
+      expect(typeof readOptions(args)).toBe("string");
+    }
   });
 
   it("spends only with --live and --yes together", () => {

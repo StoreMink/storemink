@@ -113,15 +113,16 @@ export interface RevampPlannerOptions {
 function vertexClient(ctx: RevampStepContext): ThemeStudioModelClient | null {
   const vertex = getVertexConfig();
   if (!vertex) return null;
+  const draining = ctx.draining;
   return createVertexModelClient(vertex, {
     capacity: (model) =>
       revampPlannerCapacity(
         sharedProviderCapacity(vertex.projectId, vertex.region, model, {
           scope: REVAMP_PLANNER_CAPACITY_SCOPE,
         }),
-        { draining: ctx.draining },
+        { draining },
       ),
-    ...drainingSleep(ctx.draining),
+    ...drainingSleep(draining),
   });
 }
 
@@ -142,15 +143,24 @@ export function revampPlannerCapacity(
   //   spends what is left of it, never a fresh six minutes.
   let cap: AbortSignal | null = null;
   return {
-    run: (operation, signal) =>
-      capacity.run(async (permit) => {
-        if (options.draining?.aborted) throw notSentAtDeadline();
-        const cut = (cap ??= AbortSignal.timeout(callMs));
-        return operation({
-          ...permit,
-          signal: AbortSignal.any([permit.signal, cut]),
-        });
-      }, signal),
+    run: (operation, signal, runOptions) =>
+      capacity.run(
+        async (permit) => {
+          if (options.draining?.aborted) throw notSentAtDeadline();
+          const cut = (cap ??= AbortSignal.timeout(callMs));
+          return operation({
+            ...permit,
+            signal: AbortSignal.any([permit.signal, cut]),
+          });
+        },
+        signal,
+        {
+          admission:
+            options.draining && runOptions?.admission
+              ? AbortSignal.any([options.draining, runOptions.admission])
+              : (options.draining ?? runOptions?.admission),
+        },
+      ),
   };
 }
 

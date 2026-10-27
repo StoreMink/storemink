@@ -442,11 +442,11 @@ describe("fakeRevampSiteOutput", () => {
         slides: Array<{ image_url: string }>;
       };
       expect(first.type).toBe("hero_carousel");
-      expect(config.slides).toHaveLength(3);
+      expect(config.slides).toHaveLength(2);
       for (const slide of config.slides) {
         expect(slide.image_url).toMatch(/^revamp-slot:\/\//);
       }
-      expect(new Set(config.slides.map((s) => s.image_url)).size).toBe(3);
+      expect(new Set(config.slides.map((s) => s.image_url)).size).toBe(2);
       expect(first.style?.width).toBe("full");
       expect(home.sections[home.sections.length - 1].type).toBe("newsletter");
     },
@@ -469,13 +469,13 @@ describe("fakeRevampSiteOutput", () => {
         );
       const home = plan.pages.find((p) => p.slug === "")!;
       expect(photosOn(home.sections).size).toBeGreaterThanOrEqual(3);
-      expect(plan.shots.length).toBeGreaterThanOrEqual(8);
-      expect(plan.shots.length).toBeLessThanOrEqual(26);
+      expect(plan.shots.length).toBeGreaterThanOrEqual(3);
+      expect(plan.shots.length).toBeLessThanOrEqual(8);
       // A photo-led band besides the opening: a gallery of four.
       const gallery = home.sections.find((s) => s.type === "gallery");
       expect(
         (gallery?.config as unknown as { items: unknown[] } | undefined)?.items,
-      ).toHaveLength(4);
+      ).toHaveLength(3);
       // Every page the redesign writes carries at least one photograph.
       for (const page of plan.pages) {
         expect(photosOn(page.sections).size).toBeGreaterThan(0);
@@ -870,7 +870,7 @@ describe("fakeRevampSiteOutput: distinct by default (prompt v5)", () => {
   it("names the prompt version it follows, so it compiles under v5's rules", () => {
     const { raw } = plannedFor(spiceShop, STORE_IDS[0]);
     expect(raw.promptVersion).toBe(REVAMP_SITE_PROMPT_VERSION);
-    expect(revampAnswerPromptVersion(raw)).toBe(5);
+    expect(revampAnswerPromptVersion(raw)).toBe(6);
   });
 
   it("★★ varies by store: direction, page, fonts, corners, header and structure", () => {

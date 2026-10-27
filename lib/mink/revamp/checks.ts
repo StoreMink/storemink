@@ -67,7 +67,11 @@ import {
   withoutUnsupportedClaims,
 } from "./copy-checks";
 import { revampSectionsDigest } from "./digests";
-import type { RevampCheckRun, RevampStepContext } from "./ports";
+import {
+  RevampRetryLaterError,
+  type RevampCheckRun,
+  type RevampStepContext,
+} from "./ports";
 import {
   checkRevampLink,
   fallbackSeoDescription,
@@ -192,6 +196,7 @@ async function mapLimit<T, R>(
 async function objectMissing(
   url: string,
   signal: AbortSignal,
+  recoverable = false,
 ): Promise<boolean> {
   const path = gcsPathFromUrl(url);
   if (!path) return false;
@@ -199,6 +204,12 @@ async function objectMissing(
     return (await gcsObjectInfo("public", path)) === null;
   } catch (error) {
     if (signal.aborted) throw error;
+    if (recoverable)
+      throw new RevampRetryLaterError(
+        "photos_unavailable",
+        "The stored photographs could not be checked; retrying without changing the design.",
+        60_000,
+      );
     return false;
   }
 }
@@ -328,7 +339,7 @@ async function fixImages(
     urls,
     STORAGE_CONCURRENCY,
     ctx.signal,
-    (url) => objectMissing(url, ctx.signal),
+    (url) => objectMissing(url, ctx.signal, ctx.recoverable),
   );
   const missing = new Set(urls.filter((_, i) => verdicts[i]));
 
@@ -1100,6 +1111,41 @@ export async function runRevampChecks(
   const english = isEnglish(input.request.brief.language);
   if (english) checkLanguage(w, language);
   fixPhones(w, phones);
+  // ★ Reported, never enforced (runner.ts): a homepage that lost its opening
+  //   photograph or fell under three after a missing object was taken out
+  //   is said so on the card, in the photos check's own words.
+  if (ctx.recoverable) {
+    const home = plan.pages.find((page) => page.slug === "");
+    if (home) {
+      const sections = home.sections.filter(
+        (section) => section.enabled !== false,
+      );
+      const opening = sections[0];
+      const photosOn = (items: PageSectionItem[]) =>
+        new Set(
+          items
+            .filter((section) => !PRODUCT_SECTION_TYPES.has(section.type))
+            .flatMap((section) =>
+              revampMediaFields(section.config)
+                .filter(
+                  (field) =>
+                    field.path.at(-1) !== "mobile_image_url" &&
+                    field.path.at(-1) !== "video_url",
+                )
+                .map((field) => field.url),
+            ),
+        );
+      if (
+        !opening ||
+        !["hero", "hero_carousel"].includes(opening.type) ||
+        photosOn([opening]).size === 0 ||
+        photosOn(sections).size < 3
+      )
+        photos.open.push(
+          "The homepage does not retain its opening photograph and at least three photographs after checking.",
+        );
+    }
+  }
 
   if (plan.chrome) plan.chrome.next = sanitizeChromeForSave(plan.chrome.next);
   prunePhotos(plan);

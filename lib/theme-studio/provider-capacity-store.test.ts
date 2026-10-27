@@ -224,9 +224,13 @@ describe("postgresCapacityStore", () => {
     );
     expect(update?.sql).toContain("capacity+1), successes=0");
     expect(update?.sql).toContain(
-      "next_start_at=next_start_at-(gap_ms-greatest($",
+      "next_start_at=next_start_at-(gap_ms-least($",
     );
-    expect(update?.sql).toContain("gap_ms=greatest($");
+    expect(update?.sql).toContain("gap_ms=least($");
+    expect(update?.sql).toContain("CASE WHEN epoch > 0 AND pause_until +");
+    expect(update?.sql).toContain("> statement_timestamp() THEN");
+    expect(update?.params).toContain(600_000);
+    expect(update?.params).toContain(40_000);
     expect(update?.sql).toContain("and epoch=$");
     expect(update?.sql).toMatch(
       / returning \(select gap_ms from before\) as gap_before, gap_ms as gap_after, epoch$/,
@@ -234,8 +238,14 @@ describe("postgresCapacityStore", () => {
     expect(update?.params).toEqual([
       "k",
       3,
+      45_000,
+      600_000,
+      40_000,
       10_000,
       0.9,
+      45_000,
+      600_000,
+      40_000,
       10_000,
       0.9,
       "k",
@@ -297,8 +307,10 @@ describe("postgresCapacityStore", () => {
       15_000,
       15_000,
       45_000,
+      40_000,
       1.5,
       45_000,
+      40_000,
       1.5,
       "k",
     ]);

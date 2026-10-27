@@ -3,7 +3,6 @@ import { expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { loadEnvConfig } from "@next/env";
 
 const scoped = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("@/lib/db/client", () => ({ withService: scoped.run }));
@@ -24,7 +23,6 @@ function requireLease(
 it.skipIf(process.env.THEME_STUDIO_CAPACITY_DB_TEST !== "1")(
   "coordinates concurrent instances, cooldown recovery, expiry and service-only grants",
   async () => {
-    loadEnvConfig(process.cwd(), true, { info() {}, error() {} });
     const pool = new Pool({
       host: "127.0.0.1",
       port: 5544,
@@ -283,9 +281,51 @@ it.skipIf(process.env.THEME_STUDIO_CAPACITY_DB_TEST !== "1")(
       );
       expect((await pace()).gap_ms).toBe(45_000);
       expect((await pace()).next_in_ms).toBeLessThanOrEqual(45_000);
-      // ...and successes at the 10 s floor (10.5 s x0.9 would be 9.45 s).
+      // Fresh transactions (as after a restart) retain the recovery floor.
       await pool.query(
-        "update theme_studio_provider_capacity set gap_ms=10500, pause_until=clock_timestamp(), next_start_at=clock_timestamp() where scope_key=$1",
+        "update theme_studio_provider_capacity set pause_until=clock_timestamp()-interval '1 second' where scope_key=$1",
+        [pacedKey],
+      );
+      for (const expectedGap of [40_500, 40_000, 40_000]) {
+        await startNow();
+        const fresh = requireLease(
+          await postgresCapacityStore.claim(pacedKey, randomUUID(), paced),
+        );
+        const change = await postgresCapacityStore.release(
+          pacedKey,
+          fresh,
+          true,
+          paced,
+        );
+        expect(change?.gapAfterMs).toBe(expectedGap);
+        const heldPace = await pace();
+        expect(heldPace.next_in_ms).toBeGreaterThan(expectedGap - 2_000);
+        expect(heldPace.next_in_ms).toBeLessThanOrEqual(expectedGap);
+      }
+      // Once ten minutes since cooldown have passed, cautious exploration resumes.
+      await pool.query(
+        "update theme_studio_provider_capacity set pause_until=clock_timestamp()-interval '11 minutes' where scope_key=$1",
+        [pacedKey],
+      );
+      await startNow();
+      const afterHold = requireLease(
+        await postgresCapacityStore.claim(pacedKey, randomUUID(), paced),
+      );
+      expect(
+        (await postgresCapacityStore.release(pacedKey, afterHold, true, paced))
+          ?.gapAfterMs,
+      ).toBe(36_000);
+      // Even a refusal at the minimum immediately restores the recovery floor.
+      await pool.query(
+        "update theme_studio_provider_capacity set gap_ms=10000 where scope_key=$1",
+        [pacedKey],
+      );
+      expect(
+        (await postgresCapacityStore.pause(pacedKey, 7_500, paced))?.gapAfterMs,
+      ).toBe(40_000);
+      // ...and successes at the 10 s floor after the recovery hold expires.
+      await pool.query(
+        "update theme_studio_provider_capacity set gap_ms=10500, pause_until=clock_timestamp()-interval '11 minutes', next_start_at=clock_timestamp() where scope_key=$1",
         [pacedKey],
       );
       const near = requireLease(
@@ -297,7 +337,7 @@ it.skipIf(process.env.THEME_STUDIO_CAPACITY_DB_TEST !== "1")(
         outcome: "success",
         gapBeforeMs: 10_500,
         gapAfterMs: 10_000,
-        epoch: 3,
+        epoch: 4,
       });
       expect(await pace()).toMatchObject({ gap_ms: 10_000, capacity: 2 });
       // ★★ Only an admission moves the next start. A claim refused for its

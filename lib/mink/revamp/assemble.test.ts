@@ -1476,3 +1476,57 @@ describe("a blank announcement over the theme's sample line (output-2)", () => {
     });
   });
 });
+
+describe("early design preview", () => {
+  it("keeps photo-led sections with labelled placeholders without changing the final assembly", async () => {
+    const { buildRevampDesignPreview, REVAMP_PHOTO_PLACEHOLDER } =
+      await import("./preview");
+    const input = {
+      revampId: "r1",
+      request: request(),
+      snapshot: snapshot(),
+      plan: plan(),
+      images: [],
+      outcomes: [],
+      productFailures: [],
+      free: true,
+      canChangeBrand: true,
+    };
+    const before = JSON.stringify(input);
+    const design = buildRevampDesignPreview(input);
+    expect(JSON.stringify(design.review.pages)).toContain(
+      REVAMP_PHOTO_PLACEHOLDER,
+    );
+    expect(design.photosIn).toBe(0);
+    expect(design.photosTotal).toBe(input.plan.shots.length);
+    expect(JSON.stringify(input)).toBe(before);
+    expect(JSON.stringify(assembleRevampPlan(input))).not.toContain(
+      REVAMP_PHOTO_PLACEHOLDER,
+    );
+  });
+
+  it("never exposes the hidden anchor or an unchecked photo", async () => {
+    const { buildRevampDesignPreview } = await import("./preview");
+    const images = [
+      img("anchor", "anchor"),
+      { ...img("slot", "hero"), review: "unreviewed" as const },
+      img("slot", "g1"),
+    ];
+    const design = buildRevampDesignPreview({
+      revampId: "r1",
+      request: request(),
+      snapshot: snapshot(),
+      plan: plan(),
+      images,
+      outcomes: [],
+      productFailures: [],
+      free: false,
+      canChangeBrand: true,
+    });
+    const encoded = JSON.stringify(design);
+    expect(encoded).not.toContain(images[0].url);
+    expect(encoded).not.toContain(images[1].url);
+    expect(encoded).toContain(images[2].url);
+    expect(design.photosIn).toBe(1);
+  });
+});

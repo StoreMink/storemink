@@ -1,3 +1,10 @@
+import { buildRevampDesignPreview } from "./preview";
+import {
+  REVAMP_RECOVERY_CEILING_MS,
+  REVAMP_WORK_BUDGET,
+  revampEpochMs,
+  revampRecovers,
+} from "./pacing-policy";
 import "server-only";
 
 // ---------------------------------------------------------------------------
@@ -72,7 +79,27 @@ import {
   minkRevampImages,
   minkRevamps,
 } from "@/drizzle/schema";
-import { withService, type Db } from "@/lib/db/client";
+import { withService as withDatabaseService, type Db } from "@/lib/db/client";
+
+/**
+ * ★★ EVERY WRITE HERE DECLARES THE RECOVERY PROTOCOL to the transaction it
+ *   runs in (`withDatabaseService` opens one, so the local setting lasts
+ *   until `fn` returns). The `mink_revamps_recovery_fence` trigger
+ *   (migration 0260) lets only a declaring transaction claim, save, park,
+ *   expire or fail a recoverable job: during a rolling deployment the
+ *   revision before this one can still read the row and record Stop, but
+ *   its claim is refused and its sweep's expiry writes nothing, so it can
+ *   never turn a recoverable job back into a legacy one or fail it at the
+ *   legacy ceiling. Legacy jobs and refinements are untouched by the fence.
+ */
+function withService<T>(fn: (db: Db) => Promise<T>): Promise<T> {
+  return withDatabaseService(async (db) => {
+    await db.execute(
+      sql`select set_config('app.mink_revamp_recovery', '2', true)`,
+    );
+    return fn(db);
+  });
+}
 import { isUniqueViolation, pgConstraint } from "@/lib/db/errors";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { getMinkConfig } from "../config";
@@ -108,7 +135,7 @@ import {
   type RevampStoredPlan,
 } from "./contract";
 import type { RevampDistinctReport } from "./distinctness";
-import { releaseRevampPhotos } from "./image-store";
+import { listRevampImages, releaseRevampPhotos } from "./image-store";
 import type { RevampUndoResult } from "./lifecycle-types";
 import { storedPhotoUnit } from "./photo-hold";
 import {
@@ -158,6 +185,10 @@ export type RevampPlanColumn =
 
 /** mink_revamps.result, written by the runner. */
 export interface RevampResultColumn {
+  /** Recovery policy 2 (pacing-policy.ts): written at creation for a full redesign. */
+  recoveryVersion?: 2;
+  /** Performance target only; never a claim, charge or failure condition. */
+  targetReadyAt?: number;
   photos?: { outcomes: RevampPhotoOutcome[] };
   products?: {
     failed: Array<{ key: string; reason: string }>;
@@ -333,6 +364,9 @@ const PARKED_LEASE_TOKEN = "00000000-0000-4000-8000-000000000000";
  *   18 minute deadline, each paid call still held to the hard limits (the
  *   store's 120 photos a day and the platform's 400 an hour, two planner
  *   calls an invocation, the card's credit ceiling).
+ * ★ A recoverable job (recovery policy 2) parks its waits uncounted, so its
+ *   ceiling is the longer `REVAMP_RECOVERY_CEILING_MS` (pacing-policy.ts);
+ *   `ceilingSql` reads the one that applies to the row.
  */
 export const REVAMP_RUN_CEILING_MS = 4 * 60 * 60_000;
 const MAX_RETRY_AFTER_MS = 60 * 60_000;
@@ -554,6 +588,11 @@ async function insertUnderStoreLock(
       attempts: 0,
       maxAttempts: REVAMP_LIMITS.maxAttempts,
       usage: ZERO_REVAMP_USAGE,
+      ...(input.kind === "full"
+        ? {
+            result: sql`jsonb_build_object('recoveryVersion', 2, 'targetReadyAt', floor(extract(epoch from now()) * 1000) + ${REVAMP_WORK_BUDGET.targetMs}::bigint)`,
+          }
+        : {}),
     })
     .returning();
   const parsed = inserted[0] ? parseRow(inserted[0]) : null;
@@ -685,7 +724,7 @@ export async function claimRevampJob(
         status: "running",
         leaseToken,
         leaseUntil: leaseUntilSql(),
-        result: claimedResultSql(),
+        result: claimedResultSql(leaseToken),
         updatedAt: sql`now()`,
       })
       .where(
@@ -781,6 +820,24 @@ export async function renewRevampLease(
 }
 
 /**
+ * Whether the merchant has asked this job to stop: one primary-key read of
+ * the cancel flag, which the runner asks every ten seconds on a recoverable
+ * job (pacing-policy.ts `stopPollMs`) instead of renewing the lease that
+ * often. Says nothing about the lease; throws on a database error.
+ */
+export async function revampStopRequested(revampId: string): Promise<boolean> {
+  if (!isUuid(revampId)) return false;
+  const rows = await withService((db) =>
+    db
+      .select({ cancelRequestedAt: minkRevamps.cancelRequestedAt })
+      .from(minkRevamps)
+      .where(eq(minkRevamps.id, revampId))
+      .limit(1),
+  );
+  return rows[0]?.cancelRequestedAt != null;
+}
+
+/**
  * Give the lease back. With `retryAfterMs` (a transient failure) the job waits
  * that long before the next claim; without it the job is claimable at once (a
  * deadline hand-over). With `progressed` (a hand-over whose step stored new
@@ -834,6 +891,8 @@ export async function releaseRevampLease(
           retryAfterMs > 0
             ? {
                 leaseToken: PARKED_LEASE_TOKEN,
+                // ★ The fence wants the parked token stamped too (0260).
+                result: sql`${minkRevamps.result} || jsonb_strip_nulls(jsonb_build_object('recoveryLeaseToken', CASE WHEN ${minkRevamps.result} -> 'recoveryVersion' = '2'::jsonb THEN to_jsonb(${PARKED_LEASE_TOKEN}::text) END))`,
                 leaseUntil: sql`now() + (${retryAfterMs}::int * interval '1 millisecond')`,
                 updatedAt: sql`now()`,
                 // ★ A parked release follows a failure: it never gives the
@@ -1294,6 +1353,49 @@ export async function readRevampForActor(
  * cancelled here, so a card never polls a job that cannot move. Null when the
  * revamp is not the requester's.
  */
+/** Read the compiled design only for its requester, on demand, never in polling. */
+export async function readRevampDesignPreview(
+  actor: MinkActorContext,
+  revampId: string,
+) {
+  if (!isUuid(revampId)) return null;
+  if (!can(actor.permissions, "builder", "view", actor.isSuperadmin))
+    throw new MinkRequestError(
+      "mink_revamp_access_denied",
+      "You no longer have permission to view this redesign.",
+      403,
+    );
+  const rows = await withService((db) =>
+    db.select().from(minkRevamps).where(ownedSql(actor, revampId)).limit(1),
+  );
+  const row = rows[0] ? parseRow(rows[0])?.row : null;
+  if (
+    !row ||
+    !ACTIVE_STATUSES.includes(row.status as (typeof ACTIVE_STATUSES)[number]) ||
+    row.cancelRequestedAt ||
+    row.plan?.stage !== "compiled" ||
+    !row.snapshot
+  )
+    return null;
+  const images = await listRevampImages(revampId, actor.storeId);
+  return buildRevampDesignPreview({
+    revampId,
+    request: row.request,
+    snapshot: row.snapshot,
+    plan: row.plan.plan,
+    images,
+    outcomes: [],
+    productFailures: [],
+    free: row.free,
+    canChangeBrand: can(
+      actor.permissions,
+      "branding",
+      "manage",
+      actor.isSuperadmin,
+    ),
+  });
+}
+
 export async function readRevampStatus(
   actor: MinkActorContext,
   revampId: string,
@@ -1324,6 +1426,18 @@ export async function readRevampStatus(
       found.status,
     );
     if (!active || found.noLiveHolder !== true) return found;
+    if (revampRecovers(record(found.result)) && found.step === "card") {
+      const made = await finishMadeCard(
+        db,
+        and(
+          ownedSql(actor, revampId),
+          inArray(minkRevamps.status, [...ACTIVE_STATUSES]),
+          noLiveHolderSql(),
+        ),
+        ready,
+      );
+      if (made) return made;
+    }
     if (found.cancelRequestedAt) {
       const settleable = and(
         ownedSql(actor, revampId),
@@ -1845,9 +1959,26 @@ function toStatusView(row: RevampJobRow): RevampStatusView {
     publishedAt: row.publishedAt,
     undoneAt: row.undoneAt,
     review: reviewOf(row),
+    design: {
+      ready:
+        (row.status === "running" || row.status === "queued") &&
+        row.plan?.stage === "compiled" &&
+        row.snapshot !== null,
+      photosIn:
+        row.result?.photos?.outcomes.filter(
+          (outcome) => outcome.status === "generated",
+        ).length ?? 0,
+      photosTotal:
+        row.plan?.stage === "compiled" ? row.plan.plan.shots.length : 0,
+    },
     supersededBy: row.supersededBy,
     createdAt: row.createdAt,
     finishedAt: row.finishedAt,
+    waiting:
+      (row.status === "running" || row.status === "queued") &&
+      row.leaseToken === PARKED_LEASE_TOKEN &&
+      row.leaseUntil !== null &&
+      Date.parse(row.leaseUntil) > Date.now(),
     cancelRequested: row.cancelRequestedAt !== null,
     undo: row.undoneAt === null ? null : undoAnswer(row.applySnapshot),
   };
@@ -1882,6 +2013,10 @@ function undoAnswer(snapshot: unknown): RevampUndoResult | null {
 function errorSentence(row: RevampJobRow): string | null {
   if (row.status === "cancelled") return REVAMP_ERROR_MESSAGES.cancelled;
   if (row.status !== "failed") return null;
+  // ★ A job its ceiling ended did not "try several times": the sentence
+  //   says its time ran out and nothing was charged.
+  if (row.errorDetail === "run_ceiling")
+    return REVAMP_ERROR_MESSAGES.time_limit;
   // ★ Closed codes only: an unknown code (a newer revision's, or a typo)
   //   reads as `internal`, never as the raw code or the stored detail.
   return REVAMP_ERROR_MESSAGES[
@@ -1993,9 +2128,11 @@ function nowMsSql(): SQL {
 
 /**
  * ★★ Past its wall-clock ceiling (B8): first claimed more than
- *   `REVAMP_RUN_CEILING_MS` ago. A job never claimed has no clock and is
- *   never past it, and a clock that is not a number reads as none, so an
- *   unreadable column can only ever keep a job going, never fail it.
+ *   `REVAMP_RUN_CEILING_MS` ago, or `REVAMP_RECOVERY_CEILING_MS` for a
+ *   recoverable job, whose waits park it uncounted. A job never claimed has
+ *   no clock and is never past it, and a clock that is not a number reads as
+ *   none, so an unreadable column can only ever keep a job going, never fail
+ *   it.
  */
 function pastCeilingSql(): SQL {
   return ceilingSql(sql`${minkRevamps.result}`);
@@ -2007,7 +2144,7 @@ function pastCeilingRawSql(): SQL {
 }
 
 function ceilingSql(result: SQL): SQL {
-  return sql`(CASE WHEN jsonb_typeof(${result} -> 'firstClaimedAt') = 'number' THEN (${result} ->> 'firstClaimedAt')::numeric <= ${nowMsSql()} - ${REVAMP_RUN_CEILING_MS}::bigint ELSE false END)`;
+  return sql`(CASE WHEN jsonb_typeof(${result} -> 'firstClaimedAt') = 'number' THEN (${result} ->> 'firstClaimedAt')::numeric <= ${nowMsSql()} - (CASE WHEN ${result} -> 'recoveryVersion' = '2'::jsonb THEN ${REVAMP_RECOVERY_CEILING_MS}::bigint ELSE ${REVAMP_RUN_CEILING_MS}::bigint END) ELSE false END)`;
 }
 
 /** A run that has ended without finishing: its failures or its time ran out. */
@@ -2023,9 +2160,10 @@ function runEndedSql(): SQL {
  *   interruption, kept for the logs. The token read here is the row's before
  *   this statement, as every expression in an UPDATE's SET reads it.
  */
-function claimedResultSql(): SQL {
+function claimedResultSql(leaseToken: string): SQL {
   const result = sql`${minkRevamps.result}`;
   return sql`((CASE WHEN jsonb_typeof(${result}) = 'object' THEN ${result} ELSE '{}'::jsonb END) || jsonb_build_object(
+    'recoveryLeaseToken', CASE WHEN ${result} -> 'recoveryVersion' = '2'::jsonb THEN to_jsonb(${leaseToken}::text) END,
     'firstClaimedAt', CASE WHEN jsonb_typeof(${result} -> 'firstClaimedAt') = 'number' THEN ${result} -> 'firstClaimedAt' ELSE to_jsonb(${nowMsSql()}) END,
     'interruptions', (CASE WHEN jsonb_typeof(${result} -> 'interruptions') = 'number' THEN greatest(floor((${result} ->> 'interruptions')::numeric), 0) ELSE 0 END)
       + (CASE WHEN ${minkRevamps.leaseToken} IS NOT NULL AND ${minkRevamps.leaseToken} <> ${PARKED_LEASE_TOKEN}::uuid THEN 1 ELSE 0 END)
@@ -2041,6 +2179,8 @@ function claimedResultSql(): SQL {
 function keepingClaimFieldsSql(result: RevampResultColumn): SQL {
   const stored = sql`${minkRevamps.result}`;
   return sql`(${JSON.stringify(result)}::jsonb || jsonb_strip_nulls(jsonb_build_object(
+    'recoveryVersion', CASE WHEN ${stored} -> 'recoveryVersion' = '2'::jsonb THEN ${stored} -> 'recoveryVersion' END,
+    'targetReadyAt', CASE WHEN jsonb_typeof(${stored} -> 'targetReadyAt') = 'number' THEN ${stored} -> 'targetReadyAt' END,
     'firstClaimedAt', CASE WHEN jsonb_typeof(${stored} -> 'firstClaimedAt') = 'number' THEN ${stored} -> 'firstClaimedAt' END,
     'interruptions', CASE WHEN jsonb_typeof(${stored} -> 'interruptions') = 'number' THEN ${stored} -> 'interruptions' END
   )))`;
@@ -2110,7 +2250,7 @@ function madeCardRawSql(): SQL {
 function settleableMadeCardSql(): SQL | undefined {
   return and(
     inArray(minkRevamps.status, [...ACTIVE_STATUSES]),
-    sql`(${minkRevamps.cancelRequestedAt} IS NOT NULL OR ${runEndedSql()})`,
+    sql`(${minkRevamps.cancelRequestedAt} IS NOT NULL OR ${runEndedSql()} OR ${minkRevamps.result} -> 'recoveryVersion' = '2'::jsonb)`,
     noLiveHolderSql(),
     madeCardSql(),
   );
@@ -2680,6 +2820,9 @@ function readResultColumn(
   const row = record(value);
   if (!row) return null;
   const result: RevampResultColumn = {};
+  if (revampRecovers(row)) result.recoveryVersion = 2;
+  const targetReadyAt = revampEpochMs(row.targetReadyAt);
+  if (targetReadyAt !== null) result.targetReadyAt = targetReadyAt;
   const photos = record(row.photos);
   if (photos && Array.isArray(photos.outcomes)) {
     result.photos = { outcomes: photos.outcomes.flatMap(readOutcome) };
@@ -2875,6 +3018,21 @@ function readPhotoReviewState(value: unknown): RevampPhotoReviewState | null {
     return null;
   }
   const state: RevampPhotoReviewState = { tries };
+  if (row.draws !== undefined) {
+    if (
+      typeof row.draws !== "number" ||
+      !Number.isSafeInteger(row.draws) ||
+      row.draws < 0 ||
+      row.draws > 100
+    )
+      return null;
+    state.draws = row.draws;
+  }
+  if (row.correction !== undefined) {
+    if (typeof row.correction !== "string" || row.correction.length > 1600)
+      return null;
+    state.correction = row.correction;
+  }
   if (row.sha256 !== undefined) {
     if (typeof row.sha256 !== "string" || !SHA256_PATTERN.test(row.sha256)) {
       return null;

@@ -85,7 +85,10 @@ export async function POST(request: Request) {
       );
     await getMinkActorContext(requestId);
     provider = await getMinkVoiceProvider();
+    signal.throwIfAborted();
+    const started = Date.now();
     const result = await transcribeMinkVoice(provider, checked.bytes, signal);
+    const providerMs = Date.now() - started;
     signal.throwIfAborted();
     await getMinkActorContext(requestId);
     // A clip with no words in it (a cough, a door) is an ordinary answer:
@@ -97,6 +100,8 @@ export async function POST(request: Request) {
         requestId,
         storeId: actor.storeId,
         provider,
+        providerMs,
+        audioBytes: checked.bytes.length,
       });
       return json({ text: "", languageCode: result.languageCode });
     }
@@ -110,8 +115,17 @@ export async function POST(request: Request) {
       requestId,
       storeId: actor.storeId,
       provider,
+      providerMs,
+      audioBytes: checked.bytes.length,
+      // Which language the recogniser heard and how sure it was: a closed
+      // tag and a number, never the words (voice-transcription.ts drops a
+      // guess under `SAARAS_LANGUAGE_FLOOR` before it gets here).
+      languageCode: result.languageCode,
+      ...(typeof result.languageProbability === "number"
+        ? { languageProbability: result.languageProbability }
+        : {}),
     });
-    return json(result);
+    return json({ text: result.text, languageCode: result.languageCode });
   } catch (error) {
     // ★★ THE MERCHANT MESSAGE IS DELIBERATELY VAGUE; THE LOG MUST NOT BE.
     // This recorded only `{requestId, provider}`, so a disabled API, a missing

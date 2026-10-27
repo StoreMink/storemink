@@ -4991,3 +4991,400 @@ describe("★★ a photo smaller than its frame is drawn again once (B14)", () =
     });
   });
 });
+
+describe("bounded image work", () => {
+  function boundedInput(stored: RevampStoredImage[] = [], withAbout = false) {
+    const shots = [
+      shot("one", "hero", "A quiet setting"),
+      shot("two", "content", "Materials"),
+      shot("three", "content", "The shop"),
+    ].map((shot) => ({ ...shot, goods: "none" as const, productKeys: [] }));
+    if (withAbout)
+      shots.push({
+        ...shot("about", "content", "The shop"),
+        goods: "none",
+        productKeys: [],
+      });
+    return {
+      plan: makePlan({
+        shots,
+        bindings: shots.map((shot) =>
+          binding(
+            shot.id,
+            shot.id === "about" ? "about" : "",
+            `s-${shot.id}`,
+            frame(1200, 1200),
+          ),
+        ),
+      }),
+      snapshot: makeSnapshot(),
+      stored,
+      inherited: [],
+      redraw: null,
+    };
+  }
+
+  it("journals image attempts before sending and resumes the prior correction", async () => {
+    const stored = [seedRow(REVAMP, "anchor", "anchor", 1200, 1200)];
+    const reviews = reviewsPort({
+      shots: { one: { tries: 0, draws: 2, correction: "wrong_subject" } },
+    });
+    const model = makeClient();
+    const observed: number[] = [];
+    const client: ThemeStudioImageClient = {
+      provider: "fake",
+      generateImage: async (request, signal) => {
+        observed.push(reviews.current()?.shots[request.briefId]?.draws ?? 0);
+        return model.client.generateImage(request, signal);
+      },
+    };
+    const { reviewer } = makeReviewer(() => []);
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviews.port,
+    };
+    const run = await drawRevampPhotos(ctx, boundedInput(stored), {
+      imageClient: client,
+      reviewer,
+      prepare,
+      concurrency: 1,
+    });
+    expect(model.briefs().filter((id) => id === "one")).toHaveLength(1);
+    expect(
+      model.calls.find((request) => request.briefId === "one")?.prompt,
+    ).toContain("wrong_subject");
+    expect(observed.every((attempt) => attempt > 0)).toBe(true);
+    expect(reviews.current()?.shots.one.draws).toBe(3);
+    expect(run.images.filter((image) => image.role === "slot")).toHaveLength(3);
+  });
+
+  it("checks a paid candidate recovered after a crash without drawing it again", async () => {
+    const stored = [
+      seedRow(REVAMP, "anchor", "anchor", 1200, 1200),
+      seedRow(REVAMP, "slot", "one~candidate-1", 1200, 1200),
+    ];
+    stored[1] = { ...stored[1], review: "unreviewed" };
+    const reviews = reviewsPort({ shots: { one: { tries: 0, draws: 1 } } });
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviews.port,
+    };
+    const run = await drawRevampPhotos(ctx, boundedInput(stored), {
+      imageClient: model.client,
+      reviewer: makeReviewer(() => []).reviewer,
+      prepare,
+    });
+    expect(model.briefs()).not.toContain("one");
+    expect(run.images.find((image) => image.slotId === "one")?.review).toBe(
+      "passed",
+    );
+    expect(
+      run.images.every((image) => !image.slotId.includes("~candidate-")),
+    ).toBe(true);
+  });
+
+  it("★★ a kept photograph is adopted from its parked candidate, never uploaded a second time", async () => {
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviewsPort().port,
+    };
+    const run = await drawRevampPhotos(ctx, boundedInput(), {
+      imageClient: model.client,
+      reviewer: makeReviewer(() => []).reviewer,
+      prepare,
+    });
+    expect(run.images.filter((image) => image.role === "slot")).toHaveLength(3);
+    // Every upload was a candidate parked before its review (the anchor's
+    // among them); the anchor and the three kept photographs became rows of
+    // their own by adoption, pointing at the same objects.
+    expect(h.saves.map((save) => save.slotId).sort()).toEqual([
+      "anchor~candidate-1",
+      "one~candidate-1",
+      "three~candidate-1",
+      "two~candidate-1",
+    ]);
+    expect(h.adoptCalls.map((call) => call.slotId).sort()).toEqual([
+      "anchor",
+      "one",
+      "three",
+      "two",
+    ]);
+    for (const id of ["one", "two", "three"]) {
+      const kept = run.images.find((image) => image.slotId === id)!;
+      const parked = h.rows.get(`${REVAMP}|slot|${id}~candidate-1`)!;
+      expect(kept.path).toBe(parked.path);
+      expect(kept.review).toBe("passed");
+    }
+  });
+
+  it("★ stores the bytes itself when the candidate's row cannot be adopted", async () => {
+    h.adoptFails.add("one");
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviewsPort().port,
+    };
+    const run = await drawRevampPhotos(ctx, boundedInput(), {
+      imageClient: model.client,
+      reviewer: makeReviewer(() => []).reviewer,
+      prepare,
+    });
+    expect(run.images.find((image) => image.slotId === "one")?.review).toBe(
+      "passed",
+    );
+    expect(h.saves.map((save) => save.slotId)).toContain("one");
+  });
+
+  it("★ a refinement draws a shot its record only shows redraws for, never skipping it as spent", async () => {
+    // A legacy or refine run journals no draws; reading its redraws as the
+    // engine's attempt count made the next run skip the shot and loop.
+    const reviews = reviewsPort({
+      shots: {
+        one: {
+          tries: 0,
+          redraws: [
+            { attempt: 1, problems: ["wrong_subject"] },
+            { attempt: 2, problems: ["wrong_subject"] },
+            { attempt: 3, problems: ["wrong_subject"] },
+          ],
+          correction: "wrong_subject",
+        },
+      },
+    });
+    const model = makeClient();
+    const ctx = { ...makeCtx().ctx, photoReviews: reviews.port };
+    const run = await drawRevampPhotos(
+      ctx,
+      boundedInput([seedRow(REVAMP, "anchor", "anchor", 1200, 1200)]),
+      {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => []).reviewer,
+        prepare,
+      },
+    );
+    expect(model.briefs()).toContain("one");
+    expect(run.images.find((image) => image.slotId === "one")?.review).toBe(
+      "passed",
+    );
+  });
+
+  it("cannot send more images after a previous invocation spent the whole image budget", async () => {
+    const reviews = reviewsPort({ shots: { old: { tries: 0, draws: 11 } } });
+    const model = makeClient();
+    const stored = [seedRow(REVAMP, "anchor", "anchor", 1200, 1200)];
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviews.port,
+    };
+    await expect(
+      drawRevampPhotos(ctx, boundedInput(stored), {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => []).reviewer,
+        prepare,
+      }),
+    ).rejects.toMatchObject({ code: "photos_failed" });
+    expect(model.calls).toHaveLength(0);
+  });
+
+  it("does not complete with unchecked homepage photos when the reviewer is unavailable", async () => {
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviewsPort().port,
+    };
+    await expect(
+      drawRevampPhotos(ctx, boundedInput(), {
+        imageClient: model.client,
+        reviewer: null,
+        prepare,
+      }),
+    ).rejects.toMatchObject({ code: "photos_failed" });
+  });
+
+  it("hands over at the invocation drain without omitting unfinished photographs", async () => {
+    const stored = ["one", "two", "three"].map((id) =>
+      seedRow(REVAMP, "slot", id, 1200, 1200),
+    );
+    const drain = new AbortController();
+    drain.abort();
+    const model = makeClient();
+    await expect(
+      drawRevampPhotos(
+        { ...makeCtx().ctx, recoverable: true, draining: drain.signal },
+        boundedInput(stored, true),
+        {
+          imageClient: model.client,
+          reviewer: makeReviewer(() => []).reviewer,
+          prepare,
+        },
+      ),
+    ).rejects.toBeInstanceOf(RevampDrainedError);
+    expect(model.calls).toHaveLength(0);
+    expect([...h.rows.values()].some((row) => row.slotId === "about")).toBe(
+      false,
+    );
+  });
+
+  it("retains checked photos through repeated free 429s without spending redraws, then finishes", async () => {
+    const anchor = seedRow(REVAMP, "anchor", "anchor", 1200, 1200);
+    const reviews = reviewsPort();
+    const normal = makeClient();
+    const client: ThemeStudioImageClient = {
+      provider: "fake",
+      generateImage: async (request, signal) =>
+        request.briefId === "one"
+          ? { kind: "error", code: "rate_limited", usage: ZERO_IMAGE_USAGE }
+          : normal.client.generateImage(request, signal),
+    };
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviews.port,
+    };
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await expect(
+        drawRevampPhotos(ctx, boundedInput([...h.rows.values()]), {
+          imageClient: client,
+          reviewer: makeReviewer(() => []).reviewer,
+          prepare,
+        }),
+      ).rejects.toBeInstanceOf(RevampRetryLaterError);
+      expect(reviews.current()?.shots.one.draws).toBe(0);
+    }
+    expect(normal.briefs().filter((id) => id === "two")).toHaveLength(1);
+    expect(normal.briefs().filter((id) => id === "three")).toHaveLength(1);
+    const finished = await drawRevampPhotos(
+      ctx,
+      boundedInput([...h.rows.values()]),
+      {
+        imageClient: normal.client,
+        reviewer: makeReviewer(() => []).reviewer,
+        prepare,
+      },
+    );
+    expect(
+      finished.images.filter((image) => image.role === "slot"),
+    ).toHaveLength(3);
+    expect(normal.briefs().filter((id) => id === "two")).toHaveLength(1);
+    expect(normal.briefs()).not.toContain("anchor");
+    expect(anchor.slotId).toBe("anchor");
+  });
+
+  it("keeps paid photos parked through a reviewer outage and later reviews without redrawing", async () => {
+    seedRow(REVAMP, "anchor", "anchor", 1200, 1200);
+    const reviews = reviewsPort();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviews.port,
+    };
+    const model = makeClient();
+    await expect(
+      drawRevampPhotos(ctx, boundedInput([...h.rows.values()]), {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => "outage").reviewer,
+        prepare,
+      }),
+    ).rejects.toBeInstanceOf(RevampRetryLaterError);
+    const draws = model.calls.length;
+    const finished = await drawRevampPhotos(
+      ctx,
+      boundedInput([...h.rows.values()]),
+      {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => []).reviewer,
+        prepare,
+      },
+    );
+    expect(model.calls).toHaveLength(draws);
+    expect(
+      finished.images.filter((image) => image.role === "slot"),
+    ).toHaveLength(3);
+    expect(
+      finished.images
+        .filter((image) => image.role === "slot")
+        .every((image) => image.review === "passed"),
+    ).toBe(true);
+  });
+
+  it("reuses the paid hidden reference after its reviewer recovers", async () => {
+    const reviews = reviewsPort();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviews.port,
+    };
+    const model = makeClient();
+    await expect(
+      drawRevampPhotos(ctx, boundedInput(), {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => "outage").reviewer,
+        prepare,
+      }),
+    ).rejects.toBeInstanceOf(RevampRetryLaterError);
+    expect(model.briefs()).toEqual(["anchor"]);
+    expect(
+      [...h.rows.values()].some(
+        (image) => image.slotId === "anchor~candidate-1",
+      ),
+    ).toBe(true);
+    const finished = await drawRevampPhotos(
+      ctx,
+      boundedInput([...h.rows.values()]),
+      {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => []).reviewer,
+        prepare,
+      },
+    );
+    expect(model.briefs().filter((id) => id === "anchor")).toHaveLength(1);
+    expect(
+      finished.images.filter((image) => image.role === "slot"),
+    ).toHaveLength(3);
+    expect(
+      finished.images.every((image) => !image.slotId.includes("~candidate-")),
+    ).toBe(true);
+  });
+});
+
+describe("durable image admission", () => {
+  it("does not send an image when its attempt reservation cannot be saved", async () => {
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: {
+        held: () => null,
+        record: async () => {
+          throw new Error("local journal unavailable");
+        },
+      },
+    };
+    await expect(
+      drawRevampPhotos(
+        ctx,
+        {
+          plan: makePlan(),
+          snapshot: makeSnapshot(),
+          stored: [],
+          inherited: [],
+          redraw: null,
+        },
+        {
+          imageClient: model.client,
+          reviewer: makeReviewer(() => []).reviewer,
+          prepare,
+        },
+      ),
+    ).rejects.toBeDefined();
+    expect(model.calls).toHaveLength(0);
+  });
+});

@@ -251,6 +251,7 @@ export type MinkVoiceModeInput = {
 
 export type MinkVoiceMode = {
   enabled: boolean;
+  muted: boolean;
   state: MinkVoiceState;
   mic: MinkVoiceMicState;
   support: MinkVoiceSupport;
@@ -263,6 +264,7 @@ export type MinkVoiceMode = {
   /** A short message when the loop changed something on its own; clears itself. */
   notice: string | null;
   toggle: () => void;
+  toggleMute: () => void;
   /** A typed send went out while voice chat is on: its answer is spoken too. */
   noteSend: () => void;
 };
@@ -277,6 +279,8 @@ function continuesSpoken(final: string, streamed: string): boolean {
 }
 
 type Turn = {
+  /** Immutable hint from the question that opened this answer. */
+  language: string | null;
   session: MinkSpeechSession;
   /** Replaced when the turn reopens or its block turns out to be empty. */
   segmenter: MinkSpeechSegmenter;
@@ -296,7 +300,9 @@ type Turn = {
 };
 
 type Live = {
+  lastLanguage: string | null;
   enabled: boolean;
+  muted: boolean;
   state: MinkVoiceState;
   baselineIds: Set<string>;
   spokenIds: Set<string>;
@@ -374,6 +380,7 @@ type Live = {
 
 type Setters = {
   enabled(value: boolean): void;
+  muted(value: boolean): void;
   state(value: MinkVoiceState): void;
   mic(value: MinkVoiceMicState): void;
   heard(value: string | null): void;
@@ -409,7 +416,9 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   const latest = { current: deps.input };
   const levelRef = { current: 0 };
   const l: Live = {
+    lastLanguage: null,
     enabled: false,
+    muted: false,
     state: "idle",
     baselineIds: new Set(),
     spokenIds: new Set(),
@@ -507,6 +516,9 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   const stop = (reason: MinkVoiceStopReason, text?: string) => {
     if (!l.enabled) return;
     l.enabled = false;
+    l.muted = false;
+    set.muted(false);
+    l.lastLanguage = null;
     l.captureId += 1;
     l.captureAbort?.abort();
     l.captureAbort = null;
@@ -655,7 +667,10 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (pieces.length && turn.awaiting) resumeTurn(turn);
     const fallback = latest.current.langFallback ?? DEFAULT_SPEECH_LANG;
     for (const piece of pieces)
-      turn.session.enqueue(piece, speechLangFor(piece, fallback));
+      turn.session.enqueue(
+        piece,
+        speechLangFor(piece, fallback, turn.language),
+      );
   };
 
   /** The answer after an acknowledgement has something to say: take pieces again. */
@@ -666,7 +681,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   /** Opens the speech session for the reply that was just sent. */
-  const beginTurn = () => {
+  const beginTurn = (language: string | null = null) => {
     dropTurn();
     l.empties = 0;
     l.replyPending = true;
@@ -681,6 +696,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       latest.current.createSession ?? createMinkSpeechSession;
     const useModel = l.audio !== null && l.serverSpeech !== "off";
     const turn: Turn = {
+      language,
       segmenter: createMinkSpeechSegmenter(),
       closed: false,
       finalised: false,
@@ -748,6 +764,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (latest.current.isReplying) return;
     const text = l.pendingSend;
     const replace = l.pendingReplaces;
+    const language = l.lastLanguage;
     l.pendingSend = null;
     l.pendingReplaces = false;
     clearWaitNotice();
@@ -761,7 +778,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         );
         return;
       }
-      beginTurn();
+      beginTurn(language);
       l.asked = asked;
       // A send through the composer resolves after its upload, by which time
       // the chat may already show the reply running.
@@ -825,7 +842,11 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (l.unstoppable && l.pendingSend !== null) scheduleWaitNotice();
   };
 
-  const onTranscript = (text: string | null, id: number) => {
+  const onTranscript = (
+    text: string | null,
+    id: number,
+    language: string | null = null,
+  ) => {
     if (id !== l.captureId) return;
     l.captureAbort = null;
     set.mic("closed");
@@ -839,6 +860,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       heard !== "" &&
       l.speechFrom === "speaking" &&
       isEchoTranscript(heard, l.said);
+    if (heard && !echo) l.lastLanguage = language;
     if (echo && !l.echoProne) {
       l.echoProne = true;
       notice(MINK_ECHO_NOTICE);
@@ -915,9 +937,10 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   /** Starts listening on the chat's microphone unless it already is. */
   const arm = () => {
     const microphone = l.microphone;
-    if (!l.enabled || l.captureAbort || !microphone) return;
+    if (!l.enabled || l.muted || l.captureAbort || !microphone) return;
     const controller = new AbortController();
     const id = ++l.captureId;
+    let detectedLanguage: string | null = null;
     l.captureAbort = controller;
     l.speechStarted = false;
     l.speechFrom = null;
@@ -926,9 +949,13 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     microphone
       .capture({
         signal: controller.signal,
+        onLanguage: (language) => {
+          detectedLanguage = language;
+        },
         gate: l.gate,
         onLevel: (level) => {
-          levelRef.current = Math.max(level, levelRef.current * 0.9);
+          if (id === l.captureId)
+            levelRef.current = Math.max(level, levelRef.current * 0.9);
         },
         onSpeechStart: () => onSpeechStart(id),
         onPhase: (phase) => {
@@ -936,9 +963,43 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         },
       })
       .then(
-        (text) => onTranscript(text, id),
+        (text) => onTranscript(text, id, detectedLanguage),
         (error: unknown) => onCaptureError(error, id),
       );
+  };
+
+  // Muting releases the actual input device, not just its visual indicator.
+  // In-flight capture callbacks are invalidated before aborting; answers and
+  // accepted questions continue. Unmute opens a fresh microphone on the click.
+  const toggleMute = () => {
+    if (!l.enabled) return;
+    l.muted = !l.muted;
+    set.muted(l.muted);
+    if (!l.muted) {
+      l.microphone = (latest.current.createCapture ?? createMinkVoiceCapture)();
+      arm();
+      return;
+    }
+    l.captureId += 1;
+    l.captureAbort?.abort();
+    l.captureAbort = null;
+    l.microphone?.close();
+    l.microphone = null;
+    l.speechStarted = false;
+    l.speechFrom = null;
+    levelRef.current = 0;
+    set.mic("closed");
+    // Treat discarded unfinished speech like silence if a previous question's
+    // Stop is already in flight. Its authoritative result must still settle.
+    if (l.deciding) l.parkedEmpty = true;
+    else {
+      if (l.held) release();
+      if (l.carry !== null) {
+        const carried = l.carry;
+        l.carry = null;
+        queueSend(carried, true);
+      }
+    }
   };
 
   const toggle = () => {
@@ -1198,6 +1259,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
 
   return {
     toggle,
+    toggleMute,
     noteSend,
     stop,
     onChat,
@@ -1210,6 +1272,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
 
 export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
   const [enabled, setEnabled] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [state, setState] = useState<MinkVoiceState>("idle");
   const [mic, setMic] = useState<MinkVoiceMicState>("closed");
   const [heard, setHeard] = useState<string | null>(null);
@@ -1220,6 +1283,7 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
       input,
       set: {
         enabled: setEnabled,
+        muted: setMuted,
         state: setState,
         mic: setMic,
         heard: setHeard,
@@ -1271,6 +1335,7 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
   return useMemo(
     () => ({
       enabled,
+      muted,
       state,
       mic,
       support,
@@ -1279,8 +1344,9 @@ export function useMinkVoiceMode(input: MinkVoiceModeInput): MinkVoiceMode {
       said,
       notice,
       toggle: loop.toggle,
+      toggleMute: loop.toggleMute,
       noteSend: loop.noteSend,
     }),
-    [enabled, state, mic, support, heard, said, notice, loop],
+    [enabled, muted, state, mic, support, heard, said, notice, loop],
   );
 }

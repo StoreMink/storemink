@@ -7,6 +7,7 @@ import {
   cancelRevamp,
   kickRevampIfStalled,
   readRevampStatus,
+  readRevampDesignPreview,
 } from "@/lib/mink/revamp/jobs";
 import { publishRevamp, undoRevamp } from "@/lib/mink/revamp/publish";
 import { logError, logWarn } from "@/lib/observability/logger";
@@ -72,6 +73,15 @@ export async function GET(
         { error: "Mink AI redesigns are receiving too many requests." },
         429,
       );
+    }
+    if (new URL(request.url).searchParams.get("preview") === "design") {
+      const design = await readRevampDesignPreview(actor, revampId);
+      return design
+        ? privateJson({ design })
+        : privateJson(
+            { error: "The design preview is not available yet." },
+            404,
+          );
     }
     const revamp = await readRevampStatus(actor, revampId);
     if (!revamp) {

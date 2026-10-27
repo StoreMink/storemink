@@ -541,7 +541,7 @@ describe("start_storefront_revamp", () => {
       status: "started",
       cardShown: true,
       instruction:
-        "Tell the merchant in one short sentence that the redesign has started and the card shows its progress. Do not describe the design.",
+        "Tell the merchant in one short sentence that the redesign has started and the card shows its progress. Do not describe the design or promise a completion time; the merchant can leave and return later.",
     });
     expect(JSON.stringify(forModel)).not.toMatch(/credit|budget/i);
     expectNoIdForModel(forModel);

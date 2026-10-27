@@ -55,6 +55,22 @@ function capture(
 }
 
 describe("captureMinkVoiceTurn", () => {
+  it("preserves recognition language for playback without changing the transcript", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        text: "तुमची ऑर्डर तयार आहे",
+        languageCode: "mr-IN",
+      }),
+    });
+    const onLanguage = vi.fn();
+    const pending = capture({ onLanguage });
+    await vi.waitFor(() => expect(recorder.start).toHaveBeenCalledOnce());
+    recorder.done?.(wav());
+    expect(await pending).toBe("तुमची ऑर्डर तयार आहे");
+    expect(onLanguage).toHaveBeenCalledWith("mr-IN");
+  });
+
   it("records in voice mode, then transcribes, reporting each phase", async () => {
     const onPhase = vi.fn();
     const onSpeechStart = vi.fn(() => true);

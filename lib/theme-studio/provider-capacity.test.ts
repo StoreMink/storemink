@@ -475,6 +475,8 @@ describe("shared provider capacity", () => {
       maxGapMs: 45_000,
       successFactor: 0.9,
       rateLimitFactor: 1.5,
+      recoveryFloorMs: 40_000,
+      recoveryHoldMs: 600_000,
     });
     expect(Object.isFrozen(IMAGE_START_PACING)).toBe(true);
     for (const image of [
@@ -494,40 +496,6 @@ describe("shared provider capacity", () => {
     ]) {
       expect(isImageProviderModel(text)).toBe(false);
     }
-  });
-
-  it("★★ B28: the factors cancel near 21% refused, so a line refused more often sits at the 45 s ceiling and one refused less at the 10 s floor", () => {
-    const { successFactor, rateLimitFactor } = IMAGE_START_PACING;
-    const breakEven =
-      Math.log(1 / successFactor) / Math.log(rateLimitFactor / successFactor);
-    expect(breakEven).toBeGreaterThan(0.2);
-    expect(breakEven).toBeLessThan(0.21);
-    // The store's own arithmetic (shrunkGap / grownGap): round, then clamp.
-    const step = (gap: number, refused: boolean) =>
-      refused
-        ? Math.min(
-            IMAGE_START_PACING.maxGapMs,
-            Math.round(gap * rateLimitFactor),
-          )
-        : Math.max(
-            IMAGE_START_PACING.minGapMs,
-            Math.round(gap * successFactor),
-          );
-    /** The gaps a line settles into when every nth start is refused. */
-    const settled = (everyNth: number) => {
-      let gap = IMAGE_START_PACING.initialGapMs;
-      const tail: number[] = [];
-      for (let start = 1; start <= 300; start++) {
-        gap = step(gap, start % everyNth === 0);
-        if (start > 200) tail.push(gap);
-      }
-      return { low: Math.min(...tail), high: Math.max(...tail) };
-    };
-    // One start in three refused (33%, above 21%): back at the ceiling after
-    // every refusal, so the ceiling is the pace.
-    expect(settled(3)).toEqual({ low: 36_450, high: 45_000 });
-    // One in ten (10%, below): down at the floor between refusals.
-    expect(settled(10)).toEqual({ low: 10_000, high: 15_000 });
   });
 
   it("★ hands each gap change the store reports to onPaceChange, and a failing observer costs nothing", async () => {

@@ -1,4 +1,5 @@
 import "server-only";
+import { REVAMP_WORK_BUDGET, revampRecovers } from "./pacing-policy";
 
 // ---------------------------------------------------------------------------
 // The revamp runner: one invocation claims one job, carries it as far as it
@@ -135,6 +136,14 @@ export interface RevampRunnerJobs {
   hold: JobsModule["holdRevampPhotos"];
   /** Record the photos step's photo checks on the job row (P0). */
   reviews: JobsModule["recordRevampPhotoReviews"];
+  /**
+   * Whether the merchant has pressed Stop: one primary-key read of the
+   * cancel flag, asked every `stopPollMs` on a recoverable job. ★ Optional
+   * so a caller that builds its own side effects keeps working: absent, Stop
+   * is read by the once-a-minute lease renewal and before the charge, as
+   * every job's always was.
+   */
+  stopRequested?: JobsModule["revampStopRequested"];
   notify: (input: EmitEventInput) => Promise<unknown>;
   /**
    * ★★ This store's own earlier redesigns' plans, newest first (the redo
@@ -168,6 +177,7 @@ export interface RevampThemeSelection {
  *   too, and the compiler reads the id.
  */
 type RevampPlannerInput = Parameters<RevampDeps["plan"]>[1] & {
+  photoBudget?: number;
   revampId: string;
   earlierDesigns?: string;
 };
@@ -366,6 +376,13 @@ async function runHeldRevamp(
   const { job, leaseToken } = claimed;
   const revampId = job.id;
   const request = job.request;
+  // ★★ A new full redesign recovers (pacing-policy.ts): waits park it without
+  //   counting, every paid candidate is stored before its review, and it
+  //   draws within the photo and image-call budgets. Legacy jobs and
+  //   refinements keep the earlier contract. ★ The twelve-minute target it
+  //   carries (`targetReadyAt`) is observed in the timeline only: it never
+  //   gates a claim, a paid call, the preview or the card.
+  const recoverable = revampRecovers(job.result);
 
   const controller = new AbortController();
   let stop: StopReason | null = null;
@@ -465,6 +482,30 @@ async function runHeldRevamp(
   const renewTimer = setInterval(() => {
     void renewOnce();
   }, REVAMP_LIMITS.leaseRenewMs);
+  // ★★ STOP IS READ EVERY TEN SECONDS ON A RECOVERABLE JOB, AS A READ. The
+  //   lease renewal reads the cancel flag too, but renewing six times a
+  //   minute is six fenced UPDATEs a minute per running job (each through
+  //   the recovery fence trigger) on a database that already alerts on
+  //   connections. A primary-key SELECT of the flag costs nothing to speak
+  //   of, so Stop is honoured within `stopPollMs` and the lease is still
+  //   renewed once a minute. ★ A read that throws is logged and asked again
+  //   at the next tick; it says nothing about the lease (D1).
+  const stopTimer =
+    recoverable && jobs.stopRequested
+      ? setInterval(() => {
+          if (stop) return;
+          void jobs.stopRequested!(revampId)
+            .then((requested) => {
+              if (requested && !stop && !ended) halt("cancelled");
+            })
+            .catch((error) => {
+              logWarn("mink.revamp: stop check failed", {
+                revampId,
+                code: failureCode(error),
+              });
+            });
+        }, REVAMP_WORK_BUDGET.stopPollMs)
+      : null;
 
   // Local state: the job row as this invocation has advanced it.
   const state: {
@@ -485,6 +526,16 @@ async function runHeldRevamp(
   // deadline between two steps caught nothing half done.
   let working: RevampStep | null = null;
   let lastReportAt = Number.NEGATIVE_INFINITY;
+  // ★ The photos step's "7 of 24" never runs backwards on the card: a resumed
+  //   shoot counts its own draws from zero while the earlier ones are stored,
+  //   and lanes settle out of order. The high-water mark is the stored
+  //   detail's, and starts over when the step is redone or its total changes
+  //   (a re-planned shoot), so "6 of 6" is never shown before a draw.
+  const storedPhotoDetail = job.progress
+    .find((item) => item.step === "photos")
+    ?.detail?.match(/^(\d+) of (\d+)$/);
+  let photosReported = Number(storedPhotoDetail?.[1] ?? 0);
+  let photosTotal = Number(storedPhotoDetail?.[2] ?? 0);
   // The revamp's stored photos when the photos or products step started in
   // this invocation (jobs-5); null for every other step.
   let imagesAtStepStart: number | null = null;
@@ -519,6 +570,18 @@ async function runHeldRevamp(
   const report = async (detail: string | null): Promise<void> => {
     try {
       if (!current) return;
+      if (current === "photos" && detail) {
+        const count = detail.match(/^(\d+) of (\d+)$/);
+        if (count) {
+          const total = Number(count[2]);
+          if (total !== photosTotal) {
+            photosTotal = total;
+            photosReported = 0;
+          }
+          photosReported = Math.max(photosReported, Number(count[1]));
+          detail = `${Math.min(photosReported, total)} of ${total}`;
+        }
+      }
       setState(current, "running", boundedDetail(detail));
       if (stop) return;
       const at = now();
@@ -807,7 +870,8 @@ async function runHeldRevamp(
     //   before but not counted (B8); any other transient failure (a database
     //   error, a claim that could not be recorded, a bug) is one of the step's
     //   failures, so the same real error `maxAttempts` times still fails it.
-    const google = waitedOnGoogle(error);
+    const google =
+      waitedOnGoogle(error) || (recoverable && infrastructureWait(error));
     logWarn("mink.revamp: step will be retried", {
       revampId,
       step,
@@ -887,13 +951,29 @@ async function runHeldRevamp(
   };
 
   try {
-    return { outcome: await drive() };
+    const started = now();
+    const outcome = await drive();
+    logInfo("mink.revamp: timeline", {
+      revampId,
+      outcome,
+      invocationMs: Math.max(0, now() - started),
+      wallMs: Math.max(0, now() - Date.parse(job.createdAt)),
+      images: usage.images,
+      reviews: usage.reviews,
+      estimatedCostMicroUsd: usage.estimatedCostMicroUsd,
+      recoverable,
+      targetExceeded:
+        typeof job.result?.targetReadyAt === "number" &&
+        now() > job.result.targetReadyAt,
+    });
+    return { outcome };
   } finally {
     ended = true;
     clearTimeout(deadlineTimer);
     if (graceTimer) clearTimeout(graceTimer);
     if (leaseWatch) clearTimeout(leaseWatch);
     clearInterval(renewTimer);
+    if (stopTimer) clearInterval(stopTimer);
   }
 
   async function drive(): Promise<RevampRunOutcome> {
@@ -934,6 +1014,7 @@ async function runHeldRevamp(
       actor: actor.runId ? actor : { ...actor, runId: job.originRunId },
       signal: controller.signal,
       deadline,
+      ...(recoverable ? { recoverable: true } : {}),
       report,
       draining: drainController.signal,
       photoHold: { held: () => state.result.photoHold ?? null, record: hold },
@@ -969,6 +1050,9 @@ async function runHeldRevamp(
         for (const later of REVAMP_STEPS.slice(redo)) {
           setState(later, "waiting", null);
         }
+        // A shoot done over counts its photos from nothing again.
+        photosReported = 0;
+        photosTotal = 0;
         index = redo;
         continue;
       }
@@ -984,12 +1068,18 @@ async function runHeldRevamp(
         }
       }
 
+      const stepStarted = now();
       let output: StepOutput;
       try {
         output = await runStep(step, ctx);
       } catch (error) {
         return settleError(error, step);
       }
+      logInfo("mink.revamp: step done", {
+        revampId,
+        step,
+        ms: Math.max(0, now() - stepStarted),
+      });
       // ★ A step that returned is complete (steps throw when aborted), so its
       //   output is kept even at the deadline; a lost lease or a cancel keeps
       //   nothing.
@@ -1213,6 +1303,13 @@ async function runHeldRevamp(
           snapshot: required(state.snapshot, "snapshot"),
           request,
         });
+        // ★★ A CHECK LEFT OPEN IS A NOTE ON THE CARD, NEVER A FAILURE
+        //   (checks.ts): everything with a mechanical fix was fixed, and
+        //   what remains (a merchant's own unfinished section, a wide
+        //   opening photo with no phone crop, a claim in a menu link) is
+        //   reported in plain words for the merchant to weigh. Failing the
+        //   job here threw away eight paid photographs for advice, and the
+        //   retry failed the same way.
         return {
           patch: {
             result: { ...state.result, stored: run.plan, checked: true },
@@ -1242,6 +1339,7 @@ async function runHeldRevamp(
       //   summary of this store's earlier redesigns.
       const summary = await earlierDesigns();
       const inputs: RevampPlannerInput = {
+        ...(recoverable ? { photoBudget: REVAMP_WORK_BUDGET.photos } : {}),
         request,
         snapshot,
         previous: await previousPlan(),
@@ -1265,7 +1363,10 @@ async function runHeldRevamp(
     //   always names its product keys, so `null` keys mean "not fitted yet".
     if (job.budgetCredits !== null && keys === null) {
       const fitted = deps.fitBudget(plan, {
-        request,
+        request:
+          recoverable && request.kind === "full"
+            ? withProductPhotosOnly(request, [])
+            : request,
         budget: job.budgetCredits,
       });
       unfitted = plan;
@@ -1285,6 +1386,7 @@ async function runHeldRevamp(
       //   has, which is not created, so the photo showed nowhere.
       keys = deps.productPhotoKeys(plan, request);
     }
+    if (recoverable && request.kind === "full") keys = [];
     if (distinctness) logDistinctness(distinctness);
     return {
       column: {
@@ -1459,9 +1561,18 @@ async function runHeldRevamp(
     //   copy existed is fitted again as it is, with the product photos the
     //   first fit already left out withheld for the same reason.
     const fitted = column.unfitted
-      ? deps.fitBudget(column.unfitted, { request, budget })
+      ? deps.fitBudget(column.unfitted, {
+          request:
+            recoverable && request.kind === "full"
+              ? withProductPhotosOnly(request, [])
+              : request,
+          budget,
+        })
       : deps.fitBudget(column.plan, {
-          request: withProductPhotosOnly(request, keys),
+          request: withProductPhotosOnly(
+            request,
+            recoverable && request.kind === "full" ? [] : keys,
+          ),
           budget,
         });
     const total = deps.estimate(fitted.plan, {
@@ -1482,7 +1593,8 @@ async function runHeldRevamp(
     const next: Extract<RevampPlanColumn, { stage: "compiled" }> = {
       stage: "compiled",
       plan: checked.plan,
-      productPhotoKeys: fitted.productPhotoKeys,
+      productPhotoKeys:
+        recoverable && request.kind === "full" ? [] : fitted.productPhotoKeys,
       ...(column.unfitted ? { unfitted: column.unfitted } : {}),
     };
     logInfo("mink.revamp: plan fitted again to the store's balance", {
@@ -1605,6 +1717,7 @@ async function runHeldRevamp(
         return deps.finalize(raw, inputs);
       }
       ctx.signal.throwIfAborted();
+      if (recoverable && !plannerCallFits()) throw new RevampDrainedError();
       // ★ No repair is started once the deadline has passed (jobs-4): the
       //   answered ones are saved, and the next run carries on from them.
       if (ctx.draining?.aborted) throw new RevampDrainedError();
@@ -1669,11 +1782,19 @@ async function runHeldRevamp(
    *   (a refusal, a configuration fault, a stop, the drain) is settled as it
    *   always was.
    */
+  function plannerCallFits(): boolean {
+    return (
+      now() + REVAMP_PLAN_RETRY_MIN_LEFT_MS + REVAMP_LIMITS.hardStopMarginMs <
+      deadline + REVAMP_DEADLINE_GRACE_MS
+    );
+  }
+
   async function planCall(
     ctx: RevampStepContext,
     input: RevampPlannerInput,
   ): Promise<RevampModelCall> {
     for (let calls = 1; ; calls += 1) {
+      if (recoverable && !plannerCallFits()) throw new RevampDrainedError();
       try {
         return await deps.plan(ctx, input);
       } catch (error) {
@@ -2198,6 +2319,29 @@ function waitedOnGoogle(error: unknown): boolean {
   );
 }
 
+/** Retry recognized transport/transaction failures; programming faults still count. */
+function infrastructureWait(error: unknown): boolean {
+  const code = pgErrorCode(error);
+  return (
+    (typeof code === "string" &&
+      (code.startsWith("08") ||
+        [
+          "40001",
+          "40P01",
+          "53300",
+          "57P01",
+          "57P02",
+          "57P03",
+          "ECONNRESET",
+          "ECONNREFUSED",
+          "ETIMEDOUT",
+          "EPIPE",
+          "EAI_AGAIN",
+        ].includes(code))) ||
+    (error instanceof Error && error.name === "DatabaseBusyError")
+  );
+}
+
 async function defaultRevampRunnerJobs(): Promise<RevampRunnerJobs> {
   // Imported on demand so the runner (and its tests, which pass their own
   // jobs) never load the database client unless they run for real.
@@ -2224,6 +2368,7 @@ async function defaultRevampRunnerJobs(): Promise<RevampRunnerJobs> {
     kickWaiting: (exceptRevampId) => jobs.kickWaitingRevamp(exceptRevampId),
     hold: jobs.holdRevampPhotos,
     reviews: jobs.recordRevampPhotoReviews,
+    stopRequested: jobs.revampStopRequested,
     notify: (event) => record.recordEvent(event),
     // ★ No `earlierPlans` or `theme`: the runner reads both the production
     //   way when they are absent (`memoryDefaults`), one path for this and

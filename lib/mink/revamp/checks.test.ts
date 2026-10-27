@@ -1045,3 +1045,44 @@ describe("runRevampChecks: links to the storefront's own pages (output-6)", () =
     );
   });
 });
+
+it("★ reports, on the photos check, a recoverable redesign whose homepage lost its essential photographs", async () => {
+  const source = plan([
+    page("", [
+      sec("n-hero", "hero", {
+        variant: "fullbleed",
+        heading: "Our shop",
+        image_url: GONE,
+      }),
+    ]),
+  ]);
+  const result = await runRevampChecks(
+    { ...ctx(), recoverable: true },
+    { plan: source, snapshot: snapshot(), request: request() },
+  );
+  expect(check(result.plan, "photos").passed).toBe(false);
+  expect(check(result.plan, "photos").note).toContain(
+    "at least three photographs",
+  );
+});
+
+it("retries a storage outage without accepting an unchecked design or changing its photos", async () => {
+  gcs.info.mockRejectedValue(new Error("temporary storage outage"));
+  const source = plan([
+    page("", [
+      sec("n-hero", "hero", {
+        variant: "fullbleed",
+        heading: "Our shop",
+        image_url: ERR,
+      }),
+    ]),
+  ]);
+  const before = JSON.stringify(source);
+  await expect(
+    runRevampChecks(
+      { ...ctx(), recoverable: true },
+      { plan: source, snapshot: snapshot(), request: request() },
+    ),
+  ).rejects.toMatchObject({ transient: true, code: "photos_unavailable" });
+  expect(JSON.stringify(source)).toBe(before);
+});

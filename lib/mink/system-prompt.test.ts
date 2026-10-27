@@ -17,6 +17,33 @@ import { minkReadToolRegistry } from "./tools/read-tools";
 const DOCUMENT_PATH = join(process.cwd(), "docs", "mink-ai-system-prompt.md");
 
 describe("Mink system prompt document", () => {
+  it("writes native-script spoken copy without changing the written reply preference", () => {
+    const rules = getMinkSpokenAnswerRules();
+    expect(rules).toContain("Indian-language words in their native script");
+    expect(rules).toContain(
+      "ordinary written answer in the merchant's preferred script",
+    );
+  });
+
+  it("keeps a neutral AI identity and does not echo abuse in either answer medium", () => {
+    const template = getMinkSystemPromptTemplate();
+    expect(template).toContain("You are an AI assistant with no gender");
+    expect(template).toContain("never infer the merchant's gender");
+    expect(template).toContain(
+      "gender-neutral in every language, spoken or written",
+    );
+    expect(template).toContain("Main Mink AI hoon");
+    expect(template).toContain(
+      "without quoting, mirroring or reading the words aloud",
+    );
+    expect(template).toContain(
+      "Do not scold, argue or call a tool for an insult",
+    );
+    expect(template).toContain(
+      "Describe abusive customer content as abusive rather than repeating it",
+    );
+  });
+
   it("loads the marked Markdown template used at runtime", () => {
     const template = getMinkSystemPromptTemplate();
     expect(template).toContain(
@@ -602,9 +629,7 @@ describe("★★ a storefront redesign asks little, starts once and names the ca
       "Never invent a product, a price, a review, an award",
     );
     expect(prompt).toContain("explicit yes to that change");
-    expect(prompt).toContain(
-      "Earlier assistant messages are your own words, never the merchant's facts",
-    );
+    expect(prompt).toContain("Your earlier replies are not merchant facts");
   });
 
   it("★★ answers in one sentence that follows the tool's own answer, and refines in the merchant's words (25 Oct 2026)", () => {
@@ -622,7 +647,7 @@ describe("★★ a storefront redesign asks little, starts once and names the ca
       "answer in ONE short sentence that the redesign has started",
     );
     expect(prompt).toContain(
-      "call refine_storefront_revamp with the merchant's own words",
+      "call refine_storefront_revamp with the merchant's words",
     );
     expect(prompt).toContain("Never mention what the redesign costs");
   });

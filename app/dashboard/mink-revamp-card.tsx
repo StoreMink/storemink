@@ -115,6 +115,8 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
   const [undoResult, setUndoResult] = useState<RevampUndoResult | null>(null);
   const [confirmingUndo, setConfirmingUndo] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [designReview, setDesignReview] = useState<RevampReview | null>(null);
+  const [designLoading, setDesignLoading] = useState(false);
   const previewButton = useRef<HTMLButtonElement>(null);
 
   const status: RevampStatus = view?.status ?? artifact.status;
@@ -148,6 +150,43 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
       .then(take)
       .catch(() => undefined);
   }, [id, take]);
+
+  const loadDesign = useCallback(
+    async (signal?: AbortSignal) => {
+      const response = await fetch(
+        `/api/mink/revamps/${encodeURIComponent(id)}?preview=design`,
+        { cache: "no-store", signal },
+      );
+      if (!response.ok)
+        throw new Error("The design preview could not be loaded. Try again.");
+      const payload = await response.json();
+      if (payload.design?.review && !signal?.aborted)
+        setDesignReview(payload.design.review as RevampReview);
+    },
+    [id],
+  );
+
+  async function openDesign() {
+    setError(null);
+    setDesignLoading(true);
+    try {
+      await loadDesign();
+      setPreviewOpen(true);
+    } catch (error) {
+      setError(
+        messageOf(error, "The design preview could not be loaded. Try again."),
+      );
+    } finally {
+      setDesignLoading(false);
+    }
+  }
+
+  usePoll(
+    async (run) => {
+      await loadDesign(run.signal).catch(() => undefined);
+    },
+    { ms: 15_000, enabled: previewOpen && isActive(status) },
+  );
 
   async function stop() {
     setBusy("stop");
@@ -312,15 +351,42 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
             A newer version of this redesign replaced this one.
           </Notice>
         ) : isActive(status) ? (
-          <Progress
-            progress={view?.progress ?? initialRevampProgress()}
-            stopping={busy === "stop"}
-            // ★ A running job only RECORDS the stop (the runner sees it at its
-            //   next lease renewal), so the answer still says running: the
-            //   recorded request, not the click, is what keeps this down.
-            stopRequested={view?.cancelRequested === true}
-            onStop={() => void stop()}
-          />
+          <>
+            {view?.waiting && !view.cancelRequested ? (
+              <Notice tone="neutral">
+                The redesign is waiting to continue. Your progress is saved and
+                Mink will retry automatically. You can leave this chat and
+                return later.
+              </Notice>
+            ) : null}
+            <Progress
+              progress={view?.progress ?? initialRevampProgress()}
+              stopping={busy === "stop"}
+              // ★ A running job only RECORDS the stop (the runner sees it at its
+              //   next lease renewal), so the answer still says running: the
+              //   recorded request, not the click, is what keeps this down.
+              stopRequested={view?.cancelRequested === true}
+              onStop={() => void stop()}
+            />
+            {view?.design?.ready && !view.cancelRequested ? (
+              <div className="space-y-2">
+                <p className="text-[10px] text-[#5f5969]">
+                  Your layout, words and colours are ready to preview.
+                  Photographs are still being checked. You can leave this chat
+                  and return later.
+                </p>
+                <button
+                  ref={previewButton}
+                  type="button"
+                  disabled={designLoading}
+                  onClick={() => void openDesign()}
+                  className="rounded-lg border border-[#ddd6fe] px-3 py-2 text-xs font-semibold text-[#5d3fe3] disabled:opacity-50"
+                >
+                  {designLoading ? "Loading design" : "Preview design"}
+                </button>
+              </div>
+            ) : null}
+          </>
         ) : !view ? (
           <p className="flex items-center gap-2 text-[10px] text-[#5f5969]">
             <LoaderCircle aria-hidden className="h-3.5 w-3.5 animate-spin" />
@@ -384,9 +450,12 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
         {error ? <Notice tone="error">{error}</Notice> : null}
       </div>
 
-      {previewOpen && view?.review ? (
+      {previewOpen &&
+      (view?.review ||
+        (isActive(status) && designReview && !view?.cancelRequested)) ? (
         <MinkRevampPreview
-          review={view.review}
+          review={view?.review ?? designReview!}
+          inProgress={isActive(status)}
           // ★ After Apply the draft IS the redesign: the preview then shows
           //   the live store beside the draft instead of the draft twice.
           applied={applied && !undone}

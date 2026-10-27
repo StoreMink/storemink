@@ -912,7 +912,7 @@ export function DashboardChat({
                 className="mink-message-scroll h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4"
               >
                 <MinkEarlierMessages />
-                <div className={`${columnClass} space-y-4`}>
+                <div className={`${columnClass} space-y-6`}>
                   {messages.map((message, index) =>
                     message.role === "user" ? (
                       <div
@@ -983,6 +983,10 @@ export function DashboardChat({
                   {isReplying && (
                     <div
                       className="mink-answer-row flex min-w-0 py-1"
+                      // The whole pending row is one polite live region, so a
+                      // screen reader hears the answer as it streams and the
+                      // status beneath it; a second live region nested inside
+                      // would announce the status twice.
                       aria-live="polite"
                       data-testid="mink-pending-answer"
                     >
@@ -993,7 +997,7 @@ export function DashboardChat({
                             <MinkAnswer text={streamingText} />
                           </div>
                         ) : null}
-                        <div className="flex items-center gap-2.5 py-2 text-xs text-[#5c5f62]">
+                        <div className="flex items-center gap-2.5 py-2 text-sm text-[#5c5f62]">
                           <MinkMark size="sm" />
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
                           {statusText ?? "Thinking…"}
@@ -1058,7 +1062,7 @@ export function DashboardChat({
           ) : null}
           <div
             hidden={voiceChat.enabled}
-            className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
+            className="mink-composer-footer shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
           >
             <div className={columnClass}>
               {voiceChat.notice ? (
@@ -1230,7 +1234,7 @@ export function DashboardChat({
                       autoComplete="off"
                       autoCapitalize="sentences"
                       autoCorrect="on"
-                      className={`min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#8c9196] sm:text-sm sm:leading-5 ${
+                      className={`min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#71757a] ${
                         recording === "dictation" && !input ? "hidden" : ""
                       }`}
                     />
@@ -1604,35 +1608,55 @@ export function minkCreditIndicatorState(summary: MinkCreditSummary) {
  * twelve-second run is a single pulsing dot and nothing says what is taking
  * the time.
  */
-function MinkRunSteps({ steps }: { steps: MinkRunStep[] }) {
+export function MinkRunSteps({ steps }: { steps: MinkRunStep[] }) {
   if (steps.length === 0) return null;
+  const current =
+    [...steps].reverse().find((step) => step.state === "running") ??
+    steps[steps.length - 1];
+  const previous = steps.filter((step) => step.sequence !== current.sequence);
+  const stepLine = (step: MinkRunStep) => (
+    <span className="flex items-start gap-2">
+      {step.state === "running" ? (
+        <LoaderCircle
+          className="mt-1 h-3.5 w-3.5 shrink-0 animate-spin text-[#6d4dff] motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+      ) : step.state === "failed" ? (
+        <AlertTriangle
+          className="mt-1 h-3.5 w-3.5 shrink-0 text-[#b45309]"
+          aria-hidden="true"
+        />
+      ) : (
+        <Check
+          className="mt-1 h-3.5 w-3.5 shrink-0 text-emerald-700"
+          aria-hidden="true"
+        />
+      )}
+      <span className="min-w-0 break-words">{step.status}</span>
+    </span>
+  );
   return (
-    <ol
+    <div
       aria-label="What Mink AI is doing"
-      className="mb-2 space-y-1 text-xs text-[#5c5f62]"
+      className="mb-3 space-y-1 text-sm text-[#5c5f62]"
     >
-      {steps.map((step) => (
-        <li key={step.sequence} className="flex items-center gap-2">
-          {step.state === "running" ? (
-            <LoaderCircle
-              className="h-3 w-3 shrink-0 animate-spin text-[#6d4dff]"
-              aria-hidden="true"
-            />
-          ) : step.state === "failed" ? (
-            <AlertTriangle
-              className="h-3 w-3 shrink-0 text-[#b45309]"
-              aria-hidden="true"
-            />
-          ) : (
-            <Check
-              className="h-3 w-3 shrink-0 text-emerald-600"
-              aria-hidden="true"
-            />
-          )}
-          <span>{step.status}</span>
-        </li>
-      ))}
-    </ol>
+      {stepLine(current)}
+      {previous.length > 0 && (
+        <details className="mink-progress-details">
+          <summary className="cursor-pointer py-2 text-xs font-medium text-[#67616f] focus-visible:outline-[#6d4dff]">
+            {previous.length} earlier {previous.length === 1 ? "step" : "steps"}
+            {previous.some((step) => step.state === "failed")
+              ? " · Includes an issue"
+              : ""}
+          </summary>
+          <ol className="space-y-2 border-l border-[#e5e5e5] py-1 pl-3">
+            {previous.map((step) => (
+              <li key={step.sequence}>{stepLine(step)}</li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </div>
   );
 }
 
@@ -1891,7 +1915,7 @@ function MinkUserMessage({
 
   return (
     <>
-      <div className="max-w-[85%] space-y-2 rounded-2xl rounded-br-sm bg-[#f4f0ff] px-3.5 py-2.5 text-sm text-[#1a1a1a]">
+      <div className="max-w-[85%] space-y-2 rounded-2xl rounded-br-sm bg-[#f4f0ff] px-3.5 py-2.5 text-[15px] leading-6 text-[#1a1a1a]">
         {renderedAttachments.length > 0 && (
           <div
             className="flex flex-wrap gap-2"

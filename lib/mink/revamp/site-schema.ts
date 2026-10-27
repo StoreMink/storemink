@@ -1,3 +1,4 @@
+import { REVAMP_WORK_BUDGET } from "./pacing-policy";
 // ---------------------------------------------------------------------------
 // The storefront revamp's planner contract: the JSON schema the model answers
 // in, its system rules, and the data it reads (docs/mink-storefront-revamp.md,
@@ -104,7 +105,7 @@ import {
  *     and a page colour the merchant asked for kept; this store's earlier
  *     redesigns as data (<earlier_designs>).
  */
-export const REVAMP_SITE_PROMPT_VERSION = "mink-revamp-site-v5";
+export const REVAMP_SITE_PROMPT_VERSION = "mink-revamp-site-v6";
 
 // ---------------------------------------------------------------------------
 // The schema.
@@ -524,7 +525,7 @@ export function revampSiteSystem(): string {
     "",
     "Images",
     `- An image field holds only "", a photo URL listed in <owned_photos>, or ${REVAMP_SLOT_PREFIX}<shot id> naming a shot you describe in shots.`,
-    "- Describe one shot for each image field. Every shot shares one artDirection: one description of the light, palette, setting and lens for the whole shoot.",
+    "- An image field may reuse a compatible shot from another page. Never repeat a photograph on the same page. Every shot shares one artDirection: one description of the light, palette, setting and lens for the whole shoot.",
     '- Write the shots listed in <refill_shots> and <category_shots> exactly as listed, with those ids. A category shot has purpose "category" and its category slug in category; every other shot has category null.',
     '- people is "none" unless a person wearing or using the product is the point of the picture; never a child or a real, recognisable person. Shots show no brand names, logos or words.',
     '- Every shot shows the merchant\'s real goods or no goods at all. goods "merchant": the shot shows one or two of the merchant\'s own products, named by their keys from <products> (only keys marked photo=yes) in productKeys, as they look in their own photos. goods "none": the shot shows no products at all, only a setting, materials, ingredients, or a still life of props that are not products, with productKeys [].',
@@ -533,9 +534,9 @@ export function revampSiteSystem(): string {
     "",
     "Photographs",
     "- The storefront is led by photographs, the way a good shop window is: shoppers see the goods, where they come from and how they are made before they read about them.",
-    "- Besides the opening, the homepage has at least one band led by photographs: a gallery of four to six photos, a tile_grid whose tiles, or a multicolumn whose items, each have a photo, or a media_text with two stories, each with a photo.",
+    "- Besides the opening, the homepage has at least one band led by photographs: a gallery of three or four photos, a tile_grid whose tiles, or a multicolumn whose items, each have a photo, or a media_text with two stories, each with a photo.",
     "- Every other page you write carries at least one photograph. A category being created gets its category shot from <category_shots>.",
-    "- A redesign of the whole store describes about 10 to 20 shots: its homepage shows at least three photographs outside product sections, and the plan has at least eight shots in all.",
+    "- A redesign of the whole store stays within <photo_budget>, including every refill and category shot. Its homepage shows at least three photographs outside product sections. Reuse suitable shots on other pages; never add shots merely to fill a quota.",
     "",
     "Links",
     `- Link only to a target in <link_targets> (/, /shop, /collections/<category slug>, /<page slug>, /shop/<product slug>, a listed policy page, the blog (/blogs), the enquiry form (/enquiries)), to a page you write in this answer, or leave the link "".`,
@@ -544,7 +545,7 @@ export function revampSiteSystem(): string {
     `- Write every page in <scope> marked write=yes, with slug "${REVAMP_HOME_SLUG}" for the homepage. Write no other page, except up to the number of new pages <scope> allows, each with a slug of lowercase words joined by hyphens.`,
     '- Keep every section <scope> marks KEEP: write {"keep": "<its id>"} where it should appear (its type, configJson and style are then ignored) and never rewrite it. The other sections on a page are replaced by yours.',
     "- A new section has keep \"\", a type from <section_types>, configJson written as a JSON object in a string with exactly the fields of that type's example, each item of a list with exactly the fields of the example's item, and a style. Each example is a complete section, but its words, links and shot ids only show what goes where: write your own from the merchant's facts.",
-    '- The homepage opens with a hero_carousel of two or three slides, each its own shot of the same shoot, with height "large" or "screen", style width "full" and no colour scheme on it. Use a single hero (variant "fullbleed", with an image) only when the business really has one picture to show.',
+    '- The homepage opens with a hero_carousel of two slides, each its own shot of the same shoot, with height "large" or "screen", style width "full" and no colour scheme on it. Use a single hero (variant "fullbleed", with an image) only when the business really has one picture to show.',
     "- The homepage has at least four sections chosen for the business. After the opening, follow one of the structures <industry_playbook> offers, or blend two: they are alternatives, not templates to repeat, so choose the one that suits this store.",
     "- Use featured_products or product_spotlight only when <products> says real products will exist; shop_by_category only when <categories> says a category band is allowed.",
     "- Never use testimonials, logo strips, countdowns, comparisons, before and after, image hotspots, videos, blog feeds or custom code.",
@@ -1308,7 +1309,9 @@ export function revampSiteContent(input: RevampSiteInput): string {
     ...vocabularyBlocks(input),
     ...earlierDesignsBlock(input.earlierDesigns),
     ...refineBlocks(input),
-    `At most ${REVAMP_LIMITS.maxShots} shots in all.`,
+    request.kind === "full"
+      ? `<photo_budget>${JSON.stringify({ totalNew: REVAMP_WORK_BUDGET.photos, refills: revampRefillSlots(input).length, categories: revampCategoryPhotoNeeds(input).length, otherNew: Math.max(0, REVAMP_WORK_BUDGET.photos - revampRefillSlots(input).length - revampCategoryPhotoNeeds(input).length) })}</photo_budget>\nThe total includes the compiler replacements and category shots. Prefer the homepage, then compatible reuse on other pages. When required replacements leave too little room, use fewer photo-led sections. Never reuse a category photograph for unrelated goods.`
+      : `At most ${REVAMP_LIMITS.maxShots} shots in all.`,
   ].join("\n");
 }
 

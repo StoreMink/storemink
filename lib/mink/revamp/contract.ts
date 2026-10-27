@@ -107,6 +107,8 @@ export const REVAMP_STATE_WORDS: Record<RevampStatus, string> = {
 export function revampStateWord(entry: {
   status: RevampStatus;
   cancelRequested: boolean;
+  /** A retry is scheduled; completed work is preserved. */
+  waiting?: boolean;
 }): string {
   return entry.cancelRequested && ACTIVE_REVAMP_STATUSES.includes(entry.status)
     ? "stopping"
@@ -171,6 +173,7 @@ export const REVAMP_ERROR_CODES = [
   //   stand in (photos.ts `nothingToCropFrom`), or the anchor failed its
   //   check after every redraw, which no wait fixes.
   "photos_failed",
+  "time_limit",
   "store_changed",
   "theme_missing",
   "not_allowed",
@@ -193,6 +196,8 @@ export const REVAMP_ERROR_MESSAGES: Record<RevampErrorCode, string> = {
     "Mink AI could not put together pages that pass its own checks this time. Nothing was changed. Ask Mink to try again.",
   photos_unavailable:
     "The photo service was too busy to finish the new photographs. Nothing was changed. Ask Mink to try again in a few minutes.",
+  time_limit:
+    "Mink AI could not finish this redesign in the time it allows. Nothing was changed and you were not charged. Ask Mink to try again.",
   photos_failed:
     "The new photographs did not pass Mink AI's own checks this time. Nothing was changed. Ask Mink to try again.",
   store_changed:
@@ -880,6 +885,8 @@ export interface RevampStatusView {
   undoneAt: string | null;
   /** The plan summary for the review card, once ready. */
   review: RevampReview | null;
+  /** Compact preview availability; sections are fetched only when opened. */
+  design?: { ready: boolean; photosIn: number; photosTotal: number };
   /** The revamp that replaced this one, when superseded. */
   supersededBy: string | null;
   createdAt: string;
@@ -889,6 +896,8 @@ export interface RevampStatusView {
    * its next renewal (or right before the card's charge).
    */
   cancelRequested: boolean;
+  /** A retry is scheduled; completed work is preserved. */
+  waiting?: boolean;
   /** What Undo did, once undone (`apply_snapshot.undo`); null before. */
   undo: RevampUndoResult | null;
 }

@@ -136,6 +136,14 @@ export interface RevampStepContext {
   signal: AbortSignal;
   /** Milliseconds since the epoch when this invocation must hand over. */
   deadline: number;
+  /**
+   * A new full redesign (recovery policy 2, pacing-policy.ts): capacity waits
+   * and invocation deadlines resume it, never finish it; it draws within the
+   * photo and image-call budgets, and parks every paid candidate before its
+   * review so a crash loses no photograph. Absent on legacy jobs and
+   * refinements, which keep their earlier contract.
+   */
+  recoverable?: boolean;
   /** Updates the step's detail on the card ("7 of 24"); never throws. */
   report(detail: string | null): Promise<void>;
   /**
@@ -205,6 +213,10 @@ export interface RevampPhotoReviewState {
   firstAskedAt?: number;
   /** Check calls made for it so far, across invocations. */
   tries: number;
+  /** Reserved image attempts, persisted before sending, across invocations. */
+  draws?: number;
+  /** The last correction, carried into a resumed image attempt. */
+  correction?: string;
   /** When the last of them answered (ms since the epoch). */
   lastTriedAt?: number;
   /**

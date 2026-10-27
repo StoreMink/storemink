@@ -8,7 +8,7 @@ import { MinkLink } from "./mink-link";
  */
 export function MinkAnswer({ text }: { text: string }) {
   return (
-    <div className="min-w-0 break-words text-[14px] leading-6 text-[#202123]">
+    <div className="min-w-0 break-words text-[15px] leading-7 sm:text-base text-[#202123]">
       {renderMinkBlocks(text)}
     </div>
   );

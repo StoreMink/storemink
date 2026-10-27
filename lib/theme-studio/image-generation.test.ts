@@ -62,6 +62,51 @@ import {
 const IMAGE_RUN_TIMEOUT_MS = 20_000;
 
 it(
+  "★ a parking hook that throws costs the run nothing: the lane reviews and keeps its photograph",
+  async () => {
+    const { pkg, intent } = await fixture();
+    const slots = generatableSlots(pkg, intent)
+      .filter((s) => s.purpose !== "product")
+      .slice(0, 2);
+    const parked: string[] = [];
+    const result = await runThemeImageGeneration(
+      createFakeImageClient(),
+      {
+        pkg,
+        intent,
+        only: slots.map((s) => s.slotId),
+        reviewer: {
+          client: createFakeImageReviewClient(),
+          providerModel: "fake",
+        },
+      },
+      new AbortController().signal,
+      {
+        async onPrepared(briefId) {
+          parked.push(briefId);
+          if (briefId === slots[0].slotId) throw new Error("bucket closed");
+        },
+      },
+    );
+    expect(parked).toContain(slots[0].slotId);
+    expect(result.outcomes.map((o) => o.status)).toEqual([
+      "generated",
+      "generated",
+    ]);
+    expect(result.images.map((i) => i.slotId).sort()).toEqual(
+      slots.map((s) => s.slotId).sort(),
+    );
+    expect(result.telemetry.preparedFailures).toEqual([
+      expect.objectContaining({
+        briefId: slots[0].slotId,
+        error: "bucket closed",
+      }),
+    ]);
+  },
+  IMAGE_RUN_TIMEOUT_MS,
+);
+
+it(
   "preserves a paid slot as unreviewed when the run deadline interrupts review",
   async () => {
     const { pkg, intent } = await fixture();

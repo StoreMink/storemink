@@ -108,3 +108,9 @@ describe("settleStalePhotoHold", () => {
     expect(released.calls).toEqual([]);
   });
 });
+
+it("counts a candidate stored before review against its original photo claim", () => {
+  expect(storedPhotoUnit({ role: "slot", slotId: "hero~candidate-2" })).toBe(
+    "slot:hero",
+  );
+});

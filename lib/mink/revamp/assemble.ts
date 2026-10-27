@@ -844,6 +844,8 @@ export interface RevampAssembleInput {
   free: boolean;
   /** The requester holds Branding manage (ports.ts says why it matters). */
   canChangeBrand: boolean;
+  /** Preview-only placeholder; never supplied to a runner or an Apply plan. */
+  standIn?: string;
 }
 
 /** Why a card leaves the store's tagline and footer description alone. */
@@ -902,7 +904,11 @@ export function assembleRevampPlan(
     }
     const section = sectionIn(binding);
     if (!section) continue;
-    revampSetValueAt(section.config, binding.path, image?.url ?? "");
+    revampSetValueAt(
+      section.config,
+      binding.path,
+      image?.url ?? input.standIn ?? "",
+    );
     if (binding.phonePath) {
       // ★ Never a slot reference left behind: no phone crop means the phone
       //   shows the main photograph, which the storefront does with "".
@@ -911,7 +917,7 @@ export function assembleRevampPlan(
         : undefined;
       revampSetValueAt(section.config, binding.phonePath, phone?.url ?? "");
     }
-    if (!image) cleared.add(section);
+    if (!image && !input.standIn) cleared.add(section);
   }
 
   // A section whose photo could not be made goes when it cannot show without it.

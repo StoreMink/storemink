@@ -375,6 +375,26 @@ describe("useMinkVoiceMode", () => {
     expect(h.result.current.state).toBe("listening");
   });
 
+  it("binds detected Marathi to its answer, not a later interruption's language", async () => {
+    const h = makeHarness({ langFallback: "en-US" });
+    await act(async () => h.result.current.toggle());
+    act(() => h.mic.last().input.onLanguage?.("mr-IN"));
+    await say(h, "माझ्या ऑर्डर किती आहेत?");
+    const session = h.speech.last();
+    // The next recording's metadata must not change the answer already playing.
+    act(() => h.mic.last().input.onLanguage?.("hi-IN"));
+    h.rerender({
+      ...h.input,
+      isReplying: true,
+      spokenText: "तुमच्या बारा ऑर्डर आहेत। ",
+      spokenEnded: true,
+    });
+    expect(session.enqueue).toHaveBeenCalledWith(
+      "तुमच्या बारा ऑर्डर आहेत।",
+      "mr-IN",
+    );
+  });
+
   it("picks the utterance language from each piece's script", async () => {
     const h = makeHarness({ langFallback: "en-GB" });
     await act(async () => h.result.current.toggle());
@@ -812,6 +832,32 @@ describe("useMinkVoiceMode", () => {
       expect(h.cancel).toHaveBeenCalledOnce();
       return { h, stop, first, mic, asked };
     }
+
+    it.each(["stopped", "acted", "unknown"] as const)(
+      "muting during a pending Stop honours the %s result without reopening capture",
+      async (outcome) => {
+        const { h, stop, first, asked } = await interrupted();
+        await act(async () => h.result.current.toggleMute());
+        expect(h.result.current.muted).toBe(true);
+        await act(async () => stop.resolve({ outcome }));
+        expect(h.result.current.mic).toBe("closed");
+        expect(h.mic.calls).toHaveLength(2);
+        if (outcome === "stopped") {
+          h.rerender({ ...h.input, messages: asked, isReplying: false });
+          expect(h.send).toHaveBeenLastCalledWith("Redesign my store", {
+            voice: true,
+            replaceUnanswered: true,
+          });
+          expect(h.send).toHaveBeenCalledTimes(2);
+        } else {
+          expect(first.cancel).not.toHaveBeenCalled();
+          expect(first.resume).toHaveBeenCalledOnce();
+          expect(h.send).toHaveBeenCalledOnce();
+        }
+        expect(h.mic.calls).toHaveLength(2);
+        h.unmount();
+      },
+    );
 
     it("★★ words that land before the answer wait for it, then go joined in the unanswered question's place", async () => {
       const { h, stop, mic } = await interrupted();
@@ -1817,5 +1863,51 @@ describe("useMinkVoiceMode", () => {
     expect(h.result.current.notice).toBe(
       "Voice chat needs a browser with microphone support.",
     );
+  });
+});
+
+describe("voice microphone mute", () => {
+  it("releases capture, ignores late callbacks, and resumes with a fresh device", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    const old = h.mic.last();
+    await act(async () => h.result.current.toggleMute());
+    expect(h.result.current.enabled).toBe(true);
+    expect(h.result.current.muted).toBe(true);
+    expect(h.result.current.mic).toBe("closed");
+    expect(old.input.signal.aborted).toBe(true);
+    expect(h.mic.close).toHaveBeenCalledOnce();
+    act(() => {
+      old.input.onPhase?.("open");
+      old.input.onLevel?.(1);
+    });
+    expect(h.result.current.mic).toBe("closed");
+    expect(h.result.current.levelRef.current).toBe(0);
+    expect(h.send).not.toHaveBeenCalled();
+    await act(async () => h.result.current.toggleMute());
+    expect(h.result.current.muted).toBe(false);
+    expect(h.mic.createCapture).toHaveBeenCalledTimes(2);
+    expect(h.mic.calls).toHaveLength(2);
+    await say(h, "How many orders today?");
+    expect(h.send).toHaveBeenCalledOnce();
+    h.unmount();
+  });
+
+  it("keeps the current answer playing while muted and resets mute on End", async () => {
+    const h = makeHarness();
+    await act(async () => h.result.current.toggle());
+    await say(h, "Orders today?");
+    const speech = h.speech.last();
+    act(() => speech.events.onStart());
+    await act(async () => h.result.current.toggleMute());
+    expect(h.result.current.state).toBe("speaking");
+    expect(speech.cancel).not.toHaveBeenCalled();
+    expect(h.cancel).not.toHaveBeenCalled();
+    act(() => speech.events.onIdle("done"));
+    expect(h.mic.calls).toHaveLength(2);
+    await act(async () => h.result.current.toggle());
+    expect(h.result.current.muted).toBe(false);
+    expect(h.result.current.enabled).toBe(false);
+    h.unmount();
   });
 });

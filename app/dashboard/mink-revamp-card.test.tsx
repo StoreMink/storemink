@@ -142,6 +142,8 @@ function stubServer(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.endsWith("?preview=design"))
+        return reply(200, { design: { review, photosIn: 1, photosTotal: 8 } });
       const body = init?.body
         ? (JSON.parse(String(init.body)) as Record<string, unknown>)
         : null;
@@ -719,4 +721,54 @@ describe("the storefront revamp card", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("button", { name: "Preview" })).toHaveFocus();
   });
+});
+
+describe("preview while a redesign is running", () => {
+  it("loads a design on demand without exposing Apply or Publish", async () => {
+    const server = stubServer(
+      view({ design: { ready: true, photosIn: 0, photosTotal: 8 } }),
+    );
+    render(<MinkRevampCard artifact={artifact()} />);
+    const preview = await screen.findByRole("button", {
+      name: "Preview design",
+    });
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => String(url).includes("preview=design")),
+    ).toBe(false);
+    fireEvent.click(preview);
+    expect(await screen.findByRole("dialog")).toBeTruthy();
+    expect(screen.getByText(/Design in progress/)).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "Apply to Website Builder draft" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Publish to your store" }),
+    ).toBeNull();
+    expect(server.posts).toEqual([]);
+  });
+});
+
+it("explains an automatic retry while preserving preview and Stop", async () => {
+  stubServer(
+    view({
+      status: "running",
+      review: null,
+      waiting: true,
+      design: { ready: true, photosIn: 2, photosTotal: 8 },
+    }),
+  );
+  render(<MinkRevampCard artifact={artifact()} />);
+  expect(
+    await screen.findByText(
+      /Your progress is saved and Mink will retry automatically/,
+    ),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Preview design" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /Apply to Website Builder/ }),
+  ).not.toBeInTheDocument();
 });

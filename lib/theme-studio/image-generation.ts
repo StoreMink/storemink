@@ -175,6 +175,12 @@ export interface ThemeImageRunResult {
     reviewPromptVersion: string;
     reviewModelKey: string;
     durationMs?: number;
+    /** `onPrepared` calls that threw: the candidate was drawn and reviewed, not parked. */
+    preparedFailures?: Array<{
+      briefId: string;
+      attempt: number;
+      error: string;
+    }>;
   };
 }
 
@@ -205,6 +211,16 @@ export interface ImageRunOptions {
   /** Pause the run on reviewer outages; never let them trigger paid redraws. */
   deferUnavailableReviews?: boolean;
   corrections?: Readonly<Record<string, string>>;
+  /** Persist a paid candidate before its review begins. */
+  onPrepared?: (
+    briefId: string,
+    image: PreparedSlotImage,
+    attempt: number,
+  ) => Promise<void>;
+  /** Durable attempt/correction state supplied by resumable callers. */
+  resume?: Readonly<
+    Record<string, { attempts: number; retake?: ThemeImageRetake }>
+  >;
   /**
    * Called as each slot settles, before the run ends, with the stored image
    * when one was kept. ★ For a caller that stores every paid image the
@@ -338,6 +354,9 @@ export async function runSlotImageGeneration(
   let laneFailed = false;
   const calls: ImageCall[] = [];
   const reviews: ReviewCall[] = [];
+  const onPreparedFailures: NonNullable<
+    ThemeImageRunResult["telemetry"]["preparedFailures"]
+  > = [];
   const record = (
     request: ThemeImageRequest,
     usage: ImageUsage,
@@ -385,6 +404,9 @@ export async function runSlotImageGeneration(
         reviewPromptVersion: THEME_IMAGE_REVIEW_PROMPT_VERSION,
         reviewModelKey: THEME_IMAGE_REVIEW_MODEL_KEY,
         durationMs: Date.now() - started,
+        ...(onPreparedFailures.length
+          ? { preparedFailures: onPreparedFailures }
+          : {}),
       },
     };
   };
@@ -429,8 +451,11 @@ export async function runSlotImageGeneration(
       }
       return failure;
     };
-    let retake: ThemeImageRetake | undefined;
-    for (let attempt = 1; ; attempt++) {
+    const resumed = options.resume?.[args.briefId];
+    let retake: ThemeImageRetake | undefined = resumed?.retake;
+    for (let attempt = (resumed?.attempts ?? 0) + 1; ; attempt++) {
+      if (attempt > redraws + 1)
+        return settle(attempt - 1, { status: "skipped" });
       if (signal.aborted || laneFailed)
         return settle(attempt - 1, { status: "skipped" });
       const request = args.request(retake);
@@ -519,6 +544,22 @@ export async function runSlotImageGeneration(
       });
       const reviewer = input.reviewer;
       const candidate = drawn.prepared;
+      if (candidate && options.onPrepared) {
+        // Parking the paid candidate is insurance against a crash, never a
+        // condition of the draw: a storage fault here must not fail this
+        // lane and, through the worker, discard every other lane's paid
+        // work. Only a checkpoint stops the run.
+        try {
+          await options.onPrepared(args.briefId, candidate, attempt);
+        } catch (error) {
+          if (error instanceof ImageCheckpointError) throw error;
+          onPreparedFailures.push({
+            briefId: args.briefId,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       if (!reviewer || !candidate) return kept("unreviewed");
 
       const reviewStarted = Date.now();
