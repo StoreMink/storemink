@@ -50,7 +50,7 @@ it("removes aborted waiters and releases a permit even when the SDK never settle
   await expect(c).resolves.toBe("survived");
 });
 
-it("pauses queued work during a shared cooldown, probes with one request, then restores capacity gradually", async () => {
+it("★★ pauses queued work during a shared cooldown, probes with one request, then gives back one permit per success", async () => {
   const pool = new ImageRequestPool(3);
   let resume!: () => void;
   pool.coolDown(
@@ -76,13 +76,23 @@ it("pauses queued work during a shared cooldown, probes with one request, then r
     for (let i = 0; i < 8; i++) await Promise.resolve();
   };
   await tick();
+  // The probe.
   expect(starts).toEqual([0]);
-  for (let i = 0; i < 3; i++) {
-    release[i]();
-    await runs[i];
-    await tick();
-  }
+  // Its success restores a second permit: two run.
+  release[0]();
+  await runs[0];
+  await tick();
+  expect(starts).toEqual([0, 1, 2]);
+  // One more success and the pool is whole again (three at once).
+  release[1]();
+  await runs[1];
+  await tick();
   expect(starts).toEqual([0, 1, 2, 3, 4]);
+  // Never past its limit.
+  release[2]();
+  await runs[2];
+  await tick();
+  expect(starts).toEqual([0, 1, 2, 3, 4, 5]);
   for (let i = 3; i < 6; i++) {
     release[i]();
     await runs[i];

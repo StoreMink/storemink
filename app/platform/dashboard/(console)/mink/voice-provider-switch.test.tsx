@@ -26,25 +26,49 @@ beforeEach(() => {
   h.save.mockResolvedValue({ success: true, provider: "saaras_v4" });
 });
 
-describe("global voice provider switch", () => {
+describe("global speech-to-text choice", () => {
+  it("shows both models with the one in use selected, never as on/off", () => {
+    render(<VoiceProviderSwitch initialProvider="chirp_3" canManage />);
+    expect(
+      screen.getByRole("radiogroup", {
+        name: "Speech-to-text model for every store",
+      }),
+    ).toBeInTheDocument();
+    const chirp = screen.getByRole("radio", { name: "Google Chirp 3" });
+    const sarvam = screen.getByRole("radio", { name: "Sarvam Saaras v4" });
+    expect(chirp).toHaveAttribute("aria-checked", "true");
+    expect(chirp).toHaveClass("bg-violet-600");
+    expect(sarvam).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByRole("switch")).toBeNull();
+  });
+
   it("changes the one global setting immediately", async () => {
     render(<VoiceProviderSwitch initialProvider="chirp_3" canManage />);
-    const control = screen.getByRole("switch", {
-      name: "Use Sarvam Saaras v4 globally",
-    });
-    expect(control).toHaveAttribute("aria-checked", "false");
-    expect(control.firstElementChild).toHaveClass("left-0.5", "translate-x-0");
-    fireEvent.click(control);
+    const sarvam = screen.getByRole("radio", { name: "Sarvam Saaras v4" });
+    fireEvent.click(sarvam);
     await waitFor(() => expect(h.save).toHaveBeenCalledWith("saaras_v4"));
-    await waitFor(() =>
-      expect(control).toHaveAttribute("aria-checked", "true"),
-    );
-    expect(control.firstElementChild).toHaveClass("left-0.5", "translate-x-5");
+    await waitFor(() => expect(sarvam).toHaveAttribute("aria-checked", "true"));
+    expect(sarvam).toHaveClass("bg-violet-600");
     expect(screen.getByText(/used by Mink for every store/i)).toBeVisible();
+  });
+
+  it("does nothing when the chosen model is clicked again", () => {
+    render(<VoiceProviderSwitch initialProvider="chirp_3" canManage />);
+    fireEvent.click(screen.getByRole("radio", { name: "Google Chirp 3" }));
+    expect(h.save).not.toHaveBeenCalled();
+  });
+
+  it("moves with the arrow keys", async () => {
+    render(<VoiceProviderSwitch initialProvider="chirp_3" canManage />);
+    fireEvent.keyDown(screen.getByRole("radio", { name: "Google Chirp 3" }), {
+      key: "ArrowRight",
+    });
+    await waitFor(() => expect(h.save).toHaveBeenCalledWith("saaras_v4"));
   });
 
   it("is read-only for operators who cannot manage platform settings", () => {
     render(<VoiceProviderSwitch initialProvider="chirp_3" canManage={false} />);
-    expect(screen.getByRole("switch")).toBeDisabled();
+    for (const option of screen.getAllByRole("radio"))
+      expect(option).toBeDisabled();
   });
 });

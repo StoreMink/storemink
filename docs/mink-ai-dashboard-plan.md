@@ -101,9 +101,10 @@ guarded-action slice now include:
   history, redacted tool telemetry and an append-only raw token ledger;
 - an abortable streaming client integrated with the existing Home prompt,
   drawer and expanded view, with tool progress, Stop, Retry and safe errors;
-- a store/admin-scoped ten-conversation sidebar that restores the newest
-  successful transcript after refresh, supports confirmed deletion, and
-  atomically removes the oldest thread when an eleventh is created;
+- a store/admin-scoped conversation sidebar that lists every chat used in
+  the last 90 days, a page at a time and searchable, continues the tab's own
+  chat after a refresh, and supports confirmed deletion; a chat is retired
+  90 days after its last use (2026-10-26);
 - a resizable side panel with a browser-local width preference, the same purple
   robot identity as Help Centre Mink, an auto-growing multiline composer, and a
   safe ChatGPT-style React renderer for headings, lists, tables, code, emphasis
@@ -233,13 +234,13 @@ database access.
 
 The production model strategy is:
 
-| Workload                                                                                   | Model                                                                                   | Thinking                                      | Launch status            | Decision                                                                           |
-| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------ | ---------------------------------------------------------------------------------- |
-| Intent routing, summarisation, low-cost classification                                     | `gemini-3.1-flash-lite`                                                                 | Lowest supported setting                      | GA                       | Use for high-volume, low-risk model work                                           |
-| Normal business questions, analysis, tool selection, multi-step actions, storefront coding | `gemini-3.7-flash`                                                                      | `LOW` or `MEDIUM`; `HIGH` only when justified | GA                       | **Primary Mink AI model**                                                          |
-| Exceptionally difficult planning or reasoning                                              | `gemini-3.1-pro-preview`                                                                | `HIGH`                                        | Preview                  | Evaluation-only escalation behind an operator flag; never a launch dependency      |
-| Existing Help Centre answers, copy generation and brand-voice features                     | Existing `gemini-2.5-flash` path                                                        | Existing configuration                        | Existing production path | Keep unchanged initially; migrate only through a separate regression-tested change |
-| Help Centre embeddings                                                                     | `gemini-embedding-2` (since 2026-10-15; the 001 model is capped at 5 requests a minute) | N/A                                           | Existing production path | Keep the current 768-dimensional storage contract                                  |
+| Workload                                                                                   | Model                                                                                   | Thinking                                      | Launch status                         | Decision                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- | --------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Intent routing, summarisation, low-cost classification                                     | `gemini-3.1-flash-lite`                                                                 | Lowest supported setting                      | GA                                    | Use for high-volume, low-risk model work                                                                                                                                                                      |
+| Normal business questions, analysis, tool selection, multi-step actions, storefront coding | `gemini-3.7-flash`                                                                      | `LOW` or `MEDIUM`; `HIGH` only when justified | GA                                    | **Primary Mink AI model**                                                                                                                                                                                     |
+| Exceptionally difficult planning or reasoning                                              | `gemini-3.1-pro-preview`                                                                | `HIGH`                                        | Preview                               | Evaluation-only escalation behind an operator flag; never a launch dependency                                                                                                                                 |
+| Existing Help Centre answers, copy generation and brand-voice features                     | `gemini-3.5-flash-lite` with a `gemini-3.5-flash` fallback (`lib/ai/gemini.ts`)         | `LOW`                                         | Built 2026-10-23, not yet called live | Moved off `gemini-2.5-flash` (Vertex retirement date 20 Oct 2026) in a separate regression-tested change (robustness audit B2): 30 s per attempt, one fallback attempt, the Mink credit given back on failure |
+| Help Centre embeddings                                                                     | `gemini-embedding-2` (since 2026-10-15; the 001 model is capped at 5 requests a minute) | N/A                                           | Existing production path              | Keep the current 768-dimensional storage contract                                                                                                                                                             |
 
 Google describes Gemini 3.7 Flash as the Gemini 3 family's primary agentic
 workhorse, with a 1,048,576-token context window, function calling, structured
@@ -683,14 +684,19 @@ Target protocol:
    separate visual blocks.
 
 The flag-enabled `useMinkAi` path now uses an abortable streaming client;
-closing the drawer does not cancel a run, while explicit Stop does. The
+closing the drawer does not cancel a run. An explicit Stop asks the server
+(`POST /api/mink/runs/[runId]/stop`, 2026-10-25), which stops a reply that
+has not acted yet and lets one that has started something finish, because
+behind the production load balancer an aborted fetch never reaches Cloud
+Run. The
 flag-disabled path deliberately retains the timed canned response.
 
 The current alpha implements the abortable transport with coarser
 `status`/`tool`/`message`/`usage`/`done` events and one final assistant message.
-It creates and commits the run before returning completion, retains the newest
-ten conversations per actor/store, restores the latest thread after refresh,
-and treats explicit Stop as cancellation. Delta rendering, background
+It creates and commits the run before returning completion, keeps each
+conversation 90 days after its last use (no count cap), continues the tab's
+own thread after refresh, and treats a Stop the server confirmed as a
+cancellation. Delta rendering, background
 continuation and approval-required events remain later work.
 
 ## 11. Model routing policy
@@ -708,6 +714,45 @@ Use for:
 - and low-risk Help/navigation questions.
 
 Flash-Lite never directly authorizes a mutation.
+
+**Status (2026-10-19): built as a whole-run starting model, default off.**
+What shipped differs from the list above. There is no separate classifier
+call: `lib/mink/tool-routing.ts` decides deterministically, from the
+message's wording, the page and the open record, which tool groups a run
+needs, and marks the route _light_ when it is narrow, read-only, has no
+attachment, is not a voice turn and touches only plain read groups. With
+`MINK_LITE_ROUTING=true` a light route starts on `MINK_LITE_MODEL`
+(`gemini-3.5-flash-lite`, GA at `global`; 3.1 Flash-Lite in the table above
+is the older generation) for the whole run. Every narrowed run also carries
+`request_more_tools`, which restarts the run once on the main model with
+every permitted tool, so a lite run that meets something it cannot do is not
+stuck with the cheaper model. The variables are `MINK_LITE_ROUTING` (off by
+default) and `MINK_LITE_MODEL`, not the `MINK_VERTEX_FAST_MODEL` suggested in
+§5.2. Cost is estimated at Google's list price ($0.30 / $2.50 per million,
+global only). Measured before deciding to switch it on (2026-10-19, 82
+read-alpha cases on the local echoss store, storemink-staging Vertex;
+`evals/mink/routing-live-2026-10-19.json`):
+
+| Configuration                | Answered | Tool choice passed | Median first-step prompt | Median latency (p90) | Est. cost per answered run |
+| ---------------------------- | -------: | -----------------: | -----------------------: | -------------------: | -------------------------: |
+| Every tool, 3.7 Flash        |  29 / 82 |            22 / 29 |            24,826 tokens |      11.1 s (29.2 s) |                    $0.0261 |
+| Routed, 3.7 Flash            |  28 / 82 |            20 / 28 |             3,332 tokens |       7.9 s (30.5 s) |                    $0.0070 |
+| Routed, light routes on lite |  37 / 37 |            33 / 37 |             3,263 tokens |        3.6 s (4.5 s) |                    $0.0028 |
+
+Judged against the every-tool answer where both answered: routed 9 of 9 the
+same; lite 10 the same, 1 better, 4 worse but acceptable (fewer SKUs,
+thresholds and links; denser wording) and 1 unacceptable (it gave up on a
+location name the main model resolved). Lite also answered a Help question
+without searching the Help Centre. 3.7 Flash failed most attempts for
+capacity that day (stalls with no answer, and HTTP 429 RESOURCE_EXHAUSTED,
+even for a one-word prompt; it is served only at `global`), which is why
+its samples are small; the lite model answered every request.
+
+Decision: routing on by default, the lite tier off until the owner chooses
+it. Before switching it on, keep Help questions off the lite tier and let a
+location-name miss be retried. A time-to-first-chunk watchdog with one retry
+(the WhatsApp Mink path has one) would also stop a stalled 3.7 Flash call
+from holding a merchant for the full 180 s run deadline.
 
 ### Gemini 3.7 Flash
 
@@ -1777,8 +1822,10 @@ lib/mink/` returned NOTHING before this: eighteen read tools and not one knew
   provider failure. The runtime now uses Google's recommended
   `gemini-2.5-flash-image` replacement through `generateContent` at `global`;
   a one-attempt live smoke call with the same project credentials returned a
-  valid 16:9 JPEG (611,734 bytes). The current production default is now
-  `gemini-3.1-flash-image`; storefront generation requests 2K output, with 21:9
+  valid 16:9 JPEG (611,734 bytes). The production default became
+  `gemini-3.1-flash-image`, and since 25 Oct 2026 it is
+  `gemini-nano-banana-2.1` (Cloud Build `_MINK_IMAGE_MODEL`, MINIMAL
+  thinking); storefront generation requests 2K output, with 21:9
   hero/promo framing and explicit responsive crop-safe creative direction.
   Local verification (2026-09-13): all 6,814 active tests pass (57 skipped), as
   do TypeScript, ESLint, migration lint, Help content lint and the Next 16

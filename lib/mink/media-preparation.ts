@@ -145,7 +145,7 @@ function unprepared(url: string): MinkPreparedImageResult {
  *    refused there. Resolving it through the image-model reference path
  *    instead was strictly narrower - it additionally demanded a per-collection
  *    View permission, a PNG/JPEG/WebP content type and an object inside our
- *    GCS bucket - so a store still serving legacy Supabase-hosted media, or a
+ *    GCS bucket - so a store still serving older externally hosted media, or a
  *    GIF the Media Library deliberately stores pass-through, could no longer
  *    use its own catalogue photograph as a cover at all.
  */

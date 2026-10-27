@@ -75,9 +75,9 @@ export function AuthorizeDevice({
     // register is signed out on their next request, mid-shift if it is running.
     if (
       !confirm(
-        `Retire “${device.label || "Register"}” and authorize this device instead?\n\n${lastUsed(
+        `Retire “${device.label || "POS device"}” and authorize this device instead?\n\n${lastUsed(
           device.lastSeenAt,
-        )}. That register will be signed out.`,
+        )}. That device will be signed out of POS.`,
       )
     )
       return;
@@ -116,7 +116,7 @@ export function AuthorizeDevice({
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
             {locationName} already has its {full.cap} authorized devices. Pick
             one to retire and this device takes its place - the one you choose
-            is signed out of the register.
+            is signed out of POS.
           </p>
 
           <ul className="mt-5 space-y-2">
@@ -130,7 +130,7 @@ export function AuthorizeDevice({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold">
-                    {d.label || "Register"}
+                    {d.label || "POS device"}
                   </div>
                   <div className="truncate text-xs text-[var(--pos-ink-3)]">
                     {lastUsed(d.lastSeenAt)}
@@ -212,8 +212,8 @@ export function AuthorizeDevice({
           // staff take money at all.
           <p className="mt-2 text-center text-sm text-[var(--pos-ink-2)]">
             This browser isn&apos;t an authorized POS device. The store owner
-            can authorize it, or send you a pairing code from Point of
-            Sale&nbsp;→&nbsp;Devices in the dashboard.
+            can authorize it, or send you a pairing code from
+            POS&nbsp;→&nbsp;Devices in the dashboard.
           </p>
         )}
       </div>

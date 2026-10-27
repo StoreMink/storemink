@@ -12,6 +12,7 @@ import "server-only";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { withService } from "@/lib/db/client";
+import { clientIpOrNull } from "@/lib/client-ip";
 import { legalAcceptances, storePages } from "@/drizzle/schema";
 import { logError } from "@/lib/observability/logger";
 import { checksumBody } from "./documents";
@@ -115,10 +116,8 @@ export async function recordStorePolicyConsent(
   let userAgent: string | null = null;
   try {
     const h = await headers();
-    ip =
-      h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      h.get("x-real-ip") ||
-      null;
+    // The address our load balancer saw, never one the caller wrote.
+    ip = clientIpOrNull(h);
     userAgent = h.get("user-agent");
   } catch {
     // No request scope. The row is still worth writing.

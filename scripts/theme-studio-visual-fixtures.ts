@@ -12,10 +12,12 @@
  *   npm run theme-studio:visual-fixtures -- --live --yes
  *       Live. The same evidence goes to the production reviewer model on
  *       Vertex AI (HIGH effort, no output cap), once per fixture: twenty
- *       reviews, roughly $1–3 at list price (unmeasured; the report records
- *       usage). The reviewer must flag at least 9 of the 10 defect pages and
- *       pass at least 9 of the 10 clean ones (VISUAL_FIXTURE_BAR), or the
- *       script exits 1. Needs ADC and THEME_STUDIO_GCP_PROJECT_ID (or
+ *       reviews, about $0.50 to $1.50 (estimate; the report records usage).
+ *       Graded on findings, never on the verdict (fixtureBenchmarkSummary):
+ *       every one of the 8 serious pages must produce its named serious
+ *       finding, both warning pages at least a warning, and at least 9 of the
+ *       10 clean pages no serious finding (VISUAL_FIXTURE_BAR), or the script
+ *       exits 1. Needs ADC and THEME_STUDIO_GCP_PROJECT_ID (or
  *       GCP_PROJECT_ID). No database, no private theme data, no writes.
  *
  * Options: --out=<dir> (default: a new temp directory), --only=<id,id,…>,
@@ -68,9 +70,13 @@ async function main() {
   mkdirSync(out, { recursive: true });
 
   const { THEME_DEFINITIONS } = await import("../lib/themes");
-  const { VISUAL_FIXTURES, fixtureDocument, fixtureBenchmarkSummary } =
-    await import("../lib/theme-studio/visual-fixtures");
-  const { buildVisualQaRequest, parseVisualQaReport } =
+  const {
+    VISUAL_FIXTURES,
+    fixtureDocument,
+    fixtureBenchmarkSummary,
+    fixtureCaught,
+  } = await import("../lib/theme-studio/visual-fixtures");
+  const { buildVisualQaRequest, classifyVisualQaReport, parseVisualQaReport } =
     await import("../lib/theme-studio/visual-qa-request");
   const { buildVisualEvidence, prepareVisualScreenshot } =
     await import("../lib/theme-studio/visual-evidence");
@@ -192,7 +198,6 @@ async function main() {
       }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10 * 60_000);
-      let verdict: FixtureResult["verdict"] = null;
       let parsed: ReturnType<typeof parseVisualQaReport> = null;
       let usage: unknown = null;
       let error: string | null = null;
@@ -238,12 +243,13 @@ async function main() {
         usage = result.usage;
         parsed = parseVisualQaReport(result.value);
         if (!parsed) throw new Error("qa_output_invalid");
-        verdict = parsed.verdict;
         report.push({
           id: fixture.id,
           expected: fixture.expected,
+          finding: fixture.finding,
           defect: fixture.defect,
-          verdict,
+          verdict: parsed.verdict,
+          reviewSeverity: classifyVisualQaReport(parsed, []),
           scores: parsed.scores,
           rejections: parsed.rejections,
           findings: parsed.findings,
@@ -257,6 +263,7 @@ async function main() {
         report.push({
           id: fixture.id,
           expected: fixture.expected,
+          finding: fixture.finding,
           defect: fixture.defect,
           verdict: null,
           error,
@@ -265,14 +272,19 @@ async function main() {
       } finally {
         clearTimeout(timeout);
       }
-      results.push({ id: fixture.id, expected: fixture.expected, verdict });
-      const mark = error
-        ? "ERR "
-        : verdict === fixture.expected
-          ? " ok "
-          : "MISS";
+      const graded: FixtureResult = {
+        id: fixture.id,
+        expected: fixture.expected,
+        finding: fixture.finding,
+        report: parsed,
+      };
+      results.push(graded);
+      const got = parsed
+        ? classifyVisualQaReport(parsed, [])
+        : { outcome: "none", serious: [] };
+      const mark = error ? "ERR " : fixtureCaught(graded) ? " ok " : "MISS";
       console.log(
-        `${mark} ${fixture.id.padEnd(30)} expected ${fixture.expected.padEnd(6)} got ${String(verdict).padEnd(6)}${error ? ` ${error}` : ""}`,
+        `${mark} ${fixture.id.padEnd(30)} expected ${(fixture.finding ?? fixture.expected).padEnd(18)} got ${got.outcome}${got.serious.length ? ` (${got.serious.map((f) => f.code).join(", ")})` : ""}${error ? ` ${error}` : ""}`,
       );
     }
   } finally {
@@ -309,15 +321,19 @@ async function main() {
     return;
   }
   console.log(
-    `Defects caught ${summary.defects.caught}/${summary.defects.total}` +
-      (summary.defects.missed.length
-        ? ` (missed: ${summary.defects.missed.join(", ")})`
+    `Serious pages with their finding ${summary.serious.caught}/${summary.serious.total}` +
+      (summary.serious.missed.length
+        ? ` (missed: ${summary.serious.missed.join(", ")})`
         : "") +
-      `\nClean passed ${summary.clean.passed}/${summary.clean.total}` +
+      `\nWarning pages with at least a warning ${summary.warnings.caught}/${summary.warnings.total}` +
+      (summary.warnings.missed.length
+        ? ` (missed: ${summary.warnings.missed.join(", ")})`
+        : "") +
+      `\nClean pages with no serious finding ${summary.clean.passed}/${summary.clean.total}` +
       (summary.clean.falseFails.length
-        ? ` (false fails: ${summary.clean.falseFails.join(", ")})`
+        ? ` (false blocks: ${summary.clean.falseFails.join(", ")})`
         : "") +
-      `\n${summary.ok ? "PASS" : "FAIL"}: the bar is 90% in both directions.`,
+      `\n${summary.ok ? "PASS" : "FAIL"}: the bar is 90% in every set.`,
   );
   if (!summary.ok) process.exit(1);
 }

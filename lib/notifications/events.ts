@@ -170,6 +170,7 @@ export const EVENT_KEYS = [
   "ai.credits_low",
   "ai.credits_purchased",
   "mink.workflow_completed",
+  "mink.revamp_ready",
   "mink.watch_ready",
   // ── Data (CSV import/export) ────────────────────────────────────────────
   "data.import_started",
@@ -180,6 +181,9 @@ export const EVENT_KEYS = [
   "platform.store_suspended",
   "platform.plan_changed",
   "platform.domain_verified",
+  "platform.theme_studio_ready",
+  "platform.theme_studio_needs_fix",
+  "platform.theme_studio_questions",
 ] as const;
 
 export type EventKey = (typeof EVENT_KEYS)[number];
@@ -788,6 +792,21 @@ export const EVENTS: readonly EventDef[] = [
     audiences: { "store-admins": IN_APP },
     configurable: false,
   },
+  // ★ TO THE ADMIN WHO ASKED. The runner narrows the team audience with
+  //   `restrictToAdminIds`, and the section is Website Builder because the
+  //   card it announces can only be applied by someone who may manage it.
+  //   In-app only: the merchant is told inside the product where the card is.
+  {
+    key: "mink.revamp_ready",
+    label: "Storefront redesign ready",
+    description:
+      "A storefront redesign Mink AI was asked for is ready to review in the chat.",
+    group: "Plan & billing",
+    section: "builder",
+    severity: "success",
+    audiences: { "store-admins": IN_APP },
+    configurable: false,
+  },
 
   // ── Data (CSV import/export) ─────────────────────────────────────────────
   //
@@ -881,6 +900,49 @@ export const EVENTS: readonly EventDef[] = [
     section: "activity",
     severity: "success",
     audiences: { operators: IN_APP },
+  },
+
+  // ── Theme Studio (the operator who started the theme, and nobody else) ──
+  // ★ A theme takes half an hour or more to build and check, and nobody
+  //   watches it (owner's decision 8, 24 Oct 2026): the bell AND an email,
+  //   told ONLY to the operator who started the theme. The emitter
+  //   (lib/theme-studio/notify.ts) passes the project's created_by_email as
+  //   `restrictToOperatorEmails`, which can only narrow (record.ts).
+  // ★ Not configurable: no operator has a notification settings page, so
+  //   there is no switch to honour, and the email footer must not offer a
+  //   link to the merchants' one.
+  {
+    key: "platform.theme_studio_ready",
+    label: "Theme ready to publish",
+    description:
+      "A theme you started in Theme Studio passed its checks and can be published.",
+    group: "Platform",
+    section: "activity",
+    severity: "success",
+    audiences: { operators: BOTH },
+    configurable: false,
+  },
+  {
+    key: "platform.theme_studio_needs_fix",
+    label: "Theme needs a fix",
+    description:
+      "A theme you started in Theme Studio stopped before it was ready and needs your decision.",
+    group: "Platform",
+    section: "activity",
+    severity: "warning",
+    audiences: { operators: BOTH },
+    configurable: false,
+  },
+  {
+    key: "platform.theme_studio_questions",
+    label: "Theme Studio has questions",
+    description:
+      "Theme Studio needs your answers before it can design a theme you started.",
+    group: "Platform",
+    section: "activity",
+    severity: "info",
+    audiences: { operators: BOTH },
+    configurable: false,
   },
 ];
 

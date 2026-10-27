@@ -4,7 +4,7 @@ import { getMinkActorContext } from "@/lib/mink/actor-context";
 import { rejectForeignMinkOrigin } from "@/lib/mink/request-origin";
 import { readMinkBoundedBytes } from "@/lib/mink/bounded-json";
 import { validateMinkInput } from "@/lib/mink/input-validation";
-import { reserveMinkInput } from "@/lib/mink/input-limits";
+import { reserveMinkVoice } from "@/lib/mink/input-limits";
 import { MinkRequestError } from "@/lib/mink/errors";
 import { getMinkVoiceProvider } from "@/lib/mink/voice-settings";
 import { transcribeMinkVoice } from "@/lib/mink/voice-transcription";
@@ -28,6 +28,17 @@ const json = (body: unknown, status = 200) =>
     },
   });
 
+/**
+ * Concurrent transcriptions per instance. Each holds at most one 30-second
+ * WAV (about 1 MB) and waits on the provider's network round trip, so the
+ * work is network-bound, not memory- or CPU-bound. ★ A 429 here does not make
+ * Cloud Run add an instance (it only scales on its own concurrency of 80), so
+ * the old cap of 2 refused a third merchant dictating at the same moment on
+ * an instance that had room for dozens. Voice chat makes this a turn-by-turn
+ * path, not an occasional one.
+ */
+const MAX_TRANSCRIPTIONS = 8;
+
 let processing = 0;
 
 export async function POST(request: Request) {
@@ -35,7 +46,7 @@ export async function POST(request: Request) {
   if (origin) return origin;
   if (!getMinkConfig().enabled)
     return json({ error: "Voice dictation is not enabled." }, 404);
-  if (processing >= 2)
+  if (processing >= MAX_TRANSCRIPTIONS)
     return json(
       { error: "Voice transcription is busy. Try again shortly." },
       429,
@@ -60,7 +71,7 @@ export async function POST(request: Request) {
         "Invalid voice request.",
         400,
       );
-    await reserveMinkInput(actor, requestKey);
+    await reserveMinkVoice(actor, requestKey);
     const bytes = await readMinkBoundedBytes(request, MAX_WAV_BYTES, signal);
     const checked = await validateMinkInput(
       { kind: "audio", bytes, name: "voice-note.wav", requestKey },
@@ -74,10 +85,27 @@ export async function POST(request: Request) {
       );
     await getMinkActorContext(requestId);
     provider = await getMinkVoiceProvider();
+    signal.throwIfAborted();
+    const started = Date.now();
     const result = await transcribeMinkVoice(provider, checked.bytes, signal);
+    const providerMs = Date.now() - started;
     signal.throwIfAborted();
     await getMinkActorContext(requestId);
-    if (!result.text || result.text.length > 4_000)
+    // A clip with no words in it (a cough, a door) is an ordinary answer:
+    // the composer says nothing was recognised and voice chat keeps
+    // listening. It is not a provider failure, so it is neither a 503 nor
+    // an error in the log.
+    if (!result.text) {
+      logInfo("mink.voice.empty", {
+        requestId,
+        storeId: actor.storeId,
+        provider,
+        providerMs,
+        audioBytes: checked.bytes.length,
+      });
+      return json({ text: "", languageCode: result.languageCode });
+    }
+    if (result.text.length > 4_000)
       throw new MinkRequestError(
         "invalid_voice",
         "Voice transcript is invalid.",
@@ -87,8 +115,17 @@ export async function POST(request: Request) {
       requestId,
       storeId: actor.storeId,
       provider,
+      providerMs,
+      audioBytes: checked.bytes.length,
+      // Which language the recogniser heard and how sure it was: a closed
+      // tag and a number, never the words (voice-transcription.ts drops a
+      // guess under `SAARAS_LANGUAGE_FLOOR` before it gets here).
+      languageCode: result.languageCode,
+      ...(typeof result.languageProbability === "number"
+        ? { languageProbability: result.languageProbability }
+        : {}),
     });
-    return json(result);
+    return json({ text: result.text, languageCode: result.languageCode });
   } catch (error) {
     // ★★ THE MERCHANT MESSAGE IS DELIBERATELY VAGUE; THE LOG MUST NOT BE.
     // This recorded only `{requestId, provider}`, so a disabled API, a missing

@@ -182,6 +182,14 @@
 .sf404-search input::-webkit-search-cancel-button {
   -webkit-appearance: none;
 }
+/* 16px stops iOS zooming the page when the search box takes focus (every
+   iPhone browser is Safari underneath). Larger screens keep 15px.
+   Pinned by app/(storefront)/input-zoom-coverage.test.ts. */
+@media (max-width: 600px) {
+  .sf404-search input {
+    font-size: 16px;
+  }
+}
 .sf404-search button {
   flex: none;
   border: 0;

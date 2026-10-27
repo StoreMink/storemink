@@ -30,7 +30,9 @@ import {
   ProminentPeople,
 } from "@google/genai";
 
-const MODEL = "gemini-3-pro-image";
+// ★★ One image model for every picture StoreMink draws (owner, 25 Oct 2026):
+// Nano Banana 2.1, at the global endpoint. It was gemini-3-pro-image.
+const MODEL = "gemini-nano-banana-2.1";
 const ROOT = path.resolve("public/marketing");
 
 // The look is shopify.com's: editorial, candid, premium and quiet. Every
@@ -289,9 +291,13 @@ async function generateOnce(ai, photo) {
   const blocked = response.promptFeedback?.blockReason;
   if (blocked) throw new Error(`${photo.id}: refused (${blocked})`);
   const candidate = response.candidates?.[0];
-  const inline = candidate?.content?.parts?.find(
-    (part) => part.inlineData?.data,
-  )?.inlineData;
+  // ★ The final picture is the LAST image part that is not a thought: Nano
+  //   Banana 2.1 sends a draft (thought: true) before every picture, and the
+  //   first image part was that draft (lib/theme-studio/image-vertex.ts
+  //   parseThemeImageResponse).
+  const inline = (candidate?.content?.parts ?? [])
+    .filter((part) => part.thought !== true && part.inlineData?.data)
+    .at(-1)?.inlineData;
   if (!inline?.data)
     throw new Error(
       `${photo.id}: no image (${candidate?.finishReason ?? "no candidate"})`,

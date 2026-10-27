@@ -58,14 +58,33 @@ Consequences worth knowing:
 
 One new file in `drizzle/migrations/sql/`, named `YYYYMMDD_NNNN_short_name.sql`.
 
-> **The next free sequence number is `0093`.** `0090`–`0092` are claimed by the
-> Mink Phase 8E input, unified-access and live-dictation migrations. The manifest
-> is authoritative for this branch, but also check other branches and the local
-> ledger before picking a number:
+> **The next free sequence number is `0262`** (0261 adds the Mink voice controls Help edit; 0260 is held for the separate redesign recovery work) (0256 and 0257 remain reserved for the paused release; owner approved 0258 for the redesign preview Help edit and 0259 for its deadline guard). Previously: **0256** (26 Oct 2026: `0237` is the
+> Generate with AI credit refund, `0238` its Help edit, `0239` the storefront
+> redesign's Help edit after the robustness fixes, `0240` the release's
+> indexes and `app_service` grants, `0241` the Privacy Policy v3 publish,
+> `0242` the Mink guide's attachment-reading Help edit, `0243` keeping
+> StoreMink's own invoices when a store is deleted, `0244` the Mink run stop,
+> `0245` the issued-invoice guards behind 0243, `0246` the Mink guide's Stop
+> Help edit after the run stop, `0247` the Refine stop
+> (`mink_refine_requests`), `0248` the Mink chat history retention
+> (`mink_conversations.retention_failed_at`, its retention index, the expiry
+> backfill, DELETE on `mink_messages`, `mink_feedback` and
+> `mink_action_approvals` for `app_service`), `0249` the chat history message
+> search index (store-scoped, over the text a chat shows, and the kept-answer
+> index; its own transaction), `0250` keeping a Mink AI approval and its audit
+> row when the product is deleted, `0251` the Mink guides' chat history Help
+> edits, `0252` the Mink guide's credit sentences: asking questions is not
+> free, and the proposal card shows no credit figure; `0253` the POS
+> wording Help edit and the two POS role descriptions; `0254` the POS
+> review's Help follow-ups and the GA4 guide's en dashes; `0255` the
+> Terms v2, Privacy v4 and Acceptable Use v2 publish).
+> CODEBASE.md §4 keeps the running number at the end of its migration notes
+> ("Next free"); update both when you take one. The manifest is authoritative for this branch, but
+> also check other branches and the local ledger before picking a number:
 >
 > ```bash
 > npm run db:migrate:local status   # `unknown` lists ids other branches applied
-> git log --all -S"_0093_" -- drizzle/migrations
+> git log --all -S"_0256_" -- drizzle/migrations
 > ```
 >
 > Numbers 0076–0089 contain nine
@@ -181,7 +200,14 @@ checksummed manifest entry:
 
 The target must be an exact named query on an earlier migration. Tables,
 columns, constraints, RLS, functions and privileges cannot be retired through
-this mechanism. Once the later migration has a ledger row, status and verify
+this mechanism, so an object a durable `verify` names must keep existing under
+that name: `20261026_0250` dropped the foreign key
+`mink_action_approvals_product_store_fkey`, which 0042's durable verify names,
+and had to keep the name as an always-true CHECK, or the end-of-run recheck
+would have failed every command in every environment after it. ⚠ The runner
+reads no `verify.indexes` key (17 entries carry one, 0247's included, and
+nothing checks it): check an index with a `pg_indexes` query, as 0240 and
+0247 do. Once the later migration has a ledger row, status and verify
 omit only that query. Cloud Build's read-only `status` preflight also recognizes
 a healthy pending retirement so the stale query cannot block the migration
 that retires it; `apply` rechecks after recording the new migration. The later
@@ -256,18 +282,34 @@ it is an expert tool, not part of any routine.
 
 Stated plainly so nobody assumes coverage that is not there.
 
-- **There is no reproducible fresh-database build.** `drizzle/manual/0001_schema.sql`
-  is a 43-table snapshot from the Phase 5 Cloud SQL cutover — it has no
-  `billing_*` or `store_locations` tables — while the manifest baseline
-  (`baseline:cloudsql-2026-08-14`) is much later. The gap between them is
-  covered only by the ~150 legacy `supabase/*.sql` files, which carry
-  apply-order traps. **Consequence:** CI cannot replay every migration from
-  scratch, so a migration's SQL is first _executed_ against the dev/staging
-  database, not against a throwaway one.
+- **There is no reproducible fresh-database build.** Nothing in the repository
+  rebuilds the schema from empty: the ledger starts at
+  `baseline:cloudsql-2026-08-14`, a verification baseline that creates nothing,
+  and the schema before it was applied by hand and lives only in the running
+  databases and in git history. **Consequence:** CI cannot replay every
+  migration from scratch, so a migration's SQL is first _executed_ against the
+  dev/staging database, not against a throwaway one.
   **The fix**, when it is worth doing: take a `pg_dump --schema-only` of the
-  current database as `app_service` (see `scripts/db-local-sync.sh` for why the
-  role matters), commit it as the new baseline, and add a CI job that restores
-  it and applies the whole ledger.
+  current database as the `postgres` admin user with no `--role`, as
+  `scripts/db-local-sync.sh` does (its comments say why the `app` login
+  cannot), commit it as the new baseline, and add a CI job that restores it and
+  applies the whole ledger.
+- **Older docs cite pre-ledger SQL files by bare name** (`pos_12_returns.sql`,
+  `identifiers_04_triggers.sql` and so on). They were applied by hand before the
+  ledger existed and were removed from the tree on 2026-10-26; read one in git
+  history (`git log --all --oneline -- '*pos_12_returns.sql'`). The running
+  databases are the truth for what they created. The three that were already
+  ledger migrations now sit in `sql/` under their ids (`20260814_0001`,
+  `20260818_0005`, `20260819_0006`), moved byte for byte, which the checksum
+  allows because it leaves out `file` (§3). Two applied migrations, `0206` and
+  `0207`, still name the old folder in a comment; they stay byte-for-byte (§4).
+- **Five tables still carry `REPLICA IDENTITY FULL`** (`blogs`, `enquiries`,
+  `orders`, `product_variants`, `products`), set before the ledger for a change
+  feed the platform no longer runs; no publication exists. It costs nothing
+  unless logical decoding is on (`show wal_level` returns `logical`), and the
+  schema fingerprint does not hash it. Reset them with a forward migration
+  (`ALTER TABLE … REPLICA IDENTITY DEFAULT`) before ever turning logical
+  decoding on.
 - **`schema-fingerprint.json` is refreshed by hand** after an apply
   (`db:drift:* -- --update-baseline <env>`) and committed. Until it is, drift
   reports `migrated` and exits 1. Local currently sits three ledger rows behind

@@ -181,20 +181,6 @@ export function inboxSearchQuery(q: string): string | null {
   return words.map((w) => `${w}:*`).join(" & ");
 }
 
-/** The pieces of a search snippet: `«` and `»` wrap each matched word. */
-export function splitSnippet(
-  snippet: string,
-): { text: string; hit: boolean }[] {
-  const out: { text: string; hit: boolean }[] = [];
-  const re = /«([^»]*)»/g;
-  let last = 0;
-  for (const m of snippet.matchAll(re)) {
-    if (m.index > last)
-      out.push({ text: snippet.slice(last, m.index), hit: false });
-    out.push({ text: m[1] ?? "", hit: true });
-    last = m.index + m[0].length;
-  }
-  if (last < snippet.length)
-    out.push({ text: snippet.slice(last), hit: false });
-  return out;
-}
+// The snippet splitter is shared with the Mink AI History search; the inbox
+// keeps importing it from here.
+export { splitSnippet } from "@/lib/search/prefix-search";

@@ -43,7 +43,7 @@ export function RegisterArt({ compact = false }: { compact?: boolean } = {}) {
     >
       <div className="art-tablet">
         <div className="art-status">
-          <span>Main shop · Till 1</span>
+          <span>Main shop · Front counter</span>
           <span className="art-status-live">
             <i /> Shift open
           </span>

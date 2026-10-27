@@ -74,11 +74,63 @@ describe("getMinkActorContext", () => {
       defaultLowStockThreshold: 7,
       currentPath: null,
       selectedResource: null,
-      replyLanguage: "auto",
       draftingEnabled: true,
       brandVoice: "Warm, concise, and honest.",
       requestId: "request-1",
     });
+  });
+
+  it("reads the effective plan: a live comp raises it, a lapsed grant drops it", async () => {
+    const future = new Date(Date.now() + 86_400_000).toISOString();
+    const past = new Date(Date.now() - 86_400_000).toISOString();
+    holder.withUser.mockResolvedValueOnce({
+      store: {
+        plan: "basic",
+        planExpiresAt: null,
+        compPlan: "pro",
+        compExpiresAt: future,
+        settings: {},
+      },
+      locationIds: null,
+    });
+    expect((await getMinkActorContext("request-comp")).effectivePlan).toBe(
+      "pro",
+    );
+
+    holder.withUser.mockResolvedValueOnce({
+      store: {
+        plan: "pro",
+        planExpiresAt: past,
+        compPlan: null,
+        compExpiresAt: null,
+        settings: {},
+      },
+      locationIds: null,
+    });
+    expect((await getMinkActorContext("request-lapsed")).effectivePlan).toBe(
+      "free",
+    );
+  });
+
+  it("marks a spoken turn only from the server-normalized voice flag", async () => {
+    const spoken = await getMinkActorContext("request-2", {
+      pageContext: {
+        currentPath: "/dashboard",
+        selectedResource: null,
+        screen: null,
+        voice: true,
+      },
+    });
+    expect(spoken.answerMedium).toBe("spoken");
+    const written = await getMinkActorContext("request-3", {
+      pageContext: {
+        currentPath: "/dashboard",
+        selectedResource: null,
+        screen: null,
+        voice: false,
+      },
+    });
+    expect(written).not.toHaveProperty("answerMedium");
   });
 
   it("rejects an unauthenticated request before reading a store", async () => {

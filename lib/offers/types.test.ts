@@ -350,7 +350,7 @@ describe("offer conditions — validation", () => {
       [{ type: "fulfilment_type", fulfilment: ["pickup"] }],
       ["pos"],
     );
-    expect(msg).toContain("register sale is neither");
+    expect(msg).toContain("POS sale is neither");
   });
 
   it("allows first-order and time conditions at the register", () => {

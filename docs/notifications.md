@@ -279,8 +279,8 @@ a checkout's code path. Instant mail kicks the worker as soon as the enqueue
 transaction commits; hourly/daily rows wait for their clock-aligned window and
 are grouped into one digest per person.
 
-**In-app is polling, not push.** Supabase Realtime went with the Cloud SQL
-migration. A LISTEN/NOTIFY → SSE service is the upgrade path.
+**In-app is polling, not push.** Cloud SQL has no push channel to the browser;
+a LISTEN/NOTIFY → SSE service is the upgrade path.
 
 On a phone, opening the merchant dashboard bell fixes the inbox between 12 px
 viewport gutters and caps it to the visible dynamic viewport. Its notification
@@ -302,6 +302,33 @@ remains a compact dropdown aligned to the bell.
 _not_ start sending it to them — a notification's copy is a preview of the thing
 itself, so routing must never become a side channel around the dashboard's
 access rules. The picker greys such a pick out and names the fix (their role).
+
+### Platform operators
+
+A platform event (group Platform) goes to StoreMink's own operators, the
+people on `platform_admins`, keyed by lowercased email, never to a store's
+team. `restrictToOperatorEmails` on the event input narrows that audience,
+and only ever narrows, as `restrictToAdminIds` does for a store's team: the
+emails are lowercased and applied last, naming somebody who is not on
+`platform_admins` reaches nobody, an empty list reaches nobody, and omitting
+it leaves every platform event as it was.
+
+Three Theme Studio events use it (owner decision 8, 25 Oct 2026):
+
+| Event                             | Title                             | Sent when                                                            |
+| --------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
+| `platform.theme_studio_ready`     | "Ready to publish · _theme name_" | the theme passed its checks and design review                        |
+| `platform.theme_studio_needs_fix` | "Needs a fix · _theme name_"      | a step stopped the theme (never a cancel, a requeue or a fill round) |
+| `platform.theme_studio_questions` | "Questions about _theme name_"    | the AI asks about the brief                                          |
+
+They are in-app plus email and not configurable: no operator has a settings
+page, and the email footer must not link the merchants' one. They are told
+only to the operator who started the theme (the project's
+`created_by_email`, passed by `lib/theme-studio/notify.ts`), with a fixed
+body and a link to the theme's page in the operator console. The email is
+the queue's ordinary `notification` mail carrying the in-app copy, so the
+long-dash guard covers it. `notify.ts` records after the caller's
+transaction commits (`sendThemeStudioNotice`), never inside it.
 
 ---
 
@@ -359,6 +386,6 @@ through it.
 | `app/actions/notification-actions.ts`          | Console + staff inbox                          |
 | `app/actions/customer-notification-actions.ts` | Shopper inbox                                  |
 
-SQL: `supabase/notifications_01_schema.sql` (events, inbox, preferences),
+SQL: `notifications_01_schema.sql` (events, inbox, preferences),
 `_02_email_queue.sql`, `_03_console.sql` (definitions + store settings),
 `_04_email_cc.sql`.

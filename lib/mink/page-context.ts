@@ -1,5 +1,9 @@
+import {
+  redactScreenField,
+  redactScreenPath,
+  redactScreenText,
+} from "./screen-redaction";
 import type { MinkSelectedResource } from "./types";
-import { isMinkReplyLanguage, type MinkReplyLanguage } from "./reply-language";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -8,7 +12,8 @@ export interface MinkPageContextInput {
   currentPath?: unknown;
   selectedResource?: unknown;
   screen?: unknown;
-  replyLanguage?: unknown;
+  /** True when the message came from the hands-free voice chat. */
+  voice?: unknown;
 }
 
 /** What the merchant can see, bounded on the server before anything reads it. */
@@ -27,7 +32,13 @@ export interface MinkPageContext {
   currentPath: string | null;
   selectedResource: MinkSelectedResource | null;
   screen: MinkScreenContext | null;
-  replyLanguage: MinkReplyLanguage;
+  /**
+   * The merchant spoke this message and will hear the answer. It changes how
+   * Mink phrases the reply (a short spoken block before the written answer),
+   * never what it may read or do: style, not authority, like the rest of the
+   * browser context.
+   */
+  voice: boolean;
 }
 
 const SCREEN_LIMITS = {
@@ -48,14 +59,27 @@ const SCREEN_LIMITS = {
 const SECRET_LABEL =
   /password|secret|token|api key|key id|otp|\bpin\b|credential/i;
 
-function boundedText(value: unknown, max: number): string | null {
+function plainText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const text = value
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
-  if (!text) return null;
+  return text || null;
+}
+
+function bounded(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) : text;
+}
+
+/**
+ * A screen string with its contact details hidden, then bounded. Masked
+ * before it is cut, as in the browser: a cut through an email or a phone
+ * would leave a fragment no rule recognises.
+ */
+function boundedText(value: unknown, max: number): string | null {
+  const text = plainText(value);
+  return text ? bounded(redactScreenText(text), max) : null;
 }
 
 function boundedList(value: unknown, max: number, each: number): string[] {
@@ -69,7 +93,13 @@ function boundedList(value: unknown, max: number, each: number): string[] {
   return out;
 }
 
-/** Keep only the screen facts the prompt renders, each bounded; null when nothing survives. */
+/**
+ * Keep only the screen facts the prompt renders, each bounded; null when
+ * nothing survives. ★ Every string has its email addresses, phone numbers and
+ * postal addresses hidden here as well as in the browser
+ * (lib/mink/screen-redaction.ts): a tab opened before the browser masked, or
+ * a hand-written request, must not get contact details to the model.
+ */
 export function normalizeMinkScreenContext(
   value: unknown,
 ): MinkScreenContext | null {
@@ -119,10 +149,17 @@ export function normalizeMinkScreenContext(
       if (fields.length >= SCREEN_LIMITS.fields) break;
       if (!item || typeof item !== "object") continue;
       const field = item as Record<string, unknown>;
-      const label = boundedText(field.label, SCREEN_LIMITS.fieldLabel);
-      const fieldValue = boundedText(field.value, SCREEN_LIMITS.fieldValue);
+      // The secret and address rules read the whole label, before any cut.
+      const label = plainText(field.label);
+      const fieldValue = plainText(field.value);
       if (!label || !fieldValue || SECRET_LABEL.test(label)) continue;
-      fields.push({ label, value: fieldValue });
+      fields.push({
+        label: bounded(redactScreenText(label), SCREEN_LIMITS.fieldLabel),
+        value: bounded(
+          redactScreenField(label, fieldValue),
+          SCREEN_LIMITS.fieldValue,
+        ),
+      });
     }
     if (fields.length) screen.fields = fields;
   }
@@ -149,12 +186,14 @@ export function normalizeMinkPageContext(
   input: MinkPageContextInput | undefined,
 ): MinkPageContext {
   const rawPath = input?.currentPath;
+  // The path reaches the prompt with its query string, and a search box
+  // writes what was typed there: masked like the screen, before the cut.
   const currentPath =
     typeof rawPath === "string" &&
     (rawPath === "/dashboard" || rawPath.startsWith("/dashboard/")) &&
     !rawPath.includes("\n") &&
     !rawPath.includes("\r")
-      ? rawPath.slice(0, 500)
+      ? redactScreenPath(rawPath).slice(0, 500)
       : null;
   const rawResource = input?.selectedResource;
   let selectedResource: MinkSelectedResource | null = null;
@@ -172,13 +211,10 @@ export function normalizeMinkPageContext(
       selectedResource = { type: row.type, id: row.id };
     }
   }
-  const replyLanguage = isMinkReplyLanguage(input?.replyLanguage)
-    ? input.replyLanguage
-    : "auto";
   return {
     currentPath,
     selectedResource,
     screen: normalizeMinkScreenContext(input?.screen),
-    replyLanguage,
+    voice: input?.voice === true,
   };
 }

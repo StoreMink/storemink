@@ -1,6 +1,6 @@
 "use server";
 
-// POS Phase 3 — shifts & cash reconciliation (supabase/pos_10_shifts.sql).
+// POS Phase 3 — shifts & cash reconciliation (the pos_shifts and pos_cash_movements tables).
 //
 // Opening and closing a drawer needs `open_close_shift`; recording a cash
 // movement needs `cash_drop`. Both are manager/owner capabilities, so a

@@ -35,9 +35,24 @@ import {
   type ThemeStudioSurface,
 } from "./contracts";
 import type { ThemeStudioModelKey } from "./models";
-import { validateSectionStyle } from "@/lib/homepage/section-types";
-import { defaultTemplates, normalizeTemplates } from "@/lib/themes/templates";
-import { normalizeAnnouncement } from "@/lib/themes/announcement";
+import { USP_ICONS, validateSectionStyle } from "@/lib/homepage/section-types";
+import {
+  ACCOUNT_LAYOUTS,
+  BLOG_ARTICLE_LAYOUTS,
+  BLOG_INDEX_LAYOUTS,
+  COLLECTION_FILTERS,
+  COLLECTION_PAGINATIONS,
+  PRODUCT_BLOCK_TYPES,
+  PRODUCT_GALLERIES,
+  defaultTemplates,
+  hasProductBlock,
+  normalizeTemplates,
+  type ThemeTemplates,
+} from "@/lib/themes/templates";
+import {
+  normalizeAnnouncement,
+  type ThemeAnnouncement,
+} from "@/lib/themes/announcement";
 import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
@@ -562,7 +577,8 @@ function withSeoDescriptions(
     }
     const lead = page.slug === "" ? themeName : `${page.title} · ${themeName}`;
     const body = themeDescription || `${themeName} storefront`;
-    let description = `${lead} — ${body}`.replace(/\s+/g, " ").trim();
+    // Shoppers read this (the page's meta description): no long dash.
+    let description = `${lead}: ${body}`.replace(/\s+/g, " ").trim();
     if (description.length > SEO_DESCRIPTION_MAX) {
       description = `${description.slice(0, SEO_DESCRIPTION_MAX - 1).trimEnd()}…`;
     }
@@ -767,6 +783,270 @@ export function slotSpec(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Page templates as one JSON string (prompt v33).
+//
+// v32 sent the templates as a closed object in the Stage B schema, and its
+// enums and types were the guarantee: a gallery was one of five, an icon one
+// of the trust-bar catalogue, afterIndex an integer. That object pushed the
+// revision schemas past what Vertex accepts (prompt-features.ts), so v33
+// carries the same templates as a string, the way a section's configJson is
+// carried. The renderer's normaliser would quietly coerce whatever the string
+// holds (an unknown icon becomes the first icon, an unknown gallery the
+// default one), so every value the v32 schema used to refuse is named here
+// and goes back to the model as a repair. What v32 already normalised without
+// a word (a missing price or buy box appended, a repeated block dropped, an
+// over-long list cut) stays silent. Two rules the prompt states are checked
+// on this path too, since a revision now copies the templates forward: a
+// promo tile links to a site path like the announcement does, and the
+// sticky_bar block agrees with design.layout.stickyAddToCart.
+// ---------------------------------------------------------------------------
+
+/** At most this many template problems go back in one repair turn. */
+const MAX_TEMPLATE_ISSUES = 8;
+/** How much of the parser's own message a repair sentence quotes. */
+const JSON_ERROR_MAX = 160;
+const PROMO_THEMES = ["dark", "light"] as const;
+
+/** A value as a repair sentence quotes it. */
+function shown(value: unknown): string {
+  if (value === undefined) return "missing";
+  const json = JSON.stringify(value);
+  return json.length > 40 ? `${json.slice(0, 37)}...` : json;
+}
+
+/** What the v32 schema guaranteed about a templates value and a JSON string
+ * does not, one sentence per problem, each naming its path. Only the fields a
+ * block's type uses are read, like the normaliser reads them. */
+function templatesJsonIssues(raw: Rec): string[] {
+  const issues: string[] = [];
+  const record = (value: unknown, path: string): Rec | null => {
+    if (isRec(value)) return value;
+    issues.push(`${path} must be an object (it is ${shown(value)}).`);
+    return null;
+  };
+  const array = (value: unknown, path: string): unknown[] | null => {
+    if (Array.isArray(value)) return value;
+    issues.push(`${path} must be a list (it is ${shown(value)}).`);
+    return null;
+  };
+  const string = (value: unknown, path: string) => {
+    if (typeof value !== "string")
+      issues.push(`${path} must be a string (it is ${shown(value)}).`);
+  };
+  // A list written as numbers is one mistake, so it costs one sentence (a
+  // size chart's cells would otherwise fill every slot of the repair turn).
+  const strings = (value: unknown, path: string) => {
+    const items = array(value, path) ?? [];
+    const i = items.findIndex((item) => typeof item !== "string");
+    if (i >= 0)
+      issues.push(
+        `${path} must be a list of strings (${path}[${i}] is ${shown(items[i])}).`,
+      );
+  };
+  const choice = (value: unknown, path: string, values: readonly string[]) => {
+    if (typeof value !== "string" || !values.includes(value))
+      issues.push(
+        `${path} must be one of ${values.join(", ")} (it is ${shown(value)}).`,
+      );
+  };
+
+  const root = "templatesJson";
+  const product = record(raw.product, `${root}.product`);
+  if (product) {
+    choice(product.gallery, `${root}.product.gallery`, PRODUCT_GALLERIES);
+    array(product.blocks, `${root}.product.blocks`)?.forEach((entry, i) => {
+      const at = `${root}.product.blocks[${i}]`;
+      const block = record(entry, at);
+      if (!block) return;
+      choice(block.type, `${at}.type`, PRODUCT_BLOCK_TYPES);
+      if (block.type === "trust_row") {
+        array(block.items, `${at}.items`)?.forEach((value, j) => {
+          const item = record(value, `${at}.items[${j}]`);
+          if (!item) return;
+          choice(item.icon, `${at}.items[${j}].icon`, USP_ICONS);
+          string(item.label, `${at}.items[${j}].label`);
+        });
+      } else if (block.type === "accordion") {
+        array(block.rows, `${at}.rows`)?.forEach((value, j) => {
+          const row = record(value, `${at}.rows[${j}]`);
+          if (!row) return;
+          string(row.heading, `${at}.rows[${j}].heading`);
+          string(row.body, `${at}.rows[${j}].body`);
+        });
+      } else if (block.type === "size_guide") {
+        strings(block.columns, `${at}.columns`);
+        array(block.sizes, `${at}.sizes`)?.forEach((value, j) => {
+          const size = record(value, `${at}.sizes[${j}]`);
+          if (!size) return;
+          string(size.label, `${at}.sizes[${j}].label`);
+          strings(size.values, `${at}.sizes[${j}].values`);
+        });
+      } else if (block.type === "rich_text") {
+        string(block.html, `${at}.html`);
+      }
+    });
+  }
+  const collection = record(raw.collection, `${root}.collection`);
+  if (collection) {
+    choice(
+      collection.filters,
+      `${root}.collection.filters`,
+      COLLECTION_FILTERS,
+    );
+    choice(
+      collection.pagination,
+      `${root}.collection.pagination`,
+      COLLECTION_PAGINATIONS,
+    );
+    array(collection.promoTiles, `${root}.collection.promoTiles`)?.forEach(
+      (value, k) => {
+        const at = `${root}.collection.promoTiles[${k}]`;
+        const tile = record(value, at);
+        if (!tile) return;
+        if (!Number.isInteger(tile.afterIndex))
+          issues.push(
+            `${at}.afterIndex must be a whole number (it is ${shown(tile.afterIndex)}).`,
+          );
+        for (const key of ["heading", "body", "cta_label", "href"])
+          string(tile[key], `${at}.${key}`);
+        // The normaliser would empty a bare slug and keep an off-site link;
+        // a tile's link is held to the announcement's rule instead.
+        const href = typeof tile.href === "string" ? tile.href.trim() : "";
+        if (href && (!href.startsWith("/") || href.startsWith("//")))
+          issues.push(
+            `${at}.href must be "" or a site path starting with "/" (it is ${shown(tile.href)}).`,
+          );
+        choice(tile.theme, `${at}.theme`, PROMO_THEMES);
+        if (tile.background !== null && typeof tile.background !== "string")
+          issues.push(
+            `${at}.background must be a hex colour or null (it is ${shown(tile.background)}).`,
+          );
+        // v32's closed tile had no picture; the normaliser would keep one.
+        for (const key of ["image_url", "image_alt"])
+          if (tile[key] !== undefined && tile[key] !== "")
+            issues.push(
+              `${at}.${key} is not a promo tile field: a generated theme's tile is a colour field, so leave it out.`,
+            );
+      },
+    );
+  }
+  const blog = record(raw.blog, `${root}.blog`);
+  if (blog) {
+    choice(blog.index, `${root}.blog.index`, BLOG_INDEX_LAYOUTS);
+    choice(blog.article, `${root}.blog.article`, BLOG_ARTICLE_LAYOUTS);
+  }
+  const account = record(raw.account, `${root}.account`);
+  if (account) {
+    choice(account.layout, `${root}.account.layout`, ACCOUNT_LAYOUTS);
+    // null is the page's own colours, and "" the stored spelling of it.
+    const scheme = account.scheme;
+    if (scheme !== null && scheme !== "" && !isSectionScheme(scheme))
+      issues.push(
+        `${root}.account.scheme must be null or one of ${SECTION_SCHEMES.join(", ")} (it is ${shown(scheme)}).`,
+      );
+  }
+  const more = issues.length - MAX_TEMPLATE_ISSUES;
+  return more <= 0
+    ? issues
+    : [
+        ...issues.slice(0, MAX_TEMPLATE_ISSUES),
+        `templatesJson has ${more} more ${more === 1 ? "problem" : "problems"} like these; check every value against the Templates rules.`,
+      ];
+}
+
+/** A v33 draft's templatesJson: parsed, checked against what the v32 schema
+ * enforced, then completed by the renderer's normaliser exactly as v32's
+ * object is. Undefined, with an issue, when the string is not one JSON
+ * object. */
+function parseTemplatesJson(
+  raw: string,
+  layout: ThemeDesign["layout"] | undefined,
+  issues: string[],
+): ThemeTemplates | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    // The parser quotes the source, line breaks and all; a repair turn
+    // lists one issue per line.
+    const message = (error instanceof Error ? error.message : String(error))
+      .replace(/\s+/g, " ")
+      .trim();
+    issues.push(
+      `templatesJson is not valid JSON (${message.slice(0, JSON_ERROR_MAX)}).`,
+    );
+    return undefined;
+  }
+  if (!isRec(parsed)) {
+    // What it decoded to is the hint: a string means it was encoded twice.
+    issues.push(
+      `templatesJson must encode one JSON object (it is ${shown(parsed)}).`,
+    );
+    return undefined;
+  }
+  issues.push(...templatesJsonIssues(parsed));
+  return normalizeTemplates(parsed, defaultTemplates(layout));
+}
+
+/** The storefront shows the phone's sticky add-to-cart from the sticky_bar
+ * block alone (lib/chrome/types.ts), while the catalogue fingerprint reads
+ * design.layout.stickyAddToCart, so a v33 draft writes the two to agree. The
+ * v32 object path never checked this and still does not. */
+function stickyBarIssue(
+  templates: ThemeTemplates,
+  layout: ThemeDesign["layout"] | undefined,
+): string | null {
+  const block = hasProductBlock(templates.product, "sticky_bar");
+  if (block === (layout?.stickyAddToCart === true)) return null;
+  return block
+    ? 'templatesJson.product.blocks has a "sticky_bar" block but design.layout.stickyAddToCart is not true. The block is the phone\'s sticky add-to-cart, so write it exactly when that setting is true: set the setting true or leave the block out.'
+    : 'design.layout.stickyAddToCart is true but templatesJson.product.blocks has no "sticky_bar" block. The block is the phone\'s sticky add-to-cart and the storefront shows nothing without it: add {"type":"sticky_bar"} or set the setting false.';
+}
+
+/**
+ * A stored templates value as a v33 draft writes it, for a revision's current
+ * theme (prompts.ts currentThemeForRevision). The stored shape differs from
+ * the draft's in two spellings: a promo tile carries no picture fields (a
+ * generated theme's tile is a colour field and its stored ones are always
+ * empty), and the page's own colours and field are null where the stored
+ * value says "". Normalising the result gives the stored value back exactly,
+ * so a revision that copies it changes nothing.
+ */
+export function templatesForDraft(
+  templates: ThemeTemplates,
+): Record<string, unknown> {
+  return {
+    product: templates.product,
+    collection: {
+      filters: templates.collection.filters,
+      pagination: templates.collection.pagination,
+      promoTiles: templates.collection.promoTiles.map((tile) => ({
+        afterIndex: tile.afterIndex,
+        heading: tile.heading,
+        body: tile.body,
+        cta_label: tile.cta_label,
+        href: tile.href,
+        theme: tile.theme,
+        background: tile.background || null,
+      })),
+    },
+    blog: templates.blog,
+    account: {
+      layout: templates.account.layout,
+      scheme: templates.account.scheme || null,
+    },
+  };
+}
+
+/** A theme's announcement bar as a draft writes it: both fields, "" for
+ * none. */
+export function announcementForDraft(
+  announcement: ThemeAnnouncement | undefined,
+): { text: string; href: string } {
+  return { text: announcement?.text ?? "", href: announcement?.href ?? "" };
+}
+
 /** First pass: shape the draft and find the slots it needs. */
 export function prepareDraft(
   draftInput: unknown,
@@ -781,6 +1061,9 @@ export function prepareDraft(
       products: ThemeProductSeed[];
     };
     productSlots: Map<string, ProductSlot>;
+    /** v33: the templates the draft wrote as a JSON string, checked and
+     * completed; undefined for a draft without one. */
+    templatesFromJson?: ThemeTemplates;
   } | null;
   slots: string[];
   issues: string[];
@@ -855,9 +1138,32 @@ export function prepareDraft(
     const href = text(draftInput.announcement.href);
     if (href) checkLink(href, "announcement.href", issues);
   }
+  // v33: the page templates as a JSON string. A v32 draft's object is
+  // normalised in assemblePackage, as it always was.
+  let templatesFromJson: ThemeTemplates | undefined;
+  if (typeof draftInput.templatesJson === "string")
+    templatesFromJson = parseTemplatesJson(
+      draftInput.templatesJson,
+      design?.layout,
+      issues,
+    );
+  else if (draftInput.templatesJson !== undefined)
+    issues.push("templatesJson must be a string holding one JSON object.");
+  const sticky =
+    templatesFromJson && design
+      ? stickyBarIssue(templatesFromJson, design.layout)
+      : null;
+  if (sticky) issues.push(sticky);
 
   return {
-    parts: { draft: draftInput, design, pages, catalogue, productSlots },
+    parts: {
+      draft: draftInput,
+      design,
+      pages,
+      catalogue,
+      productSlots,
+      ...(templatesFromJson ? { templatesFromJson } : {}),
+    },
     slots: [...used].sort(),
     issues,
   };
@@ -872,7 +1178,8 @@ export function assemblePackage(
   priorIssues: string[],
 ): CompileResult {
   const issues = [...priorIssues];
-  const { draft, design, pages, catalogue, productSlots } = prepared;
+  const { draft, design, pages, catalogue, productSlots, templatesFromJson } =
+    prepared;
   const features = [
     ...new Set([
       ...list(draft.features).filter((f): f is ThemeFeature =>
@@ -978,6 +1285,9 @@ export function assemblePackage(
             ),
           }
         : {}),
+      // v33: the same templates written as a JSON string, checked and
+      // completed by the same normaliser in prepareDraft.
+      ...(templatesFromJson ? { templates: templatesFromJson } : {}),
       // v32: the announcement bar, or nothing when the draft wrote text "".
       ...(normalizeAnnouncement(draft.announcement)
         ? { announcement: normalizeAnnouncement(draft.announcement) }

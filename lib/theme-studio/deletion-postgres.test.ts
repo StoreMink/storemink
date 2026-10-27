@@ -24,12 +24,25 @@ it.skipIf(process.env.THEME_STUDIO_DELETE_DB_TEST !== "1")(
     try {
       await db.query("begin");
       await db.query("set local lock_timeout='5s'");
-      await db.query(
-        await readFile(
-          "drizzle/migrations/sql/20261005_0161_theme_permanent_deletion.sql",
-          "utf8",
-        ),
-      );
+      // ★ The ledger applies 0161 to every local database, so this suite tests
+      // the function it installed. Replaying the file onto a database that
+      // has it stops at its first CREATE TABLE ("already exists") before any
+      // assertion runs; only a database restored from before 0161 needs it,
+      // and the replay is rolled back with the rest of this transaction.
+      // Same guard as change-scope-postgres and worker-recovery-postgres.
+      if (
+        !(
+          await db.query(
+            "select to_regclass('public.theme_studio_deletion_audit') as name",
+          )
+        ).rows[0].name
+      )
+        await db.query(
+          await readFile(
+            "drizzle/migrations/sql/20261005_0161_theme_permanent_deletion.sql",
+            "utf8",
+          ),
+        );
       const actor = randomUUID();
       await db.query(
         "insert into platform_admins(id,email,role) values($1,$2,'superadmin')",

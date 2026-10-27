@@ -3,11 +3,19 @@
 > **Status:** Implemented in code on 2026-09-23. This phase creates no route,
 > worker, database table, provider traffic, preview, or publication capability.
 > It defines the boundary later phases must implement.
+>
+> **Since 24 Oct 2026 (Theme Studio wave TS-1):** no step needs a second
+> person. The human approval this record names (`approved`, human review) was
+> replaced on 3 Oct 2026 by the automatic checks and the automatic design
+> review, and one superadmin publishes. Serious findings block Publish and
+> smaller ones are warnings ("Fix it, then allow Publish";
+> `docs/theme-acceptance.md` §5, `docs/mink-ai-theme-studio-phase6.md`). The
+> rows below are updated to match.
 
 ## 1. Decisions locked by Phase 0
 
 1. Theme Studio is a StoreMink **platform** tool, never a merchant Mink tool.
-2. Only a platform superadmin may create, generate, inspect, approve, publish,
+2. Only a platform superadmin may create, generate, inspect, publish,
    hide, restore, archive, or delete Studio data.
 3. Model selection is a closed server registry. A browser sends a
    stable key; it never sends a provider model id.
@@ -86,7 +94,7 @@ advice to engineers, not permission for the model to add it.
 | Select allowlisted model                  |              No |               Yes |               Resolved server-side |                        No |
 | Generate or revise candidate              |              No |           Request |                 Execute queued run | Produce structured output |
 | Run deterministic validation              |              No |      Request/view |                                Yes |                        No |
-| Human review                              |              No |               Yes |                                 No |                        No |
+| Design review (automatic since 3 Oct)     |              No |              View |              Execute queued review |   Score structured output |
 | Publish/hide/restore                      |              No |               Yes | Execute deterministic service only |                     Never |
 | Access merchant Mink conversations        |              No | No through Studio |                                 No |                        No |
 
@@ -98,17 +106,17 @@ input from service-owned storage.
 
 Allowed transitions are executable in `canTransitionThemeStudioProject`:
 
-| State        | Meaning                                                    |
-| ------------ | ---------------------------------------------------------- |
-| `draft`      | Intake exists; nothing is running.                         |
-| `generating` | One leased generation/revision is active.                  |
-| `ready`      | A parsed immutable version exists for operator inspection. |
-| `candidate`  | Required deterministic gates passed for the exact version. |
-| `approved`   | Required human approvals exist for the exact digests.      |
-| `published`  | An immutable catalog release was created.                  |
-| `failed`     | Provider/infrastructure work ended safely and may retry.   |
-| `blocked`    | A capability or required gate prevents progression.        |
-| `archived`   | Operator removed the project from active work. Terminal.   |
+| State        | Meaning                                                                                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `draft`      | Intake exists; nothing is running.                                                                                                                     |
+| `generating` | One leased generation/revision is active.                                                                                                              |
+| `ready`      | A parsed immutable version exists for operator inspection.                                                                                             |
+| `candidate`  | Required deterministic gates passed for the exact version.                                                                                             |
+| `approved`   | A publish attempt is running or did not finish; entering it needs a passed check run over the exact package (0151; human approvals before 3 Oct 2026). |
+| `published`  | An immutable catalog release was created.                                                                                                              |
+| `failed`     | Provider/infrastructure work ended safely and may retry.                                                                                               |
+| `blocked`    | A capability or required gate prevents progression.                                                                                                    |
+| `archived`   | Operator removed the project from active work. Terminal.                                                                                               |
 
 There is deliberately no `ready -> published`, `failed -> published`, or
 `published -> generating` transition. A published change starts a new release
@@ -158,28 +166,28 @@ and logging/data-sharing configuration are recorded for each model/location.
 
 ## 7. Threat model
 
-| Threat                                               | Consequence                               | Required control                                                                           | Verification                          | Owner              |
-| ---------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- | ------------------ |
-| Non-operator opens a page while its layout redirects | Cross-platform data disclosure            | Every page performs `requireOperator`; Studio requires superadmin                          | Page/component tests                  | Platform auth      |
-| Forged action or direct POST                         | Unauthorized generation/publication       | Every callable endpoint repeats superadmin authorization                                   | Route/action tests and mutation test  | Platform auth      |
-| Caller submits a raw provider model id               | Access to unapproved models/cost          | Parse a stable allowlisted key; resolve provider id on server                              | `models.test.ts`                      | AI platform        |
-| Studio models become available in merchant Mink      | Merchant cost/authority expansion         | Separate module, service identity and deployment config; no shared router entry            | Negative registry tests               | Mink runtime       |
-| Screenshot contains prompt injection                 | Publish, secrets, or tool misuse          | Image is untrusted data; Stage A schema has no instruction/action field; no powerful tools | Golden evals + parser tests           | AI platform        |
-| Operator prompt asks for code/SQL/network            | Remote execution or data access           | No such tools; package rejects custom code and unknown fields                              | Golden evals + contract tests         | Theme platform     |
-| Model invents a section/variant                      | Broken preview or hidden behavior         | Registry validation and explicit capability gap                                            | Contract tests                        | Storefront         |
-| Model silently drops an unsupported request          | Dishonest candidate                       | Blocking gap vocabulary; candidate cannot advance with blocking gaps                       | Evaluations + state tests             | Product/design     |
-| Reference assets are copied to public release        | Copyright/privacy breach                  | References and release assets have separate ids/prefixes; references never promote         | Asset integration tests               | Media platform     |
-| Third-party copy/logo/product photography is cloned  | IP infringement                           | Structure-only analysis, provenance requirement, human review rejection                    | Copyright evals + review gate         | Product/legal      |
-| Malformed image/SVG/decompression bomb               | Worker compromise or resource exhaustion  | Raster allowlist, magic-byte decode, pixel/byte limits, re-encode; reject SVG              | Upload tests in Phase 2               | Media platform     |
-| Generated package references remote assets           | Tracking, availability and ownership risk | Asset manifest accepts StoreMink path/reference only                                       | Contract tests                        | Theme platform     |
-| Provider retries create duplicate versions           | Confusing or unreviewed artifacts         | Run idempotency, lease and unique version key                                              | Worker tests in Phase 3               | AI platform        |
-| Stale tab revises or approves wrong parent           | Lost work or wrong release                | Parent/digest optimistic lock                                                              | Revision tests in Phase 4             | Theme platform     |
-| Evidence belongs to older manifest/assets            | Unsafe publication                        | Validation and approval bind all digests                                                   | Publication mutation tests in Phase 6 | Release platform   |
-| Model or worker publishes directly                   | Human boundary bypass                     | No publish tool/credential; deterministic publisher is separate                            | IAM review + integration test         | Release platform   |
-| Partial asset promotion exposes broken release       | Broken public catalog                     | Stage assets immutably; expose catalog only after complete verification                    | Failure-injection tests               | Release platform   |
-| A new release changes existing stores                | Merchant content loss                     | Installations remain version-pinned; catalog pointer affects new installs only             | Registry/rollback tests               | Storefront         |
-| Prompt/reference appears in ordinary telemetry       | Internal data disclosure                  | Operational logs contain ids, usage and safe codes only                                    | Log-capture tests                     | Observability      |
-| Cost fan-out                                         | Unexpected Vertex spend                   | daily/concurrency/token/retry/wall-time limits and global stop                             | Quota tests + budget alert            | AI platform/FinOps |
+| Threat                                               | Consequence                               | Required control                                                                            | Verification                          | Owner              |
+| ---------------------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------- | ------------------ |
+| Non-operator opens a page while its layout redirects | Cross-platform data disclosure            | Every page performs `requireOperator`; Studio requires superadmin                           | Page/component tests                  | Platform auth      |
+| Forged action or direct POST                         | Unauthorized generation/publication       | Every callable endpoint repeats superadmin authorization                                    | Route/action tests and mutation test  | Platform auth      |
+| Caller submits a raw provider model id               | Access to unapproved models/cost          | Parse a stable allowlisted key; resolve provider id on server                               | `models.test.ts`                      | AI platform        |
+| Studio models become available in merchant Mink      | Merchant cost/authority expansion         | Separate module, service identity and deployment config; no shared router entry             | Negative registry tests               | Mink runtime       |
+| Screenshot contains prompt injection                 | Publish, secrets, or tool misuse          | Image is untrusted data; Stage A schema has no instruction/action field; no powerful tools  | Golden evals + parser tests           | AI platform        |
+| Operator prompt asks for code/SQL/network            | Remote execution or data access           | No such tools; package rejects custom code and unknown fields                               | Golden evals + contract tests         | Theme platform     |
+| Model invents a section/variant                      | Broken preview or hidden behavior         | Registry validation and explicit capability gap                                             | Contract tests                        | Storefront         |
+| Model silently drops an unsupported request          | Dishonest candidate                       | Blocking gap vocabulary; candidate cannot advance with blocking gaps                        | Evaluations + state tests             | Product/design     |
+| Reference assets are copied to public release        | Copyright/privacy breach                  | References and release assets have separate ids/prefixes; references never promote          | Asset integration tests               | Media platform     |
+| Third-party copy/logo/product photography is cloned  | IP infringement                           | Structure-only analysis, provenance requirement, design-review `copied` rejection (serious) | Copyright evals + review gate         | Product/legal      |
+| Malformed image/SVG/decompression bomb               | Worker compromise or resource exhaustion  | Raster allowlist, magic-byte decode, pixel/byte limits, re-encode; reject SVG               | Upload tests in Phase 2               | Media platform     |
+| Generated package references remote assets           | Tracking, availability and ownership risk | Asset manifest accepts StoreMink path/reference only                                        | Contract tests                        | Theme platform     |
+| Provider retries create duplicate versions           | Confusing or unreviewed artifacts         | Run idempotency, lease and unique version key                                               | Worker tests in Phase 3               | AI platform        |
+| Stale tab revises or publishes wrong parent          | Lost work or wrong release                | Parent/digest optimistic lock                                                               | Revision tests in Phase 4             | Theme platform     |
+| Evidence belongs to older manifest/assets            | Unsafe publication                        | Validation and the publish evidence bind all digests                                        | Publication mutation tests in Phase 6 | Release platform   |
+| Model or worker publishes directly                   | Human boundary bypass                     | No publish tool/credential; deterministic publisher is separate                             | IAM review + integration test         | Release platform   |
+| Partial asset promotion exposes broken release       | Broken public catalog                     | Stage assets immutably; expose catalog only after complete verification                     | Failure-injection tests               | Release platform   |
+| A new release changes existing stores                | Merchant content loss                     | Installations remain version-pinned; catalog pointer affects new installs only              | Registry/rollback tests               | Storefront         |
+| Prompt/reference appears in ordinary telemetry       | Internal data disclosure                  | Operational logs contain ids, usage and safe codes only                                     | Log-capture tests                     | Observability      |
+| Cost fan-out                                         | Unexpected Vertex spend                   | daily/concurrency/token/retry/wall-time limits and global stop                              | Quota tests + budget alert            | AI platform/FinOps |
 
 No high-risk item is accepted without a named later-phase verification. The
 table is the launch checklist, not background reading.

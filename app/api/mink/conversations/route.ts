@@ -8,7 +8,13 @@ import { rateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+/**
+ * One page of the viewer's chats: no parameter is the first page, `?cursor=`
+ * the next one (an opaque position, never the merchant's words). ★ Search is
+ * POST /api/mink/conversations/search, so search words never reach a request
+ * log; any `q` here is ignored.
+ */
+export async function GET(request: Request) {
   const config = getMinkConfig();
   if (!config.enabled) {
     return NextResponse.json(
@@ -32,11 +38,11 @@ export async function GET() {
         { status: 429 },
       );
     }
-    const conversations = await listMinkConversations(actor);
-    return NextResponse.json(
-      { conversations },
-      { headers: { "Cache-Control": "no-store, private" } },
-    );
+    const cursor = new URL(request.url).searchParams.get("cursor");
+    const page = await listMinkConversations(actor, { cursor });
+    return NextResponse.json(page, {
+      headers: { "Cache-Control": "no-store, private" },
+    });
   } catch (error) {
     if (error instanceof MinkRequestError) {
       logWarn("mink.history: request rejected", {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isUniqueViolation, pgConstraint, pgErrorCode } from "./errors";
+import {
+  isUniqueViolation,
+  loggableError,
+  pgConstraint,
+  pgErrorCode,
+} from "./errors";
 
 describe("pg error helpers", () => {
   it("read the SQLSTATE and the constraint from the error or from its cause", () => {
@@ -21,5 +26,33 @@ describe("pg error helpers", () => {
     expect(pgConstraint("boom")).toBeUndefined();
     expect(pgConstraint({ code: "23505" })).toBeUndefined();
     expect(pgConstraint({ constraint: 42 })).toBeUndefined();
+  });
+});
+
+// ★ B22: what a catch hands logError. A failed query is reduced to the
+// database's reason (its own message carries the query's parameters); any
+// other Error keeps its stack and its name.
+describe("loggableError", () => {
+  it("reduces a failed query to the database's reason", () => {
+    const failed = Object.assign(
+      new Error('Failed query: select $1\nparams: "Secret Almond Shake"'),
+      { cause: new Error("deadlock detected") },
+    );
+    expect(loggableError(failed)).toBe("deadlock detected");
+  });
+
+  it("logs any other Error as itself, stack and name", () => {
+    const bug = new TypeError("Cannot read properties of undefined");
+    expect(loggableError(bug)).toBe(bug);
+    const busy = Object.assign(new Error("No database connection came free"), {
+      name: "DatabaseBusyError",
+    });
+    expect(loggableError(busy)).toBe(busy);
+  });
+
+  it("never logs a thrown non-Error as itself", () => {
+    expect(loggableError({ message: "pool ended" })).toBe("pool ended");
+    expect(loggableError({ tagline: "Secret" })).toBe("unknown error");
+    expect(loggableError(undefined, "database error")).toBe("database error");
   });
 });

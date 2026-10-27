@@ -24,7 +24,7 @@ import {
 //   acme.storemink.com        -> store with slug "acme"
 //   shop.acme.com         -> store whose custom_domain = "shop.acme.com"
 //   storemink.com / app.*     -> the platform itself (no store)
-//   localhost / *.vercel  -> the platform (dev/preview)
+//   localhost / localtest.me -> the platform (dev)
 //
 // During the single-tenant period (only WholeSip exists, served at the root /
 // localhost), `getCurrentStore()` falls back to WholeSip so the site renders
@@ -50,8 +50,8 @@ export interface Store {
   settings: Record<string, unknown>;
 }
 
-// The fallback store (the legacy "store #1"). Matches the fixed id seeded in
-// multitenant_01_schema.sql. Never-null fallback for dashboard/action callers
+// The fallback store (the legacy "store #1"): the fixed id of the first store
+// row. Never-null fallback for dashboard/action callers
 // when a host maps to no store; the storefront never relies on it (it 404s).
 export const FALLBACK_STORE_ID = "a0000000-0000-4000-8000-000000000001";
 
@@ -124,8 +124,8 @@ const lookupStoreByHost = cache(async (host: string): Promise<Store | null> => {
   return store;
 });
 
-// Request-memoized store lookup by id — used for the WholeSip fallback. (RLS mirrors the
-// old anon client: only active stores are visible without an identity.)
+// Request-memoized store lookup by id — used for the WholeSip fallback. (Under
+// withAnon, RLS shows only active stores to a caller with no identity.)
 export const lookupStoreById = cache(
   async (id: string): Promise<Store | null> => {
     // Same rule as lookupStoreByHost: never swallow a DB error into a cached

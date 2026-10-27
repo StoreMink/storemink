@@ -17,7 +17,9 @@ import {
   anchorSubject,
   buildAnchorRequest,
   buildAssetRequest,
+  type AnchorLead,
   type ThemeImageBrief,
+  type ThemeImageDirection,
   type ThemeImageRetake,
 } from "./image-prompt";
 import {
@@ -173,6 +175,12 @@ export interface ThemeImageRunResult {
     reviewPromptVersion: string;
     reviewModelKey: string;
     durationMs?: number;
+    /** `onPrepared` calls that threw: the candidate was drawn and reviewed, not parked. */
+    preparedFailures?: Array<{
+      briefId: string;
+      attempt: number;
+      error: string;
+    }>;
   };
 }
 
@@ -203,6 +211,49 @@ export interface ImageRunOptions {
   /** Pause the run on reviewer outages; never let them trigger paid redraws. */
   deferUnavailableReviews?: boolean;
   corrections?: Readonly<Record<string, string>>;
+  /** Persist a paid candidate before its review begins. */
+  onPrepared?: (
+    briefId: string,
+    image: PreparedSlotImage,
+    attempt: number,
+  ) => Promise<void>;
+  /** Durable attempt/correction state supplied by resumable callers. */
+  resume?: Readonly<
+    Record<string, { attempts: number; retake?: ThemeImageRetake }>
+  >;
+  /**
+   * Called as each slot settles, before the run ends, with the stored image
+   * when one was kept. ★ For a caller that stores every paid image the
+   * moment it exists (the Mink storefront revamp), so a run that dies half
+   * way has lost no photograph it paid for. An error it throws stops the run
+   * the way a checkpoint failure does.
+   */
+  onSlotSettled?: (
+    outcome: SlotOutcome,
+    image: PreparedSlotImage | null,
+  ) => Promise<void> | void;
+  /** Called once a newly drawn anchor is kept (never for a seeded one). */
+  onAnchor?: (anchor: {
+    bytes: Uint8Array;
+    mediaType: ThemeImageReference["mediaType"];
+    prepared: PreparedSlotImage | null;
+  }) => Promise<void> | void;
+}
+
+/**
+ * The generic image set: an anchor, then every slot matched to it, from a
+ * caller's own slot list and direction. `runThemeImageGeneration` derives
+ * both from a theme package; the Mink storefront revamp derives them from its
+ * site plan.
+ */
+export interface SlotImageRunInput {
+  slots: GeneratableSlot[];
+  direction: ThemeImageDirection;
+  /** The homepage hero's brief, which the anchor takes its look from. */
+  anchorLead: AnchorLead | null;
+  /** Required, so every caller decides whether images are reviewed. */
+  reviewer: ThemeImageReviewer | null;
+  seed?: { anchor: StoredReference; set: StoredReference | null } | null;
 }
 
 interface Drawn {
@@ -255,22 +306,40 @@ export async function runThemeImageGeneration(
   signal: AbortSignal,
   options: ImageRunOptions = {},
 ): Promise<ThemeImageRunResult> {
-  const prepare = options.prepare ?? prepareSlotImage;
-  const slots = generatableSlots(input.pkg, input.intent, input.only).map(
-    (slot) => {
-      const correction = options.corrections?.[slot.slotId];
-      return correction
-        ? {
-            ...slot,
-            brief: {
-              ...slot.brief,
-              artDirection: `${slot.brief.artDirection}\nQA correction for this slot: ${correction.slice(0, 800)}`,
-            },
-          }
-        : slot;
+  return runSlotImageGeneration(
+    client,
+    {
+      slots: generatableSlots(input.pkg, input.intent, input.only),
+      direction: directionFromPackage(input.pkg, input.intent),
+      anchorLead: anchorLeadBrief(input.pkg, input.intent),
+      reviewer: input.reviewer,
+      seed: input.seed,
     },
+    signal,
+    options,
   );
-  const direction = directionFromPackage(input.pkg, input.intent);
+}
+
+export async function runSlotImageGeneration(
+  client: ThemeStudioImageClient,
+  input: SlotImageRunInput,
+  signal: AbortSignal,
+  options: ImageRunOptions = {},
+): Promise<ThemeImageRunResult> {
+  const prepare = options.prepare ?? prepareSlotImage;
+  const slots = input.slots.map((slot) => {
+    const correction = options.corrections?.[slot.slotId];
+    return correction
+      ? {
+          ...slot,
+          brief: {
+            ...slot.brief,
+            artDirection: `${slot.brief.artDirection}\nQA correction for this slot: ${correction.slice(0, 800)}`,
+          },
+        }
+      : slot;
+  });
+  const direction = input.direction;
   const started = Date.now();
   const drawConcurrency = Math.max(
     1,
@@ -285,6 +354,9 @@ export async function runThemeImageGeneration(
   let laneFailed = false;
   const calls: ImageCall[] = [];
   const reviews: ReviewCall[] = [];
+  const onPreparedFailures: NonNullable<
+    ThemeImageRunResult["telemetry"]["preparedFailures"]
+  > = [];
   const record = (
     request: ThemeImageRequest,
     usage: ImageUsage,
@@ -332,6 +404,9 @@ export async function runThemeImageGeneration(
         reviewPromptVersion: THEME_IMAGE_REVIEW_PROMPT_VERSION,
         reviewModelKey: THEME_IMAGE_REVIEW_MODEL_KEY,
         durationMs: Date.now() - started,
+        ...(onPreparedFailures.length
+          ? { preparedFailures: onPreparedFailures }
+          : {}),
       },
     };
   };
@@ -376,8 +451,11 @@ export async function runThemeImageGeneration(
       }
       return failure;
     };
-    let retake: ThemeImageRetake | undefined;
-    for (let attempt = 1; ; attempt++) {
+    const resumed = options.resume?.[args.briefId];
+    let retake: ThemeImageRetake | undefined = resumed?.retake;
+    for (let attempt = (resumed?.attempts ?? 0) + 1; ; attempt++) {
+      if (attempt > redraws + 1)
+        return settle(attempt - 1, { status: "skipped" });
       if (signal.aborted || laneFailed)
         return settle(attempt - 1, { status: "skipped" });
       const request = args.request(retake);
@@ -466,6 +544,22 @@ export async function runThemeImageGeneration(
       });
       const reviewer = input.reviewer;
       const candidate = drawn.prepared;
+      if (candidate && options.onPrepared) {
+        // Parking the paid candidate is insurance against a crash, never a
+        // condition of the draw: a storage fault here must not fail this
+        // lane and, through the worker, discard every other lane's paid
+        // work. Only a checkpoint stops the run.
+        try {
+          await options.onPrepared(args.briefId, candidate, attempt);
+        } catch (error) {
+          if (error instanceof ImageCheckpointError) throw error;
+          onPreparedFailures.push({
+            briefId: args.briefId,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       if (!reviewer || !candidate) return kept("unreviewed");
 
       const reviewStarted = Date.now();
@@ -574,7 +668,7 @@ export async function runThemeImageGeneration(
   // 1. The anchor: reused when the caller has one (a redraw), else drawn,
   // taking its look from the homepage hero brief.
   const seed = input.seed ?? null;
-  const anchorLead = anchorLeadBrief(input.pkg, input.intent);
+  const anchorLead = input.anchorLead;
   const anchorResult: DrawResult = seed
     ? {
         status: "kept",
@@ -629,6 +723,13 @@ export async function runThemeImageGeneration(
       outcomes: slots.map((s) => ({ slotId: s.slotId, status: "skipped" })),
     });
   }
+  if (!seed && options.onAnchor) {
+    await options.onAnchor({
+      bytes: anchorResult.drawn.bytes,
+      mediaType: anchorResult.drawn.mediaType,
+      prepared: anchorResult.drawn.prepared,
+    });
+  }
   // The reference is the provider's own full-quality image, not the stored
   // WebP: every later image is matched to it. The reviewer sees the stored
   // WebP, which is what the storefront shows.
@@ -673,10 +774,12 @@ export async function runThemeImageGeneration(
       reviewSet,
     });
     const slotId = slot.slotId;
+    let outcome: SlotOutcome;
+    let kept: Drawn | null = null;
     switch (result.status) {
       case "kept":
         images.push({ slotId, image: result.drawn.prepared! });
-        outcomes.set(slotId, {
+        outcome = {
           slotId,
           status: "generated",
           attempts: result.attempts,
@@ -684,38 +787,44 @@ export async function runThemeImageGeneration(
           ...(result.problems.length
             ? { problems: result.problems, note: result.note }
             : {}),
-        });
-        return result.drawn;
+        };
+        kept = result.drawn;
+        break;
       case "rejected":
-        outcomes.set(slotId, {
+        outcome = {
           slotId,
           status: "rejected",
           attempts: result.attempts,
           problems: result.problems,
           note: result.note,
-        });
-        return null;
+        };
+        break;
       case "refused":
-        outcomes.set(slotId, {
+        outcome = {
           slotId,
           status: "refused",
           attempts: result.attempts,
           reason: result.reason,
-        });
-        return null;
+        };
+        break;
       case "failed":
       case "unusable":
-        outcomes.set(slotId, {
+        outcome = {
           slotId,
           status: result.status,
           attempts: result.attempts,
           code: result.code,
-        });
-        return null;
+        };
+        break;
       case "skipped":
-        outcomes.set(slotId, { slotId, status: "skipped" });
-        return null;
+        outcome = { slotId, status: "skipped" };
+        break;
     }
+    outcomes.set(slotId, outcome);
+    if (options.onSlotSettled) {
+      await options.onSlotSettled(outcome, kept?.prepared ?? null);
+    }
+    return kept;
   };
 
   // Single products first: the first to pass review becomes SET, and a

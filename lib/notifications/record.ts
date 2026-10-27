@@ -126,6 +126,18 @@ export interface EmitEventInput {
    */
   restrictToAdminIds?: readonly string[] | null;
   /**
+   * Narrow the `operators` audience to these StoreMink operators, by email
+   * (operators are keyed by lowercased email; any case is accepted here).
+   *
+   * ★ IT CAN ONLY EVER REMOVE PEOPLE, and it is applied LAST, exactly like
+   * `restrictToAdminIds`: naming somebody who is not on the platform
+   * operator list delivers to nobody, never to them, and an empty list
+   * delivers to nobody. Use it for an event about one operator's own work,
+   * such as a Theme Studio theme they started (lib/theme-studio/notify.ts),
+   * rather than news every operator needs.
+   */
+  restrictToOperatorEmails?: readonly string[] | null;
+  /**
    * DISPLAY-ONLY extras for the EMAIL channel — today, an order summary.
    *
    * Deliberately separate from `payload`: that one is the audit record, kept
@@ -362,7 +374,18 @@ async function fanOut(
     });
   }
   if (def.audiences.operators) {
-    recipients.push(...(await operatorRecipients(db)));
+    const operators = await operatorRecipients(db);
+    // Narrowing only, and last: see `restrictToOperatorEmails` above.
+    const wanted = input.restrictToOperatorEmails
+      ? new Set(
+          input.restrictToOperatorEmails.map((email) =>
+            email.trim().toLowerCase(),
+          ),
+        )
+      : null;
+    recipients.push(
+      ...(wanted ? operators.filter((r) => wanted.has(r.id)) : operators),
+    );
   }
 
   // Audit-only events (and events whose audience resolved to nobody) stop
@@ -949,9 +972,8 @@ async function fanOut(
     await db.insert(notifications).values(rows).onConflictDoNothing();
   }
   if (mail.length > 0) {
-    // Enqueue only — sending happens in the worker. See the header of
-    // supabase/notifications_02_email_queue.sql for why a Resend call must
-    // never sit on a checkout's code path.
+    // Enqueue only: sending happens in the worker, so a Resend outage can
+    // never slow or fail the checkout or status change that emitted this.
     await db.insert(notificationEmailQueue).values(mail).onConflictDoNothing();
   }
   if (sms.length > 0) {

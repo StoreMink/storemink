@@ -36,28 +36,33 @@ const STORE_FILES_PER_HOUR = 30;
 const STORE_FILES_PER_DAY = 100;
 const GLOBAL_FILES_PER_HOUR = 500;
 
-/** Fail closed before decoding or calling Vertex; shared across Cloud Run instances. */
-export async function reserveMinkInput(
-  actor: MinkActorContext,
-  requestKey: string,
-) {
-  const limits: [string, number, number][] = [
-    [
-      `mink-input-owner:${actor.storeId}:${actor.adminId}`,
-      OWNER_FILES_PER_MINUTE,
-      60,
-    ],
-    [`mink-input-store:${actor.storeId}`, STORE_FILES_PER_HOUR, 3600],
-    [`mink-input-day:${actor.storeId}`, STORE_FILES_PER_DAY, 86400],
-    ["mink-input-global", GLOBAL_FILES_PER_HOUR, 3600],
-    // Check fixed-cardinality quotas first so a caller over quota cannot create
-    // unbounded replay-key rows by supplying fresh request UUIDs.
-    [
-      `mink-input-replay:${actor.storeId}:${actor.adminId}:${requestKey}`,
-      1,
-      3600,
-    ],
-  ];
+/**
+ * ★★ VOICE HAS ITS OWN BUCKETS. Dictation and voice chat spent these file
+ * buckets, one slot per recording, so a few minutes of talking used up the
+ * store's 30 attachments for the hour and then voice and attachments were
+ * both refused, for everyone on the store. A conversation is a recording
+ * every few seconds, which is a different shape of use from a file someone
+ * attaches, so it gets ceilings sized for it.
+ * ★ The owner bucket fits a fast back-and-forth (a turn every few seconds,
+ * plus the bursts that turn out to hold no words); the store and day ceilings
+ * are a spend cap on the transcription provider, which bills per second of
+ * audio (each clip is at most 30 seconds). ⚠ These numbers are a spend
+ * decision, not a measurement: revisit them on real use.
+ */
+const VOICE_OWNER_PER_MINUTE = 20;
+const VOICE_STORE_PER_HOUR = 300;
+const VOICE_STORE_PER_DAY = 1_000;
+const VOICE_GLOBAL_PER_HOUR = 5_000;
+
+type Limit = [key: string, max: number, windowSeconds: number];
+
+/**
+ * Claims every limit in order and throws `refusal()` at the first one that is
+ * full. Fixed-cardinality quotas come before the replay key, so a caller over
+ * quota cannot create unbounded replay-key rows by supplying fresh request
+ * UUIDs. Fails closed: a database error is a refusal, never a pass.
+ */
+async function reserveLimits(limits: Limit[], refusal: () => Error) {
   for (const [key, max, seconds] of limits) {
     const allowed = await withService(async (db) => {
       const result = await db.execute(
@@ -67,11 +72,70 @@ export async function reserveMinkInput(
         (result.rows[0] as { allowed?: boolean } | undefined)?.allowed === true
       );
     });
-    if (!allowed)
-      throw new MinkRequestError(
+    if (!allowed) throw refusal();
+  }
+}
+
+/** Fail closed before decoding or calling Vertex; shared across Cloud Run instances. */
+export async function reserveMinkInput(
+  actor: MinkActorContext,
+  requestKey: string,
+) {
+  await reserveLimits(
+    [
+      [
+        `mink-input-owner:${actor.storeId}:${actor.adminId}`,
+        OWNER_FILES_PER_MINUTE,
+        60,
+      ],
+      [`mink-input-store:${actor.storeId}`, STORE_FILES_PER_HOUR, 3600],
+      [`mink-input-day:${actor.storeId}`, STORE_FILES_PER_DAY, 86400],
+      ["mink-input-global", GLOBAL_FILES_PER_HOUR, 3600],
+      [
+        `mink-input-replay:${actor.storeId}:${actor.adminId}:${requestKey}`,
+        1,
+        3600,
+      ],
+    ],
+    () =>
+      new MinkRequestError(
         "input_rate_limit",
         "This processing request was already used, or the input limit was reached. Wait before explicitly trying again.",
         429,
-      );
-  }
+      ),
+  );
+}
+
+/**
+ * One transcription, for dictation or voice chat: its own buckets (above),
+ * never the attachment ones. The message is shown as it is in the composer
+ * and in voice chat, so it says what to do in the merchant's words.
+ */
+export async function reserveMinkVoice(
+  actor: MinkActorContext,
+  requestKey: string,
+) {
+  await reserveLimits(
+    [
+      [
+        `mink-voice-owner:${actor.storeId}:${actor.adminId}`,
+        VOICE_OWNER_PER_MINUTE,
+        60,
+      ],
+      [`mink-voice-store:${actor.storeId}`, VOICE_STORE_PER_HOUR, 3600],
+      [`mink-voice-day:${actor.storeId}`, VOICE_STORE_PER_DAY, 86400],
+      ["mink-voice-global", VOICE_GLOBAL_PER_HOUR, 3600],
+      [
+        `mink-voice-replay:${actor.storeId}:${actor.adminId}:${requestKey}`,
+        1,
+        3600,
+      ],
+    ],
+    () =>
+      new MinkRequestError(
+        "voice_rate_limit",
+        "Voice has reached its limit for now. Try again a little later, or type your message.",
+        429,
+      ),
+  );
 }

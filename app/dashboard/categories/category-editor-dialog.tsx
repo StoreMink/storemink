@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { ImageRefineScope } from "@/components/ui/image-refine-context";
 import { NumberField } from "@/components/ui/number-field";
 import { slugify } from "@/lib/slug";
 import type { MinkCategoryPrefill } from "@/lib/mink/form-prefill";
@@ -181,12 +182,20 @@ export function CategoryEditorDialog({
 
           <div>
             <label className={labelClass}>Image</label>
-            <ImageUpload
-              folder="category-images"
-              spec="category"
-              defaultImage={form.image_url || undefined}
-              onUploadSuccess={(url) => set("image_url", url)}
-            />
+            {/* ★ Closing or cancelling the dialog unmounts its content
+                (base-ui, keepMounted off), which stops a refine still
+                running here. */}
+            <ImageRefineScope
+              id={`category:${category?.id ?? "new"}`}
+              releaseOnUnmount
+            >
+              <ImageUpload
+                folder="category-images"
+                spec="category"
+                defaultImage={form.image_url || undefined}
+                onUploadSuccess={(url) => set("image_url", url)}
+              />
+            </ImageRefineScope>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -2,7 +2,7 @@
 // Log retention — the sweep that deletes rows past their window.
 //
 // ── Why this file exists ──────────────────────────────────────────────────
-// Three tables grow forever and nothing ever pruned them. `email_logs.sql`
+// Three tables grow forever and nothing ever pruned them. The `email_logs` schema
 // documented a 90-day intent and even carries an `email_logs_created_idx`
 // built "for retention sweeps"; `pruneNotifications` was written with correct
 // windows and a docstring claiming it was "called by the daily cron". Nothing
@@ -54,6 +54,8 @@ import {
   CLOSED_CONVERSATION_RETENTION_DAYS,
   pruneClosedConversations,
 } from "@/lib/whatsapp/retention";
+import { MINK_CONVERSATION_RETENTION_DAYS } from "@/lib/mink/chat-session";
+import { pruneIdleMinkConversations } from "@/lib/mink/conversation-retention";
 
 /** Rows deleted per statement. Bounds both the IN list and the lock window. */
 export const BATCH_SIZE = 1000;
@@ -225,6 +227,52 @@ function batchDeleter(
     });
 }
 
+/** `ai_quota_refunds` (migration 0237) has no Drizzle table: only
+ * `refund_ai_quota` writes it. One statement keyed on its primary key,
+ * `take_id`, the search-metrics shape below. ★ The page is chosen by
+ * `created_at` with no index of its own (the table's only other index leads
+ * with `store_id`), which is fine for a table that gains one row per refunded
+ * take; LIMIT stops the scan at the first `limit` old rows. */
+function aiQuotaRefundBatchDeleter(
+  floorIso: string,
+  limit: number,
+): Promise<number> {
+  return withService(async (db) => {
+    const result = await db.execute(sql`
+      DELETE FROM public.ai_quota_refunds
+       WHERE take_id IN (
+         SELECT take_id
+           FROM public.ai_quota_refunds
+          WHERE created_at < ${floorIso}::timestamptz
+          LIMIT ${limit}
+       )
+    `);
+    return result.rowCount ?? 0;
+  });
+}
+
+/** `mink_refine_requests` (migration 0247) is written by raw SQL only
+ * (lib/mink/refine-stop.ts). One statement keyed on its composite primary
+ * key, the `aiQuotaRefundBatchDeleter` shape; `mink_refine_requests_created_idx`
+ * serves the page's `created_at` filter. */
+function refineRequestBatchDeleter(
+  floorIso: string,
+  limit: number,
+): Promise<number> {
+  return withService(async (db) => {
+    const result = await db.execute(sql`
+      DELETE FROM public.mink_refine_requests
+       WHERE (store_id, admin_id, stop_token) IN (
+         SELECT store_id, admin_id, stop_token
+           FROM public.mink_refine_requests
+          WHERE created_at < ${floorIso}::timestamptz
+          LIMIT ${limit}
+       )
+    `);
+    return result.rowCount ?? 0;
+  });
+}
+
 /** Search metrics use the meaningful composite bucket key rather than a
  * surrogate id. `ctid` is confined to this one statement, where it safely
  * identifies the bounded page selected and cannot survive a transaction. */
@@ -378,6 +426,23 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       minkCsvFiles.createdAt,
     ),
   },
+  {
+    // ★ BY LAST USE, NOT AGE, and RETIRED, not merely deleted
+    // (lib/mink/conversation-retention.ts): a chat holding the record of an
+    // approved or published change is reduced, its words gone, the record
+    // kept. `deleted` counts chats retired either way. Small batches: each
+    // chat cascades its runs, messages and proposals. Nothing cascades into
+    // or out of it from another entry.
+    table: "mink_conversations",
+    days: MINK_CONVERSATION_RETENTION_DAYS,
+    batchSize: 50,
+    reason:
+      "A Mink AI chat is kept 90 days after the merchant last sent a message in it " +
+      "or opened it (owner's decision, 2026-10-25), then deleted. A chat holding the " +
+      "record of an approved or published change is reduced instead: its words go, " +
+      "the record stays while the store exists.",
+    deleteBatch: pruneIdleMinkConversations,
+  },
   // ── CSV import/export history ──────────────────────────────────────────
   // ★ ISSUES BEFORE JOBS. `data_job_issues.job_id` is ON DELETE CASCADE from
   // `data_jobs`, the same shape as notifications → activity_events, so pruning
@@ -448,6 +513,34 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       billingWebhookEvents.eventId,
       billingWebhookEvents.receivedAt,
     ),
+  },
+  // ── Generate with AI refunds ───────────────────────────────────────────
+  // ★ AN EXACTLY-ONCE MARKER, like the webhook receipts above, and nothing
+  // cascades into it or out of it (it references only `stores`), so its place
+  // in this list is free.
+  {
+    table: "ai_quota_refunds",
+    days: 90,
+    reason:
+      "One row per Generate with AI take that was given back, kept so a second " +
+      "refund of the same take gives nothing. A take's id is minted for one " +
+      "request and refunded inside it (two tries, under a second apart), so 90 " +
+      "days is far past any repeat; a purchased credit's refund stays on the " +
+      "credit ledger as its grant row.",
+    deleteBatch: aiQuotaRefundBatchDeleter,
+  },
+  // ── Refine with Mink AI stops ──────────────────────────────────────────
+  // ★ Nothing cascades into it or out of it except from `stores`, so its
+  // place in this list is free.
+  {
+    table: "mink_refine_requests",
+    days: 30,
+    reason:
+      "One row per Refine with Mink AI request: the browser's stop and the charge " +
+      "claim, of which exactly one wins. A row decides only while its refine runs " +
+      "(about three minutes) and while the stage sweep looks at it (minutes); 30 " +
+      "days keeps 'did this merchant stop it?' answerable for support.",
+    deleteBatch: refineRequestBatchDeleter,
   },
   {
     table: "store_search_metrics",

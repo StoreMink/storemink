@@ -4,9 +4,9 @@
 // dot; it is now the real inbox.
 //
 // DELIVERY MECHANISM: polling, not push — the same choice (and the same
-// visibility gating) as RealtimeRefresher. Supabase Realtime went away with
-// the Cloud SQL migration and plain Postgres can't push row changes to a
-// browser, so the badge polls a count query that hits a partial index, and
+// visibility gating) as RealtimeRefresher. Plain Postgres can't push row
+// changes to a browser, so the badge polls a count query that hits a partial
+// index, and
 // only while the tab is actually being looked at. A Postgres LISTEN/NOTIFY →
 // SSE service is the eventual upgrade; nothing here would have to change but
 // the refresh trigger.

@@ -612,14 +612,8 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="inline-flex items-center gap-1 text-[10px] text-[#6c6573]">
-            {draft.chargedCredits > 0 ? (
-              <Check className="h-3 w-3 text-emerald-600" />
-            ) : (
-              <ShieldCheck className="h-3 w-3 text-emerald-600" />
-            )}
-            {draft.chargedCredits > 0
-              ? `${draft.chargedCredits} Mink credit${draft.chargedCredits === 1 ? "" : "s"} used`
-              : "Included in your plan"}
+            <ShieldCheck className="h-3 w-3 text-emerald-600" />
+            Private until you approve it
           </span>
           {draft.kind === "product_create" ? (
             <MinkLink

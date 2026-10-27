@@ -188,7 +188,7 @@ is safe to expose to real transactions.
 ## Delivered foundation — Shiprocket logistics ✅ DONE
 
 The delivery lifecycle is no longer an order-status dropdown pretending to be
-a warehouse. `logistics_01_shiprocket.sql` adds Shopify-shaped fulfilment work,
+a warehouse. `20260814_0001_logistics_shiprocket.sql` adds Shopify-shaped fulfilment work,
 parcels and append-only carrier events; each merchant connects their own
 Shiprocket API user in Channels and maps every `online_fulfil` location to a
 pickup address. Location address lines are normalized for Shiprocket's primary
@@ -212,7 +212,7 @@ and RTO propagate to the order/customer timeline; the dashboard can ask for a
 re-attempt or return-to-origin. Credentials, raw events and carrier internals
 are service-only, while the shopper sees courier, AWB, tracking link and scans.
 
-**Deployment state:** `supabase/logistics_01_shiprocket.sql` is enrolled in the
+**Deployment state:** `drizzle/migrations/sql/20260814_0001_logistics_shiprocket.sql` is enrolled in the
 checksummed migration ledger and applied to staging **and production**
 (2026-08-14). The remaining merchant setup is to set `PAYMENT_CRED_KEY`, connect
 the merchant account, sync warehouses, and copy the generated provider-neutral
@@ -342,7 +342,7 @@ the refund DESTINATION is chosen and confirmed, Shopify's model.
 - `lib/orders/cancellation.ts` — pure rules + 49 tests: the five-value window
   (`none` / `until_fulfilled` / `1h` / `24h` / `custom`), eligibility, the fixed
   cancel-reason vocabulary, and which refund destinations an order can honour.
-- `supabase/orders_01_cancellation.sql` — the request lifecycle as columns on
+- `orders_01_cancellation.sql` — the request lifecycle as columns on
   `orders` (applied), plus a partial index for the queue.
 - Three settings: allow, window (select), approval (select, **approval
   required** by default).
@@ -486,7 +486,7 @@ pickup-specific events default, and those are safe because pickup has no live
 users. A merchant's own choice always wins over the default.
 
 **⏳ Remaining:** running PS-8.1–8.31 and PS-E.1–E.6 in a browser. Nothing
-blocks it any more — `supabase/locations_11_pickup_code.sql` is applied
+blocks it any more — `locations_11_pickup_code.sql` is applied
 (`orders.pickup_code` verified present in `storemink` and `storemink_staging`,
 2026-08-18), so the only thing left is somebody doing the run.
 
@@ -663,7 +663,7 @@ same phone, **their signup collides with the row we invented for them**.
 
 ### SHIPPED — an unclaimed customer, and a claim on signup
 
-**Migration.** `supabase/pos_13_customer_claim.sql` — ✅ **applied to
+**Migration.** `pos_13_customer_claim.sql` — ✅ **applied to
 `storemink_staging` 2026-08-14** (all six FKs cascading; the guard passed).
 `users.claimed_at timestamptz` (NULL = never had an account); till-created rows
 get an id of `pos_<uuid>`, which the `text` PK already permits.
@@ -782,8 +782,9 @@ discount carries a signed approval token naming the manager who keyed their PIN
 AWAY. Persisting `approverId` is most of this step's value for almost none of
 its work — and it is the one fact nobody can reconstruct afterwards.
 
-**✅ Shipped.** `supabase/pos_16_money_audit.sql` (⚠ **not applied** — needs
-`postgres`) adds `amount` / `approver` / `order_id` plus a partial index;
+**✅ Shipped.** `pos_16_money_audit.sql` (applied by hand as `postgres`
+before the migration ledger) adds `amount` / `approver` / `order_id` plus a
+partial index;
 `posAudit` gained four money events wired into `placePosSale`, `processReturn`
 and `recordCashMovement`; and `/dashboard/pos/money` renders the feed with
 per-event filters and a net-out total. 12 new tests; the approver and the
@@ -829,11 +830,11 @@ Two cheap fixes with one theme: things that should lapse currently do not.
 `30 1 * * *`, and it carries `sweepExpiredPickups` AND `sweepPickupReminders`.
 So an expired collection sits in the queue up to 24h, an unpaid gateway order
 holds stock up to 24h, and `PICKUP_WARN_HOURS` (48) sits exactly at its
-documented minimum of 2× the interval. The daily cadence was a Vercel Hobby
-constraint that no longer applies.
+documented minimum of 2× the interval. Nothing requires the daily cadence any
+more.
 
-**✅ Shipped:** `30 * * * *` in `vercel.json` (the inert schedule record) and in
-`docs/cron-jobs.md` (the doc of record).
+**✅ Shipped:** `30 * * * *` in Cloud Scheduler, recorded in `docs/cron-jobs.md`
+(the doc of record).
 
 **✅ THE CLOUD SCHEDULER JOB IS NOW HOURLY** (applied 2026-08-21;
 `schedule: 30 * * * *`, ENABLED). It needed an interactive `gcloud` reauth, so
@@ -1314,7 +1315,7 @@ own portal approved — leaving them unable to tell whose rule they broke.
 Merchants connect their own Twilio account in **Channels → Twilio SMS**.
 StoreMink never fronts the carrier bill and never carries their spam risk.
 
-**Shipped since:** the schema (`supabase/sms_01_schema.sql`, applied),
+**Shipped since:** the schema (`sms_01_schema.sql`, applied),
 the Twilio client and the `lib/sms/send.ts` choke point with its coverage guard,
 the Channels connection card, the SMS log as a sixth log plus a Failures source,
 and the DLT template mirror actions. See CODEBASE §37.
@@ -1571,7 +1572,7 @@ customer history spanning till and website.
 **✅ Shipped.** `lib/payments/pos-gateway.ts` (start + verify, built only on the
 three Razorpay calls already live in production since §18),
 `startPosGatewayPayment` / `confirmPosGatewayPayment`, the Online method on the
-tender pad, and `supabase/pos_15_gateway_tender.sql` (applied — the index is
+tender pad, and `pos_15_gateway_tender.sql` (applied — the index is
 present in both databases, verified 2026-08-18).
 
 **★★ BOTH COUNTERS VERIFY, FROM ONE IMPLEMENTATION.** `verifyGatewayTenders`

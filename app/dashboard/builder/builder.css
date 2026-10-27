@@ -53,6 +53,15 @@
 .sm-builder-iconbtn:hover {
   background: #f3f4f6;
 }
+/* Mink AI. The builder's canvas covers the dashboard topbar and its Mink AI
+   button (dashboard.css), so the builder's own top bar opens the shared
+   panel. The purple mark is the button's face, so no frame around it. */
+.sm-builder-mink {
+  border-color: transparent;
+}
+.sm-builder-mink[aria-expanded="true"] {
+  background: #f3f4f6;
+}
 .sm-builder-brand {
   font-weight: 700;
   font-size: 14px;

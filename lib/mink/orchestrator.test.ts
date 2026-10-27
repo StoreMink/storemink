@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MinkConfig } from "./config";
+import { MinkRunStoppedError } from "./errors";
 import { runMinkAgent } from "./orchestrator";
 import type {
   MinkActorContext,
@@ -7,7 +8,7 @@ import type {
   MinkModelTurn,
   MinkUsage,
 } from "./types";
-import { MinkToolRegistry } from "./tools/registry";
+import { MinkToolRegistry, type MinkToolContext } from "./tools/registry";
 
 const ZERO_USAGE: MinkUsage = {
   promptTokens: 0,
@@ -51,6 +52,14 @@ function config(overrides: Partial<MinkConfig> = {}): MinkConfig {
     maxOutputTokens: 2_048,
     maxModelRetries: 1,
     runTimeoutMs: 120_000,
+    firstChunkTimeoutMs: 20_000,
+    streamIdleTimeoutMs: 20_000,
+    fallbackModel: "gemini-3.5-flash",
+    fallbackLocation: "asia-south1",
+    voiceStartsOnFallback: true,
+    toolRouting: true,
+    liteModel: "gemini-3.5-flash-lite",
+    liteRouting: false,
     ...overrides,
   };
 }
@@ -448,6 +457,270 @@ describe("runMinkAgent", () => {
 // prompt already asks it not to repeat a successful read; the memo makes that
 // true whether or not the model complies.
 // ---------------------------------------------------------------------------
+// ★★ B6: the run's own stop (its deadline, the merchant leaving) reaches the
+//    tools it runs, so a stopped run stops their paid work.
+describe("★★ the run's stop reaches its tools (B6)", () => {
+  function waitingRegistry(seen: { context?: MinkToolContext }) {
+    return new MinkToolRegistry([
+      {
+        declaration: {
+          name: "get_store_profile",
+          description: "Read store.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 60_000,
+        execute: vi.fn(
+          (_actor, _args, context?: MinkToolContext) =>
+            new Promise<Record<string, unknown>>((resolve) => {
+              seen.context = context;
+              context?.signal.addEventListener("abort", () =>
+                resolve({ stopped: true }),
+              );
+            }),
+        ),
+      },
+    ]);
+  }
+
+  function oneToolSession(): MinkModelSession {
+    return {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "call-1", name: "get_store_profile", args: {} },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "Stopped." })),
+    };
+  }
+
+  it("★★ hands the run's signal to every tool call", async () => {
+    const run = new AbortController();
+    const seen: { context?: MinkToolContext } = {};
+    const pending = runMinkAgent({
+      actor: ACTOR,
+      message: "How is my store?",
+      config: config(),
+      registry: waitingRegistry(seen),
+      session: oneToolSession(),
+      abortSignal: run.signal,
+    });
+    await vi.waitFor(() => expect(seen.context).toBeDefined());
+    expect(seen.context?.signal.aborted).toBe(false);
+    run.abort();
+    await pending;
+    expect(seen.context?.signal.aborted).toBe(true);
+  });
+
+  it("★ a run that has already stopped never starts its tool", async () => {
+    const run = new AbortController();
+    run.abort();
+    const seen: { context?: MinkToolContext } = {};
+    const registry = waitingRegistry(seen);
+    const execute = vi.spyOn(registry, "execute");
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "How is my store?",
+      config: config(),
+      registry,
+      session: oneToolSession(),
+      abortSignal: run.signal,
+    });
+    expect(execute).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ name: "get_store_profile" }),
+      { signal: run.signal },
+    );
+    expect(seen.context).toBeUndefined();
+  });
+});
+
+// ★★ The stop handshake (lib/mink/run-stop.ts, 25 Oct 2026): a stop the
+//    merchant asked for wins only while the run has not acted, and a stopped
+//    run asks the model nothing more, so no answer is written for it.
+describe("★★ a stop the merchant asked for", () => {
+  function writeRegistry(execute = vi.fn(async () => ({ saved: true }))) {
+    return new MinkToolRegistry([
+      {
+        declaration: {
+          name: "propose_blog_draft",
+          description: "Draft a blog.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 5_000,
+        execute,
+      },
+    ]);
+  }
+
+  function session(): MinkModelSession {
+    return {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "call-1", name: "propose_blog_draft", args: {} },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "Drafted." })),
+    };
+  }
+
+  it("★ hands the claim to every tool call", async () => {
+    const registry = writeRegistry();
+    const execute = vi.spyOn(registry, "execute");
+    const claimAct = vi.fn(async () => undefined);
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "Write a blog",
+      config: config(),
+      registry,
+      session: session(),
+      claimAct,
+    });
+    expect(result.text).toBe("Drafted.");
+    expect(execute).toHaveBeenCalledWith(
+      ACTOR,
+      expect.objectContaining({ name: "propose_blog_draft" }),
+      { signal: undefined, claimAct },
+    );
+    expect(claimAct).toHaveBeenCalledOnce();
+  });
+
+  it("★★ a refused claim ends the run as stopped, with no further model call", async () => {
+    const execute = vi.fn(async () => ({ saved: true }));
+    const chat = session();
+    const onEvent = vi.fn();
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "Write a blog",
+        config: config(),
+        registry: writeRegistry(execute),
+        session: chat,
+        onEvent,
+        claimAct: vi.fn(async () => {
+          throw new MinkRunStoppedError();
+        }),
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(execute).not.toHaveBeenCalled();
+    expect(chat.sendToolResponses).not.toHaveBeenCalled();
+    // The refused call is still recorded, as stopped.
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "tool_result",
+        name: "propose_blog_draft",
+        ok: false,
+        errorCode: "run_stopped",
+      }),
+    );
+  });
+
+  it("★★ a stop seen while a read runs ends the run before the model is asked again", async () => {
+    const run = new AbortController();
+    const chat: MinkModelSession = {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "call-1", name: "get_store_profile", args: {} },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "Your store." })),
+    };
+    const registry = new MinkToolRegistry([
+      {
+        declaration: {
+          name: "get_store_profile",
+          description: "Read store.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 5_000,
+        effect: "read",
+        execute: vi.fn(async () => {
+          // The stop arrives while the read is answering; the read finishes.
+          run.abort(new MinkRunStoppedError());
+          return { name: "Acme" };
+        }),
+      },
+    ]);
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "How is my store?",
+        config: config(),
+        registry,
+        session: chat,
+        abortSignal: run.signal,
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(chat.sendToolResponses).not.toHaveBeenCalled();
+  });
+
+  it("★ a stop seen with nothing refused still asks the model nothing more", async () => {
+    // The second turn repeats a pure read, served from the memo, so no tool
+    // answers run_stopped: only the check before the next send can stop it.
+    const run = new AbortController();
+    const read = { id: "call-1", name: "get_store_profile", args: {} };
+    const sendToolResponses = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        run.abort(new MinkRunStoppedError());
+        return turn({ functionCalls: [{ ...read, id: "call-2" }] });
+      })
+      .mockImplementation(async () => turn({ text: "Your store." }));
+    const registry = new MinkToolRegistry([
+      {
+        declaration: {
+          name: "get_store_profile",
+          description: "Read store.",
+          parametersJsonSchema: { type: "object", properties: {} },
+        },
+        permission: { section: "dashboard", action: "view" },
+        timeoutMs: 5_000,
+        repeatSafe: true,
+        execute: vi.fn(async () => ({ name: "Acme" })),
+      },
+    ]);
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "How is my store?",
+        config: config(),
+        registry,
+        session: {
+          sendUserMessage: vi.fn(async () => turn({ functionCalls: [read] })),
+          sendToolResponses,
+        },
+        abortSignal: run.signal,
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(sendToolResponses).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ a run stopped before it began asks the model nothing", async () => {
+    const run = new AbortController();
+    run.abort(new MinkRunStoppedError());
+    const chat = session();
+    await expect(
+      runMinkAgent({
+        actor: ACTOR,
+        message: "Write a blog",
+        config: config(),
+        registry: writeRegistry(),
+        session: chat,
+        abortSignal: run.signal,
+      }),
+    ).rejects.toBeInstanceOf(MinkRunStoppedError);
+    expect(chat.sendUserMessage).not.toHaveBeenCalled();
+  });
+});
+
 describe("repeated tool calls", () => {
   function memoRegistry(repeatSafe: boolean, execute = vi.fn()) {
     return new MinkToolRegistry([
@@ -821,6 +1094,12 @@ describe("★★ streamed answers", () => {
     expect(types.indexOf("text_reset")).toBeLessThan(
       types.indexOf("tool_call"),
     );
+    // ★ Labelled, so a voice turn's acknowledgement can survive this reset
+    // (the stream route keeps it) and not a retry's.
+    expect(onEvent.mock.calls[1][0]).toEqual({
+      type: "text_reset",
+      reason: "tool_call",
+    });
     expect(result.text).toBe("All good.");
   });
 
@@ -847,8 +1126,388 @@ describe("★★ streamed answers", () => {
 
     expect(onEvent.mock.calls.map(([event]) => event)).toEqual([
       { type: "text_delta", text: "Half an ans" },
-      { type: "text_reset" },
+      { type: "text_reset", reason: "retry" },
       { type: "text_delta", text: "A whole answer." },
     ]);
+  });
+});
+
+describe("★★ request_more_tools", () => {
+  const USAGE = (prompt: number): MinkUsage => ({
+    promptTokens: prompt,
+    outputTokens: 5,
+    thoughtTokens: 0,
+    totalTokens: prompt + 5,
+    cachedTokens: 0,
+    basePromptTokens: prompt,
+  });
+
+  function toolsRegistry(execute = vi.fn(async () => ({ ok: true }))) {
+    const tool = (name: string, flags: Record<string, boolean> = {}) => ({
+      declaration: {
+        name,
+        description: name,
+        parametersJsonSchema: { type: "object", properties: {} },
+      },
+      permission: { section: "dashboard", action: "view" } as const,
+      timeoutMs: 5_000,
+      ...flags,
+      execute,
+    });
+    return {
+      execute,
+      registry: new MinkToolRegistry([
+        tool("search_products", { repeatSafe: true }),
+        tool("open_dashboard_page", { restartSafe: true }),
+        tool("propose_social_posts"),
+      ]),
+    };
+  }
+
+  /** A session that widens once, on the main model. */
+  function widening(turns: {
+    narrow: MinkModelTurn[];
+    widened: MinkModelTurn[];
+  }) {
+    let model = "gemini-3.5-flash-lite";
+    let queue = [...turns.narrow];
+    const restartWithAllTools = vi.fn(() => {
+      if (model !== "gemini-3.5-flash-lite") return false;
+      model = "gemini-3.7-flash";
+      queue = [...turns.widened];
+      return true;
+    });
+    const next = async () => {
+      const value = queue.shift();
+      if (!value) throw new Error("no turn left");
+      return value;
+    };
+    const session: MinkModelSession = {
+      get model() {
+        return model;
+      },
+      restartWithAllTools,
+      sendUserMessage: vi.fn(next),
+      sendToolResponses: vi.fn(next),
+    };
+    return { session, restartWithAllTools };
+  }
+
+  it("withdraws what a turn asking for more tools wrote, as a restart, not a tool call", async () => {
+    // ★ A voice turn's acknowledgement survives a `tool_call` reset; this
+    // turn is asked again from the start, which says it again.
+    const { registry: tools } = toolsRegistry();
+    let widened = false;
+    const session: MinkModelSession = {
+      restartWithAllTools: vi.fn(() => {
+        if (widened) return false;
+        widened = true;
+        return true;
+      }),
+      sendUserMessage: vi.fn(async (_message, options) => {
+        if (widened) return turn({ text: "Done." });
+        options?.onDelta?.("<spoken>Let me check.</spoken>");
+        return turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        });
+      }),
+      sendToolResponses: vi.fn(),
+    };
+    const onEvent = vi.fn();
+
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "Write posts",
+      config: config(),
+      registry: tools,
+      session,
+      onEvent,
+    });
+
+    const resets = onEvent.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.type === "text_reset");
+    expect(resets).toEqual([{ type: "text_reset", reason: "restart" }]);
+  });
+
+  it("★ keeps the acknowledgement when the request for more tools is answered in place, not restarted", async () => {
+    // A proposal already ran, so the request is refused and the run carries
+    // on: nothing will say the acknowledgement again, so it must not be
+    // withdrawn as a restart.
+    const { registry: tools } = toolsRegistry();
+    const { session, restartWithAllTools } = widening({
+      narrow: [
+        turn({
+          functionCalls: [{ id: "a", name: "propose_social_posts", args: {} }],
+        }),
+        turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+        turn({ text: "Your posts are ready." }),
+      ],
+      widened: [],
+    });
+    const send = session.sendToolResponses as ReturnType<typeof vi.fn>;
+    send.mockImplementationOnce(async (_responses, options) => {
+      options?.onDelta?.("<spoken>Let me check that.</spoken>");
+      return turn({
+        functionCalls: [
+          { id: "b", name: "request_more_tools", args: { reason: "x" } },
+        ],
+      });
+    });
+    const onEvent = vi.fn();
+
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+      onEvent,
+    });
+
+    expect(restartWithAllTools).not.toHaveBeenCalled();
+    const resets = onEvent.mock.calls
+      .map(([event]) => event)
+      .filter((event) => event.type === "text_reset");
+    expect(resets).toEqual([{ type: "text_reset", reason: "tool_call" }]);
+  });
+
+  it("starts again with every tool on the main model, metering only the new attempt", async () => {
+    const { registry: tools, execute } = toolsRegistry();
+    const { session, restartWithAllTools } = widening({
+      narrow: [
+        turn({
+          functionCalls: [{ id: "a", name: "search_products", args: {} }],
+          usage: USAGE(1_000),
+        }),
+        turn({
+          functionCalls: [
+            {
+              id: "b",
+              name: "request_more_tools",
+              args: { reason: "Needs the social post tool." },
+            },
+          ],
+          usage: USAGE(1_200),
+        }),
+      ],
+      widened: [
+        turn({
+          functionCalls: [{ id: "c", name: "propose_social_posts", args: {} }],
+          usage: USAGE(9_000),
+        }),
+        turn({ text: "Your posts are ready.", usage: USAGE(9_400) }),
+      ],
+    });
+    const onEvent = vi.fn();
+
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "Write instagram posts for the sale",
+      config: config(),
+      registry: tools,
+      session,
+      onEvent,
+    });
+
+    expect(restartWithAllTools).toHaveBeenCalledOnce();
+    // The merchant's message is asked again on the widened chat.
+    expect(session.sendUserMessage).toHaveBeenCalledTimes(2);
+    expect(result.text).toBe("Your posts are ready.");
+    expect(result.model).toBe("gemini-3.7-flash");
+    expect(result.steps).toBe(2);
+    expect(result.toolCalls).toBe(1);
+    // ★ The miss is reported apart, never in what the merchant is metered on.
+    expect(result.usage.promptTokens).toBe(18_400);
+    expect(result.usage.basePromptTokens).toBe(9_000);
+    expect(result.restart).toEqual({
+      abandonedModel: "gemini-3.5-flash-lite",
+      usage: expect.objectContaining({ promptTokens: 2_200 }),
+      steps: 2,
+      toolCalls: 1,
+    });
+    expect(
+      onEvent.mock.calls.map(([event]) => event.type).filter(Boolean),
+    ).toContain("tools_restarted");
+    // The escape hatch itself is never recorded as a tool call.
+    expect(
+      onEvent.mock.calls.some(
+        ([event]) =>
+          event.type === "tool_call" &&
+          event.call.name === "request_more_tools",
+      ),
+    ).toBe(false);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it("★ drops calls made beside the request instead of running them", async () => {
+    const { registry: tools, execute } = toolsRegistry();
+    const { session } = widening({
+      narrow: [
+        turn({
+          functionCalls: [
+            { id: "a", name: "propose_social_posts", args: {} },
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+      ],
+      widened: [turn({ text: "Done." })],
+    });
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("★ a restart-safe navigation does not block the restart", async () => {
+    const { registry: tools } = toolsRegistry();
+    const { session, restartWithAllTools } = widening({
+      narrow: [
+        turn({
+          functionCalls: [{ id: "a", name: "open_dashboard_page", args: {} }],
+        }),
+        turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+      ],
+      widened: [turn({ text: "Done." })],
+    });
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+    });
+    expect(restartWithAllTools).toHaveBeenCalledOnce();
+  });
+
+  it("★★ refuses once something has been prepared, so nothing happens twice", async () => {
+    const { registry: tools, execute } = toolsRegistry();
+    const { session, restartWithAllTools } = widening({
+      narrow: [
+        turn({
+          functionCalls: [{ id: "a", name: "propose_social_posts", args: {} }],
+        }),
+        turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+        turn({ text: "Your posts are ready; ask me for the rest." }),
+      ],
+      widened: [],
+    });
+
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+    });
+
+    expect(restartWithAllTools).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledOnce();
+    expect(result.restart).toBeUndefined();
+    expect(result.model).toBe("gemini-3.5-flash-lite");
+    expect(session.sendToolResponses).toHaveBeenLastCalledWith(
+      [
+        {
+          id: "b",
+          name: "request_more_tools",
+          response: {
+            error: expect.objectContaining({
+              code: "more_tools_unavailable",
+              message: expect.stringContaining("already prepared or queued"),
+            }),
+          },
+        },
+      ],
+      expect.anything(),
+    );
+  });
+
+  it("answers the request in place when the session cannot widen", async () => {
+    const { registry: tools } = toolsRegistry();
+    const session: MinkModelSession = {
+      sendUserMessage: vi.fn(async () =>
+        turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+      ),
+      sendToolResponses: vi.fn(async () => turn({ text: "I can't do that." })),
+    };
+    const result = await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+    });
+    expect(result.text).toBe("I can't do that.");
+    expect(result.model).toBe("gemini-3.7-flash");
+    expect(session.sendToolResponses).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          response: {
+            error: expect.objectContaining({
+              message: expect.stringContaining("already declared"),
+            }),
+          },
+        }),
+      ],
+      expect.anything(),
+    );
+  });
+
+  it("★ forgets the abandoned attempt's reads, so the new attempt reads afresh", async () => {
+    const { registry: tools, execute } = toolsRegistry();
+    const { session } = widening({
+      narrow: [
+        turn({
+          functionCalls: [{ id: "a", name: "search_products", args: {} }],
+        }),
+        turn({
+          functionCalls: [
+            { id: "b", name: "request_more_tools", args: { reason: "x" } },
+          ],
+        }),
+      ],
+      widened: [
+        turn({
+          functionCalls: [{ id: "c", name: "search_products", args: {} }],
+        }),
+        turn({ text: "Done." }),
+      ],
+    });
+    await runMinkAgent({
+      actor: ACTOR,
+      message: "go",
+      config: config(),
+      registry: tools,
+      session,
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
+    const last = (
+      session.sendToolResponses as ReturnType<typeof vi.fn>
+    ).mock.calls.at(-1)?.[0];
+    expect(last[0].response.output).not.toHaveProperty(
+      "alreadyRequestedInThisRun",
+    );
   });
 });

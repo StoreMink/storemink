@@ -62,6 +62,12 @@
   padding: 4px;
   height: 40px;
 }
+.brandingHint {
+  margin: 0;
+  color: #5b6675;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
 .brandingBar {
   display: flex;
   align-items: center;

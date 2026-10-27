@@ -440,6 +440,8 @@ export async function answerWithMink(
     answerId: null,
     reason,
   });
+  // Only a failure of the model call itself can be "busy" (the catch below).
+  let askingModel = false;
   try {
     const config = getMinkConfig();
     if (!config.enabled || !config.projectId) return skip("mink_unavailable");
@@ -501,18 +503,22 @@ export async function answerWithMink(
     const allowed = allowedUrlsIn(facts);
     const summary = factsSummary(facts);
 
-    // One attempt, and one more only if the first stalled (mink-model.ts).
+    // The main model, once more if it was busy (a 429, a 5xx or a stall),
+    // then the Mink fallback once (mink-model.ts).
+    askingModel = true;
     const result = await callMinkWhatsAppModelWithRetry(config, {
       facts,
       message: input.text,
       now,
       timeZone: ctx.timeZone,
     });
+    askingModel = false;
     if (result.attempts > 1) {
-      logWarn("whatsapp mink: model stalled once, answered on the retry", {
+      logWarn("whatsapp mink: answered after a retry", {
         storeId,
         conversationId,
         attempts: result.attempts,
+        model: result.model,
       });
     }
     const answer =
@@ -532,7 +538,7 @@ export async function answerWithMink(
       outputTokens: result.outputTokens,
     };
 
-    // ★ A person answered while the model was thinking (seconds, up to two
+    // ★ A person answered while the model was thinking (seconds, up to three
     // 25 s attempts): their reply stands. Mink's words are kept on the ledger
     // with what they cost in tokens, and nothing is sent, charged or left as
     // a draft whose Send would answer the customer twice.
@@ -719,6 +725,27 @@ export async function answerWithMink(
         reason: "timeout",
       };
     }
+    // ★ BUSY, NOT BROKEN. A 429 or a 5xx that is still the answer after every
+    //   attempt (the main model twice, then the fallback) arrives here as the
+    //   provider's own error: Google's shared pool was full, which is no bug
+    //   of ours, so it is a warning with its own reason, never logError.
+    //   Only the model call's failure counts (`askingModel`), and only those
+    //   statuses: anything else, a TypeError included, may be a real fault.
+    //   Content-free: the status, never the provider's message.
+    const status = providerStatus(err);
+    if (askingModel && status !== null && (status === 429 || status >= 500)) {
+      logWarn("whatsapp mink: model busy", {
+        storeId,
+        conversationId,
+        status,
+      });
+      return {
+        outcome: "failed",
+        needsHuman: true,
+        answerId: null,
+        reason: "busy",
+      };
+    }
     logError("whatsapp mink: answer failed", err, { storeId, conversationId });
     return {
       outcome: "failed",
@@ -727,4 +754,11 @@ export async function answerWithMink(
       reason: "error",
     };
   }
+}
+
+/** The HTTP status a provider's error carries (the SDK's ApiError), or null. */
+function providerStatus(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const status = (error as { status?: unknown }).status;
+  return typeof status === "number" && Number.isInteger(status) ? status : null;
 }

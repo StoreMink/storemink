@@ -18,9 +18,7 @@ export default async function UserGroupsPage() {
           <span>⚠️</span> Failed to load user groups
         </div>
         <p className="leading-relaxed text-destructive/80">
-          Make sure the <code>user_groups</code> table exists (run{" "}
-          <code>supabase/user_groups_table.sql</code> in the SQL Editor) and
-          that you have the correct permissions.
+          Refresh the page to try again.
         </p>
       </div>
     );

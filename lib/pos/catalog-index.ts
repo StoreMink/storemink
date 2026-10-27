@@ -184,7 +184,7 @@ export function applyStockDeltas(
 
 // ---- Manager-arranged layout ------------------------------------------------
 
-/** One slot in a manager's register layout (supabase/pos_09_register_layout.sql). */
+/** One slot in a manager's register layout (stored in pos_layouts). */
 export interface LayoutEntry {
   productId: string;
   variantId: string | null;

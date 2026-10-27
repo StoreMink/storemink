@@ -43,6 +43,7 @@ import { minkStorefrontDesignTools } from "./storefront-design-tools";
 import { minkBuilderTools } from "./builder-tools";
 import { minkMediaTools } from "./media-tools";
 import { minkStorefrontLayoutTools } from "./storefront-layout-tools";
+import { minkStorefrontRevampTools } from "./storefront-revamp-tools";
 import { openDashboardPage } from "./navigation-tools";
 import { queryAnalytics } from "./analytics-tools";
 import { getMarketingChannels, getShippingSettings } from "./commerce-tools";
@@ -771,7 +772,7 @@ const getSalesSummary: MinkTool = {
         channel: {
           type: "string",
           enum: [...SALES_CHANNELS],
-          description: "All sales, online store sales, or point-of-sale sales.",
+          description: "All sales, online store sales, or POS sales.",
           default: "all",
         },
       },
@@ -1930,6 +1931,14 @@ function repeatSafe(tool: MinkTool): MinkTool {
   return { ...tool, repeatSafe: true };
 }
 
+/**
+ * Harmless to run again in a restarted attempt, though not to serve from the
+ * memo (registry.ts `restartSafe`).
+ */
+function restartSafe(tool: MinkTool): MinkTool {
+  return { ...tool, restartSafe: true };
+}
+
 export const minkReadToolRegistry = new MinkToolRegistry([
   // ★ `repeatSafe(...)` marks a PURE read: same arguments, same answer, no side
   // effect, so the orchestrator may serve a repeat from its per-run memo.
@@ -1965,9 +1974,11 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   repeatSafe(listOrdersTool),
   repeatSafe(currentOrderTool),
   repeatSafe(searchHelpCentreTool),
-  // ⚠ Unmarked: a navigation is something the panel ACTS on, so a repeated
-  // identical call must reach the client each time rather than the memo.
-  openDashboardPage,
+  // ⚠ Not repeat-safe: a navigation is something the panel ACTS on, so a
+  // repeated identical call must reach the client each time rather than the
+  // memo. ★ Restart-safe: the panel acts only on the FINAL message's
+  // artifacts, so a navigation from an abandoned attempt is never opened.
+  restartSafe(openDashboardPage),
   // ⚠ Unmarked: these create proposals, charge credits, or generate an image
   // that costs real money per call.
   ...minkDraftTools,
@@ -1977,4 +1988,9 @@ export const minkReadToolRegistry = new MinkToolRegistry([
   ...minkStorefrontDesignTools,
   ...minkBuilderTools,
   ...minkMediaTools,
+  // ★ The storefront revamp replaced the v1 personalisation proposal in the
+  //   model's registry; that module stays for the cards and approvals of
+  //   drafts already made. The context read is repeat-safe; the starts queue
+  //   paid work and are not.
+  ...minkStorefrontRevampTools,
 ]);

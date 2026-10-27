@@ -40,7 +40,7 @@ import {
   type MinkBulkPriceLookupInput,
   type MinkBulkPriceTarget,
 } from "../bulk-price-targets";
-import type { MinkTool } from "./registry";
+import type { MinkTool, MinkToolContext } from "./registry";
 import { resolveMinkLocation } from "./location-scope";
 import {
   evaluateMinkOrderTransition,
@@ -67,6 +67,27 @@ const currentProductAvailable = (actor: MinkActorContext) =>
 const customerGroupCreateAvailable = (actor: MinkActorContext) =>
   draftingAvailable(actor) && limitsFor(actor.effectivePlan).customerGroups;
 
+/**
+ * ★★ A PROPOSAL CLAIMS THE RUN ONLY ONCE ITS ARGUMENTS HAVE PASSED (the stop
+ *   handshake, lib/mink/run-stop.ts, 26 Oct 2026). These are `commit` tools:
+ *   every argument, limit and checkpoint is read first, and `commit` claims
+ *   that the run has acted just before the Media copy, the draft and its
+ *   charge are written. Claimed before the tool started, a proposal refused
+ *   over its arguments still marked the run as acted, so the merchant's Stop
+ *   was refused ("Mink has already started this") although nothing had been
+ *   made, and the corrected retry was drafted and charged. `commit` also
+ *   refuses the write once the tool's time is up (B6).
+ * ⚠ A refusal inside the write itself (the draft's content limits, too few
+ *   credits) has claimed by then: the safe side. Without a context (a test
+ *   calling the tool directly) the write runs as it is.
+ */
+function commitProposal<T>(
+  context: MinkToolContext | undefined,
+  write: () => Promise<T>,
+): Promise<T> {
+  return context ? context.commit(write) : write();
+}
+
 export const proposeCurrentProductDescriptionTool: MinkTool = {
   declaration: {
     name: "propose_current_product_description",
@@ -89,23 +110,27 @@ export const proposeCurrentProductDescriptionTool: MinkTool = {
   permission: { section: "products", action: "manage" },
   available: currentProductAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const product = await readCurrentProduct(actor);
+    const content = {
+      description: readString(args.description, "description", 3_000),
+    };
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "product_description",
-        title: `Description for ${product.name}`,
-        destinationType: "product",
-        destinationId: product.id,
-        destinationLabel: product.name,
-        destinationPath: `/dashboard/products/${product.id}`,
-        before: { description: product.description ?? "" },
-        content: {
-          description: readString(args.description, "description", 3_000),
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "product_description",
+          title: `Description for ${product.name}`,
+          destinationType: "product",
+          destinationId: product.id,
+          destinationLabel: product.name,
+          destinationPath: `/dashboard/products/${product.id}`,
+          before: { description: product.description ?? "" },
+          content,
+        }),
+      ),
     );
   },
 };
@@ -138,31 +163,31 @@ export const proposeCurrentProductSeoTool: MinkTool = {
   permission: { section: "products", action: "manage" },
   available: currentProductAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const product = await readCurrentProduct(actor);
+    const content = {
+      seo_title: readString(args.seo_title, "seo_title", 70),
+      seo_description: readString(args.seo_description, "seo_description", 180),
+    };
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "product_seo",
-        title: `SEO for ${product.name}`,
-        destinationType: "product",
-        destinationId: product.id,
-        destinationLabel: product.name,
-        destinationPath: `/dashboard/products/${product.id}`,
-        before: {
-          seo_title: product.seoTitle ?? "",
-          seo_description: product.seoDescription ?? "",
-        },
-        content: {
-          seo_title: readString(args.seo_title, "seo_title", 70),
-          seo_description: readString(
-            args.seo_description,
-            "seo_description",
-            180,
-          ),
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "product_seo",
+          title: `SEO for ${product.name}`,
+          destinationType: "product",
+          destinationId: product.id,
+          destinationLabel: product.name,
+          destinationPath: `/dashboard/products/${product.id}`,
+          before: {
+            seo_title: product.seoTitle ?? "",
+            seo_description: product.seoDescription ?? "",
+          },
+          content,
+        }),
+      ),
     );
   },
 };
@@ -198,8 +223,9 @@ export const proposeProductImagesTool: MinkTool = {
   permission: { section: "products", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 45_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const id = readString(args.product_id, "product_id", 36);
     if (!/^[0-9a-f-]{36}$/i.test(id))
       throw new MinkToolInputError(
@@ -213,7 +239,7 @@ export const proposeProductImagesTool: MinkTool = {
         (url) => typeof url !== "string" || !url.trim() || url.length > 2048,
       )
     )
-      throw new MinkToolInputError("Supply 1–20 exact uploaded image URLs.");
+      throw new MinkToolInputError("Supply 1 to 20 exact uploaded image URLs.");
     if (
       !["replace_primary", "add", "replace_gallery"].includes(String(args.mode))
     )
@@ -246,62 +272,73 @@ export const proposeProductImagesTool: MinkTool = {
       throw new MinkToolInputError(
         "Use an uploaded product photo or a catalogue photo generated with purpose=product, not campaign artwork.",
       );
-    const prepared: MinkPreparedImageResult[] = [];
-    try {
-      const destination = await productPhotoDestination(actor.storeId);
-      for (const url of args.image_urls as string[])
-        prepared.push(
-          await prepareMinkImageForDestination(actor, url.trim(), destination),
-        );
-      const incoming = [...new Set(prepared.map((image) => image.url))];
-      const old = product.images.filter(Boolean);
-      const images =
-        args.mode === "replace_gallery"
-          ? incoming
-          : args.mode === "add"
-            ? [...new Set([...old, ...incoming])]
-            : [
-                ...new Set([
-                  ...incoming,
-                  ...old.filter((url) => url !== product.imageUrl),
-                ]),
-              ];
-      if (images.length > 20)
-        throw new MinkToolInputError(
-          "The gallery would exceed 20 photos. Replace photos or use fewer attachments.",
-        );
-      const primary =
-        args.mode === "add" && product.imageUrl
-          ? product.imageUrl
-          : incoming[0];
-      if (!images.includes(primary)) images.unshift(primary);
-      if (images.length > 20)
-        throw new MinkToolInputError("The gallery would exceed 20 photos.");
-      // Primary is always first so the card and catalogue agree.
-      const primaryIndex = images.indexOf(primary);
-      images.splice(primaryIndex, 1);
-      images.unshift(primary);
-      return proposalOutput(
-        await createMinkDraftProposal({
-          actor,
-          kind: "product_images",
-          title: `Photos for ${product.name}`,
-          destinationType: "product",
-          destinationId: product.id,
-          destinationLabel: product.name,
-          destinationPath: `/dashboard/products/${product.id}`,
-          before: {
-            image_url: product.imageUrl ?? "",
-            images_json: JSON.stringify(product.images),
-          },
-          content: { image_url: primary, images_json: JSON.stringify(images) },
-        }),
-      );
-    } catch (error) {
-      for (const image of prepared)
-        await discardPreparedMinkImage(actor, image);
-      throw error;
-    }
+    // ★ The photos' copies are this proposal's first write, so they go
+    //   inside the commit with the draft.
+    return proposalOutput(
+      await commitProposal(context, async () => {
+        const prepared: MinkPreparedImageResult[] = [];
+        try {
+          const destination = await productPhotoDestination(actor.storeId);
+          for (const url of args.image_urls as string[])
+            prepared.push(
+              await prepareMinkImageForDestination(
+                actor,
+                url.trim(),
+                destination,
+              ),
+            );
+          const incoming = [...new Set(prepared.map((image) => image.url))];
+          const old = product.images.filter(Boolean);
+          const images =
+            args.mode === "replace_gallery"
+              ? incoming
+              : args.mode === "add"
+                ? [...new Set([...old, ...incoming])]
+                : [
+                    ...new Set([
+                      ...incoming,
+                      ...old.filter((url) => url !== product.imageUrl),
+                    ]),
+                  ];
+          if (images.length > 20)
+            throw new MinkToolInputError(
+              "The gallery would exceed 20 photos. Replace photos or use fewer attachments.",
+            );
+          const primary =
+            args.mode === "add" && product.imageUrl
+              ? product.imageUrl
+              : incoming[0];
+          if (!images.includes(primary)) images.unshift(primary);
+          if (images.length > 20)
+            throw new MinkToolInputError("The gallery would exceed 20 photos.");
+          // Primary is always first so the card and catalogue agree.
+          const primaryIndex = images.indexOf(primary);
+          images.splice(primaryIndex, 1);
+          images.unshift(primary);
+          return await createMinkDraftProposal({
+            actor,
+            kind: "product_images",
+            title: `Photos for ${product.name}`,
+            destinationType: "product",
+            destinationId: product.id,
+            destinationLabel: product.name,
+            destinationPath: `/dashboard/products/${product.id}`,
+            before: {
+              image_url: product.imageUrl ?? "",
+              images_json: JSON.stringify(product.images),
+            },
+            content: {
+              image_url: primary,
+              images_json: JSON.stringify(images),
+            },
+          });
+        } catch (error) {
+          for (const image of prepared)
+            await discardPreparedMinkImage(actor, image);
+          throw error;
+        }
+      }),
+    );
   },
 };
 
@@ -400,8 +437,9 @@ export const proposeBlogDraftTool: MinkTool = {
   permission: { section: "blogs", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 25_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const title = readString(args.title, "title", 200);
     // Re-derived from the actor, never from the declaration the model saw:
     // tool visibility is not authorization anywhere else here either.
@@ -409,37 +447,46 @@ export const proposeBlogDraftTool: MinkTool = {
     const requestedCoverImageUrl = coverRequired
       ? readString(args.cover_image_url, "cover_image_url", 2_048)
       : readOptionalString(args.cover_image_url, "cover_image_url", 2_048);
-    const preparedCover = requestedCoverImageUrl
-      ? await prepareMinkImageForDestination(
-          actor,
-          requestedCoverImageUrl,
-          "blog_cover",
-        )
-      : null;
-    const coverImageUrl = preparedCover?.url ?? "";
-    return proposalOutput(
-      await proposalWithPreparedImage(actor, preparedCover, () =>
-        createMinkDraftProposal({
-          actor,
-          kind: "blog",
-          title: `Blog draft: ${title}`,
-          destinationType: "blog",
-          destinationLabel: "Blogs",
-          destinationPath: "/dashboard/blogs",
-          content: {
-            title,
-            excerpt: readString(args.excerpt, "excerpt", 500),
-            content: readString(args.content, "content", 12_000),
-            cover_image_url: coverImageUrl,
-            seo_title: readOptionalString(args.seo_title, "seo_title", 70),
-            seo_description: readOptionalString(
-              args.seo_description,
-              "seo_description",
-              180,
-            ),
-          },
-        }),
+    const article = {
+      title,
+      excerpt: readString(args.excerpt, "excerpt", 500),
+      content: readString(args.content, "content", 12_000),
+    };
+    const seo = {
+      seo_title: readOptionalString(args.seo_title, "seo_title", 70),
+      seo_description: readOptionalString(
+        args.seo_description,
+        "seo_description",
+        180,
       ),
+    };
+    // ★ The cover's copy is this proposal's first write: inside the commit.
+    return proposalOutput(
+      await commitProposal(context, async () => {
+        const preparedCover = requestedCoverImageUrl
+          ? await prepareMinkImageForDestination(
+              actor,
+              requestedCoverImageUrl,
+              "blog_cover",
+            )
+          : null;
+        const coverImageUrl = preparedCover?.url ?? "";
+        return proposalWithPreparedImage(actor, preparedCover, () =>
+          createMinkDraftProposal({
+            actor,
+            kind: "blog",
+            title: `Blog draft: ${title}`,
+            destinationType: "blog",
+            destinationLabel: "Blogs",
+            destinationPath: "/dashboard/blogs",
+            content: {
+              ...article,
+              cover_image_url: coverImageUrl,
+              ...seo,
+            },
+          }),
+        );
+      }),
     );
   },
 };
@@ -486,8 +533,9 @@ export const proposeCouponEmailTool: MinkTool = {
   permission: { section: "marketing", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const code = readString(args.coupon_code, "coupon_code", 100);
     const coupon = await readCoupon(actor, code);
     const snapshot = readString(args.coupon_snapshot, "coupon_snapshot", 64);
@@ -496,25 +544,28 @@ export const proposeCouponEmailTool: MinkTool = {
         "Coupon details changed or were not checked. Call get_coupon_for_draft again before drafting.",
       );
     }
+    // Generated copy obeys the email rule every StoreMink template does:
+    // no long dash. The merchant still reviews and may edit the draft.
+    const content = {
+      // Cleaned BEFORE the length/emptiness check, so the rewrite (which
+      // can lengthen "10–20" to "10 to 20") is what gets validated.
+      subject: readString(dashFree(args.subject), "subject", 200),
+      body: readString(dashFree(args.body), "body", 5_000),
+    };
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "coupon_email",
-        title: `Coupon email for ${coupon.code}`,
-        destinationType: "coupon",
-        destinationId: coupon.id,
-        destinationLabel: `Coupon ${coupon.code}`,
-        destinationPath: `/dashboard/marketing/coupons/${coupon.id}/edit`,
-        before: { subject: "", body: "" },
-        // Generated copy obeys the email rule every StoreMink template does:
-        // no long dash. The merchant still reviews and may edit the draft.
-        content: {
-          // Cleaned BEFORE the length/emptiness check, so the rewrite (which
-          // can lengthen "10–20" to "10 to 20") is what gets validated.
-          subject: readString(dashFree(args.subject), "subject", 200),
-          body: readString(dashFree(args.body), "body", 5_000),
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "coupon_email",
+          title: `Coupon email for ${coupon.code}`,
+          destinationType: "coupon",
+          destinationId: coupon.id,
+          destinationLabel: `Coupon ${coupon.code}`,
+          destinationPath: `/dashboard/marketing/coupons/${coupon.id}/edit`,
+          before: { subject: "", body: "" },
+          content,
+        }),
+      ),
     );
   },
 };
@@ -541,6 +592,8 @@ export const getCouponForDraftTool: MinkTool = {
   permission: { section: "marketing", action: "view" },
   available: draftingAvailable,
   timeoutMs: 5_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const coupon = await readCoupon(
       actor,
@@ -586,21 +639,25 @@ export const proposeCustomerMessageTool: MinkTool = {
   permission: { section: "users", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
+    const content = {
+      subject: readOptionalString(args.subject, "subject", 200),
+      body: readString(args.body, "body", 4_000),
+    };
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "customer_message",
-        title: "Customer message template",
-        destinationType: "customer_message",
-        destinationLabel: "Customers",
-        destinationPath: "/dashboard/users",
-        content: {
-          subject: readOptionalString(args.subject, "subject", 200),
-          body: readString(args.body, "body", 4_000),
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "customer_message",
+          title: "Customer message template",
+          destinationType: "customer_message",
+          destinationLabel: "Customers",
+          destinationPath: "/dashboard/users",
+          content,
+        }),
+      ),
     );
   },
 };
@@ -648,8 +705,9 @@ export const proposeProductCreateTool: MinkTool = {
   permission: { section: "products", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 25_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     await assertProductProposalCapacity(actor);
     const name = readString(args.name, "name", 200);
     const proposedSlug = slugify(name).slice(0, 200);
@@ -663,42 +721,38 @@ export const proposeProductCreateTool: MinkTool = {
       "image_url",
       2_048,
     );
-    const preparedImage = requestedImageUrl
-      ? await prepareMinkImageForDestination(
-          actor,
-          requestedImageUrl,
-          await productPhotoDestination(actor.storeId),
-        )
-      : null;
-    const imageUrl = preparedImage?.url ?? "";
+    const details = {
+      name,
+      slug: proposedSlug,
+      description: readString(args.description, "description", 3_000),
+      seo_title: readString(args.seo_title, "seo_title", 70),
+      seo_description: readString(args.seo_description, "seo_description", 180),
+      base_price: readNumberString(args.base_price, "base_price"),
+      selling_price: readNumberString(args.selling_price, "selling_price"),
+    };
+    // ★ The photo's copy is this proposal's first write: inside the commit.
     return proposalOutput(
-      await proposalWithPreparedImage(actor, preparedImage, () =>
-        createMinkDraftProposal({
-          actor,
-          kind: "product_create",
-          title: `New draft product: ${name}`,
-          destinationType: "product",
-          destinationLabel: "New draft product",
-          destinationPath: "/dashboard/products/new",
-          content: {
-            name,
-            slug: proposedSlug,
-            description: readString(args.description, "description", 3_000),
-            seo_title: readString(args.seo_title, "seo_title", 70),
-            seo_description: readString(
-              args.seo_description,
-              "seo_description",
-              180,
-            ),
-            base_price: readNumberString(args.base_price, "base_price"),
-            selling_price: readNumberString(
-              args.selling_price,
-              "selling_price",
-            ),
-            image_url: imageUrl,
-          },
-        }),
-      ),
+      await commitProposal(context, async () => {
+        const preparedImage = requestedImageUrl
+          ? await prepareMinkImageForDestination(
+              actor,
+              requestedImageUrl,
+              await productPhotoDestination(actor.storeId),
+            )
+          : null;
+        const imageUrl = preparedImage?.url ?? "";
+        return proposalWithPreparedImage(actor, preparedImage, () =>
+          createMinkDraftProposal({
+            actor,
+            kind: "product_create",
+            title: `New draft product: ${name}`,
+            destinationType: "product",
+            destinationLabel: "New draft product",
+            destinationPath: "/dashboard/products/new",
+            content: { ...details, image_url: imageUrl },
+          }),
+        );
+      }),
     );
   },
 };
@@ -713,19 +767,22 @@ export const proposeCouponCreateTool: MinkTool = {
   permission: { section: "marketing", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const content = couponProposalContent(args);
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "coupon_create",
-        title: `New disabled coupon: ${content.code}`,
-        destinationType: "coupon",
-        destinationLabel: `New coupon ${content.code}`,
-        destinationPath: "/dashboard/marketing/coupons/new",
-        content,
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "coupon_create",
+          title: `New disabled coupon: ${content.code}`,
+          destinationType: "coupon",
+          destinationLabel: `New coupon ${content.code}`,
+          destinationPath: "/dashboard/marketing/coupons/new",
+          content,
+        }),
+      ),
     );
   },
 };
@@ -740,8 +797,9 @@ export const proposeCouponUpdateTool: MinkTool = {
   permission: { section: "marketing", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const currentCode = readString(
       args.current_coupon_code,
       "current_coupon_code",
@@ -761,17 +819,19 @@ export const proposeCouponUpdateTool: MinkTool = {
     }
     const content = couponProposalContent(args);
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "coupon_update",
-        title: `Update disabled coupon ${coupon.code}`,
-        destinationType: "coupon",
-        destinationId: coupon.id,
-        destinationLabel: `Coupon ${coupon.code}`,
-        destinationPath: `/dashboard/marketing/coupons/${coupon.id}/edit`,
-        before: couponDraftValues(coupon),
-        content,
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "coupon_update",
+          title: `Update disabled coupon ${coupon.code}`,
+          destinationType: "coupon",
+          destinationId: coupon.id,
+          destinationLabel: `Coupon ${coupon.code}`,
+          destinationPath: `/dashboard/marketing/coupons/${coupon.id}/edit`,
+          before: couponDraftValues(coupon),
+          content,
+        }),
+      ),
     );
   },
 };
@@ -793,6 +853,8 @@ export const getCustomerGroupForDraftTool: MinkTool = {
   permission: { section: "users", action: "view" },
   available: draftingAvailable,
   timeoutMs: 5_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const group = await readCustomerGroup(
       actor,
@@ -817,19 +879,22 @@ export const proposeCustomerGroupCreateTool: MinkTool = {
   permission: { section: "users", action: "manage" },
   available: customerGroupCreateAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const content = customerGroupProposalContent(args);
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "customer_group_create",
-        title: `New customer group: ${content.name}`,
-        destinationType: "customer_group",
-        destinationLabel: `New group ${content.name}`,
-        destinationPath: "/dashboard/users/user_groups/new",
-        content,
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "customer_group_create",
+          title: `New customer group: ${content.name}`,
+          destinationType: "customer_group",
+          destinationLabel: `New group ${content.name}`,
+          destinationPath: "/dashboard/users/user_groups/new",
+          content,
+        }),
+      ),
     );
   },
 };
@@ -844,8 +909,9 @@ export const proposeCustomerGroupUpdateTool: MinkTool = {
   permission: { section: "users", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const currentName = readString(
       args.current_group_name,
       "current_group_name",
@@ -860,17 +926,19 @@ export const proposeCustomerGroupUpdateTool: MinkTool = {
     }
     const content = customerGroupProposalContent(args);
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "customer_group_update",
-        title: `Update customer group ${group.name}`,
-        destinationType: "customer_group",
-        destinationId: group.id,
-        destinationLabel: `Customer group ${group.name}`,
-        destinationPath: `/dashboard/users/user_groups/${group.id}/edit`,
-        before: customerGroupDraftValues(group),
-        content,
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "customer_group_update",
+          title: `Update customer group ${group.name}`,
+          destinationType: "customer_group",
+          destinationId: group.id,
+          destinationLabel: `Customer group ${group.name}`,
+          destinationPath: `/dashboard/users/user_groups/${group.id}/edit`,
+          before: customerGroupDraftValues(group),
+          content,
+        }),
+      ),
     );
   },
 };
@@ -897,6 +965,8 @@ export const getCategoryForDraftTool: MinkTool = {
   permission: { section: "categories", action: "view" },
   available: draftingAvailable,
   timeoutMs: 5_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const category = await readCategory(
       actor,
@@ -924,19 +994,22 @@ export const proposeCategoryCreateTool: MinkTool = {
   permission: { section: "categories", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const content = categoryProposalContent(args);
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "category_create",
-        title: `New category: ${content.name}`,
-        destinationType: "category",
-        destinationLabel: `New category ${content.name}`,
-        destinationPath: "/dashboard/categories",
-        content,
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "category_create",
+          title: `New category: ${content.name}`,
+          destinationType: "category",
+          destinationLabel: `New category ${content.name}`,
+          destinationPath: "/dashboard/categories",
+          content,
+        }),
+      ),
     );
   },
 };
@@ -951,8 +1024,9 @@ export const proposeCategoryUpdateTool: MinkTool = {
   permission: { section: "categories", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const current = readString(args.current_category, "current_category", 200);
     const category = await readCategory(actor, current);
     const snapshot = readString(
@@ -967,17 +1041,19 @@ export const proposeCategoryUpdateTool: MinkTool = {
     }
     const content = categoryProposalContent(args);
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "category_update",
-        title: `Update category ${category.name}`,
-        destinationType: "category",
-        destinationId: category.id,
-        destinationLabel: `Category ${category.name}`,
-        destinationPath: "/dashboard/categories",
-        before: categoryDraftValues(category),
-        content,
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "category_update",
+          title: `Update category ${category.name}`,
+          destinationType: "category",
+          destinationId: category.id,
+          destinationLabel: `Category ${category.name}`,
+          destinationPath: "/dashboard/categories",
+          before: categoryDraftValues(category),
+          content,
+        }),
+      ),
     );
   },
 };
@@ -1012,24 +1088,28 @@ export const proposeSocialPostsTool: MinkTool = {
   permission: { section: "marketing", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const subject = readOptionalString(args.subject, "subject", 120);
+    const content = {
+      instagram: readString(args.instagram, "instagram", 2_200),
+      facebook: readOptionalString(args.facebook, "facebook", 3_000),
+      whatsapp: readOptionalString(args.whatsapp, "whatsapp", 1_000),
+      hashtags: readOptionalString(args.hashtags, "hashtags", 300),
+    };
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "social_post",
-        title: subject ? `Social posts: ${subject}` : "Social posts",
-        destinationType: "social_post",
-        destinationLabel: "Your social accounts",
-        destinationPath: "/dashboard/offers",
-        content: {
-          instagram: readString(args.instagram, "instagram", 2_200),
-          facebook: readOptionalString(args.facebook, "facebook", 3_000),
-          whatsapp: readOptionalString(args.whatsapp, "whatsapp", 1_000),
-          hashtags: readOptionalString(args.hashtags, "hashtags", 300),
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "social_post",
+          title: subject ? `Social posts: ${subject}` : "Social posts",
+          destinationType: "social_post",
+          destinationLabel: "Your social accounts",
+          destinationPath: "/dashboard/offers",
+          content,
+        }),
+      ),
     );
   },
 };
@@ -1052,6 +1132,8 @@ export const getInventoryItemForAdjustmentTool: MinkTool = {
   permission: { section: "inventory", action: "view" },
   available: draftingAvailable,
   timeoutMs: 7_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const target = await readInventoryAdjustmentTarget(
       actor,
@@ -1115,8 +1197,9 @@ export const proposeInventoryAdjustmentTool: MinkTool = {
   permission: { section: "inventory", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const sku = readString(args.product_sku, "product_sku", 100);
     const target = await readInventoryAdjustmentTarget(
       actor,
@@ -1160,22 +1243,24 @@ export const proposeInventoryAdjustmentTool: MinkTool = {
       );
     }
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "inventory_adjustment",
-        title: `Adjust ${target.sku} at ${target.locationName}`,
-        destinationType: "inventory",
-        destinationId: target.productId,
-        destinationLocationId: target.locationId,
-        destinationVariantId: target.variantId,
-        destinationLabel: `${target.productName}${target.variantName ? ` · ${target.variantName}` : ""} (${target.sku}) at ${target.locationName}`,
-        destinationPath: `/dashboard/inventory?location=${encodeURIComponent(target.locationId)}`,
-        content: {
-          quantity_change: String(quantityChange),
-          reason,
-          note,
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "inventory_adjustment",
+          title: `Adjust ${target.sku} at ${target.locationName}`,
+          destinationType: "inventory",
+          destinationId: target.productId,
+          destinationLocationId: target.locationId,
+          destinationVariantId: target.variantId,
+          destinationLabel: `${target.productName}${target.variantName ? ` · ${target.variantName}` : ""} (${target.sku}) at ${target.locationName}`,
+          destinationPath: `/dashboard/inventory?location=${encodeURIComponent(target.locationId)}`,
+          content: {
+            quantity_change: String(quantityChange),
+            reason,
+            note,
+          },
+        }),
+      ),
     );
   },
 };
@@ -1212,6 +1297,8 @@ export const getInventoryItemsForBulkAdjustmentTool: MinkTool = {
   permission: { section: "inventory", action: "view" },
   available: draftingAvailable,
   timeoutMs: 10_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const inputs = readBulkLookupLines(args.lines);
     const resolved = await withActor(actor, (db) =>
@@ -1299,8 +1386,9 @@ export const proposeBulkInventoryAdjustmentTool: MinkTool = {
   permission: { section: "inventory", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 10_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const lines = readBulkProposalLines(args.lines);
     const inputs = lines.map((line) => ({
       sku: line.sku,
@@ -1392,15 +1480,17 @@ export const proposeBulkInventoryAdjustmentTool: MinkTool = {
       };
     }
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "bulk_inventory_adjustment",
-        title: `Bulk inventory adjustment · ${contentLines.length} lines`,
-        destinationType: "inventory_bulk",
-        destinationLabel: `${contentLines.length} inventory adjustments`,
-        destinationPath: "/dashboard/inventory",
-        content: { lines_json: JSON.stringify(contentLines) },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "bulk_inventory_adjustment",
+          title: `Bulk inventory adjustment · ${contentLines.length} lines`,
+          destinationType: "inventory_bulk",
+          destinationLabel: `${contentLines.length} inventory adjustments`,
+          destinationPath: "/dashboard/inventory",
+          content: { lines_json: JSON.stringify(contentLines) },
+        }),
+      ),
     );
   },
 };
@@ -1436,6 +1526,8 @@ export const getProductsForBulkPriceUpdateTool: MinkTool = {
   permission: { section: "products", action: "view" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const inputs = readBulkPriceLookupLines(args.lines);
     const resolved = await withActor(actor, (db) =>
@@ -1537,8 +1629,9 @@ export const proposeBulkPriceUpdateTool: MinkTool = {
   permission: { section: "products", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 10_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const lines = readBulkPriceProposalLines(args.lines);
     const resolved = await withActor(actor, (db) =>
       resolveMinkBulkPriceTargets(
@@ -1636,15 +1729,17 @@ export const proposeBulkPriceUpdateTool: MinkTool = {
       };
     }
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "bulk_price_update",
-        title: `Bulk price update · ${contentLines.length} SKUs`,
-        destinationType: "price_bulk",
-        destinationLabel: `${contentLines.length} SKU price changes`,
-        destinationPath: "/dashboard/products",
-        content: { lines_json: JSON.stringify(contentLines) },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "bulk_price_update",
+          title: `Bulk price update · ${contentLines.length} SKUs`,
+          destinationType: "price_bulk",
+          destinationLabel: `${contentLines.length} SKU price changes`,
+          destinationPath: "/dashboard/products",
+          content: { lines_json: JSON.stringify(contentLines) },
+        }),
+      ),
     );
   },
 };
@@ -1672,6 +1767,8 @@ export const getOrderForStatusTransitionTool: MinkTool = {
   permission: { section: "orders", action: "view" },
   available: draftingAvailable,
   timeoutMs: 7_000,
+  // A checkpoint read: it writes nothing, so it never claims the run.
+  effect: "read",
   async execute(actor, args) {
     const reference = normalizeMinkOrderReference(args.order_ref);
     const order = await readOrderStatusTargetForTool(actor, reference);
@@ -1725,8 +1822,9 @@ export const proposeOrderStatusTransitionTool: MinkTool = {
   permission: { section: "orders", action: "manage" },
   available: draftingAvailable,
   timeoutMs: 8_000,
+  effect: "commit",
   artifact: proposalArtifact,
-  async execute(actor, args) {
+  async execute(actor, args, context) {
     const reference = normalizeMinkOrderReference(args.order_ref);
     const order = await readOrderStatusTargetForTool(actor, reference);
     const snapshot = readString(args.order_snapshot, "order_snapshot", 64);
@@ -1738,21 +1836,24 @@ export const proposeOrderStatusTransitionTool: MinkTool = {
     const targetStatus = readString(args.target_status, "target_status", 20);
     const decision = evaluateMinkOrderTransition(order, targetStatus);
     if (!decision.allowed) throw new MinkToolInputError(decision.message);
+    const content = {
+      target_status: decision.targetStatus,
+      note: readOptionalString(args.note, "note", 200),
+    };
     return proposalOutput(
-      await createMinkDraftProposal({
-        actor,
-        kind: "order_status_transition",
-        title: `Advance ${order.reference} to ${decision.targetStatus}`,
-        destinationType: "order",
-        destinationId: order.id,
-        destinationLabel: order.reference,
-        destinationPath: `/dashboard/orders?q=${encodeURIComponent(order.reference)}`,
-        before: { target_status: order.status, note: "" },
-        content: {
-          target_status: decision.targetStatus,
-          note: readOptionalString(args.note, "note", 200),
-        },
-      }),
+      await commitProposal(context, () =>
+        createMinkDraftProposal({
+          actor,
+          kind: "order_status_transition",
+          title: `Advance ${order.reference} to ${decision.targetStatus}`,
+          destinationType: "order",
+          destinationId: order.id,
+          destinationLabel: order.reference,
+          destinationPath: `/dashboard/orders?q=${encodeURIComponent(order.reference)}`,
+          before: { target_status: order.status, note: "" },
+          content,
+        }),
+      ),
     );
   },
 };

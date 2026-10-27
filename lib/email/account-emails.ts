@@ -174,8 +174,8 @@ export function buildPosStaffInviteEmail(opts: {
   const html = composeEmail({
     brand,
     eyebrow: "Invitation",
-    heading: "Set up your register access",
-    preheader: `Finish setting up your account for the ${brand.name} register.`,
+    heading: "Set up your POS access",
+    preheader: `Finish setting up your account for ${brand.name} POS.`,
     blocks: [
       emailParagraph(greeting(opts.name), { lead: true }),
       emailParagraph(
@@ -187,7 +187,7 @@ export function buildPosStaffInviteEmail(opts: {
       ),
       emailSignoff(brand.name),
     ],
-    footerReasonHtml: `You're receiving this because ${store} added you to its point of sale team.`,
+    footerReasonHtml: `You're receiving this because ${store} added you to its POS team.`,
   });
 
   return { subject: `You've been added to ${brand.name} POS`, html };
@@ -204,12 +204,12 @@ export function buildPosCredentialResetEmail(opts: {
 
   const html = composeEmail({
     brand,
-    heading: "Reset your register access",
-    preheader: `Choose a new PIN or password for the ${brand.name} register.`,
+    heading: "Reset your POS access",
+    preheader: `Choose a new PIN or password for ${brand.name} POS.`,
     blocks: [
       emailParagraph(greeting(opts.name), { lead: true }),
       emailParagraph(
-        `We received a request to reset the PIN or password you use at the <strong>${store}</strong> register.`,
+        `We received a request to reset the PIN or password you use for <strong>${store}</strong> POS.`,
       ),
       ...actionBlocks(opts.link, "Reset PIN or password", { fallback: true }),
       emailNote(
@@ -217,7 +217,7 @@ export function buildPosCredentialResetEmail(opts: {
       ),
       emailSignoff(brand.name),
     ],
-    footerReasonHtml: `You're receiving this because a reset was requested for your ${store} register account.`,
+    footerReasonHtml: `You're receiving this because a reset was requested for your ${store} POS account.`,
   });
 
   return { subject: `Reset your ${brand.name} POS access`, html };

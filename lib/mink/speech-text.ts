@@ -19,6 +19,17 @@
 
 export const SPEAKABLE_MAX_CHARS = 1_500;
 
+/**
+ * The longest text one read-aloud request may carry. ★ It is a cost bound,
+ * not a style choice: the voice loop cuts every answer into pieces no longer
+ * than this and the speech route refuses anything longer, so the route's rate
+ * limits (a request per sentence or two) cap the characters a merchant can
+ * have read aloud, which StoreMink pays for and does not charge.
+ */
+export const MINK_SPEECH_PIECE_MAX = 600;
+/** The first piece of an answer is shorter, so the first words play sooner. */
+export const MINK_SPEECH_FIRST_PIECE_MAX = 160;
+
 /** A line that already ends a sentence, or one that clearly continues (a comma). */
 const ENDED = /(?:[.!?।…]|[,;:])["')\]]*$/;
 const SENTENCE_BOUNDARY = /[.!?।…]["')\]]*(?=\s)/g;
@@ -155,36 +166,214 @@ export function speakableMinkText(markdown: string): string {
   return capAtSentence(joined, SPEAKABLE_MAX_CHARS);
 }
 
-const SCRIPTS: { lang: string; letters: RegExp }[] = [
-  { lang: "hi-IN", letters: /[ऀ-ॣ०-ॿ]/g },
-  { lang: "bn-IN", letters: /[ঀ-৿]/g },
+const SCRIPTS: { lang: string; letters: RegExp; languages?: string[] }[] = [
+  {
+    lang: "hi-IN",
+    letters: /[ऀ-ॣ०-ॿ]/g,
+    languages: ["hi", "mr", "ne", "kok", "sa", "brx", "mai", "doi"],
+  },
+  { lang: "bn-IN", letters: /[ঀ-৿]/g, languages: ["bn", "as", "mni"] },
   { lang: "pa-IN", letters: /[਀-੿]/g },
   { lang: "gu-IN", letters: /[઀-૿]/g },
   { lang: "ta-IN", letters: /[஀-௿]/g },
   { lang: "te-IN", letters: /[ఀ-౿]/g },
   { lang: "kn-IN", letters: /[ಀ-೿]/g },
   { lang: "ml-IN", letters: /[ഀ-ൿ]/g },
+  { lang: "or-IN", letters: /[଀-୿]/g },
+  { lang: "ur-IN", letters: /[\u0600-\u06ff]/g, languages: ["ur", "ks", "sd"] },
+  { lang: "sat-IN", letters: /[\u1c50-\u1c7f]/g },
+  { lang: "mni-IN", letters: /[\uabc0-\uabff]/g },
 ];
 const LATIN_LETTERS = /[A-Za-zÀ-ɏ]/g;
 
 export const DEFAULT_SPEECH_LANG = "en-IN";
 
 /**
+ * ★★ THE LANGUAGES THE READ-ALOUD MODEL HAS A VOICE FOR (Sarvam Bulbul:
+ *   nine on V4 Flash plus Malayalam and Odia on V3, `BULBUL_V4_FLASH_SPEAKERS`
+ *   and `BULBUL_V3_SPEAKERS` in speech-synthesis.ts, which a test holds equal
+ *   to this). The recogniser hears 22 Indian languages, and its hint for a
+ *   language with no voice (Maithili, Nepali, Konkani, Assamese…) must not
+ *   retag an answer the model could read in the script's own voice: a
+ *   Devanagari answer tagged mai-IN was refused by Bulbul and handed to the
+ *   browser, which has no Maithili voice either, where hi-IN read it as
+ *   before. So a hint only speaks for a language in this set.
+ */
+export const MINK_MODEL_VOICE_LANGUAGES: ReadonlySet<string> = new Set([
+  "en",
+  "hi",
+  "bn",
+  "gu",
+  "kn",
+  "mr",
+  "pa",
+  "ta",
+  "te",
+  "ml",
+  "or",
+]);
+
+/** Provider metadata is a hint, never arbitrary text passed to browser APIs. */
+export function normalizeSpeechLanguage(value: unknown): string | null {
+  if (
+    typeof value !== "string" ||
+    !/^[a-z]{2,3}(?:-[a-z]{2})?$/i.test(value.trim())
+  )
+    return null;
+  const [raw, region] = value.trim().toLowerCase().split("-");
+  const language = raw === "od" ? "or" : raw;
+  if (
+    ![
+      "en",
+      "hi",
+      "bn",
+      "kn",
+      "ml",
+      "mr",
+      "or",
+      "pa",
+      "ta",
+      "te",
+      "gu",
+      "as",
+      "ur",
+      "ne",
+      "kok",
+      "ks",
+      "sd",
+      "sa",
+      "sat",
+      "mni",
+      "brx",
+      "mai",
+      "doi",
+    ].includes(language)
+  )
+    return null;
+  return `${language}-${(region || "in").toUpperCase()}`;
+}
+
+/**
  * The BCP-47 tag a synthesiser should read `text` in, decided by the script
  * most of its letters are written in. Latin text takes `fallback` (the
  * browser's own language in the dashboard), and a blank fallback is en-IN.
  * The danda (। ॥) is punctuation shared across scripts, so it never votes.
+ * ★ `detected`, the recogniser's language for the question, settles a script
+ *   several languages share (Devanagari: Hindi or Marathi; Bengali: Bengali
+ *   or Assamese) and retags Latin text (romanised Hindi), but only for a
+ *   language the model has a voice for (`MINK_MODEL_VOICE_LANGUAGES`).
  */
-export function speechLangFor(text: string, fallback: string): string {
+export function speechLangFor(
+  text: string,
+  fallback: string,
+  detected?: string | null,
+): string {
   const safeFallback = fallback?.trim() || DEFAULT_SPEECH_LANG;
+  const normalized = normalizeSpeechLanguage(detected);
+  const hint =
+    normalized && MINK_MODEL_VOICE_LANGUAGES.has(normalized.split("-")[0])
+      ? normalized
+      : null;
+  const hintLanguage = hint?.split("-")[0];
   if (typeof text !== "string" || !text) return safeFallback;
   let best = {
-    lang: safeFallback,
+    lang: hint ?? safeFallback,
     count: (text.match(LATIN_LETTERS) ?? []).length,
   };
   for (const script of SCRIPTS) {
     const count = (text.match(script.letters) ?? []).length;
-    if (count > best.count) best = { lang: script.lang, count };
+    const compatible =
+      hintLanguage !== undefined &&
+      (script.languages ?? [script.lang.split("-")[0]]).includes(hintLanguage);
+    if (count > best.count)
+      best = { lang: compatible ? hint! : script.lang, count };
   }
   return best.count > 0 ? best.lang : safeFallback;
+}
+
+/**
+ * A sentence ends at . ! ? । ॥ (plus any closing quotes or brackets) only
+ * when whitespace or the end of the text follows, and the next word does not
+ * start with a lowercase Latin letter or a digit: "4.5", "Rs. 500", "v2.1"
+ * and "e.g. this" stay in one piece. ★ OVER-JOINING IS THE SAFE DIRECTION:
+ * a piece is only a unit of work for the model, which reads the punctuation
+ * itself, while a split inside a number is spoken as two numbers with a
+ * pause between them. A terminator that is not an end is an ordinary
+ * character of the sentence it sits in, so a leading "..." is kept too.
+ */
+const SENTENCE_END = String.raw`[.!?।॥]+["'”’)\]]*(?=\s+(?![a-z0-9])|$)`;
+const SENTENCE = new RegExp(
+  String.raw`(?:[^.!?।॥]|[.!?।॥](?!["'”’)\]]*(?:\s+(?![a-z0-9])|$)))+(?:${SENTENCE_END}|$)\s*`,
+  "g",
+);
+
+/**
+ * Offsets just past each sentence that has PROVABLY ended: the same terminator
+ * rule as `SENTENCE`, but the whitespace must be followed by a further word,
+ * never the end of the text. Streamed text grows at its end, so a full stop
+ * that is the last character may still be "Rs." with "500" on its way; a
+ * stop with a capitalised word already after it is settled.
+ */
+const SENTENCE_END_FOLLOWED = /[.!?।॥]+["'”’)\]]*(?=\s+[^\sa-z0-9])/g;
+
+export function speechSentenceEnds(text: string): number[] {
+  if (typeof text !== "string" || !text) return [];
+  const ends: number[] = [];
+  for (const match of text.matchAll(SENTENCE_END_FOLLOWED)) {
+    ends.push(match.index + match[0].length);
+  }
+  return ends;
+}
+
+function splitLong(sentence: string, max: number): string[] {
+  const parts: string[] = [];
+  let rest = sentence.trim();
+  while (rest.length > max) {
+    const cut = rest.lastIndexOf(" ", max);
+    const at = cut > max / 2 ? cut : max;
+    parts.push(rest.slice(0, at).trim());
+    rest = rest.slice(at).trim();
+  }
+  if (rest) parts.push(rest);
+  return parts;
+}
+
+/**
+ * An answer split for a read-aloud model, at sentence boundaries: a short
+ * first piece (≤ `firstMax`) so the first words play quickly, then pieces of
+ * up to `restMax` fetched while the one before is playing. A sentence longer
+ * than its piece is cut at a space. Every character of `text` reaches exactly
+ * one piece, in order.
+ */
+export function splitSpeechChunks(
+  text: string,
+  firstMax = MINK_SPEECH_FIRST_PIECE_MAX,
+  restMax = MINK_SPEECH_PIECE_MAX,
+): string[] {
+  const clean =
+    typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
+  if (!clean) return [];
+  const sentences = (clean.match(SENTENCE) ?? [clean])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    const max = chunks.length === 0 ? firstMax : restMax;
+    const joined = current ? `${current} ${sentence}` : sentence;
+    if (joined.length <= max) {
+      current = joined;
+      continue;
+    }
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+    const limit = chunks.length === 0 ? firstMax : restMax;
+    const pieces = splitLong(sentence, Math.max(limit, 1));
+    current = pieces.pop() ?? "";
+    chunks.push(...pieces);
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }

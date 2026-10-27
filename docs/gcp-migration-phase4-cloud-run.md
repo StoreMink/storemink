@@ -1,17 +1,15 @@
-# GCP Migration — Phase 4: Vercel → Cloud Run
+# Cloud Run hosting runbook
 
-> Hosting migration runbook. The **code** (containerization) is done and
-> committed; the rest is infrastructure you provision with `gcloud`. Do it in
-> parallel with Vercel and cut DNS over only once proven — fully reversible.
+> Hosting runbook. The **code** (containerization) is in the repo; the rest is
+> infrastructure you provision with `gcloud`.
 >
-> **Targets the post-Phase-5/6 stack** (Cloud SQL + Identity Platform) — env is
-> updated accordingly, no `SUPABASE_*`. Project `storemink-prod`, region
-> `asia-south1` (Mumbai) assumed throughout; the Identity Platform project is
-> separate (per-env — CODEBASE.md §7).
+> **Targets the current stack** (Cloud SQL + Identity Platform). Project
+> `storemink-prod`, region `asia-south1` (Mumbai) assumed throughout; the
+> Identity Platform project is separate (per env, CODEBASE.md §7).
 
 ## What's already in the repo (Phase 4 code)
 
-- `next.config.ts` → `output: "standalone"` (self-contained server bundle; ignored by Vercel).
+- `next.config.ts` → `output: "standalone"` (self-contained server bundle).
 - `Dockerfile` — multi-stage, Debian-slim, non-root, listens on `$PORT` (8080). Bakes `NEXT_PUBLIC_*` at build; server secrets stay runtime-only.
 - `.dockerignore` — small context; **keeps `brand/tasks/*.md` and both Mink
   prompt documents** (read at runtime by the AI actions).
@@ -27,9 +25,8 @@ Verified: `npm run build` produces `.next/standalone/server.js` with
 
 ## Runtime env split (post Phase 5/6 — Cloud SQL + Identity Platform)
 
-> **⚠ Updated for the migrated stack.** Data is on **Cloud SQL** (`lib/db`,
-> Drizzle) and auth on **Identity Platform** (`lib/auth`, Firebase) — there are
-> **no `SUPABASE_*` vars** anymore. Key subtlety: the Identity Platform project
+> Data is on **Cloud SQL** (`lib/db`, Drizzle) and auth on **Identity
+> Platform** (`lib/auth`, Firebase). Key subtlety: the Identity Platform project
 > is a **different GCP project** from the infra project (per-env pairing —
 > CODEBASE.md §7), and the Cloud Run runtime SA can't cross projects, so give
 > Firebase **explicit `FIREBASE_*` service-account creds** and point
@@ -52,10 +49,8 @@ Verified: `npm run build` produces `.next/standalone/server.js` with
   key, `\n`-escaped), `PAYMENT_CRED_KEY`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
   `RAZORPAY_WEBHOOK_SECRET`, `RESEND_API_KEY`, `CRON_SECRET`,
   `GOOGLE_SEARCH_CONSOLE_CREDENTIALS` (opt), `INDEXNOW_KEY` (opt).
-- **No longer needed on Cloud Run**: `SUPABASE_SERVICE_ROLE_KEY` +
-  `NEXT_PUBLIC_SUPABASE_*` (Supabase is out of the request path); `GEMINI_API_KEY`
-  (→ Vertex via ADC); `GCP_SA_KEY` (→ default SA signs GCS video URLs via IAM).
-  `VERCEL_URL` is Vercel-only.
+- **Not needed on Cloud Run**: `GEMINI_API_KEY` (→ Vertex via ADC); `GCP_SA_KEY`
+  (→ default SA signs GCS video URLs via IAM).
 
 ## Steps
 
@@ -100,7 +95,7 @@ GCS uploads AND signed video URLs work with no `GCP_SA_KEY`. `cloudsql.client`
 
 ```bash
 # one per secret; repeat for each name in the "Runtime secrets" list
-printf %s "$VALUE" | gcloud secrets create SUPABASE_SERVICE_ROLE_KEY --data-file=-
+printf %s "$VALUE" | gcloud secrets create "$NAME" --data-file=-
 # accessor role already granted to the SA in step 3
 ```
 
@@ -141,6 +136,12 @@ so the live value is the `_MIN_INSTANCES` substitution on the Cloud Build trigge
 next deploy. Both were changed together; see the cost note in
 [`gcp-ci-cd.md`](gcp-ci-cd.md).
 
+⚠ **Memory is the opposite case: `storemink-web-prod` runs with 2 GiB since
+2026-10-23** (the `--memory=1Gi` above is the original value). `cloudbuild.yaml`
+passes no `--memory`, so the `gcloud run services update --memory=2Gi` made that
+day is kept by every later deploy; see "Production memory" in
+[`gcp-ci-cd.md`](gcp-ci-cd.md).
+
 ### 7. Smoke-test BEFORE DNS (the Host-header trick)
 
 `proxy.ts` routes by Host, and a raw `*.run.app` host is treated as an unknown
@@ -169,14 +170,19 @@ External Application Load Balancer + Certificate Manager wildcard cert:
    HTTP proxy, and `EXTERNAL_MANAGED` global forwarding rule on port 80. This
    preserves the host, path, and query while returning 308, so a bare address
    such as `pos.storemink.com` upgrades to HTTPS before it reaches Cloud Run.
-5. **DNS**: point `storemink.com` and `*.storemink.com` A/AAAA at the LB IP.
+5. **DNS**: point `storemink.com` and `*.storemink.com` at the LB IP with an
+   **A record only (IPv4)**. That address is also `DOMAIN_LB_IP`, the anchor
+   `lib/client-ip.ts` uses to find each visitor's address. An IPv6 frontend (a
+   second forwarding rule, then AAAA records) first needs `lib/client-ip.ts` to
+   accept its address; until then an IPv6 visitor's rate-limit key falls back
+   to the first `X-Forwarded-For` entry, which a caller can forge.
 
-Keep Vercel live throughout; flip DNS only when curl tests pass. **Rollback = revert DNS to Vercel.**
+Flip DNS only when the curl tests pass. **Rollback = route traffic to the preceding healthy Cloud Run revision.**
 
-### 9. Cron jobs → Cloud Scheduler (replaces `vercel.json` crons)
+### 9. Cron jobs → Cloud Scheduler
 
-Do this at cutover (don't double-run with Vercel crons). For each of
-`send-emails`, `plan-expiry`, `expire-pending-payments`:
+Every job, its schedule and its check are in `docs/cron-jobs.md`. One job looks
+like this:
 
 ```bash
 gcloud scheduler jobs create http cron-send-emails \
@@ -186,8 +192,7 @@ gcloud scheduler jobs create http cron-send-emails \
   --headers="Authorization=Bearer <CRON_SECRET>"
 ```
 
-Then delete the `crons` block from `vercel.json`. (Consider OIDC auth instead of
-the bearer secret once stable.)
+(Consider OIDC auth instead of the bearer secret once stable.)
 
 ## Notes carried forward
 

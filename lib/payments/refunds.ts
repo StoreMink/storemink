@@ -9,7 +9,7 @@
 // leaves a stray fraction, and here that fraction decides whether a full
 // refund is allowed at all ("₹840.00 exceeds the refundable ₹839.99999").
 
-/** Where a refund is in its life. Mirrors the CHECK in pos_12_returns.sql. */
+/** Where a refund is in its life. Mirrors order_refunds_status_check. */
 export const REFUND_STATUSES = ["pending", "completed", "failed"] as const;
 export type RefundStatus = (typeof REFUND_STATUSES)[number];
 

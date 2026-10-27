@@ -4,6 +4,14 @@
 > shopper flow changes, so there is **no Help Centre migration**. No model is
 > called: this phase ships an offline test provider so the durable pipeline can
 > be exercised before Phase 3 wires in Gemini on Vertex AI.
+>
+> **Since 25 Oct 2026 (wave TS-2)** the Studio's screens are three: Themes, with
+> its Catalog and Theme Studio tabs (`/dashboard/themes`,
+> `/dashboard/themes/studio`), New theme (`/dashboard/themes/studio/new`) and
+> one theme page (`/dashboard/themes/studio/<id>`, with the tabs Preview,
+> Checks, Pictures, Changes and Log). This record keeps the Phase 2 screens as
+> built; `docs/operator-console.md` and `CODEBASE.md` ("Theme Studio wave
+> TS-2") describe today's.
 
 ## 1. What an operator can do now
 
@@ -115,7 +123,9 @@ make a double-submitted queue or retry return the same run; a stale revision is
 refused. Creating a project refuses an id that belongs to a bundled theme, a
 runtime release or catalog entry, or another active project. Limits from
 `THEME_STUDIO_LIMITS` are enforced at intake: 20 new projects per operator per
-day and 2 concurrent runs per operator.
+day and 2 concurrent runs per operator (since 24 Oct 2026 counting only runs
+the operator started: not Theme Studio's own automatic steps or photo fill
+rounds, but every Retry).
 
 `lib/theme-studio/worker.ts` claims runs with `FOR UPDATE SKIP LOCKED` and a
 20-minute lease (the Phase 0 wall-time ceiling), executes outside any

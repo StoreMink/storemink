@@ -9,6 +9,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useState } from "react";
+import type { MinkVoiceComposer } from "./chat-context";
+import type { MinkPreparedSend } from "./mink-ai";
 import {
   MinkMultimodalInput,
   shouldReadMinkImageAsStorefrontDesign,
@@ -28,22 +30,30 @@ vi.mock("@/app/actions/media-actions", () => ({
   uploadMediaAsset: media.upload,
   deleteMediaAsset: media.remove,
 }));
-// The composer reads the chat only for the voice loop; one mutable value the
-// voice tests move and every other test ignores.
-const chat = vi.hoisted(() => {
+// The composer reads the voice loop only for its toggle; one mutable value
+// the voice tests move and every other test ignores.
+const voice = vi.hoisted(() => {
   const value = {
-    isChatOpen: true,
-    messages: [] as Array<{
-      id: string | number;
-      role: "user" | "assistant";
-      text: string;
-    }>,
-    isReplying: false,
-    error: null as { code: string; message: string } | null,
+    enabled: false,
+    state: "idle",
+    mic: "closed",
+    support: { ok: true } as { ok: true } | { ok: false; reason: string },
+    levelRef: { current: 0 },
+    heard: null as string | null,
+    said: null as string | null,
+    notice: null as string | null,
+    toggle: vi.fn(),
+    noteSend: vi.fn(),
+    registerComposer: vi.fn<(composer: MinkVoiceComposer) => () => void>(
+      () => () => {},
+    ),
   };
-  return { value, useChat: vi.fn(() => value) };
+  return { value, useMinkVoice: vi.fn(() => value) };
 });
-vi.mock("./chat-context", () => ({ useChat: chat.useChat }));
+vi.mock("./chat-context", () => ({
+  useChat: vi.fn(),
+  useMinkVoice: voice.useMinkVoice,
+}));
 
 const fetchMock = vi.fn();
 const SAVED_URL =
@@ -73,10 +83,9 @@ beforeEach(() => {
   });
   URL.createObjectURL = vi.fn(() => "blob:local");
   URL.revokeObjectURL = vi.fn();
-  chat.value.isChatOpen = true;
-  chat.value.messages = [];
-  chat.value.isReplying = false;
-  chat.value.error = null;
+  voice.value.enabled = false;
+  voice.value.support = { ok: true };
+  voice.value.toggle.mockReset();
 });
 
 afterEach(() => {
@@ -88,10 +97,12 @@ function LiveComposer({
   initial = "",
   canSaveMedia = false,
   onSubmit,
+  onSubmitPrepared,
 }: {
   initial?: string;
   canSaveMedia?: boolean;
   onSubmit?: (message: string) => void;
+  onSubmitPrepared?: (prepared: MinkPreparedSend) => boolean;
   /** Changing it re-renders the composer, which is how a mocked reply lands. */
   tick?: number;
 }) {
@@ -103,8 +114,17 @@ function LiveComposer({
       disabled={false}
       canSaveMedia={canSaveMedia}
       onSubmit={onSubmit}
+      onSubmitPrepared={
+        onSubmitPrepared &&
+        ((prepared) => {
+          // As the chat does: a message it takes leaves the box.
+          const taken = onSubmitPrepared(prepared);
+          if (taken) setValue("");
+          return taken;
+        })
+      }
     >
-      {({ attach, attachment, voice, submit }) => (
+      {({ attach, attachment, voice, submit, recorder }) => (
         <div>
           {attachment}
           {attach}
@@ -113,6 +133,7 @@ function LiveComposer({
             value={value}
             onChange={(event) => setValue(event.target.value)}
           />
+          {recorder}
           {voice}
           <button type="button" onClick={() => void submit()}>
             Send message
@@ -396,6 +417,64 @@ describe("ChatGPT-style Mink attachments", () => {
     );
   });
 
+  // ★ One beacon that THROWS (older Chromium refused a JSON Blob with a
+  // SecurityError) used to stop the loop, so every later upload stayed in
+  // the Media Library. Now that one goes as a keepalive fetch instead.
+  it("a beacon that throws for one upload still sends the next, and that one goes by keepalive fetch", async () => {
+    let calls = 0;
+    const beacon = vi.fn<(url: string, body?: BodyInit | null) => boolean>(
+      () => {
+        calls += 1;
+        if (calls === 1) throw new DOMException("refused", "SecurityError");
+        return true;
+      },
+    );
+    vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon });
+    media.upload
+      .mockResolvedValueOnce({
+        asset: { id: "asset-1", url: SAVED_URL, filename: "a.png" },
+      })
+      .mockResolvedValueOnce({
+        asset: { id: "asset-2", url: SAVED_URL, filename: "b.png" },
+      });
+    render(
+      <LiveComposer initial="Use these" canSaveMedia onSubmit={vi.fn()} />,
+    );
+    const files = ["a.png", "b.png"].map((name) => {
+      const file = new File(["source"], name, { type: "image/png" });
+      Object.defineProperty(file, "arrayBuffer", {
+        value: async () => new TextEncoder().encode("source").buffer,
+      });
+      return file;
+    });
+    fireEvent.change(screen.getByLabelText("Choose image or document"), {
+      target: { files },
+    });
+    await waitFor(() => expect(media.upload).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: "View b.png" });
+    const keepalive = vi.fn(async () => new Response(null));
+    vi.stubGlobal("fetch", keepalive);
+
+    fireEvent(
+      window,
+      Object.assign(new Event("pagehide"), { persisted: false }),
+    );
+    expect(beacon).toHaveBeenCalledTimes(2);
+    expect(keepalive).toHaveBeenCalledOnce();
+    expect(keepalive).toHaveBeenCalledWith("/api/mink/media/discard", {
+      method: "POST",
+      body: beacon.mock.calls[0][1],
+      keepalive: true,
+      credentials: "same-origin",
+    });
+    const ids = await Promise.all(
+      beacon.mock.calls.map(async ([, body]) =>
+        JSON.parse(await (body as Blob).text()),
+      ),
+    );
+    expect(ids).toEqual([{ id: "asset-1" }, { id: "asset-2" }]);
+  });
+
   it("dismisses attachment errors after a few seconds", async () => {
     vi.useFakeTimers();
     try {
@@ -482,6 +561,67 @@ describe("Mink attachment intent", () => {
   });
 });
 
+describe("★★ a spoken turn takes what is staged in the hidden composer", () => {
+  /** What the composer registered with voice chat when it mounted. */
+  const registered = () => voice.value.registerComposer.mock.calls.at(-1)?.[0];
+
+  it("hands back nothing when nothing is staged, so the transcript goes alone", () => {
+    render(<LiveComposer initial="" />);
+    expect(
+      registered()?.(
+        "Sales?",
+        vi.fn(() => true),
+      ),
+    ).toBeNull();
+  });
+
+  it("sends the draft, the words and the staged image together, and keeps the upload", async () => {
+    const submit = vi.fn();
+    const view = render(
+      <LiveComposer
+        initial="Create a new product from this image"
+        canSaveMedia
+        onSubmit={submit}
+      />,
+    );
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    const deliver = vi.fn<(message: string) => boolean>(() => true);
+    let taken: boolean | null | undefined;
+    await act(async () => {
+      taken = await registered()?.("call it Almond Shake", deliver);
+    });
+    expect(taken).toBe(true);
+    // Voice chat delivers it as a spoken turn; the typed send is not used.
+    expect(submit).not.toHaveBeenCalled();
+    const sent = deliver.mock.calls[0][0] as string;
+    expect(
+      sent.startsWith(
+        "Create a new product from this image call it Almond Shake",
+      ),
+    ).toBe(true);
+    expect(sent).toContain(SAVED_URL);
+    expect(screen.queryByRole("button", { name: "View echos.png" })).toBeNull();
+    // The composer remounts once the new conversation has its id: the image
+    // went with the message, so its upload must survive that.
+    view.unmount();
+    expect(media.remove).not.toHaveBeenCalled();
+  });
+
+  it("leaves the words in the box when the turn cannot go", async () => {
+    render(<LiveComposer initial="Draft" />);
+    let taken: boolean | null | undefined;
+    await act(async () => {
+      taken = await registered()?.(
+        "and more",
+        vi.fn(() => false),
+      );
+    });
+    expect(taken).toBe(false);
+    expect(screen.getByLabelText("Message")).toHaveValue("Draft and more");
+  });
+});
+
 describe("Mink dictation", () => {
   it("inserts one final transcript and waits for Send", async () => {
     const submit = vi.fn();
@@ -504,6 +644,27 @@ describe("Mink dictation", () => {
     expect(submit).toHaveBeenCalledOnce();
   });
 
+  it("★ says no words were recognised, not that transcription failed, when the clip held none", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: "", languageCode: null }),
+    });
+    render(<LiveComposer initial="Please" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    expect(await screen.findByText(/Listening/i)).toBeVisible();
+    act(() =>
+      recording.done?.(
+        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
+      ),
+    );
+    expect(
+      await screen.findByText(
+        "No speech was recognised. Try again or type your message.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Message")).toHaveValue("Please");
+  });
+
   it("cancels dictation without changing the message", async () => {
     render(<LiveComposer initial="Existing" />);
     fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
@@ -514,90 +675,93 @@ describe("Mink dictation", () => {
   });
 });
 
-class FakeUtterance {
-  text: string;
-  lang = "";
-  onend: null | (() => void) = null;
-  onerror: null | (() => void) = null;
-  constructor(text: string) {
-    this.text = text;
-  }
-}
-const synth = { speak: vi.fn(), cancel: vi.fn() };
+describe("★★ dictation lives inside the composer, ChatGPT-style", () => {
+  it("swaps the old status bar for a waveform, a clock, Cancel and Done", async () => {
+    render(<LiveComposer initial="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    const recorder = await screen.findByTestId("mink-recorder");
+    expect(screen.getByTestId("mink-waveform")).toBeInTheDocument();
+    expect(recorder).toHaveTextContent("0:00");
+    expect(
+      screen.getByRole("button", { name: "Cancel dictation" }),
+    ).toBeEnabled();
+    const done = screen.getByRole("button", { name: "Finish dictation" });
+    await waitFor(() => expect(done).toBeEnabled());
+    await waitFor(() => expect(done).toHaveFocus());
+    // The full-width bar and its instruction are gone.
+    expect(screen.queryByText(/pause when you are finished/i)).toBeNull();
+  });
 
-// jsdom has neither a synthesiser nor a microphone, so each is installed by
-// hand and removed again, which is also what makes the unsupported test real.
-function installSpeechBrowser() {
-  Object.defineProperty(window, "isSecureContext", {
-    value: true,
-    configurable: true,
+  it("keeps listening through a pause and finishes on Done", async () => {
+    const stop = vi.fn(() =>
+      recording.done?.(
+        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
+      ),
+    );
+    recording.start.mockImplementation((signal, done, progress) => {
+      recording.signal = signal;
+      recording.done = done;
+      progress(4);
+      return Promise.resolve(stop);
+    });
+    render(<LiveComposer initial="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await waitFor(() => expect(recording.start).toHaveBeenCalledOnce());
+    expect(recording.start.mock.calls[0][3]).toMatchObject({
+      endOnSilence: false,
+    });
+    expect(await screen.findByTestId("mink-recorder")).toHaveTextContent(
+      "0:04",
+    );
+    const done = screen.getByRole("button", { name: "Finish dictation" });
+    await waitFor(() => expect(done).toBeEnabled());
+    fireEvent.click(done);
+    expect(stop).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Message")).toHaveValue(
+        "Visible product and storefront details",
+      ),
+    );
+    expect(screen.queryByTestId("mink-recorder")).toBeNull();
   });
-  Object.defineProperty(window, "AudioContext", {
-    value: class {},
-    configurable: true,
-  });
-  Object.defineProperty(navigator, "mediaDevices", {
-    value: { getUserMedia: vi.fn() },
-    configurable: true,
-  });
-  Object.defineProperty(window, "speechSynthesis", {
-    value: synth,
-    configurable: true,
-  });
-  Object.defineProperty(window, "SpeechSynthesisUtterance", {
-    value: FakeUtterance,
-    configurable: true,
-  });
-}
-function removeSpeechBrowser() {
-  for (const key of [
-    "isSecureContext",
-    "AudioContext",
-    "speechSynthesis",
-    "SpeechSynthesisUtterance",
-  ]) {
-    delete (window as unknown as Record<string, unknown>)[key];
-  }
-  delete (navigator as unknown as Record<string, unknown>).mediaDevices;
-}
 
-async function turnVoiceChatOn() {
-  const toggle = screen.getByRole("button", { name: "Talk with Mink" });
-  await waitFor(() => expect(toggle).toBeEnabled());
-  fireEvent.click(toggle);
-  expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await waitFor(() => expect(recording.start).toHaveBeenCalledOnce());
-  expect(await screen.findByText("Listening…")).toBeVisible();
-  return toggle;
-}
-
-function replyArrives(
-  view: ReturnType<typeof render>,
-  text: string,
-  onSubmit: (message: string) => void,
-) {
-  chat.value.messages = [
-    ...chat.value.messages,
-    { id: `a${chat.value.messages.length}`, role: "assistant", text },
-  ];
-  view.rerender(
-    <LiveComposer onSubmit={onSubmit} tick={chat.value.messages.length} />,
-  );
-}
+  it("shows Transcribing… while the recording is converted", async () => {
+    let answer!: (value: unknown) => void;
+    fetchMock.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    render(<LiveComposer initial="" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await waitFor(() => expect(recording.done).not.toBeNull());
+    act(() =>
+      recording.done?.(
+        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
+      ),
+    );
+    expect(await screen.findByText("Transcribing…")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Finish dictation" }),
+    ).toBeDisabled();
+    await act(async () =>
+      answer({ ok: true, json: async () => ({ text: "Hello" }) }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Message")).toHaveValue("Hello"),
+    );
+  });
+});
 
 describe("Mink voice chat", () => {
-  beforeEach(() => {
-    synth.speak.mockReset();
-    synth.cancel.mockReset();
-    installSpeechBrowser();
-  });
-  afterEach(removeSpeechBrowser);
-
-  it("renders the toggle disabled with the reason when the browser cannot speak", async () => {
-    removeSpeechBrowser();
+  it("renders the toggle disabled with the reason when the browser cannot run it", () => {
+    voice.value.support = {
+      ok: false,
+      reason: "Voice chat needs a browser that can read answers aloud.",
+    };
     render(<MinkMultimodalInput message="" onAdd={vi.fn()} disabled={false} />);
     const toggle = screen.getByRole("button", { name: "Talk with Mink" });
-    await waitFor(() => expect(toggle).toBeDisabled());
+    expect(toggle).toBeDisabled();
     expect(toggle).toHaveAttribute(
       "title",
       "Voice chat needs a browser that can read answers aloud.",
@@ -605,87 +769,42 @@ describe("Mink voice chat", () => {
     expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("listens, sends the transcript, speaks the reply and listens again", async () => {
-    const submit = vi.fn();
-    // A restored answer is on screen before the toggle: never read aloud.
-    chat.value.messages = [{ id: "old", role: "assistant", text: "Earlier." }];
-    const view = render(<LiveComposer onSubmit={submit} />);
-    await turnVoiceChatOn();
-    expect(synth.speak).not.toHaveBeenCalled();
+  it("★ the sound-wave button hands over to the shared loop, which owns the microphone", () => {
+    render(<MinkMultimodalInput message="" onAdd={vi.fn()} disabled={false} />);
+    fireEvent.click(screen.getByRole("button", { name: "Talk with Mink" }));
+    expect(voice.value.toggle).toHaveBeenCalledOnce();
+    // The composer opens no microphone of its own for voice chat.
+    expect(recording.start).not.toHaveBeenCalled();
+  });
 
-    act(() =>
-      recording.done?.(
-        new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
-      ),
-    );
-    await waitFor(() =>
-      expect(submit).toHaveBeenCalledWith(
-        "Visible product and storefront details",
-      ),
-    );
-    // Sent, not parked in the box for a Send click.
-    expect(screen.getByLabelText("Message")).toHaveValue("");
-    expect(screen.getByText("Thinking…")).toBeVisible();
+  it("while voice chat is on, dictation is unavailable and the toggle reads pressed", () => {
+    voice.value.enabled = true;
+    render(<MinkMultimodalInput message="" onAdd={vi.fn()} disabled={false} />);
+    const toggle = screen.getByRole("button", { name: "Talk with Mink" });
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Voice chat is listening for you" }),
+    ).toBeDisabled();
+    expect(screen.queryByTestId("mink-recorder")).toBeNull();
+  });
 
-    replyArrives(view, "**Sales** are up this week.", submit);
-    await waitFor(() => expect(synth.speak).toHaveBeenCalledOnce());
-    const utterance = synth.speak.mock.calls[0][0] as FakeUtterance;
-    expect(utterance.text).toBe("Sales are up this week.");
-    expect(utterance.lang).toBe(navigator.language);
-    expect(screen.getByText("Speaking…")).toBeVisible();
-
-    act(() => utterance.onend?.());
-    await waitFor(() => expect(recording.start).toHaveBeenCalledTimes(2));
-    expect(screen.getByText("Listening…")).toBeVisible();
+  it("while dictating, voice chat cannot be started", async () => {
+    render(<LiveComposer onSubmit={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await waitFor(() => expect(recording.start).toHaveBeenCalledOnce());
     expect(
       screen.getByRole("button", { name: "Talk with Mink" }),
-    ).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("listens again after an empty recording", async () => {
-    render(<LiveComposer onSubmit={vi.fn()} />);
-    await turnVoiceChatOn();
-    act(() => recording.done?.(null));
-    await waitFor(() => expect(recording.start).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByText("Listening…")).toBeVisible();
-  });
-
-  it("turns off from the status row and releases the microphone", async () => {
-    render(<LiveComposer onSubmit={vi.fn()} />);
-    const toggle = await turnVoiceChatOn();
-    await waitFor(() => expect(recording.signal).not.toBeNull());
-    fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
-    expect(recording.signal?.aborted).toBe(true);
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "Dictate message" }),
-    ).toBeEnabled();
-  });
-
-  it("lets a typed send interrupt the microphone and still speaks the reply", async () => {
-    const submit = vi.fn();
-    const view = render(<LiveComposer onSubmit={submit} />);
-    await turnVoiceChatOn();
-    await waitFor(() => expect(recording.signal).not.toBeNull());
-    fireEvent.change(screen.getByLabelText("Message"), {
-      target: { value: "Typed instead" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledWith("Typed instead"));
-    expect(recording.signal?.aborted).toBe(true);
-    expect(screen.getByText("Thinking…")).toBeVisible();
-
-    replyArrives(view, "Here you go.", submit);
-    await waitFor(() => expect(synth.speak).toHaveBeenCalledOnce());
-    expect(screen.getByText("Speaking…")).toBeVisible();
+    ).toBeDisabled();
   });
 
   it("keeps plain dictation unchanged while voice chat is off", async () => {
     const submit = vi.fn();
     render(<LiveComposer initial="Please" onSubmit={submit} />);
     fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    expect(recording.start.mock.calls[0][3]).toMatchObject({
+      endOnSilence: false,
+    });
     act(() =>
       recording.done?.(
         new File(["wav"], "voice-note.wav", { type: "audio/wav" }),
@@ -697,7 +816,7 @@ describe("Mink voice chat", () => {
       ),
     );
     expect(submit).not.toHaveBeenCalled();
-    expect(synth.speak).not.toHaveBeenCalled();
+    expect(voice.value.toggle).not.toHaveBeenCalled();
   });
 });
 
@@ -730,4 +849,205 @@ it("uploads an intact CSV privately without calling the visual reader", async ()
   expect(submit.mock.calls[0][0]).toContain("Private product CSV attachment");
   expect(submit.mock.calls[0][0]).not.toContain("Whole Milk");
   expect(media.upload).not.toHaveBeenCalled();
+});
+
+describe("★★ Enter hands a message with attachments to the chat at once", () => {
+  function handOff() {
+    const sent: MinkPreparedSend[] = [];
+    const onSubmitPrepared = vi.fn((prepared: MinkPreparedSend) => {
+      sent.push(prepared);
+      return true;
+    });
+    return { sent, onSubmitPrepared };
+  }
+
+  it("clears the box and hands over the photo before anything is uploaded or read", async () => {
+    let finishUpload!: () => void;
+    media.upload.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = () =>
+            resolve({
+              asset: { id: "asset-1", url: SAVED_URL, filename: "echos.png" },
+            });
+        }),
+    );
+    const { sent, onSubmitPrepared } = handOff();
+    render(
+      <LiveComposer
+        initial="Is this in stock?"
+        canSaveMedia
+        onSubmit={vi.fn()}
+        onSubmitPrepared={onSubmitPrepared}
+      />,
+    );
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmitPrepared).toHaveBeenCalledOnce();
+    expect(sent[0]).toMatchObject({
+      draft: "Is this in stock?",
+      attachments: [
+        { name: "echos.png", kind: "image", previewUrl: "blob:local" },
+      ],
+    });
+    // Nothing is left in the box, and nothing has been read yet.
+    expect(screen.queryByRole("button", { name: "View echos.png" })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const setStatus = vi.fn();
+    const reading = sent[0]!.prepare({
+      signal: new AbortController().signal,
+      setStatus,
+    });
+    finishUpload();
+    const finished = await reading;
+
+    expect(finished.message).toContain("Is this in stock?");
+    expect(finished.message).toContain(SAVED_URL);
+    expect(finished.message).toContain(
+      "Visible product and storefront details",
+    );
+    expect(finished.previews).toEqual({ [`url:${SAVED_URL}`]: "blob:local" });
+    expect(setStatus).toHaveBeenCalledWith("Looking at your photo…");
+    // ★ The upload begun when the photo was picked is the one used: no second.
+    expect(media.upload).toHaveBeenCalledOnce();
+    // ★ The chat shows that picture now, so it is not revoked here.
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("puts the words and the photo back, with the reason, when reading fails, and keeps the upload", async () => {
+    const { sent, onSubmitPrepared } = handOff();
+    render(
+      <LiveComposer
+        initial="Is this in stock?"
+        canSaveMedia
+        onSubmit={vi.fn()}
+        onSubmitPrepared={onSubmitPrepared}
+      />,
+    );
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(screen.getByLabelText("Message")).toHaveValue("");
+
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ error: "Busy" }),
+    });
+    await expect(
+      sent[0]!.prepare({
+        signal: new AbortController().signal,
+        setStatus: vi.fn(),
+      }),
+    ).rejects.toThrow("Busy");
+
+    let kept = false;
+    act(() => {
+      kept = sent[0]!.restore({ code: "attachment_failed", message: "Busy" });
+    });
+
+    expect(kept).toBe(true);
+    expect(
+      await screen.findByRole("button", { name: "View echos.png" }),
+    ).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Busy");
+    expect(screen.getByLabelText("Message")).toHaveValue("Is this in stock?");
+
+    // Sending again reuses the saved copy: one upload in all.
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(onSubmitPrepared).toHaveBeenCalledTimes(2);
+    await sent[1]!.prepare({
+      signal: new AbortController().signal,
+      setStatus: vi.fn(),
+    });
+    expect(media.upload).toHaveBeenCalledOnce();
+  });
+
+  it("sends a photo on its own, with no words", async () => {
+    const { sent, onSubmitPrepared } = handOff();
+    render(
+      <LiveComposer onSubmit={vi.fn()} onSubmitPrepared={onSubmitPrepared} />,
+    );
+    await stageImage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmitPrepared).toHaveBeenCalledOnce();
+    expect(sent[0]?.draft).toBe("");
+  });
+
+  it("keeps everything in the box when the chat cannot take it", async () => {
+    const onSubmitPrepared = vi.fn(() => false);
+    render(
+      <LiveComposer
+        initial="Is this in stock?"
+        onSubmit={vi.fn()}
+        onSubmitPrepared={onSubmitPrepared}
+      />,
+    );
+    await stageImage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    expect(onSubmitPrepared).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: "View echos.png" }),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Message")).toHaveValue("Is this in stock?");
+  });
+
+  it("lets the files go but keeps the words when the box that sent them has closed", async () => {
+    const { sent, onSubmitPrepared } = handOff();
+    const onAdd = vi.fn();
+    function ChatBox() {
+      const [value, setValue] = useState("Is this in stock?");
+      return (
+        <MinkMultimodalInput
+          message={value}
+          onAdd={(next) => {
+            onAdd(next);
+            setValue(next);
+          }}
+          disabled={false}
+          canSaveMedia
+          onSubmit={vi.fn()}
+          onSubmitPrepared={(prepared) => {
+            const taken = onSubmitPrepared(prepared);
+            if (taken) setValue("");
+            return taken;
+          }}
+        >
+          {({ attach, attachment, submit }) => (
+            <div>
+              {attachment}
+              {attach}
+              <button type="button" onClick={() => void submit()}>
+                Send message
+              </button>
+            </div>
+          )}
+        </MinkMultimodalInput>
+      );
+    }
+    const view = render(<ChatBox />);
+    await stageImage();
+    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await sent[0]!
+      .prepare({ signal: new AbortController().signal, setStatus: vi.fn() })
+      .catch(() => undefined);
+    view.unmount();
+    // ★ Handed over, so leaving did not delete the upload the message uses.
+    expect(media.remove).not.toHaveBeenCalled();
+
+    const kept = sent[0]!.restore({ code: "attachment_failed", message: "x" });
+
+    expect(kept).toBe(false);
+    expect(onAdd).toHaveBeenCalledWith("Is this in stock?");
+    await waitFor(() => expect(media.remove).toHaveBeenCalledWith("asset-1"));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local");
+  });
 });

@@ -907,7 +907,7 @@ export async function placeOrder(
   if (closedRefusal) return { error: closedRefusal };
 
   // Throttle order placement per customer (abuse / accidental double-submit /
-  // scripted spam). Backed by Postgres so it holds across serverless instances;
+  // scripted spam). Backed by Postgres so it holds across Cloud Run instances;
   // fails open on a DB hiccup, since auth + validation remain the real boundary.
   const rl = await rateLimit(`checkout:${user.id}`, {
     max: 10,
@@ -970,8 +970,8 @@ export async function placeOrder(
   const storeId = await getCurrentStoreId();
 
   // Orders/order_items are written with a service-role (RLS-bypassing) scope:
-  // there is no customer INSERT RLS policy on those tables by design (see
-  // orders_table.sql), and all prices/totals are re-derived from the DB below,
+  // there is no customer INSERT RLS policy on those tables by design, and all
+  // prices/totals are re-derived from the DB below,
   // not trusted from the client — so the write is safe with RLS bypassed.
 
   // For an online payment, resolve the store's gateway UP FRONT (connected +
@@ -1535,8 +1535,9 @@ export async function placeOrder(
 
   // The order id is generated up front so the order row and its stock-ledger
   // movements share it. What follows is a reserve → create → reserve → rollback
-  // flow. There is NO cross-statement transaction over PostgREST, so every
-  // failure path unwinds each step that already succeeded, in reverse order.
+  // flow. Each step is its own withService transaction, not one transaction
+  // across statements, so every failure path unwinds each step that already
+  // succeeded, in reverse order.
   const orderId = crypto.randomUUID();
 
   // 3b. Reserve a coupon use ATOMICALLY, before creating the order, so a
@@ -1883,7 +1884,7 @@ export async function placeOrder(
     db
       .insert(orders)
       // order_no / order_ref are NOT NULL but owned by the BEFORE-INSERT trigger
-      // (identifiers_04_triggers.sql) — the app never sends them, so the insert
+      // (orders_set_ref) — the app never sends them, so the insert
       // type is asserted past those columns.
       .values({
         id: orderId,

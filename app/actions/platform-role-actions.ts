@@ -93,7 +93,7 @@ export async function createPlatformRole(
   const base = slugifyRoleName(form.name);
   // A register slug is a code table; a dashboard role may not shadow one.
   if ((POS_ROLE_SLUGS as readonly string[]).includes(base)) {
-    return { error: "That name belongs to a register role." };
+    return { error: "That name belongs to a POS role." };
   }
 
   let slug: string;

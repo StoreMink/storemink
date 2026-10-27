@@ -15,7 +15,7 @@
 //     attempt starts a grace clock and "can't be auto-collected" must not.
 //
 // ⚠ The one-in-flight guarantee itself is a partial UNIQUE index in Postgres,
-// proved by supabase/billing_verify.sql. Here we only prove this layer reads a
+// proved by scripts/billing-verify.sql. Here we only prove this layer reads a
 // conflict as "already collecting" instead of as an error.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";

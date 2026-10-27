@@ -49,7 +49,7 @@ export const PLANS = [
     who: "For growing brands",
     features: [
       `Everything in ${PLAN_META.basic.name}`,
-      `Point of Sale, ${PLAN_LIMITS.pro.posLocationsIncluded} locations`,
+      `Point of Sale (POS), ${PLAN_LIMITS.pro.posLocationsIncluded} locations`,
       "Buy online, collect in store",
       "Email campaigns",
       "Your own domain",

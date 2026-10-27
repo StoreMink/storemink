@@ -19,9 +19,15 @@ import {
   users,
 } from "@/drizzle/schema";
 import { getManagerUserId, getActingStoreId } from "@/app/dashboard/lib/access";
-import { callGemini, brandSystemText } from "@/lib/ai/gemini";
+import {
+  AI_PROMPT_SHORT_FIELD_MAX,
+  AI_UNUSABLE_MESSAGE,
+  callGemini,
+  brandSystemText,
+  promptText,
+} from "@/lib/ai/gemini";
 import { getBrandSoulForStore } from "@/lib/ai/brand-voice";
-import { consumeAiQuota } from "@/lib/ai/quota";
+import { withAiCredit } from "@/lib/ai/credited-copy";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 import { emailConfigured } from "@/lib/email/send";
 import {
@@ -184,6 +190,7 @@ export async function listEmailRecipients(
 // AI generation — one templated email body with a {{first_name}} merge tag.
 // ---------------------------------------------------------------------------
 
+// A JSON Schema, sent as responseJsonSchema (GeminiOptions, lib/ai/gemini.ts).
 const EMAIL_SCHEMA = {
   type: "object",
   properties: {
@@ -191,6 +198,7 @@ const EMAIL_SCHEMA = {
     body: { type: "string" },
   },
   required: ["subject", "body"],
+  additionalProperties: false,
 };
 
 export async function generateCouponEmail(
@@ -204,22 +212,41 @@ export async function generateCouponEmail(
   if (!(await storeAllowsPlanFeature(storeId, "emailCampaigns"))) {
     return { error: CAMPAIGN_PLAN_ERROR };
   }
-  const quota = await consumeAiQuota(storeId);
-  if (!quota.allowed) return { error: quota.error };
 
+  // ★ The credit is taken before the model is asked (the store's rates
+  // first), and every way out that does not return a draft gives it back: a
+  // failed or busy model, a reply that is not the JSON asked for, or a throw
+  // on the way (audit B1; lib/ai/credited-copy.ts).
+  return withAiCredit({ storeId, actorId: userId }, async () => {
+    const draft = await draftCouponEmail(storeId, input);
+    if (!draft.subject || !draft.body) {
+      return { error: draft.error ?? AI_UNUSABLE_MESSAGE };
+    }
+    return { subject: draft.subject, body: draft.body };
+  });
+}
+
+/** The model call behind generateCouponEmail, after the credit is taken. */
+async function draftCouponEmail(
+  storeId: string,
+  input: GenerateEmailInput,
+): Promise<GenerateEmailResult> {
   const brand = await getBrandSoulForStore(storeId);
 
+  // ★ Every field is bounded (`promptText`): this is a server action, so the
+  //   form's own limits are not what reaches the model.
+  const short = (value: unknown) =>
+    promptText(value, AI_PROMPT_SHORT_FIELD_MAX);
+  const validUntil = short(input.validUntilLabel);
+  const note = promptText(input.description);
+  const instructions = promptText(input.instructions);
   const facts = [
-    `Coupon code: ${input.code}`,
-    `Offer: ${input.discountLabel}`,
-    input.validUntilLabel ? `Valid until: ${input.validUntilLabel}` : "",
-    input.description
-      ? `Internal note about the coupon: ${input.description}`
-      : "",
-    `Audience: ${input.audienceLabel}`,
-    input.instructions
-      ? `Extra direction from the team: ${input.instructions}`
-      : "",
+    `Coupon code: ${short(input.code)}`,
+    `Offer: ${short(input.discountLabel)}`,
+    validUntil ? `Valid until: ${validUntil}` : "",
+    note ? `Internal note about the coupon: ${note}` : "",
+    `Audience: ${short(input.audienceLabel)}`,
+    instructions ? `Extra direction from the team: ${instructions}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -241,27 +268,27 @@ ${facts}`;
     temperature: 0.8,
     maxOutputTokens: 1024,
     responseMimeType: "application/json",
-    responseSchema: EMAIL_SCHEMA,
+    responseJsonSchema: EMAIL_SCHEMA,
   });
-  if (error) return { error };
+  if (error || !text) return { error: error ?? AI_UNUSABLE_MESSAGE };
 
+  let parsed: { subject?: unknown; body?: unknown };
   try {
-    const parsed = JSON.parse(text ?? "{}") as {
-      subject?: string;
-      body?: string;
-    };
-    if (!parsed.subject || !parsed.body)
-      return { error: "The AI response was incomplete. Try again." };
-    // The prompt forbids long dashes, but a model can ignore an instruction,
-    // and this text becomes StoreMink-drafted email copy. Normalise it here so
-    // the merchant reviews (and can still edit) dash-free copy.
-    return {
-      subject: withoutLongDashes(parsed.subject).trim(),
-      body: withoutLongDashes(parsed.body).trim(),
-    };
+    parsed = JSON.parse(text) as { subject?: unknown; body?: unknown };
   } catch {
-    return { error: "Could not parse the AI response. Try again." };
+    return { error: AI_UNUSABLE_MESSAGE };
   }
+  const rawSubject = parsed?.subject;
+  const rawBody = parsed?.body;
+  if (typeof rawSubject !== "string" || typeof rawBody !== "string")
+    return { error: AI_UNUSABLE_MESSAGE };
+  // The prompt forbids long dashes, but a model can ignore an instruction,
+  // and this text becomes StoreMink-drafted email copy. Normalise it here so
+  // the merchant reviews (and can still edit) dash-free copy.
+  const subject = withoutLongDashes(rawSubject).trim();
+  const body = withoutLongDashes(rawBody).trim();
+  if (!subject || !body) return { error: AI_UNUSABLE_MESSAGE };
+  return { subject, body };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +395,7 @@ const RECIPIENT_INSERT_CHUNK = 1000;
  * write one row per recipient to email_campaign_recipients, then return
  * immediately — the worker (app/api/cron/send-emails) does the actual sending.
  * This is what lets a 100k-recipient campaign work at all: doing it inline
- * would exceed the serverless function timeout.
+ * would outlast the request timeout.
  */
 export async function sendCouponEmail(
   input: SendEmailInput,
@@ -424,8 +451,7 @@ export async function sendCouponEmail(
   } catch (err) {
     console.error("Failed to create email campaign:", err);
     return {
-      error:
-        "Could not queue the campaign. Apply supabase/email_campaigns.sql, then try again.",
+      error: "Could not queue the campaign. Please try again.",
     };
   }
 

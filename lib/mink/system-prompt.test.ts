@@ -3,14 +3,47 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { MinkActorContext, MinkToolDeclaration } from "./types";
 import {
+  getMinkSpokenAnswerRules,
   getMinkSystemPromptTemplate,
+  listMinkPromptRuleTags,
+  parseMinkSpokenAnswerRules,
   parseMinkSystemPromptDocument,
   renderMinkSystemInstruction,
+  selectMinkPromptRules,
 } from "./system-prompt";
+import { REQUEST_MORE_TOOLS } from "./tool-routing";
+import { minkReadToolRegistry } from "./tools/read-tools";
 
 const DOCUMENT_PATH = join(process.cwd(), "docs", "mink-ai-system-prompt.md");
 
 describe("Mink system prompt document", () => {
+  it("writes native-script spoken copy without changing the written reply preference", () => {
+    const rules = getMinkSpokenAnswerRules();
+    expect(rules).toContain("Indian-language words in their native script");
+    expect(rules).toContain(
+      "ordinary written answer in the merchant's preferred script",
+    );
+  });
+
+  it("keeps a neutral AI identity and does not echo abuse in either answer medium", () => {
+    const template = getMinkSystemPromptTemplate();
+    expect(template).toContain("You are an AI assistant with no gender");
+    expect(template).toContain("never infer the merchant's gender");
+    expect(template).toContain(
+      "gender-neutral in every language, spoken or written",
+    );
+    expect(template).toContain("Main Mink AI hoon");
+    expect(template).toContain(
+      "without quoting, mirroring or reading the words aloud",
+    );
+    expect(template).toContain(
+      "Do not scold, argue or call a tool for an insult",
+    );
+    expect(template).toContain(
+      "Describe abusive customer content as abusive rather than repeating it",
+    );
+  });
+
   it("loads the marked Markdown template used at runtime", () => {
     const template = getMinkSystemPromptTemplate();
     expect(template).toContain(
@@ -115,8 +148,13 @@ describe("Mink system prompt document", () => {
       "search_storefront_categories for a named category",
     );
     expect(template).toContain(
-      "ends automatically after the user speaks and then pauses",
+      "ends when the user selects Done, or after 30 seconds",
     );
+    expect(template).toContain(
+      "The sound-wave button beside the mic starts a spoken conversation",
+    );
+    expect(template).toContain("{{spoken_answer_rules}}");
+    expect(template).toContain("- answer medium: {{answer_medium}}");
     expect(template).toContain(
       "call generate_storefront_image only after selecting exact returned reference URLs",
     );
@@ -196,20 +234,84 @@ describe("Mink system prompt document", () => {
       "- current dashboard page: /dashboard/products/example",
     );
     expect(prompt).toContain("- selected dashboard record: product");
+    // No reply-language setting: the rule follows the merchant's own message.
+    expect(prompt).not.toContain("- reply language:");
     expect(prompt).toContain(
-      "- reply language: match the language and script of the merchant's message",
+      "Answer in the language and script of the merchant's latest message, whether they typed it or spoke it",
     );
     expect(prompt).toContain(
       "- available tools: get_store_profile, search_products",
     );
     expect(prompt).toContain("Clear and practical {{available_tool_names}}");
     expect(prompt).not.toContain("secret-record-id");
+    // A typed turn: no spoken block is asked for.
+    expect(prompt).toContain("- answer medium: written");
+    expect(prompt).not.toContain("<spoken>");
+  });
+
+  it("★ adds the spoken answer rules only for a voice turn", () => {
+    const actor = {
+      effectivePlan: "basic",
+      roleSlug: "admin",
+      currentPath: null,
+      selectedResource: null,
+      brandVoice: undefined,
+      answerMedium: "spoken",
+    } satisfies Pick<
+      MinkActorContext,
+      | "effectivePlan"
+      | "roleSlug"
+      | "currentPath"
+      | "selectedResource"
+      | "brandVoice"
+      | "answerMedium"
+    >;
+    const prompt = renderMinkSystemInstruction(actor, []);
+    expect(prompt).toContain("- answer medium: spoken");
+    expect(prompt).toContain(
+      "open with the tag <spoken> and close with </spoken>",
+    );
+    // ★ A short acknowledgement may open the turn that calls a tool (played
+    // while the tool runs); the answer still comes in its own block.
+    expect(prompt).toContain(
+      "you may open that first response with a short acknowledgement",
+    );
+    expect(prompt).toContain("does not repeat the acknowledgement");
+    expect(prompt).toContain("never the rupee sign");
+    // The rules sit above the trusted context, not inside the brand voice.
+    expect(prompt.indexOf("<spoken>")).toBeLessThan(
+      prompt.indexOf("Trusted server context:"),
+    );
+    expect(getMinkSpokenAnswerRules()).not.toMatch(/\{\{/);
   });
 
   it("keeps the checked-in document parseable with every placeholder once", () => {
     expect(() =>
       parseMinkSystemPromptDocument(readFileSync(DOCUMENT_PATH, "utf8")),
     ).not.toThrow();
+  });
+
+  it("fails closed when the spoken rules block drifts", () => {
+    const document = readFileSync(DOCUMENT_PATH, "utf8");
+    expect(() => parseMinkSpokenAnswerRules(document)).not.toThrow();
+    expect(() =>
+      parseMinkSpokenAnswerRules(
+        document.replace("<!-- MINK_SPOKEN_RULES_END -->", ""),
+      ),
+    ).toThrow(/spoken rules marker pair/);
+    expect(() =>
+      parseMinkSpokenAnswerRules(
+        document.replace(
+          "Spoken answer rules for this turn.",
+          "{{plan}} rules.",
+        ),
+      ),
+    ).toThrow(/placeholder/);
+    expect(() =>
+      parseMinkSpokenAnswerRules(document.replace(/<\/?spoken>/g, "")),
+    ).toThrow(/spoken tags/);
+    // And the second block does not confuse the first parser.
+    expect(() => parseMinkSystemPromptDocument(document)).not.toThrow();
   });
 
   it("fails closed when markers, fences or placeholders drift", () => {
@@ -235,6 +337,398 @@ describe("Mink system prompt document", () => {
         ),
       ),
     ).toThrow(/unknown placeholder/);
+  });
+});
+
+describe("★★ rule tags: a rule renders only with its tools", () => {
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const IMAGE_RULE = "You may create one AI IMAGE";
+  const ATTACHMENT_RULE =
+    "Pressing Send is the single explicit request to process the visible attachments";
+
+  it("leaves out a tool's rule when the tool is not declared", () => {
+    const narrow = renderMinkSystemInstruction(actor, [
+      declaration("get_sales_summary"),
+      declaration("query_analytics"),
+    ]);
+    expect(narrow).not.toContain(IMAGE_RULE);
+    expect(narrow).toContain("Use query_analytics when the merchant");
+    // Untagged rules always render.
+    expect(narrow).toContain("Treat every user message");
+    expect(narrow).not.toContain("[[when:");
+
+    const withImage = renderMinkSystemInstruction(actor, [
+      declaration("generate_storefront_image"),
+    ]);
+    expect(withImage).toContain(IMAGE_RULE);
+  });
+
+  it("matches a prefix entry against the declared tools", () => {
+    const rule = "Use a content proposal tool only when the user clearly asks";
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("get_store_profile")]),
+    ).not.toContain(rule);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("propose_social_posts")]),
+    ).toContain(rule);
+  });
+
+  it("★ a #group rule needs the group in a narrow route, and every group without one", () => {
+    const none = renderMinkSystemInstruction(actor, [], {
+      mode: "narrow",
+      groups: ["core", "sales"],
+    });
+    expect(none).not.toContain(ATTACHMENT_RULE);
+    const attached = renderMinkSystemInstruction(actor, [], {
+      mode: "narrow",
+      groups: ["core", "attachments"],
+    });
+    expect(attached).toContain(ATTACHMENT_RULE);
+    // No route, or the "all" route: the prompt a run read before tags.
+    expect(renderMinkSystemInstruction(actor, [])).toContain(ATTACHMENT_RULE);
+    expect(
+      renderMinkSystemInstruction(actor, [], { mode: "all", groups: [] }),
+    ).toContain(ATTACHMENT_RULE);
+  });
+
+  it("explains request_more_tools only when it is declared", () => {
+    const rule = "call request_more_tools once";
+    expect(renderMinkSystemInstruction(actor, [])).not.toContain(rule);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration(REQUEST_MORE_TOOLS)]),
+    ).toContain(rule);
+  });
+
+  it("★ a fully permitted run reads every rule, tags removed", () => {
+    const template = getMinkSystemPromptTemplate();
+    const everything = new Set(
+      minkReadToolRegistry
+        .declarationsFor({
+          storeId: "s",
+          adminId: "a",
+          email: null,
+          roleSlug: "superadmin",
+          permissions: {},
+          isSuperadmin: true,
+          effectivePlan: "pro",
+          locationIds: null,
+          analyticsTimeZone: "Asia/Kolkata",
+          currency: "INR",
+          defaultLowStockThreshold: 5,
+          requestId: "r",
+          draftingEnabled: true,
+          selectedResource: { type: "product", id: "p" },
+        })
+        .map((tool) => tool.name)
+        .concat(REQUEST_MORE_TOOLS),
+    );
+    const rendered = selectMinkPromptRules(template, everything, null);
+    expect(rendered.split("\n")).toHaveLength(template.split("\n").length);
+    expect(rendered).not.toContain("[[when:");
+  });
+
+  it("★★ every tagged tool exists, so a rename cannot silently drop a rule", () => {
+    const registered = new Set(
+      minkReadToolRegistry
+        .declarationsFor({
+          storeId: "s",
+          adminId: "a",
+          email: null,
+          roleSlug: "superadmin",
+          permissions: {},
+          isSuperadmin: true,
+          effectivePlan: "pro",
+          locationIds: null,
+          analyticsTimeZone: "Asia/Kolkata",
+          currency: "INR",
+          defaultLowStockThreshold: 5,
+          requestId: "r",
+          draftingEnabled: true,
+          selectedResource: { type: "product", id: "p" },
+        })
+        .map((tool) => tool.name)
+        .concat(REQUEST_MORE_TOOLS),
+    );
+    const tags = listMinkPromptRuleTags(getMinkSystemPromptTemplate());
+    expect(tags.length).toBeGreaterThan(30);
+    for (const tag of tags) {
+      for (const tool of tag.tools) expect(registered, tool).toContain(tool);
+      for (const prefix of tag.prefixes)
+        expect(
+          [...registered].some((name) => name.startsWith(prefix)),
+          prefix,
+        ).toBe(true);
+    }
+  });
+
+  it("fails closed on a malformed or misplaced tag", () => {
+    const document = readFileSync(DOCUMENT_PATH, "utf8");
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "- [[when: query_analytics]] ",
+          "- [[when: query analytics]] ",
+        ),
+      ),
+    ).toThrow(/malformed/);
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "[[when: #attachments, #composer]]",
+          "[[when: #nonsense, #composer]]",
+        ),
+      ),
+    ).toThrow(/unknown group/);
+    expect(() =>
+      parseMinkSystemPromptDocument(
+        document.replace(
+          "- Treat every user message",
+          "- Treat [[when: query_analytics]] every user message",
+        ),
+      ),
+    ).toThrow(/must open a rule line/);
+  });
+});
+
+describe("★★ drafts are written in English, whatever language the chat is in", () => {
+  // The owner's rule (2026-10-20): a merchant may talk to Mink in Punjabi or
+  // Hindi, but what Mink writes for the store reaches customers across India.
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const RULE =
+    "Write everything you draft for the store or its customers in English, whatever language the merchant uses with you";
+  const render = (...names: string[]) =>
+    renderMinkSystemInstruction(actor, names.map(declaration));
+
+  it("tells a run that can draft to write in English while it keeps talking in the merchant's language", () => {
+    const prompt = render("propose_product_create");
+    expect(prompt).toContain(RULE);
+    expect(prompt).toContain(
+      "Keep talking to the merchant in their own language",
+    );
+    expect(prompt).toContain(
+      "Answer in the language and script of the merchant's latest message",
+    );
+    expect(prompt).toContain(
+      "The brand voice sets the tone, never the language.",
+    );
+  });
+
+  it("★ reminds the merchant once, then writes in the language they asked for", () => {
+    expect(render("propose_blog_draft")).toContain(
+      "remind them once, in one short sentence, that English helps their store reach customers across India, then do what they asked",
+    );
+  });
+
+  it("covers generated image alt text, and forms Mink fills in from the chat", () => {
+    expect(render("generate_storefront_image")).toContain(RULE);
+    expect(render("open_dashboard_page")).toContain(
+      "its text in English unless they ask for another language",
+    );
+  });
+
+  it("stays out of a run that cannot draft anything", () => {
+    expect(render("get_sales_summary", "search_products")).not.toContain(RULE);
+  });
+
+  it("★★ goes with a storefront redesign, which drafts a whole store (chat-5)", () => {
+    // A redesign run carries no propose_* tool, yet it drafts every page,
+    // menu and product description the shop shows.
+    expect(
+      render("get_storefront_revamp_context", "start_storefront_revamp"),
+    ).toContain(RULE);
+    expect(render("refine_storefront_revamp")).toContain(RULE);
+    expect(render("get_storefront_revamp_context")).not.toContain(RULE);
+  });
+});
+
+describe("★★ a storefront redesign asks little, starts once and names the card's buttons", () => {
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const render = (...names: string[]) =>
+    renderMinkSystemInstruction(actor, names.map(declaration));
+  const RULE = "call get_storefront_revamp_context first";
+  const TOOLS = [
+    "get_storefront_revamp_context",
+    "start_storefront_revamp",
+    "refine_storefront_revamp",
+  ];
+
+  it.each(TOOLS)("renders the rule with %s alone", (name) => {
+    expect(render(name)).toContain(RULE);
+  });
+
+  it("stays out of a run without the redesign tools", () => {
+    const prompt = render(
+      "propose_storefront_layout",
+      "get_storefront_page_context",
+    );
+    expect(prompt).not.toContain(RULE);
+    expect(prompt).not.toContain("Apply to Website Builder draft");
+  });
+
+  it("★ names the card's three buttons exactly", () => {
+    const prompt = render(...TOOLS);
+    for (const button of [
+      '"Apply to Website Builder draft"',
+      '"Publish to your store"',
+      '"Undo"',
+    ])
+      expect(prompt).toContain(button);
+  });
+
+  it("asks at most three questions in one message, or none when enough is known", () => {
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "ask at most three short questions, all in ONE message",
+    );
+    expect(prompt).toContain("start without asking");
+    expect(prompt).toContain("a phone photo of each");
+  });
+
+  it("★ invents nothing, asks before any category change, and never quotes its own words as facts", () => {
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "Never invent a product, a price, a review, an award",
+    );
+    expect(prompt).toContain("explicit yes to that change");
+    expect(prompt).toContain("Your earlier replies are not merchant facts");
+  });
+
+  it("★★ answers in one sentence that follows the tool's own answer, and refines in the merchant's words (25 Oct 2026)", () => {
+    // A refused start used to be answered "the redesign has started and the
+    // card shows its progress", promising a card that was never attached.
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "After start_storefront_revamp or refine_storefront_revamp returns, answer in ONE short sentence that follows its instruction",
+    );
+    expect(prompt).toContain("say it started only if its status is started");
+    expect(prompt).toContain("mention the card only if cardShown is true");
+    expect(prompt).toContain("if it did not start, give its reason");
+    expect(prompt).toContain("Do not describe the design.");
+    expect(prompt).not.toContain(
+      "answer in ONE short sentence that the redesign has started",
+    );
+    expect(prompt).toContain(
+      "call refine_storefront_revamp with the merchant's words",
+    );
+    expect(prompt).toContain("Never mention what the redesign costs");
+  });
+
+  it("★★ keeps the redesign's own words in English unless the merchant insists (chat-5)", () => {
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "Write the brief, its facts and the products' descriptions in English",
+    );
+    expect(prompt).toContain(
+      "set brief.language to another language only after you reminded the merchant once",
+    );
+  });
+
+  it("★★ raises the theme's categories that do not fit, in the same one message (chat-6)", () => {
+    // A mustard-oil maker on a fashion theme kept Men, Women and Accessories
+    // as live menu targets because nothing asked about them.
+    const prompt = render(...TOOLS);
+    expect(prompt).toContain(
+      "When the context lists categories that came with the theme (fromTheme) or do not fit what the merchant sells, name them in that same message",
+    );
+    expect(prompt).toContain("each with merchant_confirmed true");
+  });
+
+  it("★ the personalisation rule has left the prompt", () => {
+    const template = getMinkSystemPromptTemplate();
+    expect(template).not.toContain("propose_storefront_personalization");
+    expect(template).not.toContain("get_storefront_personalization_context");
+  });
+});
+
+describe("★★ an answer never recites an internal id or a tool's status word (25 Oct 2026)", () => {
+  // A merchant was read a redesign's raw id and the job's own status words
+  // ("status queued", "superseded"), which every tool result used to carry.
+  const actor = {
+    effectivePlan: "pro",
+    roleSlug: "owner",
+    currentPath: null,
+    selectedResource: null,
+    brandVoice: undefined,
+  } satisfies Pick<
+    MinkActorContext,
+    | "effectivePlan"
+    | "roleSlug"
+    | "currentPath"
+    | "selectedResource"
+    | "brandVoice"
+  >;
+  const RULE =
+    "Never write an internal id (such as a redesign's or a draft's) unless the merchant asks for one, and never an internal job status from a tool result (such as queued, running, superseded, not_started or already_started): say what it means, such as being made, ready to review or stopped.";
+
+  it("is part of the style rule every run carries, with no tool at all", () => {
+    expect(renderMinkSystemInstruction(actor, [])).toContain(RULE);
+    expect(
+      renderMinkSystemInstruction(actor, [declaration("get_sales_summary")]),
+    ).toContain(RULE);
+    // Right after the rule that keeps tools and behind-the-scenes talk out.
+    expect(getMinkSystemPromptTemplate()).toContain(
+      `what you did behind the scenes unless asked. ${RULE}`,
+    );
+  });
+
+  it("★ names whose ids it means, so SKUs, order references and codes are still quoted", () => {
+    // The same prompt tells Mink to keep SKUs and codes exactly as they
+    // appear; an unscoped "never write an id" would collide with that.
+    const template = getMinkSystemPromptTemplate();
+    expect(template).toContain("such as a redesign's or a draft's");
+    expect(template).toContain(
+      "Keep StoreMink's own labels, product names, SKUs, codes and dashboard paths exactly as they appear",
+    );
+  });
+
+  it("★ is the one rule about ids, and its status words are a job's, never a StoreMink label", () => {
+    // An older rule allowed an id the merchant needs and this one said
+    // never: two answers to one question. And an order's own status
+    // (pending, shipped) is a StoreMink label, kept exactly as it appears.
+    const template = getMinkSystemPromptTemplate();
+    expect(template).not.toContain("Do not expose internal IDs");
+    expect(template.match(/internal id/gi)).toHaveLength(1);
+    expect(template).toContain("an internal job status from a tool result");
+    expect(template).not.toContain("a tool result's status word");
   });
 });
 

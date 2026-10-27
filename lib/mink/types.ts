@@ -1,6 +1,6 @@
 import type { MinkFormPrefill } from "./form-prefill";
+import type { RevampArtifact } from "./revamp/contract";
 import type { MinkHighlight } from "./guide-targets";
-import type { MinkReplyLanguage } from "./reply-language";
 import type {
   DesignFont,
   DesignPaletteToken,
@@ -308,6 +308,51 @@ export type MinkArtifact =
       creditSource: MinkDraftCreditSource;
     }
   | {
+      /**
+       * One proposal that personalises the whole storefront: every page's
+       * text, new photos, the look, the header and footer copy, confirmed
+       * category changes and the theme's sample products.
+       * ★ A SUMMARY, NOT THE PLAN. The stored plan holds whole section lists
+       *   (it can run to hundreds of kilobytes) and lives on the draft row;
+       *   this artifact rides in the conversation, so it carries only what
+       *   the review card shows.
+       */
+      type: "storefront_personalization_proposal";
+      draftId: string;
+      title: string;
+      explanation: string;
+      planDigest: string;
+      pages: Array<{
+        slug: string;
+        title: string;
+        textChanges: number;
+        photoChanges: number;
+        hidden: Array<{ type: string; reason: string }>;
+      }>;
+      /** The new photos, each already in the store's Media Library. */
+      photos: Array<{ url: string; alt: string; where: string }>;
+      design: MinkStorefrontDesignSummary | null;
+      chrome: Array<{ label: string; before: string; after: string }>;
+      categories: Array<{
+        action: "update" | "create" | "hide";
+        name: string;
+        previousName: string | null;
+        description: string | null;
+        photoUrl: string | null;
+      }>;
+      products: Array<{ name: string }>;
+      /** What could not be done this time, and why, in the merchant's words. */
+      skipped: Array<{ label: string; reason: string }>;
+      /** What changes on the live store the moment it is applied. */
+      live: string[];
+      status: "private_preview";
+      expectedCredits: number;
+      chargedCredits: number;
+      creditSource: MinkDraftCreditSource;
+    }
+  // The storefront revamp's live card: an id the card polls, never the plan.
+  | RevampArtifact
+  | {
       type: "storefront_design_proposal";
       draftId: string;
       title: string;
@@ -453,16 +498,22 @@ export interface MinkActorContext {
   defaultLowStockThreshold: number;
   currentPath?: string | null;
   selectedResource?: MinkSelectedResource | null;
-  /** The merchant's chosen reply language, validated against a closed list. */
-  replyLanguage?: MinkReplyLanguage;
   /** Trusted run id is attached only after the run row is created. */
   runId?: string;
   /** Operator-controlled Phase 3 access; never inferred from the prompt. */
   draftingEnabled?: boolean;
   /** Store-authored style context. It may shape copy but never authority. */
   brandVoice?: string;
+  /**
+   * How the merchant will take the answer in: `spoken` when the message came
+   * from the hands-free voice chat, so the reply opens with a short spoken
+   * block before the written answer. Absent means written.
+   */
+  answerMedium?: MinkAnswerMedium;
   requestId: string;
 }
+
+export type MinkAnswerMedium = "written" | "spoken";
 
 export interface MinkToolPermission {
   section: string;
@@ -556,11 +607,32 @@ export interface MinkModelSession {
     responses: MinkToolResponse[],
     options?: MinkStreamOptions,
   ): Promise<MinkModelTurn>;
+  /**
+   * The model answering right now: the lite model until a restart, the main
+   * model after one, the fallback once the main model has failed in this run.
+   * Absent means the configured model.
+   */
+  readonly model?: string;
+  /** The Vertex location of `model`. Absent means the configured location. */
+  readonly location?: string;
+  /**
+   * Swap a narrowed session for one with every permitted tool, on the main
+   * model, keeping the stored conversation. False when there is nothing to
+   * widen: the run was never narrowed, or it already was widened.
+   */
+  restartWithAllTools?(): boolean;
 }
 
 export type MinkRunEvent =
   | { type: "text_delta"; text: string }
-  | { type: "text_reset" }
+  /**
+   * Text already streamed is withdrawn. `retry`: the provider call failed half
+   * way and the turn is being asked again. `restart`: the turn asked for more
+   * tools and the run starts again with all of them. `tool_call`: the turn
+   * ended in a function call, so what it wrote was working-out (a voice
+   * turn's spoken acknowledgement survives this one; see the stream route).
+   */
+  | { type: "text_reset"; reason: "retry" | "restart" | "tool_call" }
   | { type: "tool_call"; sequence: number; call: MinkToolCall }
   | {
       type: "tool_result";
@@ -569,7 +641,12 @@ export type MinkRunEvent =
       ok: boolean;
       errorCode?: string;
       artifact?: MinkArtifact;
-    };
+    }
+  /**
+   * A narrowed run asked for more tools and started again with all of them.
+   * `usage` is the abandoned attempt's, which the run's own usage excludes.
+   */
+  | { type: "tools_restarted"; abandonedModel: string; usage: MinkUsage };
 
 export interface MinkRunResult {
   text: string;
@@ -579,6 +656,17 @@ export interface MinkRunResult {
   retryCount: number;
   usage: MinkUsage;
   artifacts: MinkArtifact[];
+  /**
+   * Set when the run restarted with every tool. ★ The abandoned attempt's
+   * tokens are reported here and NOT in `usage`: a routing miss is
+   * StoreMink's to pay for, and `usage` is what the merchant is metered on.
+   */
+  restart?: {
+    abandonedModel: string;
+    usage: MinkUsage;
+    steps: number;
+    toolCalls: number;
+  };
 }
 
 export interface MinkRunProgress {

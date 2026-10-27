@@ -152,9 +152,9 @@ describe("the registry and the content agree", () => {
   // ★ A PLACEHOLDER THAT REACHES PRODUCTION IS A POLICY THAT SAYS NOTHING at
   // the exact moment someone relies on it — and these bodies are published
   // verbatim into an immutable table, so it cannot be edited out afterwards,
-  // only superseded. Two clauses are deliberately unfinished (the contracting
-  // entity and the governing-law seat); they keep real v1 wording rather than
-  // a bracket for exactly this reason.
+  // only superseded. Terms v1 left two clauses unfinished (the contracting
+  // entity and the governing-law seat) and kept real wording in them rather
+  // than a bracket, for exactly this reason; Terms v2 settles both.
   it("no policy body contains an unfilled placeholder", () => {
     for (const content of LEGAL_CONTENT) {
       for (const pattern of [

@@ -196,7 +196,7 @@ export function InviteUserDialog({
                   ))}
                 </SelectGroup>
                 <SelectGroup>
-                  <SelectLabel>Point of sale</SelectLabel>
+                  <SelectLabel>POS</SelectLabel>
                   {posRoles(roles).map((r) => (
                     <SelectItem
                       key={r.slug}
@@ -216,15 +216,14 @@ export function InviteUserDialog({
             )}
             {!posEnabled && (
               <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
-                Manager and Cashier work the register. Switch on Point of Sale
-                to invite them.
+                Manager and Cashier use POS. Switch on POS to invite them.
               </p>
             )}
             {isPosRole && (
               <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
                 They get an email link to set a password, verify their phone and
-                choose an 8-digit PIN. They sign in at the register only, never
-                the dashboard.
+                choose an 8-digit PIN. They sign in to POS only, never the
+                dashboard.
               </p>
             )}
           </div>

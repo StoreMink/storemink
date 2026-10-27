@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { startMinkRecording } from "./voice-recorder";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  MINK_BARGE_IN_GATE,
+  MINK_SPEECH_GATE,
+  MINK_VOICE_MAX_OPEN_MS,
+  openMinkMicrophone,
+  startMinkRecording,
+  type MinkSpeechGate,
+} from "./voice-recorder";
 const h = {
   stop: vi.fn(),
   close: vi.fn(),
@@ -87,7 +96,8 @@ describe("microphone privacy lifecycle", () => {
       done,
       progress,
     );
-    h.node.port.onmessage?.({ data: new Float32Array(16000) });
+    // A second of speech: a silent clip is reported as none, not as a file.
+    h.node.port.onmessage?.({ data: new Float32Array(16000).fill(0.08) });
     stop();
     expect(h.stop).toHaveBeenCalledTimes(1);
     expect(h.close).toHaveBeenCalled();
@@ -155,11 +165,447 @@ describe("microphone privacy lifecycle", () => {
     );
     expect(h.stop).toHaveBeenCalledOnce();
   });
+  it("keeps dictating through a pause when the caller finishes it by hand", async () => {
+    const done = vi.fn();
+    const stop = await startMinkRecording(
+      new AbortController().signal,
+      done,
+      vi.fn(),
+      { endOnSilence: false },
+    );
+    h.node.port.onmessage?.({ data: new Float32Array(3200).fill(0.08) });
+    h.node.port.onmessage?.({ data: new Float32Array(19200) });
+    expect(done).not.toHaveBeenCalled();
+    expect(h.stop).not.toHaveBeenCalled();
+    stop();
+    expect(done).toHaveBeenCalledOnce();
+    expect(done).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "voice-note.wav", type: "audio/wav" }),
+    );
+  });
+  it("still finishes a hand-finished dictation at the time cap", async () => {
+    const done = vi.fn();
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      endOnSilence: false,
+    });
+    h.node.port.onmessage?.({ data: new Float32Array(3200).fill(0.08) });
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(done).toHaveBeenCalledOnce();
+  });
+  it("★ reports a hand-finished recording with no speech as none, with no file", async () => {
+    const done = vi.fn();
+    const stop = await startMinkRecording(
+      new AbortController().signal,
+      done,
+      vi.fn(),
+      { endOnSilence: false },
+    );
+    // Room noise well under the speech threshold, for over a second.
+    h.node.port.onmessage?.({ data: new Float32Array(19200).fill(0.004) });
+    stop();
+    expect(done).toHaveBeenCalledOnce();
+    expect(done).toHaveBeenCalledWith(null);
+    expect(h.stop).toHaveBeenCalledOnce();
+  });
+  it("★ reports a cap reached in silence as none, so nothing is transcribed", async () => {
+    const done = vi.fn();
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      endOnSilence: false,
+    });
+    h.node.port.onmessage?.({ data: new Float32Array(16000) });
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(done).toHaveBeenCalledOnce();
+    expect(done).toHaveBeenCalledWith(null);
+  });
+  it("★ counts every burst of a dictation spoken in short phrases with pauses", async () => {
+    const done = vi.fn();
+    const stop = await startMinkRecording(
+      new AbortController().signal,
+      done,
+      vi.fn(),
+      { endOnSilence: false },
+    );
+    // Five 100 ms phrases, each followed by a 400 ms pause: no single burst
+    // reaches the speech floor, but together they are plainly speech.
+    for (let i = 0; i < 5; i += 1) {
+      h.node.port.onmessage?.({ data: new Float32Array(1600).fill(0.08) });
+      h.node.port.onmessage?.({ data: new Float32Array(6400) });
+    }
+    stop();
+    expect(done).toHaveBeenCalledOnce();
+    expect(done.mock.calls[0][0]).toBeInstanceOf(File);
+  });
+
+  it("reports each chunk's loudness for the waveform", async () => {
+    const onLevel = vi.fn();
+    await startMinkRecording(new AbortController().signal, vi.fn(), vi.fn(), {
+      onLevel,
+    });
+    h.node.port.onmessage?.({ data: new Float32Array(128).fill(0.5) });
+    h.node.port.onmessage?.({ data: new Float32Array(128) });
+    expect(onLevel).toHaveBeenNthCalledWith(1, 0.5);
+    expect(onLevel).toHaveBeenNthCalledWith(2, 0);
+  });
   it("does not finish from silence before the user has spoken", async () => {
     const done = vi.fn();
     await startMinkRecording(new AbortController().signal, done, vi.fn());
     h.node.port.onmessage?.({ data: new Float32Array(24000) });
     expect(done).not.toHaveBeenCalled();
     expect(h.stop).not.toHaveBeenCalled();
+  });
+  it("asks the browser for echo cancellation on every recording", async () => {
+    await startMinkRecording(new AbortController().signal, vi.fn(), vi.fn());
+    expect(h.mic).toHaveBeenCalledWith({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+      video: false,
+    });
+  });
+  it("★ keeps a dictation that crosses the cap mid-chunk instead of discarding it", async () => {
+    const done = vi.fn();
+    await startMinkRecording(new AbortController().signal, done, vi.fn());
+    h.node.port.onmessage?.({ data: new Float32Array(16000 * 29).fill(0.08) });
+    h.node.port.onmessage?.({ data: new Float32Array(16000 * 2).fill(0.08) });
+    expect(done).toHaveBeenCalledOnce();
+    expect(done).toHaveBeenCalledWith(
+      expect.objectContaining({ size: 44 + 2 * 16000 * 30 }),
+    );
+  });
+  it("★ the worklet no longer caps the capture itself", () => {
+    const worklet = readFileSync(
+      join(process.cwd(), "public", "mink-audio-recorder.js"),
+      "utf8",
+    );
+    expect(worklet).not.toContain("480000");
+    expect(worklet).toContain('registerProcessor("mink-audio-recorder"');
+  });
+});
+
+describe("★★ voice chat keeps the microphone open", () => {
+  const speech = (ms: number, level = 0.08) =>
+    new Float32Array((16000 * ms) / 1000).fill(level);
+  const silence = (ms: number) => new Float32Array((16000 * ms) / 1000);
+  function voiceOptions(
+    gate: MinkSpeechGate = MINK_SPEECH_GATE,
+    onSpeechStart = vi.fn(() => true),
+  ) {
+    const holder = { current: gate };
+    return { holder, onSpeechStart, voice: { gate: holder, onSpeechStart } };
+  }
+
+  it("reports speech once at the floor and sends pre-roll plus the utterance", async () => {
+    const done = vi.fn();
+    const { voice, onSpeechStart } = voiceOptions();
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    // Two seconds of quiet room before anyone speaks.
+    for (let i = 0; i < 16; i += 1)
+      h.node.port.onmessage?.({ data: silence(125) });
+    expect(onSpeechStart).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: speech(200) });
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+    h.node.port.onmessage?.({ data: speech(200) });
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+    h.node.port.onmessage?.({ data: silence(1200) });
+    expect(done).toHaveBeenCalledOnce();
+    const file = done.mock.calls[0][0] as File;
+    // Well under the full two seconds of room noise plus speech.
+    expect(file.size).toBeLessThan(44 + 2 * 16000 * 2.3);
+    expect(file.size).toBeGreaterThan(44 + 2 * 16000 * 1.6);
+  });
+
+  it("★ a refused speech start disarms and keeps listening", async () => {
+    const done = vi.fn();
+    const onSpeechStart = vi.fn(() => false);
+    const { voice } = voiceOptions(MINK_SPEECH_GATE, onSpeechStart);
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    h.node.port.onmessage?.({ data: speech(200) });
+    h.node.port.onmessage?.({ data: silence(1500) });
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+    expect(done).not.toHaveBeenCalled();
+    onSpeechStart.mockReturnValue(true);
+    h.node.port.onmessage?.({ data: speech(200) });
+    expect(onSpeechStart).toHaveBeenCalledTimes(2);
+    h.node.port.onmessage?.({ data: silence(1200) });
+    expect(done).toHaveBeenCalledOnce();
+    expect(done.mock.calls[0][0]).toBeInstanceOf(File);
+  });
+
+  it("★ reads the gate live, so a barge-in needs a louder, longer burst", async () => {
+    const { voice, onSpeechStart } = voiceOptions(MINK_BARGE_IN_GATE);
+    await startMinkRecording(new AbortController().signal, vi.fn(), vi.fn(), {
+      voice,
+    });
+    // Ordinary talking level, which arms the normal gate at once.
+    h.node.port.onmessage?.({ data: speech(300, 0.02) });
+    expect(onSpeechStart).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: speech(300, 0.05) });
+    expect(onSpeechStart).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: speech(100, 0.05) });
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+  });
+
+  it("forgets sporadic bursts before arming", async () => {
+    const { voice, onSpeechStart } = voiceOptions();
+    await startMinkRecording(new AbortController().signal, vi.fn(), vi.fn(), {
+      voice,
+    });
+    h.node.port.onmessage?.({ data: speech(100) });
+    h.node.port.onmessage?.({ data: silence(400) });
+    h.node.port.onmessage?.({ data: speech(100) });
+    expect(onSpeechStart).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: speech(100) });
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+  });
+
+  it("★ the caps count from speech, and the idle clock pauses while Mink plays", async () => {
+    const done = vi.fn();
+    const { voice, holder } = voiceOptions(MINK_BARGE_IN_GATE);
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    // Forty seconds of Mink's own answer playing: no stop, no cap.
+    await vi.advanceTimersByTimeAsync(40_000);
+    for (let i = 0; i < 40; i += 1)
+      h.node.port.onmessage?.({ data: silence(1000) });
+    expect(done).not.toHaveBeenCalled();
+    // Back to listening: thirty quiet seconds end the recording as nothing heard.
+    holder.current = MINK_SPEECH_GATE;
+    for (let i = 0; i < 29; i += 1)
+      h.node.port.onmessage?.({ data: silence(1000) });
+    expect(done).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: silence(1000) });
+    expect(done).toHaveBeenCalledWith(null);
+  });
+
+  it("★ a long utterance is finished thirty seconds after it began, by clock or by samples", async () => {
+    let done = vi.fn();
+    let { voice } = voiceOptions();
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    await vi.advanceTimersByTimeAsync(25_000);
+    h.node.port.onmessage?.({ data: speech(300) });
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(done).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(done).toHaveBeenCalledOnce();
+    expect(done.mock.calls[0][0]).toBeInstanceOf(File);
+
+    done = vi.fn();
+    ({ voice } = voiceOptions());
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    h.node.port.onmessage?.({ data: speech(300) });
+    for (let i = 0; i < 31; i += 1)
+      h.node.port.onmessage?.({ data: speech(1000) });
+    expect(done).toHaveBeenCalledOnce();
+    expect((done.mock.calls[0][0] as File).size).toBe(44 + 2 * 16000 * 30);
+  });
+
+  it("★★ a long utterance after a lead-in is capped at what is sent, and the caller always hears back", async () => {
+    const done = vi.fn();
+    const { voice } = voiceOptions(MINK_BARGE_IN_GATE);
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    // A quiet room, then an interruption whose bursts arm the gate late, so
+    // the lead-in kept before arming is well over a second.
+    for (let i = 0; i < 16; i += 1)
+      h.node.port.onmessage?.({ data: silence(125) });
+    for (let i = 0; i < 3; i += 1) {
+      h.node.port.onmessage?.({ data: speech(100, 0.05) });
+      h.node.port.onmessage?.({ data: silence(200) });
+    }
+    // Then someone keeps talking for well over the cap.
+    for (let i = 0; i < 35; i += 1)
+      h.node.port.onmessage?.({ data: speech(1000, 0.05) });
+    expect(done).toHaveBeenCalledOnce();
+    expect(done.mock.calls[0][0]).toBeInstanceOf(File);
+    expect((done.mock.calls[0][0] as File).size).toBe(44 + 2 * 16000 * 30);
+  });
+
+  it("★ an interruption keeps its first word, though the gate armed a second later", async () => {
+    const done = vi.fn();
+    const { voice, onSpeechStart } = voiceOptions(MINK_BARGE_IN_GATE);
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    for (let i = 0; i < 16; i += 1)
+      h.node.port.onmessage?.({ data: silence(125) });
+    // Four short bursts with gaps under the decay: 400 ms of voice over a
+    // second, so the barge-in floor (350 ms) is reached on the last one.
+    for (let i = 0; i < 3; i += 1) {
+      h.node.port.onmessage?.({ data: speech(100, 0.05) });
+      h.node.port.onmessage?.({ data: silence(200) });
+    }
+    expect(onSpeechStart).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: speech(100, 0.05) });
+    expect(onSpeechStart).toHaveBeenCalledOnce();
+    h.node.port.onmessage?.({ data: silence(1200) });
+    expect(done).toHaveBeenCalledOnce();
+    // The pre-roll, the whole second from the first burst, and the pause.
+    const seconds = ((done.mock.calls[0][0] as File).size - 44) / 2 / 16000;
+    expect(seconds).toBeGreaterThanOrEqual(0.4 + 1 + 1.2);
+    expect(seconds).toBeLessThan(0.4 + 1 + 1.2 + 0.2);
+  });
+
+  it("stops an open microphone at the absolute ceiling", async () => {
+    const done = vi.fn();
+    const { voice } = voiceOptions(MINK_BARGE_IN_GATE);
+    await startMinkRecording(new AbortController().signal, done, vi.fn(), {
+      voice,
+    });
+    await vi.advanceTimersByTimeAsync(MINK_VOICE_MAX_OPEN_MS + 1);
+    expect(done).toHaveBeenCalledWith(null);
+    expect(h.stop).toHaveBeenCalled();
+  });
+});
+
+describe("★★ one microphone for the whole voice chat", () => {
+  const speech = (ms: number, level = 0.08) =>
+    new Float32Array((16000 * ms) / 1000).fill(level);
+  const silence = (ms: number) => new Float32Array((16000 * ms) / 1000);
+  const voice = () => ({
+    gate: { current: MINK_SPEECH_GATE },
+    onSpeechStart: vi.fn(() => true),
+  });
+
+  it("records turn after turn on one stream, and releases it only on close", async () => {
+    const mic = await openMinkMicrophone();
+    const first = vi.fn();
+    mic.record(new AbortController().signal, first, vi.fn(), {
+      voice: voice(),
+    });
+    h.node.port.onmessage?.({ data: speech(300) });
+    h.node.port.onmessage?.({ data: silence(1200) });
+    expect(first).toHaveBeenCalledOnce();
+    expect(first.mock.calls[0][0]).toBeInstanceOf(File);
+    // The turn is over; the stream, its context and the worklet are not.
+    expect(h.stop).not.toHaveBeenCalled();
+    expect(h.close).not.toHaveBeenCalled();
+    expect(mic.closed).toBe(false);
+
+    const second = vi.fn();
+    mic.record(new AbortController().signal, second, vi.fn(), {
+      voice: voice(),
+    });
+    h.node.port.onmessage?.({ data: speech(300) });
+    h.node.port.onmessage?.({ data: silence(1200) });
+    expect(second).toHaveBeenCalledOnce();
+    expect(second.mock.calls[0][0]).toBeInstanceOf(File);
+    expect(h.mic).toHaveBeenCalledOnce();
+    expect(h.addModule).toHaveBeenCalledOnce();
+
+    mic.close();
+    expect(mic.closed).toBe(true);
+    expect(h.stop).toHaveBeenCalledOnce();
+    expect(h.close).toHaveBeenCalledOnce();
+  });
+
+  it("keeps nothing heard between turns", async () => {
+    const mic = await openMinkMicrophone();
+    // Someone talking while no turn is recording reaches nobody.
+    h.node.port.onmessage?.({ data: speech(600) });
+    const options = voice();
+    const onLevel = vi.fn();
+    const done = vi.fn();
+    mic.record(new AbortController().signal, done, vi.fn(), {
+      voice: options,
+      onLevel,
+    });
+    expect(options.onSpeechStart).not.toHaveBeenCalled();
+    expect(onLevel).not.toHaveBeenCalled();
+    for (let i = 0; i < 12; i += 1)
+      h.node.port.onmessage?.({ data: silence(125) });
+    expect(done).not.toHaveBeenCalled();
+    expect(options.onSpeechStart).not.toHaveBeenCalled();
+    h.node.port.onmessage?.({ data: speech(300) });
+    expect(options.onSpeechStart).toHaveBeenCalledOnce();
+    h.node.port.onmessage?.({ data: silence(1200) });
+    // The pre-roll, the utterance and the pause: nothing from before the turn.
+    const seconds = ((done.mock.calls[0][0] as File).size - 44) / 2 / 16000;
+    expect(seconds).toBeLessThanOrEqual(0.525 + 0.3 + 1.2);
+  });
+
+  it("an abandoned turn discards its audio and leaves the microphone open for the next", async () => {
+    const mic = await openMinkMicrophone();
+    const controller = new AbortController();
+    const done = vi.fn();
+    mic.record(controller.signal, done, vi.fn(), { voice: voice() });
+    h.node.port.onmessage?.({ data: speech(300) });
+    controller.abort();
+    expect(done).not.toHaveBeenCalled();
+    expect(h.stop).not.toHaveBeenCalled();
+    expect(mic.closed).toBe(false);
+
+    const next = vi.fn();
+    mic.record(new AbortController().signal, next, vi.fn(), {
+      voice: voice(),
+    });
+    h.node.port.onmessage?.({ data: speech(300) });
+    h.node.port.onmessage?.({ data: silence(1200) });
+    expect(next).toHaveBeenCalledOnce();
+    expect(next.mock.calls[0][0]).toBeInstanceOf(File);
+  });
+
+  it("records one turn at a time, none once closed, and none for a turn already cancelled", async () => {
+    const mic = await openMinkMicrophone();
+    const cancelled = new AbortController();
+    cancelled.abort();
+    expect(() => mic.record(cancelled.signal, vi.fn(), vi.fn())).toThrow();
+    const done = vi.fn();
+    mic.record(new AbortController().signal, done, vi.fn(), {
+      voice: voice(),
+    });
+    expect(() =>
+      mic.record(new AbortController().signal, vi.fn(), vi.fn()),
+    ).toThrow("already recording");
+    mic.close();
+    // Closing with a quiet turn in progress reports it as nothing heard.
+    expect(done).toHaveBeenCalledWith(null);
+    expect(() =>
+      mic.record(new AbortController().signal, vi.fn(), vi.fn()),
+    ).toThrow("closed");
+  });
+
+  it("★ a device that goes away closes the microphone, and the turn keeps what it heard", async () => {
+    let ended: (() => void) | undefined;
+    h.mic.mockResolvedValue({
+      getTracks: () => [
+        {
+          stop: h.stop,
+          addEventListener: (type: string, listener: () => void) => {
+            if (type === "ended") ended = listener;
+          },
+        },
+      ],
+    });
+    const mic = await openMinkMicrophone();
+    const done = vi.fn();
+    mic.record(new AbortController().signal, done, vi.fn(), {
+      voice: voice(),
+    });
+    h.node.port.onmessage?.({ data: speech(300) });
+    expect(ended).toBeTypeOf("function");
+    ended?.();
+    expect(mic.closed).toBe(true);
+    expect(done).toHaveBeenCalledOnce();
+    expect(done.mock.calls[0][0]).toBeInstanceOf(File);
+    expect(h.close).toHaveBeenCalledOnce();
+  });
+
+  it("does not open for a voice chat that has already ended", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(openMinkMicrophone(controller.signal)).rejects.toThrow();
+    expect(h.mic).not.toHaveBeenCalled();
   });
 });

@@ -28,6 +28,17 @@ import {
 } from "@/lib/help/assistant-input";
 import { clientIp, rateLimit } from "@/lib/rate-limit";
 
+/**
+ * ★★ ONE BUDGET FOR A WHOLE TURN (robustness review of B2). A turn asks Gemini
+ * twice in a row, to search and then to answer, and each call may take about
+ * a minute (30 s on the main model, 30 s on the fallback), so a slow Google
+ * kept a public visitor watching the drawer for about two minutes before the
+ * guides-only answer. Both calls now share this one signal: when it fires,
+ * the search keeps its keyword results and the answer becomes the verified
+ * guides with no model text, on time.
+ */
+const HELP_ASSISTANT_DEADLINE_MS = 45_000;
+
 export type HelpAssistantRole = "user" | "assistant";
 
 export interface HelpAssistantTurn {
@@ -66,28 +77,33 @@ const MAX_DOCUMENTS = 6;
 const MAX_DOCUMENT_CHARS = 5_000;
 const MAX_CONTEXT_CHARS = 24_000;
 
+// A JSON Schema, sent as responseJsonSchema (GeminiOptions, lib/ai/gemini.ts):
+// the field and the lowercase-type subset lib/mink and lib/theme-studio send
+// live, which the SDK passes through unchanged on both backends.
+// propertyOrdering belonged to the old responseSchema field, not JSON Schema;
+// the reply is read by key, so its order does not matter.
 const ASSISTANT_RESPONSE_SCHEMA = {
-  type: "OBJECT",
+  type: "object",
   properties: {
-    answer: { type: "STRING" },
-    steps: { type: "ARRAY", items: { type: "STRING" }, maxItems: 8 },
-    notes: { type: "ARRAY", items: { type: "STRING" }, maxItems: 4 },
+    answer: { type: "string" },
+    steps: { type: "array", items: { type: "string" }, maxItems: 8 },
+    notes: { type: "array", items: { type: "string" }, maxItems: 4 },
     sourceSlugs: {
-      type: "ARRAY",
-      items: { type: "STRING" },
+      type: "array",
+      items: { type: "string" },
       maxItems: 6,
     },
     followUps: {
-      type: "ARRAY",
-      items: { type: "STRING" },
+      type: "array",
+      items: { type: "string" },
       maxItems: 3,
     },
     clarificationPrompts: {
-      type: "ARRAY",
-      items: { type: "STRING" },
+      type: "array",
+      items: { type: "string" },
       maxItems: 3,
     },
-    needsHuman: { type: "BOOLEAN" },
+    needsHuman: { type: "boolean" },
   },
   required: [
     "answer",
@@ -98,15 +114,7 @@ const ASSISTANT_RESPONSE_SCHEMA = {
     "clarificationPrompts",
     "needsHuman",
   ],
-  propertyOrdering: [
-    "answer",
-    "steps",
-    "notes",
-    "sourceSlugs",
-    "followUps",
-    "clarificationPrompts",
-    "needsHuman",
-  ],
+  additionalProperties: false,
 };
 
 interface ModelAnswer {
@@ -161,7 +169,7 @@ function validHistory(value: unknown): HelpAssistantTurn[] {
 const CONTEXTUAL_FOLLOW_UP =
   /\b(again|it|its|that|this|them|then|next|previous|same)\b/i;
 const SELF_CONTAINED_HELP_TOPIC =
-  /\b(accounts?|admins?|analytics|api|barcode|billing|blog|branding|cash|checkout|cod|colors?|coupons?|currency|customers?|delivery|discounts?|dns|domains?|email|enquir(?:y|ies)|fulfilment|gst|inventory|invoices?|locations?|login|marketing|media|navigation|notifications?|orders?|password|payments?|permissions?|pickup|plans?|polic(?:y|ies)|pos|products?|refunds?|register|reports?|returns?|roles?|sales?|seo|settings|shipping|shop|signup|sku|staff|stock|storefront|tax|team|themes?|upi|users?|variants?|website)\b/i;
+  /\b(accounts?|admins?|analytics|api|barcode|billing|blog|branding|cash|checkout|cod|colors?|coupons?|currency|customers?|delivery|discounts?|dns|domains?|email|enquir(?:y|ies)|fulfilment|gst|inventory|invoices?|locations?|login|marketing|media|navigation|notifications?|orders?|password|payments?|permissions?|pickup|plans?|polic(?:y|ies)|pos|products?|refunds?|registers?|reports?|returns?|roles?|sales?|seo|settings|shipping|shop|signup|sku|staff|stock|storefront|tax|team|themes?|tills?|upi|users?|variants?|website)\b/i;
 
 function retrievalQuery(message: string, history: HelpAssistantTurn[]): string {
   const priorUserQuestion = history
@@ -328,9 +336,27 @@ export async function askHelpAssistant(
     };
   }
 
+  const budget = new AbortController();
+  const budgetTimer = setTimeout(
+    () => budget.abort(),
+    HELP_ASSISTANT_DEADLINE_MS,
+  );
+  try {
+    return await answerWithinBudget(boundedMessage, history, budget.signal);
+  } finally {
+    clearTimeout(budgetTimer);
+  }
+}
+
+/** The retrieval and the answer, inside the turn's one budget (`signal`). */
+async function answerWithinBudget(
+  boundedMessage: string,
+  history: HelpAssistantTurn[],
+  signal: AbortSignal,
+): Promise<HelpAssistantResult> {
   const query = retrievalQuery(boundedMessage, history);
   const [search, semantic] = await Promise.all([
-    searchPublishedHelpWithAi(query),
+    searchPublishedHelpWithAi(query, { signal }),
     searchHelpArticleChunksByMeaning(query),
   ]);
   const lexical = search.results
@@ -395,7 +421,8 @@ Rules:
       temperature: 0.2,
       maxOutputTokens: 1_800,
       responseMimeType: "application/json",
-      responseSchema: ASSISTANT_RESPONSE_SCHEMA,
+      responseJsonSchema: ASSISTANT_RESPONSE_SCHEMA,
+      signal,
     },
   );
   if (error || !text) {

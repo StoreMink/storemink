@@ -1,15 +1,14 @@
 # Scheduled jobs (Cloud Scheduler)
 
-**`vercel.json` does not drive anything.** Production runs on Cloud Run, where
-Vercel's `crons` block is inert. It is kept only as a record of the intended
-schedules. The real driver is **Cloud Scheduler in `storemink-prod`,
-`asia-south1`**.
+Every scheduled job runs in **Cloud Scheduler in `storemink-prod`,
+`asia-south1`**, and this file is the record of what each schedule should be.
+Nothing in the repository drives a schedule.
 
 ## The gap this documents
 
 Between the Cloud Run cutover and **2026-07-30**, `storemink-prod` had **zero**
 Cloud Scheduler jobs in **any** region — verified by sweeping every location.
-`docs/gcp-migration-cutover-checklist.md` listed `Crons → Cloud Scheduler` and
+The go-live checklist listed `Crons → Cloud Scheduler` and
 the box was never ticked. So for the whole period after the cutover, none of the
 three scheduled jobs ran.
 
@@ -135,7 +134,7 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 > | `storemink-mink-publications` | `* * * * *` | `https://storemink.com/api/cron/mink-publications` |
 > | `storemink-mink-workflows` | `* * * * *` | `https://storemink.com/api/cron/mink-workflows` |
 > | `storemink-theme-studio-runs` | `* * * * *` | `https://storemink.com/api/internal/theme-studio/runs` |
-> | `storemink-theme-studio-capture` | `* * * * *` ⚠ | Cloud Run Job execution API (to pause: see below) |
+> | `storemink-theme-studio-capture` | `* * * * *`, **PAUSED** since 2026-10-10 | Cloud Run Job execution API; the job is started on demand (see below) |
 > | `storemink-theme-studio-qa` | `* * * * *` | `https://storemink.com/api/internal/theme-studio/qa` |
 
 > ⚠ **The table above is the INTENDED state. Measured live 2026-09-08 with
@@ -143,14 +142,14 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 > production does not match it.** This is the exact gap the section above
 > describes, so it is recorded rather than quietly corrected:
 >
-> | Job                           | Table says   | Actually              |
-> | ----------------------------- | ------------ | --------------------- |
-> | `storemink-send-emails`       | `* * * * *`  | ✅ fixed 2026-09-08   |
-> | `storemink-search-metrics`    | `30 2 * * *` | **PAUSED**            |
-> | `storemink-analytics-rollup`  | `40 * * * *` | **PAUSED**            |
-> | `storemink-help-embeddings`   | `50 * * * *` | ✅ created 2026-10-15 |
-> | `storemink-mink-publications` | `* * * * *`  | **absent**            |
-> | `storemink-mink-workflows`    | `* * * * *`  | ✅ created 2026-09-08 |
+> | Job                           | Table says   | Actually                        |
+> | ----------------------------- | ------------ | ------------------------------- |
+> | `storemink-send-emails`       | `* * * * *`  | ✅ fixed 2026-09-08             |
+> | `storemink-search-metrics`    | `30 2 * * *` | ✅ enabled (checked 2026-10-24) |
+> | `storemink-analytics-rollup`  | `40 * * * *` | ✅ enabled (checked 2026-10-24) |
+> | `storemink-help-embeddings`   | `50 * * * *` | ✅ created 2026-10-15           |
+> | `storemink-mink-publications` | `* * * * *`  | **absent**                      |
+> | `storemink-mink-workflows`    | `* * * * *`  | ✅ created 2026-09-08           |
 >
 > ⚠ **An earlier version of this note called the `send-emails` schedule a LIVE
 > cost. That was wrong, and the correction is the useful part.** Measured on
@@ -197,9 +196,10 @@ failed 0`. Overlapping runs are safe because the endpoint is idempotent and
 > **None of those were changed:** each needs its own decision about whether its
 > migrations and routes are actually deployed first.
 
-✅ **`storemink-theme-studio-runs` exists as of 2026-09-29, with a matching
-`-dev` schedule.** Each call executes up to two independently leased Theme
-Studio runs and one visual-QA run concurrently. A run can take up to 20
+✅ **`storemink-theme-studio-runs` exists as of 2026-09-29** (its `-dev`
+twin was deleted on 2026-10-11: dev builds no themes). Each call executes up
+to two independently leased Theme Studio runs and one visual-QA run
+concurrently. A run can take up to 20
 minutes, so it needs an attempt deadline of
 **1,200 s** (Cloud Scheduler allows up to 1,800 s for HTTP targets), **no
 retries** (the next eligible scheduled call claims queued work), and a Cloud
@@ -212,16 +212,34 @@ runs queue and wait; nothing is lost. The path is under `/api/internal/`, not
 `/api/cron/`, because it is a worker rather than a heartbeat. Full rollout list:
 `docs/mink-ai-theme-studio-phase3.md` §6.
 
+A failed attempt of `storemink-theme-studio-runs` or
+`storemink-theme-studio-qa` emails the owner once the Theme Studio alerts are
+applied ([monitoring](monitoring.md), alert 20).
+
+**Inside each runs call (TS-3B, with the Theme Studio release):** an idle
+lane beside a busy one asks for work every 5 to 10 s (it was every second);
+a fresh photo run starts only with 9 minutes of the 19-minute request left,
+and one cut by the request's deadline continues in the next request (up to
+3 times, no crash attempt spent); automatic repairs are claimed before other
+work; Theme Studio's text calls queue on their own capacity row
+(`theme-studio-text`); and a text call that fails as `provider_unavailable`
+(twice) or `provider_timeout` (once) is waited out, like a 429, instead of
+failing the theme. The "theme studio: run settled" line carries `errorCode`.
+
 **Prepared locally, 4 October:** generation and visual QA leases are now
 180 seconds with thirty-second renewal and an expiry watchdog; a dead worker
 is eligible after its last renewal, plus schedule/capacity wait. The generation
 route drains free lanes under a request deadline. Cloud Build deploys private
 model/QA services from the serving web digest. Moving schedules off the web
-and adding one independent peer per role is a separate first-rollout action,
-with private OIDC/application-header authentication and a checked shared SQL
-connection budget. Until that routing happens, the existing web targets and
-QA fallback remain. See [worker rollout](theme-studio-worker-rollout.md);
-private-service deployment alone does not change scheduler URLs.
+is a separate first-rollout action, with private OIDC/application-header
+authentication and a checked shared SQL connection budget. ⚠ The planned
+"-peer" schedule per role adds nothing: each worker runs at most one
+instance with request concurrency one, so a second request while the first
+runs is refused by Cloud Run with HTTP 429, not queued. Routing (plan P1,
+after the release, with decision 9) drops the peers. Until that routing
+happens, the existing web targets and QA fallback remain. See
+[worker rollout](theme-studio-worker-rollout.md); private-service deployment
+alone does not change scheduler URLs.
 
 Cloud Scheduler **skips ticks while the previous request is outstanding**; a
 one-minute schedule does not create overlapping long workers. The two run
@@ -243,24 +261,31 @@ the preview store and posts the pictures back, and exits at once when nothing is
 queued. Dev and production each have their own job and five-minute schedule,
 and both completed an empty-queue smoke execution before
 `THEME_STUDIO_CAPTURE_ENABLED=true` was enabled. Build, deploy and schedule:
-`docs/theme-studio-capture-job.md`.
+`docs/theme-studio-capture-job.md`. Today: the schedule is paused (below) and
+the web app starts the job when a capture is waiting, at a minute tick of
+the runs or QA route and, since the Theme Studio release, right after the
+capture is queued. Builds update production's job only; the dev job is no
+longer updated and waits to be deleted (step A6, with the owner's OK).
 
 ★ **Dev has no schedules at all (owner, 2026-10-10).** Themes are never built
 on dev, so every Theme Studio `-dev` schedule is deleted and Theme Studio is
 switched off on the dev trigger (`docs/gcp-ci-cd.md`). Do not recreate them.
 
-⚠ **The capture schedules are to be PAUSED (2026-10-10).** A Cloud Run job
+✅ **The capture schedule is PAUSED (since 2026-10-10).** A Cloud Run job
 execution is billed for at least one minute, so the every-minute schedules in
 dev and production cost ₹5,819 of Cloud Run's ₹5,972 for 1–10 October, almost
 all of it idle executions. The `-qa` and `-runs` routes now start the job
-themselves when a capture is waiting (`lib/theme-studio/capture-start.ts`).
-Pause `storemink-theme-studio-capture` and `storemink-theme-studio-capture-dev`
-only after granting the runtime service account `roles/run.invoker` on both
-jobs and deploying; the order and commands are in
-`docs/theme-studio-capture-job.md` ("Start it on demand instead"). Update the
-table above to PAUSED once done.
+themselves when a capture is waiting (`lib/theme-studio/capture-start.ts`),
+and since the Theme Studio release so does the code that queues a capture,
+right after its transaction commits; the minute routes stay as the safety
+net. Checked on 2026-10-11: `storemink-theme-studio-capture`'s schedule is
+paused (its last scheduled run was 2026-10-10 14:32 UTC, with no job
+execution since), no `-dev` schedule exists, and the runtime service account
+holds `roles/run.invoker` on both jobs. `resume` brings the schedule back as
+a fallback; the order and commands are in
+`docs/theme-studio-capture-job.md` ("Start it on demand instead").
 
-Track 5 reuses this job for automatic acceptance and pre-review. It captures
+Track 5 reuses this job for automatic acceptance and the design review. It captures
 every preview surface at five widths and reports browser evidence; the server
 records full acceptance before visual review and bounded repair. Both capture
 and `_THEME_STUDIO_AUTO_QA_ENABLED=true` remain required.
@@ -276,6 +301,19 @@ retains its QA lane as a fallback. Both capture jobs run the image built from
 merge commit `621ee75`, and both capture schedules were shortened from five
 minutes to one. Leases fence overlapping capture/QA executions. First
 scheduled attempts at 11:34 UTC succeeded in both environments.
+
+**Since the Theme Studio release (TS-3A)** the capture job also calls
+`POST /api/internal/theme-studio/qa`, with the same `CRON_SECRET` bearer,
+right after its captures end (and when it stops at its capture limit or
+budget), and waits up to 300 s for the answer, so a design review starts at
+once instead of at the next tick. The minute schedule stays as the safety
+net. At most 2 design reviews run at once across the platform, and each call
+logs `theme_studio.qa_waiting` when reviews have waited over 10 minutes
+([monitoring](monitoring.md), alert 18). One call holds either the photo
+checks of a theme's unchecked photos (until 250 s after its claim) or a
+design review (up to 4 minutes), never both past the 300-second attempt
+deadline: when the checks took more than 20 s the review goes back to the
+queue, claimable at once, and the next call runs it.
 
 ⚠ **`billing` must stay HOURLY.** The cycle boundary and the 48-hour grace
 deadline are wall-clock instants, so the interval IS the resolution of the whole
@@ -325,6 +363,63 @@ and is isolated: its failure is logged, never propagated, so it cannot fail
 merchant Mink workflows. The response carries `themeStudioPreviewsRemoved`.
 Nothing about the job itself changes.
 
+★ **It also sweeps stalled storefront revamps (2026-10-21).**
+`sweepStalledRevamps` (`lib/mink/revamp/jobs.ts`) finishes a card already
+made, fails jobs out of attempts or past their four-hour ceiling (since
+2026-10-24 a claim counts no attempt, so the ceiling is what ends a job that
+never finishes), gives a failed redesign's daily start back, cancels the
+ones whose stop no runner will see, kicks up to five waiting ones and
+settles finished photo holds; it is isolated like the preview sweep and
+reports `revamps`. On dev, which has no scheduler, a stalled revamp moves
+when its card's status poll kicks it, or when a runner that turned its kick
+away finishes and kicks the oldest waiting one.
+
+★ **It also closes Mink chat runs whose Stop their server never saw
+(2026-10-25).** The merchant's Stop is recorded on the run's row
+(`POST /api/mink/runs/[runId]/stop`, `lib/mink/run-stop.ts`), and the
+instance answering the run sees it within about two seconds. A run still
+running three minutes after its Stop lost its instance: `closeStoppedMinkRuns`
+closes at most 20 a tick, oldest first, through the stream route's own
+failure record as cancelled with code `stopped` (never charged). It runs just
+before the dead-run pass below, so a run that is both is recorded as the
+stop it was, is isolated (`mink workflow cron: stopped run sweep failed`)
+and reports `stoppedRuns` (`{closed, failed}`, or null when the pass failed).
+
+★ **It also closes Mink chat runs a dead server left running (2026-10-24,
+robustness audit B7).** `closeStaleMinkRuns` (`lib/mink/persistence.ts`)
+closes at most 20 a tick, oldest first: runs still "running" 15 minutes after
+they started and after their latest tool call started. Each goes through the
+stream route's own failure record (`run_abandoned`), so a redesign it started
+is kept with its card and its chat can be deleted again. It is isolated
+(its failure is logged as `mink workflow cron: stale run sweep failed` and
+never fails the tick) and reports `staleRuns` (`{closed, failed}`, or null
+when the pass failed). On dev a dead run is closed when its chat is deleted.
+Its query reads `mink_runs` across every store, so it uses the partial index
+`mink_runs_running_idx` (`(started_at, id) where status = 'running'`,
+migration `20261024_0240`), which holds only running runs in the sweep's own
+order and stays small as the table grows (on 200,083 runs locally: 15.7 ms
+before, 0.09 ms after).
+
+★ **It also publishes or clears Refine stages (2026-10-26).** A Refine with
+Mink AI result is staged in the private bucket until it is paid for
+(`lib/mink/refine-stages.ts`). `sweepRefineStages` lists only THIS database's
+prefix (`refine-stage/{DB_NAME}/`: dev and staging share one database and one
+bucket, and a laptop uses that bucket with `storemink_local`, so no
+environment ever decides another's stages), skips stages younger than five
+minutes (a stage without a creation time is left, with one warning a pass),
+and decides at most twenty a tick with `abandonRefineStage`: a paid photo
+whose publish failed is published to the store's `refined/` folder (unless
+the merchant has since deleted it from the Media Library, when only its
+stage is deleted), and a stage nobody paid for (or can ever pay for) is
+deleted. Its ten-second budget covers every storage call, the listing's
+included, each cut at what is left of it, and it runs LAST in the
+heartbeat, after the database passes, because it is the only one that waits
+on storage. It is isolated (a failure is logged as
+`mink workflow cron: refine stage sweep failed` and never fails the tick)
+and reports `refineStages` (`{published, deleted, failed}`, or null when
+the pass failed). Dev has no scheduler: there a deferred publish waits
+until the route is run by hand.
+
 ★★ **IT ALSO CARRIES THE MINK CREDIT RECONCILER (2026-09-21), and that is
 deliberately not a job of its own.** `settleMinkRunCredits` runs after the run
 row commits and never throws, because a billing failure must not roll back a
@@ -372,10 +467,12 @@ Phase 5E. Apply it only after migration
 `20260901_0053_mink_phase_5e_campaigns` and the matching application are live;
 before that deployment, the older claim function is not schedule-aware.** Also,
 **`storemink-search-metrics` and `storemink-analytics-rollup`
-are PAUSED**: their routes are on `staging` and NOT YET on `main`, and prod
-deploys from `main` — so both 404 against `https://storemink.com`
-(`analytics-rollup`'s first run returned NOT_FOUND at 11:40Z). **Resume both
-once the routes reach prod**:
+were PAUSED** while their routes were on `staging` and not yet on `main`
+(`analytics-rollup`'s first run returned NOT_FOUND at 11:40Z). ✅ Both routes
+are live on `https://storemink.com` now (each answers 401 to an unsigned
+request) and both jobs were found ENABLED on 2026-10-24, each with a
+successful attempt that day (empty status code). If either is ever paused
+again, this is how to resume it:
 
 ```bash
 gcloud scheduler jobs resume storemink-analytics-rollup \
@@ -534,9 +631,8 @@ service account first; see `docs/seo-indexing.md`.
 > next minute heartbeat drains them. Future campaign rows are excluded from the
 > worker's remaining count, so this cadence does not self-chain while waiting.
 
-> **⚠ Timezone is `Etc/UTC`, not IST.** The cron expressions were lifted verbatim
-> from `vercel.json`, where they were always UTC. Re-creating them in
-> `Asia/Kolkata` would shift every job by 5h30m.
+> **⚠ Timezone is `Etc/UTC`, not IST.** The cron expressions are written in
+> UTC. Re-creating them in `Asia/Kolkata` would shift every job by 5h30m.
 
 ## Recreating them
 
@@ -578,7 +674,8 @@ gcloud scheduler jobs create http storemink-theme-studio-runs \
 ```
 
 After deploying the automatic-acceptance web changes, create the separate QA
-scheduler (for dev, use a distinct `-dev` name, dev origin and its secret):
+scheduler (production only: dev has no Theme Studio schedules, owner
+2026-10-10):
 
 ```bash
 gcloud scheduler jobs create http storemink-theme-studio-qa \
@@ -637,6 +734,13 @@ gcloud scheduler jobs create http storemink-analytics-rollup \
   --http-method=GET --headers="Authorization=Bearer ${CRON_SECRET_VALUE}" \
   --attempt-deadline=300s --max-retry-attempts=3
 ```
+
+⚠ Each rebuild runs in its own transaction with a 5-minute statement limit
+(`setRollupStatementLimit`, 2026-10-24), not the pool's 30 s: 2.2 s and 2.6 s
+for 211,473 local events. The job's 300 s attempt deadline is shorter than
+that limit, so a rebuild that ever took minutes would be retried while it is
+still running (the primary keys keep the counts right). Raising the deadline
+to 900 s is a live change for the owner to approve.
 
 The domain backstop is the one **hourly** job. Google's managed certificate takes
 up to ~30 minutes after the challenge CNAME resolves, and merchants edit DNS on
@@ -738,17 +842,28 @@ because there was nothing to list. The job reported green throughout.
 Three tables grew without bound because their retention policy was written down
 and never wired to anything:
 
-| Table                            | Window                   | Why                                                                                                       |
-| -------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------- |
-| `notifications`                  | 90 days                  | A read inbox row is history.                                                                              |
-| `activity_events`                | 365 days                 | The audit trail, so it gets the longest life.                                                             |
-| `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.      |
-| `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                              |
-| `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain. |
-| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.      |
-| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows. |
+| Table                            | Window                   | Why                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notifications`                  | 90 days                  | A read inbox row is history.                                                                                                                                                                                                                                                                                                                                                                |
+| `activity_events`                | 365 days                 | The audit trail, so it gets the longest life.                                                                                                                                                                                                                                                                                                                                               |
+| `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.                                                                                                                                                                                                                                                                                        |
+| `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                                                                                                                                                                                                                                                                                                                |
+| `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain.                                                                                                                                                                                                                                                                                   |
+| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.                                                                                                                                                                                                                                                                                        |
+| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows.                                                                                                                                                                                                                                                                                   |
+| `ai_quota_refunds`               | 90 days                  | One row per Generate with AI take that was given back, kept so a second refund of the same take gives nothing; a take is refunded only inside its own request.                                                                                                                                                                                                                              |
+| `mink_refine_requests`           | 30 days                  | One row per Refine with Mink AI request: the browser's stop and the charge claim; it decides only while its refine runs.                                                                                                                                                                                                                                                                    |
+| `mink_conversations`             | 90 days after last use   | A Mink AI chat is kept 90 days after the merchant last sent a message in it or opened it, then retired: deleted, or reduced when it holds the record of an approved or published change (its words go, the record stays while the store exists). A chat is retired only when both its expiry and its last message are 90 days old; never one with a reply running or a redesign being made. |
 
-`supabase/email_logs.sql` documented the 90-day intent and even carries an
+For `mink_conversations`, `deleted` in the response counts chats retired
+(deleted or reduced), and the log line `mink.retention: batch` gives healed,
+stripped, deleted, reduced, skipped and failed per batch (each batch first
+moves forward the expiry of chats a revision without the 90-day rule used,
+and strips redesigns nobody applied whose chat is already gone). A chat
+whose retirement failed is marked and skipped for 7 days
+(`mink.retention: chat not retired`, ids only).
+
+`email_logs.sql` documented the 90-day intent and even carries an
 `email_logs_created_idx` built "for retention sweeps". `pruneNotifications` had
 the right windows and a docstring saying it was "called by the daily cron".
 **Nothing called it** — a grep returned the definition and nothing else. So
@@ -783,22 +898,20 @@ Behaviour worth knowing before you read a response:
   are swept first and at the shorter window. **Financial records — orders,
   refunds, credit notes — live in their own tables and are never touched.**
 
-> **⚠ `data_jobs` and `data_job_issues` are NOT yet swept, and they belong
-> here.** They have the same shape and the same unbounded growth — `ISSUE_CAP`
-> bounds issues per job, but nothing bounds the number of jobs. The sweep was
-> written on `main`, where those tables do not exist; on this branch they do, so
-> the blocker is gone. Adding them is two entries in `RETENTION_POLICIES`
-> (`lib/retention/prune.ts`), **issues before jobs** — `data_job_issues.job_id`
-> is `ON DELETE CASCADE` from `data_jobs`, the same shape as
-> notifications→events.
+> **`data_jobs` and `data_job_issues` are swept too** (90 days each), with the
+> same shape and the same unbounded growth: `ISSUE_CAP` bounds issues per job,
+> but nothing else bounds the number of jobs. Their two `RETENTION_POLICIES`
+> entries (`lib/retention/prune.ts`) run **issues before jobs**, because
+> `data_job_issues.job_id` is `ON DELETE CASCADE` from `data_jobs`, the same
+> shape as notifications→events.
 >
-> ⚠ Both tables carry only `(store_id, created_at)` composite indexes. A
-> retention sweep filters on `created_at` **alone**, which cannot use a
-> composite whose leading column is `store_id`, so each also wants a plain
-> `created_at` index in `supabase/import_export_01_jobs.sql` — added as a
-> separate `CREATE INDEX IF NOT EXISTS` so re-running the file stays idempotent.
-> Without it the sweep works but seq-scans, which is precisely the cost that
-> matters once the table is big enough to need pruning.
+> Both tables' `(store_id, created_at)` composite indexes cannot serve a sweep
+> that filters on `created_at` **alone**, so each has a plain `created_at`
+> index in its own file, `retention_01_prune_indexes.sql` (an
+> applied `CREATE TABLE IF NOT EXISTS` file is never edited). Without it the
+> sweep works but seq-scans, which is precisely the cost that matters once
+> the table is big enough to need pruning. (Until 2026-10-25 this note said
+> they were not swept yet, long after both entries were added.)
 
 ## Verifying
 

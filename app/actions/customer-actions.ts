@@ -71,8 +71,8 @@ export async function updateCustomer(
 /**
  * Dashboard: permanently delete a customer — the Cloud SQL `users` row (which
  * cascades to reviews / blog links keyed on the customer) AND the Identity
- * Platform login. Both are removed explicitly: auth and profile now live in
- * separate systems, so there's no `auth.users` cascade to lean on. Guarded by
+ * Platform login. Both are removed explicitly: auth and profile live in
+ * separate systems with no cascade between them. Guarded by
  * "users" manage.
  */
 export async function deleteCustomer(id: string): Promise<ActionResult> {

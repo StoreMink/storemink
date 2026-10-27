@@ -11,6 +11,23 @@ import {
 } from "lucide-react";
 import { openThemeStudioPreviewAction } from "@/app/actions/theme-studio-actions";
 
+// ---------------------------------------------------------------------------
+// One design's private preview, inside the theme page's Preview tab (wave
+// TS-2). The frame asks the server for an entry token only after it mounts,
+// so no token is ever rendered into the page's HTML.
+//
+// ★ IT FITS THE WIDTH AND THE HEIGHT OF ITS BOX (plan section 4). The frame
+// is drawn at the viewport's real size and scaled down to whichever of the
+// box's width or height is tighter; a phone frame (390 by 844) never runs
+// past the bottom of the screen. Below about 900 px of box the first view is
+// Tablet (below 600 px, Phone), until the operator picks one.
+//
+// ★ THE POP-OUT OPENS ITS WINDOW INSIDE THE TAP. A browser allows a new
+// window only while it handles the tap; waiting for the token first (as this
+// file used to) is what Safari blocks. The window opens at once on a blank
+// page and its address is filled in when the token arrives.
+// ---------------------------------------------------------------------------
+
 type ViewportKey = "desktop" | "tablet" | "mobile";
 type Viewports = Record<ViewportKey, { width: number; height: number }>;
 
@@ -26,19 +43,41 @@ const VIEWPORT_LABELS: Record<
   ViewportKey,
   { label: string; icon: typeof Laptop }
 > = {
-  desktop: { label: "Laptop", icon: Laptop },
-  tablet: { label: "iPad", icon: Tablet },
-  mobile: { label: "Mobile", icon: Smartphone },
+  desktop: { label: "Desktop", icon: Laptop },
+  tablet: { label: "Tablet", icon: Tablet },
+  mobile: { label: "Phone", icon: Smartphone },
 };
+
+const VIEWPORT_ORDER: ViewportKey[] = ["desktop", "tablet", "mobile"];
 
 /** Entry tokens last ten minutes; renew a little before that. */
 const TOKEN_REFRESH_MS = 8 * 60 * 1000;
+
+/** Box widths under which the first view is smaller than Desktop. */
+export const PREVIEW_TABLET_BELOW = 900;
+export const PREVIEW_PHONE_BELOW = 600;
 
 function enterUrl(opened: Opened, path: string): string {
   const url = new URL("/api/theme-studio/preview/enter", opened.origin);
   url.searchParams.set("token", opened.enterToken);
   url.searchParams.set("path", path);
   return url.toString();
+}
+
+/** The first view for a box this wide. */
+export function previewStartViewport(boxWidth: number): ViewportKey {
+  if (boxWidth < PREVIEW_PHONE_BELOW) return "mobile";
+  if (boxWidth < PREVIEW_TABLET_BELOW) return "tablet";
+  return "desktop";
+}
+
+/** How far a viewport is scaled to fit a box: never above real size. */
+export function previewScale(
+  box: { width: number; height: number },
+  viewport: { width: number; height: number },
+): number {
+  if (box.width <= 0 || box.height <= 0) return 1;
+  return Math.min(1, box.width / viewport.width, box.height / viewport.height);
 }
 
 export function PreviewFrame({
@@ -53,10 +92,12 @@ export function PreviewFrame({
   const [opened, setOpened] = useState<Opened | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [viewport, setViewport] = useState<ViewportKey>("desktop");
+  const [chosen, setChosen] = useState<ViewportKey | null>(null);
+  const [box, setBox] = useState<{ width: number; height: number } | null>(
+    null,
+  );
   const [path, setPath] = useState("/");
   const [frameSrc, setFrameSrc] = useState<string | null>(null);
-  const [scale, setScale] = useState(1);
   const holder = useRef<HTMLDivElement>(null);
 
   const accept = useCallback(
@@ -77,122 +118,154 @@ export function PreviewFrame({
   /** From an event handler: show progress, then open. */
   const open = useCallback(async (): Promise<Opened | null> => {
     setLoading(true);
-    return accept(await openThemeStudioPreviewAction({ projectId, versionId }));
+    try {
+      return accept(
+        await openThemeStudioPreviewAction({ projectId, versionId }),
+      );
+    } catch {
+      setLoading(false);
+      setError("The preview couldn't be opened. Try again.");
+      return null;
+    }
   }, [accept, projectId, versionId]);
+
+  function fresh(): Opened | null {
+    return opened && Date.now() - opened.mintedAt <= TOKEN_REFRESH_MS
+      ? opened
+      : null;
+  }
 
   // A fresh token for every navigation keeps each frame load self-contained:
   // it does not depend on a cookie a browser may refuse inside a frame.
-  const navigate = useCallback(
-    async (nextPath: string) => {
-      setPath(nextPath);
-      let current = opened;
-      if (!current || Date.now() - current.mintedAt > TOKEN_REFRESH_MS) {
-        current = await open();
-      }
-      if (current) setFrameSrc(enterUrl(current, nextPath));
-    },
-    [open, opened],
-  );
+  async function navigate(nextPath: string) {
+    setPath(nextPath);
+    const current = fresh() ?? (await open());
+    if (current) setFrameSrc(enterUrl(current, nextPath));
+  }
 
   // The first open starts in the loading state, so the effect only sets
   // state once the server has answered.
   useEffect(() => {
     let cancelled = false;
-    void openThemeStudioPreviewAction({ projectId, versionId }).then(
-      (result) => {
+    openThemeStudioPreviewAction({ projectId, versionId })
+      .then((result) => {
         if (cancelled) return;
         const first = accept(result);
         if (first) setFrameSrc(enterUrl(first, "/"));
-      },
-    );
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLoading(false);
+        setError("The preview couldn't be opened. Try again.");
+      });
     return () => {
       cancelled = true;
     };
   }, [accept, projectId, versionId]);
 
-  const size = viewports[viewport];
+  // The box's size, whenever it changes (the chat folding or being dragged,
+  // the window resizing). A hidden tab measures 0 by 0: the last size stays.
   useEffect(() => {
     const element = holder.current;
-    if (!element) return;
-    const measure = () =>
-      setScale(Math.min(1, element.clientWidth / size.width));
-    measure();
-    const observer = new ResizeObserver(measure);
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const width = element.clientWidth;
+      const height = element.clientHeight;
+      if (width > 0 && height > 0) setBox({ width, height });
+    });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [size.width]);
+  }, []);
 
-  async function popOut() {
-    let current = opened;
-    if (!current || Date.now() - current.mintedAt > TOKEN_REFRESH_MS) {
-      current = await open();
+  const viewport: ViewportKey =
+    chosen ?? (box ? previewStartViewport(box.width) : "desktop");
+  const size = viewports[viewport];
+  const scale = box ? previewScale(box, size) : 1;
+  const narrow = box ? box.width < PREVIEW_PHONE_BELOW : false;
+
+  function popOut() {
+    const ready = fresh();
+    if (ready) {
+      window.open(enterUrl(ready, path), "_blank", "noopener");
+      return;
     }
-    if (current) window.open(enterUrl(current, path), "_blank", "noopener");
+    // Opened now, inside the tap; filled in when the token arrives.
+    const win = window.open("", "_blank");
+    if (win) {
+      try {
+        win.opener = null;
+        win.document.title = "Opening the preview";
+        win.document.body.textContent = "Opening the preview...";
+      } catch {
+        // A window the browser keeps apart is still filled in below.
+      }
+    }
+    void open().then((next) => {
+      if (!win || win.closed) return;
+      if (next) win.location.replace(enterUrl(next, path));
+      else win.close();
+    });
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div
-          role="group"
-          aria-label="Viewport"
-          className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5"
-        >
-          {(Object.keys(VIEWPORT_LABELS) as ViewportKey[]).map((key) => {
+    <div className="studio-preview">
+      <div className="studio-preview-bar">
+        <div role="group" aria-label="Screen size" className="studio-segmented">
+          {VIEWPORT_ORDER.map((key) => {
             const { label, icon: Icon } = VIEWPORT_LABELS[key];
             return (
               <button
                 key={key}
                 type="button"
                 aria-pressed={viewport === key}
-                onClick={() => setViewport(key)}
-                className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition ${
-                  viewport === key
-                    ? "bg-slate-900 text-white"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
+                onClick={() => setChosen(key)}
               >
-                <Icon className="h-4 w-4" /> {label}
-                <span className="text-xs opacity-70">
+                <Icon aria-hidden="true" className="h-4 w-4" /> {label}
+                {/* In a narrow box (a phone, or a tablet beside the chat)
+                    the sizes stay in each button's name, not on screen:
+                    with them the group is about 470 px wide. */}
+                <span className={narrow ? "sr-only" : "studio-muted"}>
+                  <span className="sr-only">, </span>
                   {viewports[key].width}×{viewports[key].height}
                 </span>
               </button>
             );
           })}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => void navigate(path)}
             disabled={loading}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            className="dash-btn dash-btn-ghost dash-btn-sm"
           >
-            <RefreshCw className="h-4 w-4" /> Reload
+            <RefreshCw aria-hidden="true" className="h-4 w-4" /> Reload
           </button>
           <button
             type="button"
-            onClick={() => void popOut()}
+            onClick={popOut}
             disabled={loading && !opened}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+            className={
+              narrow
+                ? "dash-btn dash-btn-primary dash-btn-sm"
+                : "dash-btn dash-btn-ghost dash-btn-sm"
+            }
           >
-            <ExternalLink className="h-4 w-4" /> Open full page
+            <ExternalLink aria-hidden="true" className="h-4 w-4" /> Open full
+            page
           </button>
         </div>
       </div>
 
       {opened ? (
-        <nav aria-label="Preview pages" className="flex flex-wrap gap-1.5">
+        <nav aria-label="Preview pages" className="studio-preview-pages">
           {opened.pages.map((page) => (
             <button
               key={page.surface}
               type="button"
               aria-current={page.path === path ? "page" : undefined}
               onClick={() => void navigate(page.path)}
-              className={`rounded-full border px-3 py-1 text-xs transition ${
-                page.path === path
-                  ? "border-slate-900 bg-slate-900 text-white"
-                  : "border-slate-300 text-slate-700 hover:bg-slate-50"
-              }`}
+              className="studio-chip"
             >
               {page.label}
             </button>
@@ -201,14 +274,14 @@ export function PreviewFrame({
       ) : null}
 
       {error ? (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <p role="alert" className="studio-notice" data-tone="warning">
           {error}
         </p>
       ) : null}
 
-      <div ref={holder} className="w-full">
+      <div ref={holder} className="studio-preview-holder">
         <div
-          className="relative mx-auto overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm"
+          className="studio-preview-frame"
           style={{
             width: size.width * scale,
             height: size.height * scale,
@@ -231,14 +304,15 @@ export function PreviewFrame({
             />
           ) : null}
           {loading ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-slate-600">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Preparing the
-              preview - the first open of a version builds its store.
+            <div className="studio-preview-wait" role="status">
+              <Loader2 aria-hidden="true" className="h-4 w-4 studio-spin" />
+              Preparing the preview. The first open of a design builds its
+              preview store.
             </div>
           ) : null}
         </div>
       </div>
-      <p className="text-xs text-slate-500">
+      <p className="studio-muted text-xs">
         Links inside the preview work as they would in a live store. Checkout is
         switched off, and the preview closes itself a day after it was last
         opened.

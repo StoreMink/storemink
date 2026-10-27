@@ -10,6 +10,8 @@
 // index on all three tables) is asserted in the SQL files, not here.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -30,6 +32,8 @@ import {
   sweepPolicy,
   type RetentionPolicy,
 } from "./prune";
+import { withService } from "@/lib/db/client";
+import { pruneIdleMinkConversations } from "@/lib/mink/conversation-retention";
 
 /** A policy whose batches return the given counts, in order. */
 function policyReturning(
@@ -273,6 +277,64 @@ describe("RETENTION_POLICIES", () => {
       RETENTION_POLICIES.map((policy) => [policy.table, policy.days]),
     );
     expect(byTable.get("whatsapp_conversations")).toBe(730);
+  });
+
+  it("★ retires a Mink AI chat 90 days after its last use, in small batches", () => {
+    const policy = RETENTION_POLICIES.find(
+      (entry) => entry.table === "mink_conversations",
+    );
+    expect(policy?.days).toBe(90);
+    expect(policy?.batchSize).toBe(50);
+    expect(policy?.reason).toContain("last sent a message in it");
+    expect(policy?.deleteBatch).toBe(pruneIdleMinkConversations);
+  });
+
+  it("★ forgets a Generate with AI refund after 90 days, one page of its own rows at a time", async () => {
+    // ai_quota_refunds (migration 0237) has no Drizzle table, so its deleter
+    // is raw SQL: the page is chosen by created_at, deleted by take_id.
+    const policy = RETENTION_POLICIES.find(
+      (entry) => entry.table === "ai_quota_refunds",
+    );
+    expect(policy?.days).toBe(90);
+    const execute = vi.fn<
+      (query: SQL) => Promise<{ rows: unknown[]; rowCount: number }>
+    >(async () => ({ rows: [], rowCount: 7 }));
+    vi.mocked(withService).mockImplementationOnce(async (fn) =>
+      fn({ execute } as never),
+    );
+
+    const floor = "2026-07-26T00:00:00.000Z";
+    expect(await policy!.deleteBatch(floor, 1000)).toBe(7);
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0][0]);
+    expect(query.sql.replace(/\s+/g, " ").trim()).toBe(
+      "DELETE FROM public.ai_quota_refunds WHERE take_id IN ( SELECT take_id FROM public.ai_quota_refunds WHERE created_at < $1::timestamptz LIMIT $2 )",
+    );
+    expect(query.params).toEqual([floor, 1000]);
+  });
+
+  it("★ forgets a Refine with Mink AI stop after 30 days, by its composite key", async () => {
+    // mink_refine_requests (migration 0247) is written by raw SQL only: the
+    // page is chosen by created_at, deleted by (store_id, admin_id, stop_token).
+    const policy = RETENTION_POLICIES.find(
+      (entry) => entry.table === "mink_refine_requests",
+    );
+    expect(policy?.days).toBe(30);
+    const execute = vi.fn<
+      (query: SQL) => Promise<{ rows: unknown[]; rowCount: number }>
+    >(async () => ({ rows: [], rowCount: 4 }));
+    vi.mocked(withService).mockImplementationOnce(async (fn) =>
+      fn({ execute } as never),
+    );
+
+    const floor = "2026-09-26T00:00:00.000Z";
+    expect(await policy!.deleteBatch(floor, 1000)).toBe(4);
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0][0]);
+    expect(query.sql.replace(/\s+/g, " ").trim()).toBe(
+      "DELETE FROM public.mink_refine_requests WHERE (store_id, admin_id, stop_token) IN ( SELECT store_id, admin_id, stop_token FROM public.mink_refine_requests WHERE created_at < $1::timestamptz LIMIT $2 )",
+    );
+    expect(query.params).toEqual([floor, 1000]);
   });
 
   it("documents why every window is what it is", () => {

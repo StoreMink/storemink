@@ -9,10 +9,11 @@ import {
   submitThemeStudioBrowserEvidenceAction,
 } from "@/app/actions/theme-studio-actions";
 
-// The Theme Studio acceptance runner.
+// The Theme Studio in-browser check runner (a fallback beside Check again,
+// which measures in the capture job).
 //
-// Starts a run (the server stage happens inside that request), then — when the
-// server returns a plan — drives the browser stage: each review surface is
+// Starts a run (the server stage happens inside that request), then, when the
+// server returns a plan, drives the browser stage: each page is
 // loaded at each acceptance viewport in a VISIBLE, exactly-sized frame, the
 // preview's probe is asked to measure, and the raw results are submitted. The
 // frame stays on screen because browsers throttle hidden cross-origin frames,
@@ -201,8 +202,8 @@ export function AcceptanceRunner({
       setPhase("idle");
       setNotice(
         started.status === "blocked"
-          ? "The security scan failed. The project is now blocked."
-          : "Server checks failed before a preview could be measured.",
+          ? "The security scan failed, so this version can't be published. Describe a fix in the chat."
+          : "The server checks found problems before any page could be measured. The details are below.",
       );
       router.refresh();
       return;
@@ -268,10 +269,10 @@ export function AcceptanceRunner({
     } else {
       setNotice(
         submitted.status !== "passed"
-          ? "Some required gates did not pass. The details are below."
+          ? "Some checks found problems. The details are below."
           : submitted.candidate
-            ? "Every required gate passed. This version is now a candidate."
-            : "Every required gate passed. It becomes a candidate once the automatic visual review has also passed this exact package.",
+            ? "Every check passed in this browser, and this version is Ready to publish."
+            : "Every check passed in this browser. The theme page shows whether it is Ready to publish.",
       );
     }
     router.refresh();
@@ -298,7 +299,7 @@ export function AcceptanceRunner({
               ? "Measuring in this browser…"
               : phase === "submitting"
                 ? "Saving results…"
-                : "Run acceptance checks"}
+                : "Check in this browser"}
         </button>
         {!canRun && blockedReason ? (
           <p className="text-sm text-slate-500">{blockedReason}</p>

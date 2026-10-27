@@ -30,6 +30,7 @@ vi.mock("./location-tag", () => ({
 }));
 
 import { DashboardTopbar, type DashboardSearchGroup } from "./dashboard-topbar";
+import { SECTIONS } from "./lib/permissions";
 
 const SEARCH_GROUPS: DashboardSearchGroup[] = [
   {
@@ -119,6 +120,65 @@ describe("DashboardTopbar search", () => {
       desktopResults().getByRole("option", { name: /Storefront/ }),
     );
     expect(push).toHaveBeenCalledWith("/dashboard/storefront");
+  });
+
+  // ★ "Point of Sale" became "POS" (26 Oct 2026), and people still call it a
+  // register or a till, words the app no longer uses for it. The real catalogue
+  // entry is used so its aliases cannot be dropped unnoticed.
+  it.each(["register", "till", "point of sale"])(
+    "finds POS by the old word %j",
+    (word) => {
+      const pos = SECTIONS.find((section) => section.key === "pos");
+      expect(pos?.label).toBe("POS");
+      renderTopbar([
+        {
+          group: "Sell in person",
+          items: [
+            {
+              label: pos?.label ?? "",
+              href: pos?.href ?? "",
+              searchAliases: pos?.searchAliases,
+            },
+          ],
+        },
+      ]);
+      const input = screen.getByRole("combobox", { name: "Search dashboard" });
+      fireEvent.focus(input);
+      fireEvent.change(input, { target: { value: word } });
+      fireEvent.click(desktopResults().getByRole("option", { name: /POS/ }));
+      expect(push).toHaveBeenCalledWith("/dashboard/pos");
+    },
+  );
+
+  // The old words find a POS page as well as the section: "register settings"
+  // works the way "pos settings" does.
+  it.each([
+    ["register settings", /POS settings/, "/dashboard/pos/settings"],
+    ["till devices", /Devices/, "/dashboard/pos/devices"],
+    ["register shifts", /Shifts/, "/dashboard/pos/shifts"],
+  ])("finds a POS page by %j", (query, name, href) => {
+    const pos = SECTIONS.find((section) => section.key === "pos");
+    renderTopbar([
+      {
+        group: "Sell in person",
+        items: [
+          {
+            label: pos?.label ?? "",
+            href: pos?.href ?? "",
+            searchAliases: pos?.searchAliases,
+            children: pos?.children?.map(({ label, href }) => ({
+              label,
+              href,
+            })),
+          },
+        ],
+      },
+    ]);
+    const input = screen.getByRole("combobox", { name: "Search dashboard" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: query } });
+    fireEvent.click(desktopResults().getByRole("option", { name }));
+    expect(push).toHaveBeenCalledWith(href);
   });
 
   it("opens and focuses search with Command/Ctrl+K", async () => {

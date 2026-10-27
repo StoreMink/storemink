@@ -25,7 +25,6 @@ export function BrandVoiceForm({
     initial.structured,
   );
   const [content, setContent] = useState(initial.content);
-  const [usage, setUsage] = useState(initial.usage);
   const [generating, setGenerating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(
@@ -47,7 +46,6 @@ export function BrandVoiceForm({
     }
     setContent(res.content);
     // One generation was consumed — reflect it without a refetch.
-    setUsage((u) => (u.cap === null ? u : { ...u, used: u.used + 1 }));
     setStatus({
       ok: true,
       msg: "Draft ready - review it below, tweak anything, then save.",
@@ -94,15 +92,6 @@ export function BrandVoiceForm({
           The identity your AI copy speaks from - product descriptions, SEO and
           marketing emails all follow this guide. Answer a few questions and let
           AI draft it, or write your own below.
-          {usage.cap !== null && (
-            <>
-              {" "}
-              <strong>
-                {Math.min(usage.used, usage.cap)} of {usage.cap}
-              </strong>{" "}
-              Mink credits used in this plan cycle.
-            </>
-          )}
         </p>
 
         <div className="brandingGrid">

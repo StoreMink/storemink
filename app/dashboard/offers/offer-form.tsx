@@ -127,11 +127,11 @@ const CONDITION_LABELS: Record<
 > = {
   payment_method: {
     title: "Payment method",
-    hint: "Website only. The register shows the total before payment is taken, so it cannot change once a method is chosen.",
+    hint: "Website only. POS shows the total before payment is taken, so it cannot change once a method is chosen.",
   },
   fulfilment_type: {
     title: "Delivery or pickup",
-    hint: "Website only. A register sale is neither a delivery nor a collection.",
+    hint: "Website only. A POS sale is neither a delivery nor a collection.",
   },
   first_order: {
     title: "First order only",
@@ -236,9 +236,8 @@ function ConditionsEditor({
 
                 {blocked ? (
                   <p className="mt-2 text-xs text-[#b45309]">
-                    This offer includes the register, where this condition
-                    cannot work. Set the offer to your website only, or remove
-                    the condition.
+                    This offer includes POS, where this condition cannot work.
+                    Set the offer to your website only, or remove the condition.
                   </p>
                 ) : null}
 
@@ -673,7 +672,7 @@ const TYPE_GROUPS: {
       {
         value: "free_shipping",
         title: "Free delivery",
-        blurb: "Waives the delivery charge. Never applies at a till.",
+        blurb: "Waives the delivery charge. Never applies in POS.",
       },
       {
         value: "free_item",
@@ -1055,9 +1054,9 @@ export function OfferForm({
       : `Code ${form.code ? form.code.toUpperCase() : "-"}`,
     form.channels.length === 1
       ? form.channels[0] === "pos"
-        ? "point of sale only"
+        ? "POS only"
         : "online store only"
-      : "online store and point of sale",
+      : "online store and POS",
     form.locationIds.length > 0
       ? `${form.locationIds.length} location${
           form.locationIds.length === 1 ? "" : "s"
@@ -1237,8 +1236,8 @@ export function OfferForm({
                     {form.delivery === "automatic" && !autoApplyOn && (
                       <span className="mt-1 block text-[11px] text-amber-700">
                         Your store has automatic offers switched off, so this
-                        will not apply to anything - online or at the till -
-                        however you set it up here. Turn on{" "}
+                        will not apply to anything - online or in POS - however
+                        you set it up here. Turn on{" "}
                         <Link
                           href="/dashboard/offers/settings"
                           className="underline"
@@ -1319,7 +1318,7 @@ export function OfferForm({
                           set("channels", next);
                         }}
                       />
-                      {ch === "pos" ? "Point of sale" : "Online store"}
+                      {ch === "pos" ? "POS" : "Online store"}
                     </label>
                   ))}
                 </div>
@@ -1980,13 +1979,13 @@ export function OfferForm({
                   title="Locations"
                   subtitle={
                     form.locationIds.length > 0
-                      ? `${form.locationIds.length} of ${locations.length} tills`
-                      : "Every till"
+                      ? `${form.locationIds.length} of ${locations.length} locations`
+                      : "Every location"
                   }
                 >
                   <p className={`${hintClass} mb-2`}>
-                    Leave all unticked to run at every till. Online orders are
-                    never location-limited.
+                    Leave all unticked to run at every location. Online orders
+                    are never location-limited.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     {locations.map((l) => (

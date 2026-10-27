@@ -1140,8 +1140,8 @@ function MinkDraftCard({
             : !windowOpen
               ? "The 24-hour window has closed; only a template can be sent now."
               : draft.charged
-                ? "Already paid for: sending uses no credit."
-                : "Sending uses 1 Mink credit."}
+                ? "Ready to send."
+                : "Sending uses Mink credits."}
         </span>
         <button
           type="button"

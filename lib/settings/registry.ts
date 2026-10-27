@@ -184,9 +184,9 @@ export const SETTINGS: readonly SettingDef[] = [
   },
   {
     key: "pos.enabled",
-    label: "Point of Sale",
+    label: "POS",
     description:
-      "Enable the in-store register at /pos for this store. Available on the Pro plan.",
+      "Enable POS at /pos for this store. Available on the Pro plan.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -197,9 +197,9 @@ export const SETTINGS: readonly SettingDef[] = [
   },
   {
     key: "pos.idleLockMinutes",
-    label: "Auto-lock the register after",
+    label: "Auto-lock POS after",
     description:
-      "Minutes of inactivity before the register locks and asks for the cashier's PIN again. Stops the next person selling as whoever walked away.",
+      "Minutes of inactivity before POS locks and asks for the cashier's PIN again. Stops the next person selling as whoever walked away.",
     group: "Point of Sale",
     section: "pos",
     type: "number",
@@ -210,9 +210,9 @@ export const SETTINGS: readonly SettingDef[] = [
   },
   {
     key: "pos.allowPriceOverride",
-    label: "Allow price overrides at the register",
+    label: "Allow price overrides in POS",
     description:
-      "Let the till change an item's price during a sale. Turn off to make listed prices final. Who may do it is governed by the setting below.",
+      "Lets an item's price be changed during a POS sale. Turn off to make listed prices final. Who may do it is governed by the setting below.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -259,7 +259,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.requireOpenShift",
     label: "Require an open shift to sell",
     description:
-      "Cashiers must open the drawer with a counted float before ringing a sale. Off by default - turning it on can stop a till, so it is the merchant's call.",
+      "Cashiers must open the drawer with a counted float before ringing a sale. Off by default - turning it on stops sales in POS until someone opens a shift, so it is the merchant's call.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",

@@ -2,7 +2,7 @@
 
 // Channels → Digital payments: a merchant connects their OWN Razorpay account
 // (BYO gateway — order money settles directly with them). Credentials live in
-// store_payment_providers (service-only, supabase/payment_providers.sql);
+// store_payment_providers (service-only);
 // the key secret is app-layer encrypted (lib/payments/crypto.ts) and is
 // WRITE-ONLY: no action ever returns it to a client.
 //

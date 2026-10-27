@@ -5,6 +5,13 @@ import { logError } from "@/lib/observability/logger";
 import { purgeExpiredMinkMemories } from "@/lib/mink/memories";
 import { reconcileMinkRunCredits } from "@/lib/mink/run-credit-reconcile";
 import { getMinkConfig } from "@/lib/mink/config";
+import {
+  MINK_STALE_RUN_SWEEP_LIMIT,
+  closeStaleMinkRuns,
+} from "@/lib/mink/persistence";
+import { sweepRefineStages } from "@/lib/mink/refine-stages";
+import { closeStoppedMinkRuns } from "@/lib/mink/run-stop";
+import { sweepStalledRevamps } from "@/lib/mink/revamp/jobs";
 import { sweepThemeStudioPreviews } from "@/lib/theme-studio/preview";
 import { runThemeStudioWorker } from "@/lib/theme-studio/worker";
 
@@ -92,6 +99,61 @@ async function handle(request: Request) {
     } catch (error) {
       logError("mink workflow cron: theme studio preview sweep failed", error);
     }
+    // ★ A chat run the merchant stopped whose instance went away before it
+    //   saw the stop (a live one sees it within about two seconds): closed as
+    //   cancelled with code `stopped` three minutes after the stop, through
+    //   the same failure record (lib/mink/run-stop.ts). BEFORE the stale
+    //   sweep, so a run that is both is recorded as the stop it was, not as
+    //   abandoned. Isolated like the passes below.
+    let stoppedRuns: { closed: number; failed: number } | null = null;
+    try {
+      stoppedRuns = await closeStoppedMinkRuns();
+    } catch (error) {
+      logError("mink workflow cron: stopped run sweep failed", error);
+    }
+    // ★ A chat run still "running" past the longest any run can live is dead
+    //   (its process went away mid-answer), and it blocks deleting its chat
+    //   from History for ever. Closed here as failed, through the stream
+    //   route's own failure record, at most MINK_STALE_RUN_SWEEP_LIMIT a tick;
+    //   a redesign it started is kept, with its card (robustness audit B7).
+    //   Isolated like the passes below, so it never touches `passError`.
+    let staleRuns: { closed: number; failed: number } | null = null;
+    try {
+      staleRuns = await closeStaleMinkRuns({
+        limit: MINK_STALE_RUN_SWEEP_LIMIT,
+      });
+    } catch (error) {
+      logError("mink workflow cron: stale run sweep failed", error);
+    }
+    // ★ Storefront revamps whose runner died get one kick each (at most five
+    //   a tick), and ones that ran out of attempts are failed, so a merchant
+    //   who closed the card still gets an answer (docs/mink-storefront-revamp.md
+    //   section 4.3). Isolated like Theme Studio: a revamp failure is logged and
+    //   never fails the merchant workflow worker above, which is why it does
+    //   not touch `passError`.
+    let revamps: { kicked: number; failed: number } | null = null;
+    try {
+      revamps = await sweepStalledRevamps(5);
+    } catch (error) {
+      logError("mink workflow cron: revamp sweep failed", error);
+    }
+    // ★ Refine with Mink AI stages (lib/mink/refine-stages.ts): a paid refined
+    //   photo whose publish failed is published from its private stage, and a
+    //   stage nobody paid for is deleted, five minutes after it was written,
+    //   only this database's. Isolated like the passes above: a failure is
+    //   logged and never fails the heartbeat. ★ LAST: the only pass that waits
+    //   on storage (ten seconds at most), so a storage stall never delays the
+    //   database backstops above.
+    let refineStages: {
+      published: number;
+      deleted: number;
+      failed: number;
+    } | null = null;
+    try {
+      refineStages = await sweepRefineStages();
+    } catch (error) {
+      logError("mink workflow cron: refine stage sweep failed", error);
+    }
     if (passError) throw passError;
     if (!result) throw new Error("Workflow heartbeat returned no result.");
     return NextResponse.json({
@@ -102,6 +164,10 @@ async function handle(request: Request) {
       creditsSettled,
       themeStudio,
       themeStudioPreviewsRemoved,
+      stoppedRuns,
+      refineStages,
+      staleRuns,
+      revamps,
     });
   } catch (error) {
     // 503, not an unhandled 500, so Cloud Scheduler's retries engage — the

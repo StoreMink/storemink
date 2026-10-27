@@ -4,8 +4,12 @@ import {
   MINK_RUN_STATUSES,
   normalizeMinkRunFilters,
 } from "@/lib/platform/mink-runs";
-import { getMinkVoiceProvider } from "@/lib/mink/voice-settings";
+import {
+  getMinkSpeechSettings,
+  getMinkVoiceProvider,
+} from "@/lib/mink/voice-settings";
 import { canManage, requireOperator } from "../require-operator";
+import { SpeechProviderSwitch } from "./speech-provider-switch";
 import { VoiceProviderSwitch } from "./voice-provider-switch";
 
 export const metadata = { title: "Mink AI runs · StoreMink Admin" };
@@ -25,9 +29,10 @@ export default async function PlatformMinkRunsPage({
   // read at the page boundary before querying any merchant's telemetry.
   const viewer = await requireOperator();
   const filters = normalizeMinkRunFilters(await searchParams);
-  const [data, voiceProvider] = await Promise.all([
+  const [data, voiceProvider, speechSettings] = await Promise.all([
     getPlatformMinkRuns(filters),
     getMinkVoiceProvider(),
+    getMinkSpeechSettings(),
   ]);
 
   return (
@@ -44,6 +49,10 @@ export default async function PlatformMinkRunsPage({
 
       <VoiceProviderSwitch
         initialProvider={voiceProvider}
+        canManage={canManage(viewer)}
+      />
+      <SpeechProviderSwitch
+        initial={speechSettings}
         canManage={canManage(viewer)}
       />
 

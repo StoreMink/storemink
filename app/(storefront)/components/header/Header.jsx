@@ -71,7 +71,7 @@ export default function Header() {
 
   // Unread badge for the shopper's notification centre. Polls only while
   // signed in AND the tab is visible — the same shape as the dashboard bell
-  // (Supabase Realtime went with the Cloud SQL migration, so there is no push).
+  // (plain Postgres cannot push row changes to a browser, so there is no push).
   useEffect(() => {
     // Signed out: nothing to poll. The badge is derived from isLoggedIn at
     // render time rather than being zeroed here, so the effect never sets

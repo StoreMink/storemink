@@ -159,7 +159,7 @@ store and confirm:
 
 - [x] `RECURRING_CHARGE_VERIFIED` enabled for staging / empty-production
       verification on 2026-08-16.
-- [ ] Apply `supabase/billing_09_attempt_mandate_ceiling.sql` to staging and
+- [ ] Apply `billing_09_attempt_mandate_ceiling.sql` to staging and
       production before deploying this code.
 - [ ] Watch the first live renewal cycle end to end before trusting it.
 

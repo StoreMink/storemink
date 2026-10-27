@@ -37,8 +37,7 @@ export function MinkSuggestions({
               Mink suggests
             </h2>
             <div className="dash-card-sub">
-              What to do next, ranked from your store&apos;s own numbers. No
-              credits used.
+              What to do next, ranked from your store&apos;s own numbers.
             </div>
           </div>
         </div>

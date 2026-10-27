@@ -59,11 +59,29 @@ describe("Mink skills", () => {
       minkStarterSkills(MINK_SKILLS, "/dashboard/products/abc").map(
         (skill) => skill.id,
       ),
-    ).toEqual(["product-description", "seo", "low-stock", "launch-check"]);
+    ).toEqual(["product-photo", "product-description", "seo", "low-stock"]);
     expect(
       minkStarterSkills(MINK_SKILLS, null).map((skill) => skill.id),
     ).toEqual(["whats-new", "sales-today", "low-stock", "pending-orders"]);
     expect(minkStarterSkills([], "/dashboard")).toEqual([]);
+  });
+
+  it("starts the storefront revamp from its chip, for builder managers only", () => {
+    const chip = MINK_SKILLS.find((skill) => skill.id === "personalise-store");
+    expect(chip?.prompt).toBe("Customise my store for my business");
+    expect(chip?.section).toBe("builder");
+    expect(chip?.action).toBe("manage");
+    expect(
+      minkStarterSkills(MINK_SKILLS, "/dashboard/storefront").map(
+        (skill) => skill.id,
+      ),
+    ).toContain("personalise-store");
+    const viewers = minkSkillsFor((_section, action) => action === "view");
+    expect(viewers.map((skill) => skill.id)).not.toContain("personalise-store");
+    const builders = minkSkillsFor(
+      (section, action) => section === "builder" && action === "manage",
+    );
+    expect(builders.map((skill) => skill.id)).toContain("personalise-store");
   });
 
   it("has unique slashes and no em dash anywhere", () => {

@@ -103,10 +103,10 @@ describe("POS product host discovery metadata", () => {
       "utf8",
     );
 
-    expect(page).toContain(
-      'import posDevicesImage from "@/public/brand/storemink-pos-multidevice.png"',
-    );
-    expect(page).toContain("src={posDevicesImage}");
+    // The multidevice picture shows "Register" on its screens (owner, 26 Oct
+    // 2026): the hero frame shows the drawn POS until a new picture exists.
+    expect(page).not.toContain("storemink-pos-multidevice.png");
+    expect(page).toContain("<RegisterArt compact />");
     expect(page).toContain('<a href="#checkout">Checkout</a>');
     expect(page).toContain('<a href="#inventory">Inventory</a>');
     expect(page).toContain('<a href="#fulfilment">Pickup & returns</a>');

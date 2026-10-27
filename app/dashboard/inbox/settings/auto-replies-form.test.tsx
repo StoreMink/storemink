@@ -206,7 +206,10 @@ describe("AutoRepliesForm: Mink AI answers", () => {
     expect(
       screen.getByRole("radio", { name: /Answers customers/ }),
     ).toBeChecked();
-    expect(screen.getByText(/uses 1 Mink credit/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Replies that are sent use Mink credits/),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\d+\s*Mink credits?/);
   });
 
   it("★ saves the chosen mode, and off again as off", async () => {

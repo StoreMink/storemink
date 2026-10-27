@@ -6,7 +6,6 @@ import {
   Check,
   ChevronDown,
   CircleCheck,
-  Smartphone,
 } from "lucide-react";
 import { PLATFORM_URL, POS_URL, THEMES_URL } from "@/lib/site";
 import { subdomainOrigin } from "@/lib/store/host";
@@ -16,6 +15,7 @@ import {
   platformOrganizationSchema,
   platformWebsiteSchema,
 } from "@/lib/seo/brand-identity";
+import { serializeJsonLd } from "@/lib/seo/json-ld";
 import { allowanceLabel, includedMinkCredits } from "@/lib/plans";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
@@ -32,7 +32,12 @@ import { SiteHeader } from "./site-header";
 import { PricingCards, type PricingCard } from "./pricing-cards";
 import { FAQS, PLANS } from "./pricing-content";
 import { CommerceCommandCentre, MinkArt } from "./homepage-art";
-import { BuilderArt, InvoiceArt, StorefrontArt } from "./product-art";
+import {
+  BuilderArt,
+  InvoiceArt,
+  RegisterArt,
+  StorefrontArt,
+} from "./product-art";
 import { ThemeRail } from "./theme-rail";
 import "./homepage.css";
 
@@ -247,7 +252,7 @@ export default async function StoreminkLanding() {
     <>
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{ __html: serializeJsonLd(jsonLd) }}
       />
       <div className="smh">
         <a className="smh-skip" href="#main-content">
@@ -264,10 +269,10 @@ export default async function StoreminkLanding() {
                 <div className="smh-hero-glow" aria-hidden="true" />
                 <div className="smh-hero-copy">
                   <p className="smh-eyebrow">
-                    <span>AI-native</span> business platform, built in India
+                    <span>AI-Powered</span> Commerce, Made Simple with Mink AI.
                   </p>
                   <h1>
-                    Build <em>what&apos;s yours.</em>
+                    Build <em>What&apos;s Yours.</em>
                     <span className="smh-rotator">
                       <span className="smh-rotator-static">
                         Be {HERO_ROTATION[0]}
@@ -746,7 +751,9 @@ export default async function StoreminkLanding() {
             <div className="smh-container">
               <div className="smh-pos-card">
                 <div className="smh-pos-copy">
-                  <p className="smh-section-label">StoreMink Point of Sale</p>
+                  <p className="smh-section-label">
+                    StoreMink Point of Sale (POS)
+                  </p>
                   <h2>
                     Your website and your counter, finally on the same page.
                   </h2>
@@ -782,17 +789,11 @@ export default async function StoreminkLanding() {
                     Explore Point of Sale <ArrowRight size={17} />
                   </Link>
                 </div>
+                {/* ★ DRAWN, NOT PHOTOGRAPHED, until a new product picture
+                    exists (owner, 26 Oct 2026): the multidevice picture shows
+                    "Register" on its screens, and the product says POS. */}
                 <div className="smh-pos-media">
-                  <Image
-                    src="/brand/storemink-pos-multidevice.png"
-                    alt="StoreMink Point of Sale running on a desktop, tablet and phone"
-                    width={1536}
-                    height={1024}
-                    sizes="(max-width: 900px) 100vw, 56vw"
-                  />
-                  <span className="smh-pos-badge">
-                    <Smartphone size={16} /> Works across your devices
-                  </span>
+                  <RegisterArt compact />
                 </div>
               </div>
             </div>

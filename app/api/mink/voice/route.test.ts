@@ -4,6 +4,7 @@ const h = vi.hoisted(() => ({
   actor: vi.fn(),
   config: vi.fn(),
   reserve: vi.fn(),
+  reserveInput: vi.fn(),
   validate: vi.fn(),
   provider: vi.fn(),
   transcribe: vi.fn(),
@@ -13,7 +14,10 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/lib/mink/actor-context", () => ({ getMinkActorContext: h.actor }));
 vi.mock("@/lib/mink/config", () => ({ getMinkConfig: h.config }));
-vi.mock("@/lib/mink/input-limits", () => ({ reserveMinkInput: h.reserve }));
+vi.mock("@/lib/mink/input-limits", () => ({
+  reserveMinkVoice: h.reserve,
+  reserveMinkInput: h.reserveInput,
+}));
 vi.mock("@/lib/mink/input-validation", () => ({
   validateMinkInput: h.validate,
 }));
@@ -78,6 +82,66 @@ describe("global Mink voice endpoint", () => {
     expect(h.reserve).toHaveBeenCalledWith(
       { storeId: "echos", adminId: "owner" },
       requestKey,
+    );
+  });
+
+  it("records provider duration and audio size without logging the transcript", async () => {
+    await POST(req());
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.voice.completed",
+      expect.objectContaining({
+        provider: "saaras_v4",
+        providerMs: expect.any(Number),
+        audioBytes: 1,
+      }),
+    );
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain("नमस्ते");
+  });
+
+  it("does not start transcription after cancellation while settings load", async () => {
+    const stop = new AbortController();
+    h.provider.mockImplementation(async () => {
+      stop.abort();
+      return "saaras_v4";
+    });
+    await POST(new Request(req(), { signal: stop.signal }));
+    expect(h.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("★ spends the voice buckets, never the store's attachment quota", async () => {
+    await POST(req());
+    expect(h.reserve).toHaveBeenCalledOnce();
+    expect(h.reserveInput).not.toHaveBeenCalled();
+  });
+
+  it("answers a spent voice budget with its own words before any provider work", async () => {
+    const { MinkRequestError } = await import("@/lib/mink/errors");
+    h.reserve.mockRejectedValue(
+      new MinkRequestError(
+        "voice_rate_limit",
+        "Voice has reached its limit for now. Try again a little later, or type your message.",
+        429,
+      ),
+    );
+    const response = await POST(req());
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({
+      error:
+        "Voice has reached its limit for now. Try again a little later, or type your message.",
+      code: "voice_rate_limit",
+    });
+    expect(h.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("★ answers a clip with no words as an empty transcript, not an outage", async () => {
+    h.transcribe.mockResolvedValue({ text: "", languageCode: null });
+    const response = await POST(req());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ text: "", languageCode: null });
+    expect(h.logError).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.voice.empty",
+      expect.objectContaining({ storeId: "echos", provider: "saaras_v4" }),
     );
   });
 

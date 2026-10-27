@@ -13,6 +13,17 @@ import type { MinkArtifact } from "./types";
  */
 export const MINK_FOLLOW_UP_LIMIT = 3;
 
+/**
+ * The changes a finished storefront redesign is refined with, phrased as the
+ * merchant would ask. The revamp card offers them too, once its review is
+ * ready (mink-revamp-card.tsx).
+ */
+export const MINK_REVAMP_REFINE_PROMPTS = [
+  "Make the colours warmer",
+  "Redo the opening photo",
+  "Add my products",
+] as const;
+
 export function suggestMinkFollowUps(input: {
   text: string;
   artifacts?: MinkArtifact[];
@@ -21,12 +32,30 @@ export function suggestMinkFollowUps(input: {
   if (artifacts.some((artifact) => artifact.type === "clarification")) {
     return [];
   }
+  // ★★ NOTHING UNDER A REDESIGN STILL BEING MADE (chat-8). Nothing can refine
+  //   it yet, so a tapped "Make the colours warmer" went to the Builder's own
+  //   design change, which then collided with the redesign's look. The card
+  //   offers the changes itself once its review is ready.
+  if (
+    artifacts.some(
+      (artifact) =>
+        artifact.type === "storefront_revamp" &&
+        (artifact.status === "queued" || artifact.status === "running"),
+    )
+  ) {
+    return [];
+  }
   const suggestions: string[] = [];
   const add = (prompt: string) => {
     if (!suggestions.includes(prompt)) suggestions.push(prompt);
   };
 
   for (const artifact of artifacts) {
+    if (artifact.type === "storefront_revamp") {
+      for (const prompt of MINK_REVAMP_REFINE_PROMPTS) add(prompt);
+      if (suggestions.length >= MINK_FOLLOW_UP_LIMIT) break;
+      continue;
+    }
     switch (artifact.type) {
       case "metrics":
         add("Compare this with the previous period");
@@ -83,6 +112,10 @@ export function suggestMinkFollowUps(input: {
       case "media_image_proposal":
         add("Try a different style");
         add("Put this on my homepage");
+        break;
+      case "storefront_personalization_proposal":
+        add("Explain exactly what this will change");
+        add("What should I check before publishing?");
         break;
       case "navigation":
       case "workflow":

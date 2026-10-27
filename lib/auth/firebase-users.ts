@@ -1,13 +1,11 @@
 // Firebase Admin user-management helpers (GCP migration Phase 6). Thin wrappers
-// over the Admin SDK for the server-side auth admin ops that used to go through
-// Supabase's `auth.admin.*` + `auth.updateUser` — create/delete/update an
+// over the Admin SDK for the server-side auth admin ops: create/delete/update an
 // Identity Platform user, server-side password re-verification, and admin
 // password-reset links.
 //
 // IMPORTANT — no cross-system cascade: with auth in Identity Platform and the
 // profile rows (admins/users) in Cloud SQL, deleting an auth user does NOT
-// remove its Cloud SQL row (the old `id REFERENCES auth.users ON DELETE CASCADE`
-// is gone). Callers must delete BOTH explicitly.
+// remove its Cloud SQL row. Callers must delete BOTH explicitly.
 
 import { getFirebaseAdminAuth } from "./firebase-admin";
 
@@ -156,7 +154,7 @@ export async function verifyPassword(
 
 /**
  * An admin-triggered password-reset link (delivered via our own email
- * transport, like the Supabase resetPasswordForEmail flow). Null when Identity
+ * transport). Null when Identity
  * Platform isn't configured or generation fails.
  */
 export async function generatePasswordResetLink(

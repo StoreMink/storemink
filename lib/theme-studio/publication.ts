@@ -38,29 +38,52 @@ import {
 import type { ThemeCatalogVisibility } from "@/lib/themes/meta";
 import type { ThemeStudioActor } from "./access";
 import { renderedWithTheme } from "./acceptance-gates";
-import { verifyCandidateEvidenceWithDb } from "./acceptance";
+import { publishEvidenceWithDb, type PublishEvidenceGap } from "./acceptance";
 import { fetchInternalPageWithRetry } from "./acceptance-http";
+import { queueThemeStudioRecheck } from "./capture";
+import { getThemeStudioConfig } from "./config";
 import { validateThemePackageV2, type ThemePackageV2 } from "./contracts";
+import { SEVERITY_RULES_VERSION } from "./finding-severity";
 import {
   buildPublishedPackage,
   nextReleaseVersion,
   publicationBlockers,
+  publicationWarningLog,
   releaseDate,
   validateCatalogChange,
+  type PublicationWarning,
 } from "./publication-core";
 import { isUuid, recordThemeStudioEvent, ThemeStudioError } from "./repository";
 
+export type { PublicationWarning } from "./publication-core";
+export type { PublishEvidenceGap } from "./acceptance";
+
 // ---------------------------------------------------------------------------
-// Mink AI Theme Studio — Phase 6: approval, publication and rollback.
+// Mink AI Theme Studio: publication and rollback.
+//
+// ONE STEP, NO SECOND PERSON. A superadmin publishes a theme that is Ready to
+// publish (`candidate`): its checks and its design review passed, serious
+// problems were fixed or stopped it on the way, and the warnings it still
+// carries go live with it, recorded with the severity rule version on the
+// publish events ("Fix it, then allow Publish", owner, 23 Oct 2026).
 //
 // Order of publication (docs/mink-ai-theme-studio-plan.md §8):
-//   1. lock the project and re-read the approved version;
-//   2. re-verify the evidence and the two reviews by digest;
+//   1. lock the project and the theme id; re-read the current version and
+//      refuse a package that could never be published;
+//   2. ask `publishEvidenceWithDb` (acceptance.ts) whether the newest check
+//      run passed on TODAY's build with a passed design review bound to it.
+//      If not, write nothing: once that read has committed,
+//      `queueThemeStudioRecheck` (capture.ts) measures the design again on
+//      today's build in the capture job, in its own short transaction, never
+//      inside this one, and Publish answers `rechecking` (owner decision 4).
+//      Old browser evidence never publishes, and nothing here writes an
+//      acceptance row. "Try again" on a publish that did not finish follows
+//      the same rule;
 //   3. allocate a release version without overwriting (or resume the one a
-//      failed attempt allocated) and write the attempt row;
+//      failed attempt of the same version stored) and write the attempt row;
 //   4. copy every slot image to the immutable public release prefix;
 //   5. write the immutable theme_releases row;
-//   6. seed demo-{theme} and render its surfaces — zero errors;
+//   6. seed demo-{theme} and render its surfaces, with zero errors;
 //   7. only then point the catalog at the release, public, and mark the
 //      project published, with an audit row, in one transaction;
 //   8. invalidate the registry, store and storefront caches.
@@ -181,7 +204,36 @@ interface BegunAttempt {
   versionNumber: number;
   draft: ThemePackageV2;
   resumedReleaseId: string | null;
+  accepted: PublishAcceptance;
 }
+
+/**
+ * What a publish went ahead on, as both publish events record it: the check
+ * run, its design review (or that the automatic checks were off, the
+ * labelled exception), the severity rules that decided what is a warning,
+ * and the warnings it accepted. Small and content-free (an event's detail is
+ * capped at 4 KiB): kinds and counts, never messages or places.
+ */
+interface PublishAcceptance {
+  acceptanceRunId: string;
+  /** The rules that decided which findings are warnings (this code's). */
+  severityRules: string;
+  /** The rules the run was measured under; null on a run from before them. */
+  measuredUnder: string | null;
+  designReview: "passed" | "not_configured";
+  designReviewId: string | null;
+  warnings: ReturnType<typeof publicationWarningLog>;
+}
+
+type BeginResult =
+  | { kind: "attempt"; attempt: BegunAttempt }
+  | {
+      /** Nothing was written: the design must be measured again first. */
+      kind: "recheck";
+      versionId: string;
+      revision: number;
+      reason: PublishEvidenceGap;
+    };
 
 async function beginAttempt(
   actor: ThemeStudioActor,
@@ -189,8 +241,8 @@ async function beginAttempt(
     projectId: string;
     expectedRevision: number;
   },
-): Promise<BegunAttempt> {
-  return withService(async (db) => {
+): Promise<BeginResult> {
+  return withService(async (db): Promise<BeginResult> => {
     const project = await lockProject(db, input.projectId);
     if (project.revision !== input.expectedRevision) {
       throw new ThemeStudioError(
@@ -198,11 +250,11 @@ async function beginAttempt(
         "This project changed in another tab. Reload to see it.",
       );
     }
-    // ONE STEP: a candidate (every automated acceptance gate and the visual
-    // QA scorecard passed) is published directly. `approved` remains only as
-    // the state a failed publication waits in, so a retry resumes rather than
-    // starting over. The database still refuses `approved` without passing
-    // evidence and `published` without a publication (migration 0151).
+    // ONE STEP: a candidate (Ready to publish) is published directly.
+    // `approved` remains only as the state a publish that did not finish
+    // waits in, so "Try again" resumes it rather than starting over. The
+    // database still refuses `approved` without passing evidence and
+    // `published` without a publication (migration 0151).
     if (project.status !== "candidate" && project.status !== "approved") {
       throw new ThemeStudioError(
         "illegal_state",
@@ -210,48 +262,27 @@ async function beginAttempt(
       );
     }
     await lockThemeId(db, project.themeId);
-
     const fromCandidate = project.status === "candidate";
-    const evidence = await verifyCandidateEvidenceWithDb(db, project, {
-      status: fromCandidate ? "candidate" : "approved",
-      // A fresh publish needs evidence from this build; a retry of one that
-      // already started keeps the evidence it started on.
-      requireCurrentBuild: fromCandidate,
-    });
-    if (!evidence.ok) throw new ThemeStudioError("stale", evidence.reason);
-    const [version] = await db
-      .select()
-      .from(themeStudioVersions)
-      .where(eq(themeStudioVersions.id, project.currentVersionId!))
-      .limit(1);
+
+    const [version] = project.currentVersionId
+      ? await db
+          .select()
+          .from(themeStudioVersions)
+          .where(eq(themeStudioVersions.id, project.currentVersionId))
+          .limit(1)
+      : [];
     const parsed = validateThemePackageV2(version?.packageJson);
     if (!version || !parsed.ok) {
       throw new ThemeStudioError(
         "illegal_state",
-        "The approved version no longer passes its contract.",
+        "The version being published no longer passes its contract.",
       );
     }
-    const blockers = publicationBlockers(parsed.value);
-    if (blockers.length > 0) {
-      throw new ThemeStudioError("illegal_state", blockers[0]);
-    }
-    if (fromCandidate) {
-      // Freeze the version for publication. Same transaction as the attempt
-      // row, so a refusal below leaves the project a candidate.
-      await db
-        .update(themeStudioProjects)
-        .set({ status: "approved", revision: project.revision + 1 })
-        .where(eq(themeStudioProjects.id, project.id));
-      await recordThemeStudioEvent(db, {
-        projectId: project.id,
-        actor,
-        eventType: "project_approved",
-        detail: {
-          versionId: project.currentVersionId,
-          acceptanceRunId: evidence.runId,
-          automatic: true,
-        },
-      });
+    // A package that could never be published is refused before anything
+    // is measured again: a re-check cannot fix it.
+    const refused = publicationBlockers(parsed.value).blocking;
+    if (refused.length > 0) {
+      throw new ThemeStudioError("illegal_state", refused[0]);
     }
 
     const attempts = await db
@@ -266,14 +297,48 @@ async function beginAttempt(
       );
     }
     const active = attempts.find((a) => a.status === "publishing");
-    if (active) {
-      const age = Date.now() - Date.parse(active.updatedAt);
-      if (age < ABANDONED_ATTEMPT_MINUTES * 60_000) {
-        throw new ThemeStudioError(
-          "illegal_state",
-          "A publication is already in progress.",
-        );
+    if (
+      active &&
+      Date.now() - Date.parse(active.updatedAt) <
+        ABANDONED_ATTEMPT_MINUTES * 60_000
+    ) {
+      throw new ThemeStudioError(
+        "illegal_state",
+        "A publication is already in progress.",
+      );
+    }
+
+    // Owner decision 4: only a check run from TODAY's build, with a passed
+    // design review bound to that very run, publishes. A first publish and a
+    // retry alike: old browser evidence is never published.
+    const evidence = await publishEvidenceWithDb(db, project);
+    if (!evidence.ok) {
+      // With the automatic checks off (local development) nothing can
+      // measure it again here; the in-browser runner is the way.
+      if (!getThemeStudioConfig().autoQaEnabled) {
+        throw new ThemeStudioError("stale", evidence.detail);
       }
+      return {
+        kind: "recheck",
+        versionId: version.id,
+        revision: project.revision,
+        reason: evidence.reason,
+      };
+    }
+    const { warnings } = publicationBlockers(parsed.value, {
+      gates: evidence.gates,
+      review: evidence.review?.severity ?? null,
+    });
+    const accepted: PublishAcceptance = {
+      acceptanceRunId: evidence.acceptanceRunId,
+      severityRules: SEVERITY_RULES_VERSION,
+      measuredUnder: evidence.severityRules,
+      designReview: evidence.review ? "passed" : "not_configured",
+      designReviewId: evidence.review?.id ?? null,
+      warnings: publicationWarningLog(warnings),
+    };
+
+    if (active) {
       await db
         .update(themeStudioPublications)
         .set({
@@ -283,10 +348,20 @@ async function beginAttempt(
         })
         .where(eq(themeStudioPublications.id, active.id));
     }
+    if (fromCandidate) {
+      // Freeze the version for publication. Same transaction as the attempt
+      // row, so a refusal below leaves the project a candidate. No
+      // `project_approved` event any more: one click is one Activity line,
+      // `publication_started` (the events rule still allows old rows).
+      await db
+        .update(themeStudioProjects)
+        .set({ status: "approved", revision: project.revision + 1 })
+        .where(eq(themeStudioProjects.id, project.id));
+    }
 
     // Resume the release an earlier attempt of THIS version already stored:
     // the row is immutable, and rebuilding it on another day would change its
-    // release date — and so its digest — and collide with itself.
+    // release date, and so its digest, and collide with itself.
     const resumable = attempts.find(
       (a) => a.versionId === version.id && a.releaseId,
     );
@@ -306,7 +381,7 @@ async function beginAttempt(
       .values({
         projectId: project.id,
         versionId: version.id,
-        acceptanceRunId: evidence.runId,
+        acceptanceRunId: evidence.acceptanceRunId,
         themeId: project.themeId,
         releaseVersion,
         releaseId: resumable?.releaseId ?? null,
@@ -324,16 +399,21 @@ async function beginAttempt(
         versionId: version.id,
         releaseVersion,
         resumed: Boolean(resumable),
+        ...accepted,
       },
     });
     return {
-      attemptId: attempt.id,
-      themeId: project.themeId,
-      releaseVersion,
-      versionId: version.id,
-      versionNumber: version.versionNumber,
-      draft: parsed.value,
-      resumedReleaseId: resumable?.releaseId ?? null,
+      kind: "attempt",
+      attempt: {
+        attemptId: attempt.id,
+        themeId: project.themeId,
+        releaseVersion,
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+        draft: parsed.value,
+        resumedReleaseId: resumable?.releaseId ?? null,
+        accepted,
+      },
     };
   });
 }
@@ -590,6 +670,8 @@ async function exposeRelease(
         themeId: attempt.themeId,
         releaseVersion: attempt.releaseVersion,
         manifestDigest: release.manifestDigest,
+        // What went live with it: the evidence and the warnings accepted.
+        ...attempt.accepted,
       },
     });
   });
@@ -598,18 +680,54 @@ async function exposeRelease(
 export type PublicationResult =
   | {
       ok: true;
+      kind: "published";
       publicationId: string;
       themeId: string;
       releaseVersion: string;
       demoSlug: string;
     }
-  | { ok: false; publicationId: string; problems: string[] };
+  | {
+      /** The attempt failed after it was written; its reasons are recorded
+       * on it, and the same button tries again. */
+      ok: false;
+      kind: "failed";
+      publicationId: string;
+      problems: string[];
+    }
+  | {
+      /** Not published: the design is being measured again on today's build
+       * first (owner decision 4). No attempt was written. */
+      ok: false;
+      kind: "rechecking";
+      publicationId?: undefined;
+      /** One plain sentence saying what happens now. */
+      problems: string[];
+      captureId: string;
+      /** The same version is measured in place (no new design version). */
+      inPlace: boolean;
+      reason: PublishEvidenceGap;
+    };
+
+const RECHECK_STARTED: Record<PublishEvidenceGap, string> = {
+  old_build: "StoreMink was updated since this design was checked",
+  no_review: "The newest check of this design has no design review of its own",
+  none: "No passing check covers this design as it stands",
+};
+
+/** What Publish says when it starts a re-check instead of publishing. */
+export function recheckStartedMessage(reason: PublishEvidenceGap): string {
+  return `${RECHECK_STARTED[reason]}, so it is being checked again on today's build first. That takes about 3 to 5 minutes, and you can leave this page. Publish again once it is ready.`;
+}
 
 /**
- * Publish a candidate (or retry a failed publication). A refusal before
- * anything is written throws a ThemeStudioError; a failure after the attempt
- * row exists is recorded on it and returned, and the project stays approved
- * so the operator can retry with the same button.
+ * Publish a candidate, or try again on a publish that did not finish. Either
+ * way the evidence must be today's (`publishEvidenceWithDb`): if it is not,
+ * nothing is published or written here; the design is measured again on
+ * today's build (`queueThemeStudioRecheck`, after the read has committed and
+ * outside any publish transaction) and the answer is `rechecking`. A refusal
+ * before anything is written throws a ThemeStudioError; a failure after the
+ * attempt row exists is recorded on it and returned as `failed`, and the
+ * project stays `approved` so the same button tries again.
  */
 export async function publishThemeStudioProject(
   actor: ThemeStudioActor,
@@ -628,10 +746,32 @@ export async function publishThemeStudioProject(
       "Media storage is not configured, so the theme's images cannot be published.",
     );
   }
-  const attempt = await beginAttempt(actor, {
+  const begun = await beginAttempt(actor, {
     projectId: input.projectId,
     expectedRevision: Number(input.expectedRevision),
   });
+  if (begun.kind === "recheck") {
+    // Its own short transaction: it moves the project to `generating`
+    // (0151 allows that from candidate and approved) and queues one
+    // automatic final capture at the repair ceiling, so the design review
+    // that follows can never buy a paid restyle. Its revision check refuses
+    // it if anything changed since the read above.
+    const queued = await queueThemeStudioRecheck(actor, {
+      projectId: input.projectId,
+      versionId: begun.versionId,
+      expectedRevision: begun.revision,
+      reason: "publish_recheck",
+    });
+    return {
+      ok: false,
+      kind: "rechecking",
+      problems: [recheckStartedMessage(begun.reason)],
+      captureId: queued.captureId,
+      inPlace: queued.inPlace,
+      reason: begun.reason,
+    };
+  }
+  const attempt = begun.attempt;
   try {
     const release = await storeRelease(actor, deps, input.projectId, attempt);
     // The demo store renders the release by its exact pin; expire the
@@ -650,6 +790,7 @@ export async function publishThemeStudioProject(
     expireCaches();
     return {
       ok: true,
+      kind: "published",
       publicationId: attempt.attemptId,
       themeId: attempt.themeId,
       releaseVersion: attempt.releaseVersion,
@@ -666,7 +807,12 @@ export async function publishThemeStudioProject(
       });
     }
     await failAttempt(actor, attempt, input.projectId, problems);
-    return { ok: false, publicationId: attempt.attemptId, problems };
+    return {
+      ok: false,
+      kind: "failed",
+      publicationId: attempt.attemptId,
+      problems,
+    };
   }
 }
 
@@ -816,12 +962,27 @@ export interface ThemeStudioCatalogAuditView {
 }
 
 export interface ThemeStudioReleaseState {
+  /** The check run Publish would publish on (`publishEvidenceWithDb`), or
+   * why there is none on today's build. A published project shows the run
+   * it published on. */
   evidence:
     | { ok: true; runId: string; evidenceDigest: string }
     | { ok: false; reason: string };
+  /** Why the evidence is not today's (owner decision 4); null when it holds,
+   * and for a published project. */
+  evidenceGap: PublishEvidenceGap | null;
+  /** Publish would measure the design again on today's build first and
+   * answer `rechecking`, instead of publishing or refusing: Ready to publish
+   * (or a publish that did not finish), automatic checks on, and the
+   * evidence not today's. */
+  recheckOnPublish: boolean;
   packageDigest: string | null;
   versionNumber: number | null;
+  /** What refuses Publish in the package itself. */
   blockers: string[];
+  /** The warnings it would go live with, from the check run and design
+   * review Publish would use; empty while that evidence does not hold. */
+  warnings: PublicationWarning[];
   publications: ThemeStudioPublicationView[];
   catalog: {
     visibility: ThemeCatalogVisibility;
@@ -849,18 +1010,32 @@ export async function getThemeStudioReleaseState(
           .where(eq(themeStudioVersions.id, project.currentVersionId))
           .limit(1)
       : [];
-    const approvedLike =
-      project.status === "approved" || project.status === "published";
-    const evidence = await verifyCandidateEvidenceWithDb(db, project, {
-      status: approvedLike ? "approved" : "candidate",
-      requireCurrentBuild: !approvedLike,
-    });
-    // A published project is no longer `approved`; its evidence is history.
-    const shownEvidence =
+    // A published project's evidence is history: show the run it passed on.
+    const evidence =
       project.status === "published"
-        ? await latestPassedRun(db, project.currentVersionId)
-        : evidence;
+        ? null
+        : await publishEvidenceWithDb(db, project);
+    const shownEvidence: ThemeStudioReleaseState["evidence"] = !evidence
+      ? await latestPassedRun(db, project.currentVersionId)
+      : evidence.ok
+        ? {
+            ok: true,
+            runId: evidence.acceptanceRunId,
+            evidenceDigest: evidence.evidenceDigest,
+          }
+        : { ok: false, reason: evidence.detail };
     const parsed = version ? validateThemePackageV2(version.packageJson) : null;
+    const checked = parsed?.ok
+      ? publicationBlockers(
+          parsed.value,
+          evidence?.ok
+            ? {
+                gates: evidence.gates,
+                review: evidence.review?.severity ?? null,
+              }
+            : {},
+        )
+      : null;
     const publicationRows = await db
       .select()
       .from(themeStudioPublications)
@@ -895,11 +1070,28 @@ export async function getThemeStudioReleaseState(
       .where(eq(themeCatalogAudit.themeId, project.themeId))
       .orderBy(desc(themeCatalogAudit.createdAt))
       .limit(50);
+    // Publish refuses before it would re-check: a package that can never be
+    // published, or a publish still running (beginAttempt's own order).
+    const publishingNow = publicationRows.some(
+      (row) =>
+        row.status === "publishing" &&
+        Date.now() - Date.parse(row.updatedAt) <
+          ABANDONED_ATTEMPT_MINUTES * 60_000,
+    );
     return {
       evidence: shownEvidence,
+      evidenceGap: evidence && !evidence.ok ? evidence.reason : null,
+      recheckOnPublish:
+        (project.status === "candidate" || project.status === "approved") &&
+        evidence !== null &&
+        !evidence.ok &&
+        getThemeStudioConfig().autoQaEnabled &&
+        (checked?.blocking.length ?? 1) === 0 &&
+        !publishingNow,
       packageDigest: version?.packageDigest ?? null,
       versionNumber: version?.versionNumber ?? null,
-      blockers: parsed?.ok ? publicationBlockers(parsed.value) : [],
+      blockers: checked?.blocking ?? [],
+      warnings: checked?.warnings ?? [],
       publications: publicationRows.map((row) => ({
         id: row.id,
         status: row.status as ThemeStudioPublicationView["status"],

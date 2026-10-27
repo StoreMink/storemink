@@ -23,6 +23,7 @@ import "server-only";
 import { after } from "next/server";
 import { and, eq, inArray } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
+import { loggableError } from "@/lib/db/errors";
 import { products, productVariants, stores } from "@/drizzle/schema";
 import { effectiveLowStockThreshold } from "./status";
 import { resolveStoreSettings } from "@/lib/settings/registry";
@@ -77,7 +78,13 @@ export function reportStockChanges(
       try {
         await checkStockChanges(storeId, changes);
       } catch (err) {
-        logError("notifications: stock alert failed", { err: String(err) });
+        // ★ The error, the store as the context (robustness audit B22: one
+        //   object here read "[object Object]"). A failed query is logged as
+        //   the database's reason only, since its message carries its
+        //   parameters and an alert's are product names (`loggableError`).
+        logError("notifications: stock alert failed", loggableError(err), {
+          storeId,
+        });
       }
     });
   } catch {

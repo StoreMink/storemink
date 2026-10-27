@@ -69,7 +69,7 @@ export function ResetClient({
             Your {label} is updated
           </h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
-            Sign in at your shop&apos;s register with{" "}
+            Sign in to POS at your shop with{" "}
             <span className="text-[var(--pos-ink)]">{email}</span> and your new{" "}
             {label}.
           </p>

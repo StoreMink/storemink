@@ -2,7 +2,7 @@ import "server-only";
 
 // ---------------------------------------------------------------------------
 // Resolved plan pricing: the code defaults in lib/plans.ts, overridden by what
-// a platform operator has set in `plan_prices` (supabase/plans_03_pricing.sql).
+// a platform operator has set in the `plan_prices` table.
 //
 // The same three-layer shape the settings registry uses (CODEBASE §9): code
 // default ← stored override. An empty table behaves exactly like the constants,

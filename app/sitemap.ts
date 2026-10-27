@@ -56,7 +56,7 @@ const STATIC_PATHS: { path: string; priority: number; freq: ChangeFreq }[] = [
 ];
 
 // Image sitemaps need an absolute image URL. Uploaded media is already an
-// absolute URL (GCS, or legacy Supabase Storage); theme-bundled imagery is a
+// absolute URL (GCS, or an older external host); theme-bundled imagery is a
 // site-relative /public path, so resolve that against the store origin.
 // Anything else is skipped.
 function imageEntry(
@@ -286,7 +286,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       url: `${siteUrl}/shop/${p.slug}`,
       // content_updated_at, NOT updated_at: the latter is bumped by
       // _recompute_stock_aggregate on every sale, so it would claim a content
-      // change per purchase. See supabase/seo_01_product_content_timestamp.sql.
+      // change per purchase; the products_touch_content_updated_at trigger keeps it.
       ...(p.content_updated_at
         ? { lastModified: new Date(p.content_updated_at) }
         : {}),

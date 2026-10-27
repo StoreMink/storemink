@@ -37,9 +37,7 @@ export default async function OfferSettingsPage() {
             <ArrowLeft size={14} /> Offers
           </Link>
           <h1>Offer settings</h1>
-          <p>
-            These apply to every offer in your store, online and at the till.
-          </p>
+          <p>These apply to every offer in your store, online and in POS.</p>
         </div>
       </header>
 
@@ -51,7 +49,7 @@ export default async function OfferSettingsPage() {
         ) : (
           <FeatureToggles
             title="How offers behave"
-            subtitle="Changes take effect on your storefront and your till immediately."
+            subtitle="Changes take effect on your storefront and in POS immediately."
             successMessage="Offer settings saved."
             plan={plan}
             initialSettings={settings}

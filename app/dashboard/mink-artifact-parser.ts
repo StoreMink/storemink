@@ -2,6 +2,7 @@ import type { MinkArtifact } from "@/lib/mink/types";
 import { MINK_WORKFLOW_TEMPLATES } from "@/lib/mink/workflow-types";
 import { readMinkFormPrefill } from "@/lib/mink/form-prefill";
 import { readMinkHighlight } from "@/lib/mink/guide-targets";
+import { isRevampArtifact } from "@/lib/mink/revamp/contract";
 
 const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "metrics",
@@ -15,6 +16,8 @@ const MINK_ARTIFACT_TYPES = new Set<MinkArtifact["type"]>([
   "storefront_design_proposal",
   "builder_proposal",
   "media_image_proposal",
+  "storefront_personalization_proposal",
+  "storefront_revamp",
   "workflow",
   "product_import",
   "navigation",
@@ -40,7 +43,7 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
           typeof row.live === "boolean" &&
           isCreditCount(row.expectedCredits) &&
           isCreditCount(row.chargedCredits) &&
-          ["plan", "credit", "mixed", "plan_unlimited"].includes(
+          ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
             String(row.creditSource),
           ) &&
           [
@@ -176,6 +179,14 @@ export function readMinkArtifacts(value: unknown): MinkArtifact[] {
       if (type === "media_image_proposal") {
         return isMediaImageProposal(artifact as Record<string, unknown>);
       }
+      if (type === "storefront_personalization_proposal") {
+        return isStorefrontPersonalizationProposal(
+          artifact as Record<string, unknown>,
+        );
+      }
+      // ★ The revamp card is an id and a status; the card fetches the rest
+      // from the owner-checked status route, so nothing else is trusted here.
+      if (type === "storefront_revamp") return isRevampArtifact(artifact);
       if (type !== "catalog") return true;
       const catalog = artifact as Record<string, unknown>;
       return (
@@ -374,7 +385,7 @@ function isStorefrontCodeProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -410,7 +421,7 @@ function isStorefrontLayoutProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -438,7 +449,7 @@ function isStorefrontDesignProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
   );
@@ -600,9 +611,131 @@ function isMediaImageProposal(value: Record<string, unknown>): boolean {
     value.status === "private_preview" &&
     isCreditCount(value.expectedCredits) &&
     isCreditCount(value.chargedCredits) &&
-    ["plan", "credit", "mixed", "plan_unlimited"].includes(
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
       String(value.creditSource),
     )
+  );
+}
+
+/**
+ * ★ EVERY PICTURE ON THIS CARD IS ONE MINK DREW FOR THIS STORE. The photo
+ * strip and the category thumbnails become `<img src>` restored from stored
+ * conversation JSON, so each URL is pinned to our own bucket's generated-image
+ * folder (`isGeneratedImageUrl`), the 9E rule: a forged history row must not
+ * turn opening the dashboard into a third-party request. The bounds mirror
+ * the personalisation contract's own ceilings (8 pages, 12 photos, 12
+ * category changes, 40 sample products) and are hardcoded for
+ * `isSectionRefs`'s reason.
+ */
+function isStorefrontPersonalizationProposal(
+  value: Record<string, unknown>,
+): boolean {
+  const design = value.design;
+  return (
+    isUuid(value.draftId) &&
+    isBoundedText(value.title, 120) &&
+    isBoundedText(value.explanation, 1_000) &&
+    isDigest(value.planDigest) &&
+    isBoundedList(value.pages, 8, isPersonalizedPage) &&
+    isBoundedList(
+      value.photos,
+      12,
+      (row) =>
+        isGeneratedImageUrl(row.url) &&
+        isTextUpTo(row.alt, 200) &&
+        isBoundedText(row.where, 200),
+    ) &&
+    (design === null ||
+      (isRecord(design) &&
+        isDesignChanges(design.palette, isPaletteChange) &&
+        isDesignChanges(design.fonts, isFontChange) &&
+        isDesignChanges(design.shape, isShapeChange) &&
+        Array.isArray(design.contrastIssues) &&
+        design.contrastIssues.length <= 3 &&
+        design.contrastIssues.every((issue) => isBoundedText(issue, 200)))) &&
+    isBoundedList(
+      value.chrome,
+      4,
+      (row) =>
+        isBoundedText(row.label, 60) &&
+        isTextUpTo(row.before, 1_000) &&
+        isBoundedText(row.after, 1_000),
+    ) &&
+    isBoundedList(value.categories, 12, isPersonalizedCategory) &&
+    isBoundedList(value.products, 40, (row) => isBoundedText(row.name, 200)) &&
+    isBoundedList(
+      value.skipped,
+      30,
+      (row) => isBoundedText(row.label, 200) && isBoundedText(row.reason, 400),
+    ) &&
+    Array.isArray(value.live) &&
+    value.live.length <= 5 &&
+    value.live.every((entry) => isBoundedText(entry, 300)) &&
+    value.status === "private_preview" &&
+    isPersonalizationCredits(value.expectedCredits, 1) &&
+    isPersonalizationCredits(value.chargedCredits, 0) &&
+    ["plan", "credit", "mixed", "plan_unlimited", "free"].includes(
+      String(value.creditSource),
+    )
+  );
+}
+
+function isPersonalizedPage(row: Record<string, unknown>): boolean {
+  return (
+    isBoundedText(row.slug, 120) &&
+    isBoundedText(row.title, 200) &&
+    isCount(row.textChanges, 5_000) &&
+    isCount(row.photoChanges, 12) &&
+    isBoundedList(
+      row.hidden,
+      40,
+      (entry) =>
+        isBoundedText(entry.type, 40) && isBoundedText(entry.reason, 300),
+    )
+  );
+}
+
+function isPersonalizedCategory(row: Record<string, unknown>): boolean {
+  return (
+    (row.action === "update" ||
+      row.action === "create" ||
+      row.action === "hide") &&
+    isBoundedText(row.name, 120) &&
+    (row.previousName === null || isBoundedText(row.previousName, 120)) &&
+    (row.description === null || isTextUpTo(row.description, 1_000)) &&
+    (row.photoUrl === null || isGeneratedImageUrl(row.photoUrl))
+  );
+}
+
+function isBoundedList(
+  value: unknown,
+  max: number,
+  entry: (row: Record<string, unknown>) => boolean,
+): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length <= max &&
+    value.every((row) => isRecord(row) && entry(row))
+  );
+}
+
+/** Text that may legitimately be empty, such as a tagline the store never set. */
+function isTextUpTo(value: unknown, max: number): value is string {
+  return typeof value === "string" && value.length <= max;
+}
+
+function isCount(value: unknown, max: number): boolean {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= max;
+}
+
+/**
+ * ⚠ A PERSONALISATION IS CHARGED FOR EVERYTHING IT MADE, up to 200 credits
+ * (the draft-kind ceiling in `lib/mink/drafts.ts`), so `isCreditCount`'s 20
+ * would drop every restored card for a whole-site personalisation.
+ */
+function isPersonalizationCredits(value: unknown, min: number): boolean {
+  return (
+    Number.isInteger(value) && Number(value) >= min && Number(value) <= 200
   );
 }
 

@@ -1,20 +1,21 @@
 import {
+  ArrowUp,
   ArrowUpRight,
   BookOpen,
   Boxes,
   ChartNoAxesCombined,
   CircleHelp,
-  ExternalLink,
   MapPin,
   PackageSearch,
   PanelsTopLeft,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useId, type MouseEvent as ReactMouseEvent } from "react";
 import {
   MINK_PREFILL_LABELS,
   minkPrefillPath,
   storeMinkPrefill,
 } from "@/lib/mink/form-prefill";
+import { useChat } from "./chat-context";
 import type { MinkArtifact } from "@/lib/mink/types";
 import { MinkProductImportCard } from "./mink-product-import-card";
 import { MinkProposalCard } from "./mink-proposal-card";
@@ -22,21 +23,83 @@ import { MinkStorefrontCodeProposalCard } from "./mink-storefront-code-proposal-
 import { MinkStorefrontDesignProposalCard } from "./mink-storefront-design-proposal-card";
 import { MinkMediaProposalCard } from "./mink-media-proposal-card";
 import { MinkStorefrontLayoutProposalCard } from "./mink-storefront-layout-proposal-card";
+import { MinkStorefrontPersonalizationCard } from "./mink-storefront-personalization-card";
+import { MinkRevampCard } from "./mink-revamp-card";
 import { MinkWorkflowCard } from "./mink-workflow-card";
 import { MinkBuilderProposalCard } from "./mink-builder-proposal-card";
 import { MinkLink } from "./mink-link";
 import { MinkChartCard } from "./mink-chart";
 
+/**
+ * The DOM id of a storefront redesign's card, so a later mention of the same
+ * redesign can scroll back to it. Only one chat surface (the side panel or
+ * the full view) renders at a time, so the id is unique on the page.
+ */
+export function revampCardElementId(revampId: string): string {
+  return `revamp-card-${revampId}`;
+}
+
+/** Scrolls to a redesign's card and moves focus onto it. */
+function showRevampCard(revampId: string) {
+  const card = document.getElementById(revampCardElementId(revampId));
+  if (!card) return;
+  const still =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  card.scrollIntoView?.({
+    block: "start",
+    behavior: still ? "auto" : "smooth",
+  });
+  card.focus({ preventScroll: true });
+}
+
+/**
+ * A later mention of a redesign whose card the thread already shows (owner's
+ * words, 25 Oct 2026): one line, and a button that goes to that card.
+ */
+function RevampCardPointer({ revampId }: { revampId: string }) {
+  const lineId = useId();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#ded8f4] bg-[#fcfbff] px-3 py-2">
+      <p id={lineId} className="text-xs leading-5 text-[#29272d]">
+        Your storefront redesign card is above.
+      </p>
+      <button
+        type="button"
+        aria-describedby={lineId}
+        onClick={() => showRevampCard(revampId)}
+        className="inline-flex items-center gap-1 rounded-full border border-[#ded8f4] bg-white px-3 py-1.5 text-xs font-semibold text-[#5b3fd0] transition-colors hover:bg-[#f3f0fb] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] pointer-coarse:min-h-11"
+      >
+        <ArrowUp className="h-3 w-3" aria-hidden="true" />
+        Show it
+      </button>
+    </div>
+  );
+}
+
 export function MinkArtifacts({
   artifacts,
   onPrompt,
   promptDisabled = false,
+  shownRevampIds,
 }: {
   artifacts: MinkArtifact[];
   onPrompt?: (prompt: string) => void;
   promptDisabled?: boolean;
+  /**
+   * Storefront redesigns whose card an earlier message in the thread already
+   * shows (`revampIdsShownBefore` in dashboard-chat.tsx).
+   */
+  shownRevampIds?: ReadonlySet<string>;
 }) {
   if (!artifacts.length) return null;
+  // ★★ ONE CARD PER REDESIGN IN A THREAD (owner's decision, 25 Oct 2026).
+  // The card polls its job and carries Apply, Publish and Undo, so a second
+  // copy is a second set of buttons for one redesign: Apply pressed on one,
+  // and the other still offers it. A repeat (in a later answer, or twice in
+  // one) is a line pointing back to the first. Local to this render, so the
+  // check covers repeats inside this message too.
+  const seenRevamps = new Set(shownRevampIds ?? []);
   return (
     <div className="mt-2 space-y-2">
       {artifacts.map((artifact, index) => {
@@ -134,6 +197,35 @@ export function MinkArtifacts({
             />
           );
         }
+        if (artifact.type === "storefront_personalization_proposal") {
+          return (
+            <MinkStorefrontPersonalizationCard
+              key={`${artifact.type}-${artifact.draftId}`}
+              proposal={artifact}
+            />
+          );
+        }
+        if (artifact.type === "storefront_revamp") {
+          if (seenRevamps.has(artifact.revampId)) {
+            return (
+              <RevampCardPointer
+                key={`${artifact.type}-${artifact.revampId}-again-${index}`}
+                revampId={artifact.revampId}
+              />
+            );
+          }
+          seenRevamps.add(artifact.revampId);
+          return (
+            <div
+              key={`${artifact.type}-${artifact.revampId}`}
+              id={revampCardElementId(artifact.revampId)}
+              tabIndex={-1}
+              className="scroll-mt-4 rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] focus-visible:ring-offset-2"
+            >
+              <MinkRevampCard artifact={artifact} />
+            </div>
+          );
+        }
         if (artifact.type === "storefront_design_proposal") {
           return (
             <MinkStorefrontDesignProposalCard
@@ -169,33 +261,47 @@ export function MinkArtifacts({
   );
 }
 
-/**
- * Open a page Mink was asked for, with the chat staying open beside it.
- *
- * ★ A BUTTON THAT NAVIGATES CLIENT-SIDE, so the answer this card sits in is
- * still on screen when the merchant looks back; the panel also opens it on
- * its own when the artifact arrives live (DashboardChat). A product prefill
- * is written to session storage immediately before the navigation, where the
- * new-product form reads and clears it on its first render.
- */
-export function openMinkNavigation(
+/** Where a navigation card goes: the prefilled form, or the page itself. */
+export function minkNavigationHref(
   artifact: Extract<MinkArtifact, { type: "navigation" }>,
-  push: (path: string) => void,
 ) {
-  if (artifact.prefill) {
-    storeMinkPrefill(artifact.prefill);
-    push(minkPrefillPath(artifact.prefill.kind));
-    return;
-  }
-  push(safeHref(artifact.path) ? artifact.path : "/dashboard");
+  if (artifact.prefill) return minkPrefillPath(artifact.prefill.kind);
+  return safeHref(artifact.path) ? artifact.path : "/dashboard";
 }
 
+function isPlainClick(event: ReactMouseEvent) {
+  return (
+    event.button === 0 &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.shiftKey &&
+    !event.altKey
+  );
+}
+
+/**
+ * A page Mink found for the merchant, opened only when they click it.
+ *
+ * ★★ IT NEVER OPENS BY ITSELF. The panel used to navigate the moment the
+ * answer arrived, and on a phone that also closed the chat, so asking "where
+ * do I add a product?" swept the merchant off the conversation mid-read.
+ * ChatGPT, Claude and Sidekick all put the link in the answer and leave the
+ * tap to the person. It is a real dashboard link (MinkLink), so the chat
+ * surface's capture-phase rule collapses the full view or closes the phone
+ * panel exactly as it does for any other link in an answer, and a new-tab
+ * click works as one.
+ *
+ * ★ A prefill is written to session storage as the click happens, before the
+ * client navigation, where the form reads and clears it on first render; the
+ * spotlight is asked for only on a plain click, since a new tab leaves this
+ * page where the control is not.
+ */
 function NavigationArtifact({
   artifact,
 }: {
   artifact: Extract<MinkArtifact, { type: "navigation" }>;
 }) {
-  const router = useRouter();
+  const { showSpotlight } = useChat();
   return (
     <section className="overflow-hidden rounded-2xl border border-[#ded8f4] bg-[#fcfbff] shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
       <ArtifactHeader
@@ -205,21 +311,22 @@ function NavigationArtifact({
       <div className="flex flex-wrap items-center justify-between gap-2 p-3">
         <p className="text-xs leading-5 text-[#29272d]">
           {artifact.prefill
-            ? `${capitalise(MINK_PREFILL_LABELS[artifact.prefill.kind])} opens with ${describePrefill(artifact.prefill.fields)} filled in. Review it and save when you are happy.`
+            ? `Opens ${MINK_PREFILL_LABELS[artifact.prefill.kind]} with ${describePrefill(artifact.prefill.fields)} filled in, for you to review and save.`
             : artifact.highlight
-              ? `${artifact.highlight.label} is pointed out on the page. ${artifact.highlight.hint ?? ""}`.trim()
-              : "This chat stays open while you look."}
+              ? `Opens the page and points out ${artifact.highlight.label}.`
+              : "Opens the page. This chat is here when you come back."}
         </p>
-        <button
-          type="button"
-          onClick={() =>
-            openMinkNavigation(artifact, (path) => router.push(path))
-          }
+        <MinkLink
+          href={minkNavigationHref(artifact)}
+          onClick={(event) => {
+            if (artifact.prefill) storeMinkPrefill(artifact.prefill);
+            if (isPlainClick(event)) showSpotlight(artifact.highlight ?? null);
+          }}
           className="inline-flex items-center gap-1 rounded-full bg-[#6d4dff] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#5b3fd0]"
         >
           {artifact.label}
-          <ExternalLink className="h-3 w-3" aria-hidden="true" />
-        </button>
+          <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+        </MinkLink>
       </div>
     </section>
   );
@@ -253,10 +360,6 @@ const PREFILL_FIELD_WORDS: Record<string, string> = {
   manualMaxDays: "delivery days",
   handlingDays: "handling time",
 };
-
-function capitalise(text: string) {
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
 
 function describePrefill(fields: object) {
   const parts: string[] = [];

@@ -9,6 +9,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { ImageRefineScope } from "@/components/ui/image-refine-context";
 
 type Props = {
   open: boolean;
@@ -59,15 +60,20 @@ export function MediaPickerDialog({
         </DialogHeader>
 
         <div className="py-4">
-          <ImageUpload
-            folder="blog-covers"
-            spec="blog_cover"
-            onUploadSuccess={(url) => {
-              if (url) {
-                onSelect(url);
-              }
-            }}
-          />
+          {/* ★ Closing the dialog stops a refine still running here. (The
+              upload selects and closes at once today, so Refine is hardly
+              reachable; the scope keeps the rule true if that changes.) */}
+          <ImageRefineScope id="blog-cover" releaseOnUnmount>
+            <ImageUpload
+              folder="blog-covers"
+              spec="blog_cover"
+              onUploadSuccess={(url) => {
+                if (url) {
+                  onSelect(url);
+                }
+              }}
+            />
+          </ImageRefineScope>
 
           {mediaUrlPrefix ? (
             <>

@@ -72,6 +72,16 @@ function customerOrderUrl(e: RenderableEvent): string {
   return id ? `/orders/${id}` : "/orders";
 }
 
+/** A Theme Studio theme's page in the operator console: the subject is the
+ *  project, and anything that is not a project id falls back to the list. */
+function themeStudioUrl(e: RenderableEvent): string {
+  const id = str(e.subjectId);
+  return id &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    ? `/dashboard/themes/studio/${id.toLowerCase()}`
+    : "/dashboard/themes/studio";
+}
+
 function safeDashboardUrl(value: unknown): string {
   const path = str(value);
   return path && /^\/dashboard(?:[/?#]|$)/.test(path) ? path : "/dashboard";
@@ -429,6 +439,13 @@ export function renderNotification(
         url: safeDashboardUrl(p.url),
       };
 
+    case "mink.revamp_ready":
+      return {
+        title: "Your storefront redesign is ready",
+        body: "Open Mink AI to review it and apply it to your Website Builder draft.",
+        url: safeDashboardUrl(p.url),
+      };
+
     case "mink.watch_ready":
       return {
         title: "Your Mink watch has an update",
@@ -563,6 +580,35 @@ export function renderNotification(
         title: `Custom domain verified${subject ? ` · ${subject}` : ""}`,
         body: str(p.domain),
         url: "/dashboard",
+      };
+
+    // ── Theme Studio (the operator who started the theme) ─────────────────
+    // The bell line and the email are the same copy (record.ts emailFor):
+    // the theme's name in the title, a fixed sentence in the body, and a
+    // link to the theme's own page in the operator console.
+    case "platform.theme_studio_ready":
+      return {
+        title: subject
+          ? `Ready to publish · ${subject}`
+          : "A theme is ready to publish",
+        body: "Theme Studio finished building and checking this theme. Open it to look it over, read any warnings and publish it.",
+        url: themeStudioUrl(event),
+      };
+
+    case "platform.theme_studio_needs_fix":
+      return {
+        title: subject ? `Needs a fix · ${subject}` : "A theme needs a fix",
+        body: "Theme Studio stopped before this theme was ready. Open it to see why and what to do next.",
+        url: themeStudioUrl(event),
+      };
+
+    case "platform.theme_studio_questions":
+      return {
+        title: subject
+          ? `Questions about ${subject}`
+          : "Theme Studio has questions",
+        body: "Theme Studio needs a few answers before it can design this theme. Open it to reply.",
+        url: themeStudioUrl(event),
       };
 
     default:

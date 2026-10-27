@@ -12,13 +12,9 @@ describe("canOptimizeImage", () => {
   });
 
   // ★ next/image throws on an unconfigured host, which took the Product
-  //   images tab down for a store with legacy Supabase photos.
+  //   images tab down for a store with photos on an older external host.
   it("leaves any other host to a plain image request", () => {
-    expect(
-      canOptimizeImage(
-        "https://oiblxqrvyekxdbimvhod.supabase.co/storage/v1/x.png",
-      ),
-    ).toBe(false);
+    expect(canOptimizeImage("https://cdn.example.com/x.png")).toBe(false);
     expect(canOptimizeImage("http://storage.googleapis.com/b/a.webp")).toBe(
       false,
     );

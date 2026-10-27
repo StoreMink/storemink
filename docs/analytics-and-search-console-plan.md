@@ -267,7 +267,7 @@ can be reassigned, or overwrites A with B. Sources stay separate in storage and
 are summed only in the read query.
 
 ```sql
--- supabase/search_metrics_01_schema.sql (shape; exact constraints in migration)
+-- drizzle/migrations/sql/20260819_0006_search_metrics.sql (shape; exact constraints in migration)
 create table store_search_sources (
   id             uuid primary key default gen_random_uuid(),
   store_id       uuid not null references stores(id) on delete cascade,

@@ -11,15 +11,23 @@ vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerUserId: vi.fn(),
   getActingStoreId: vi.fn(async () => STORE),
 }));
-vi.mock("@/lib/ai/gemini", () => ({
+vi.mock("@/lib/ai/gemini", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ai/gemini")>()),
   callGemini: vi.fn(),
   brandSystemText: vi.fn((b: string) => `SYSTEM:${b}`),
 }));
 vi.mock("@/lib/ai/brand-voice", () => ({
   getBrandSoulForStore: vi.fn(async () => "brand soul"),
 }));
+// What consumeAiQuota took; refundAiQuota must be handed exactly this back.
+const AI_TAKE = vi.hoisted(() => ({
+  source: "plan" as const,
+  takeId: "33333333-3333-4333-8333-333333333333",
+  period: "2026-10",
+}));
 vi.mock("@/lib/ai/quota", () => ({
-  consumeAiQuota: vi.fn(async () => ({ allowed: true })),
+  consumeAiQuota: vi.fn(async () => ({ allowed: true, taken: AI_TAKE })),
+  refundAiQuota: vi.fn(async () => "refunded"),
 }));
 vi.mock("@/lib/plans/entitlements", () => ({
   storeAllowsPlanFeature: vi.fn(async () => true),
@@ -85,8 +93,8 @@ import {
   sendCouponEmail,
 } from "./coupon-email-actions";
 import { getManagerUserId, getActingStoreId } from "@/app/dashboard/lib/access";
-import { callGemini } from "@/lib/ai/gemini";
-import { consumeAiQuota } from "@/lib/ai/quota";
+import { AI_UNUSABLE_MESSAGE, callGemini } from "@/lib/ai/gemini";
+import { consumeAiQuota, refundAiQuota } from "@/lib/ai/quota";
 import { storeAllowsPlanFeature } from "@/lib/plans/entitlements";
 import { mergeTokens, renderCouponEmail } from "@/lib/email/coupon-campaign";
 
@@ -129,7 +137,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   dbHolder.current = makeDbMock({ returning: [{ id: "camp1" }] });
   vi.mocked(getManagerUserId).mockResolvedValue("user-1");
-  vi.mocked(consumeAiQuota).mockResolvedValue({ allowed: true });
+  vi.mocked(consumeAiQuota).mockResolvedValue({
+    allowed: true,
+    taken: AI_TAKE,
+  });
   vi.mocked(callGemini).mockResolvedValue({
     text: JSON.stringify({ subject: "S", body: "B" }),
   });
@@ -231,27 +242,73 @@ describe("generateCouponEmail", () => {
     expect(callGemini).not.toHaveBeenCalled();
   });
 
-  it("surfaces a callGemini error", async () => {
+  // ★★ B1: the credit was taken first, so every failure gives it back.
+  it("surfaces a callGemini error and gives the credit back", async () => {
     vi.mocked(callGemini).mockResolvedValue({ error: "AI busy" });
     const result = await generateCouponEmail(genInput);
     expect(result.error).toBe("AI busy");
+    expect(refundAiQuota).toHaveBeenCalledTimes(1);
+    expect(refundAiQuota).toHaveBeenCalledWith(STORE, AI_TAKE);
   });
 
-  it("errors when the AI response is not valid JSON", async () => {
+  it("gives the credit back when the AI response is not valid JSON", async () => {
     vi.mocked(callGemini).mockResolvedValue({ text: "not json {{{" });
     const result = await generateCouponEmail(genInput);
-    expect(result.error).toMatch(/could not parse/i);
+    expect(result.error).toBe(AI_UNUSABLE_MESSAGE);
+    expect(refundAiQuota).toHaveBeenCalledTimes(1);
   });
 
-  it("errors when the JSON is incomplete (missing body)", async () => {
+  it("gives the credit back when the JSON is incomplete (missing body)", async () => {
     vi.mocked(callGemini).mockResolvedValue({
       text: JSON.stringify({ subject: "Hi" }),
     });
     const result = await generateCouponEmail(genInput);
-    expect(result.error).toMatch(/incomplete/i);
+    expect(result.error).toBe(AI_UNUSABLE_MESSAGE);
+    expect(refundAiQuota).toHaveBeenCalledTimes(1);
   });
 
-  it("returns the trimmed subject + body on success", async () => {
+  it("gives the credit back when the brand voice read throws", async () => {
+    const { getBrandSoulForStore } = await import("@/lib/ai/brand-voice");
+    vi.mocked(getBrandSoulForStore).mockRejectedValueOnce(new Error("db down"));
+    await expect(generateCouponEmail(genInput)).rejects.toThrow("db down");
+    expect(refundAiQuota).toHaveBeenCalledWith(STORE, AI_TAKE);
+  });
+
+  // ★ The rates are per store AND per admin, so the take names who asked.
+  it("takes the credit for the admin who asked", async () => {
+    await generateCouponEmail(genInput);
+    expect(consumeAiQuota).toHaveBeenCalledWith(STORE, { actorId: "user-1" });
+  });
+
+  // ★★ A server action is reachable without its form: what reaches the model
+  //    is bounded here, never by the browser.
+  it("cuts the team's direction and the note to their bound", async () => {
+    await generateCouponEmail({
+      ...genInput,
+      code: "X".repeat(1_000),
+      description: "n".repeat(10_000),
+      instructions: "i".repeat(10_000),
+    });
+    const [, userText] = vi.mocked(callGemini).mock.calls[0];
+    expect(userText).toContain(`Coupon code: ${"X".repeat(300)}\n`);
+    expect(userText.match(/n{4000}/)).not.toBeNull();
+    expect(userText).not.toMatch(/n{4001}/);
+    expect(userText.match(/i{4000}/)).not.toBeNull();
+    expect(userText).not.toMatch(/i{4001}/);
+  });
+
+  it("refunds nothing when the plan or the quota refused it", async () => {
+    vi.mocked(consumeAiQuota).mockResolvedValueOnce({
+      allowed: false,
+      error: "You've used all 10 AI generations…",
+    });
+    await generateCouponEmail(genInput);
+    vi.mocked(storeAllowsPlanFeature).mockResolvedValueOnce(false);
+    await generateCouponEmail(genInput);
+    expect(refundAiQuota).not.toHaveBeenCalled();
+  });
+
+  it("returns the trimmed subject + body on success and keeps the credit", async () => {
     vi.mocked(callGemini).mockResolvedValue({
       text: JSON.stringify({ subject: "  Sub  ", body: "  Bod  " }),
     });
@@ -259,6 +316,20 @@ describe("generateCouponEmail", () => {
     expect(result.subject).toBe("Sub");
     expect(result.body).toBe("Bod");
     expect(result.error).toBeUndefined();
+    expect(refundAiQuota).not.toHaveBeenCalled();
+  });
+
+  // ★ The schema is sent the way lib/mink sends one: JSON Schema, lowercase.
+  it("asks for JSON through responseJsonSchema", async () => {
+    await generateCouponEmail(genInput);
+    const options = vi.mocked(callGemini).mock.calls[0][2]!;
+    expect(options.responseMimeType).toBe("application/json");
+    expect(options.responseJsonSchema).toMatchObject({
+      type: "object",
+      required: ["subject", "body"],
+      additionalProperties: false,
+    });
+    expect(options).not.toHaveProperty("responseSchema");
   });
 
   // The draft is StoreMink-written email copy, so a long dash the model slips

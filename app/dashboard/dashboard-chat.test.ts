@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
-import { createElement } from "react";
+import { createElement, Fragment } from "react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampMinkPanelWidth,
   DashboardChat,
+  isMinkInAppLinkClick,
   isMinkScrollNearBottom,
   latestMinkUserMessageId,
   minkCheckedLine,
@@ -15,15 +22,62 @@ import {
   minkCreditWarning,
   minkHistoryStartsOpen,
   minkTurnAnchorSpace,
+  revampIdsShownBefore,
   shouldSubmitMinkComposer,
 } from "./dashboard-chat";
 import { MINK_MAX_RUN_CREDITS } from "@/lib/mink/metering";
+import type { RevampArtifact, RevampStatus } from "@/lib/mink/revamp/contract";
 import { useChat } from "./chat-context";
 import { addSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 
+const voiceChat = vi.hoisted(() => ({
+  value: {
+    enabled: false,
+    state: "idle",
+    mic: "closed",
+    support: { ok: true },
+    levelRef: { current: 0 },
+    heard: null as string | null,
+    said: null as string | null,
+    notice: null as string | null,
+    toggle: vi.fn(),
+    noteSend: vi.fn(),
+    registerComposer: vi.fn(() => () => {}),
+  },
+}));
 vi.mock("./chat-context", () => ({
   useChat: vi.fn(),
+  useMinkVoice: vi.fn(() => voiceChat.value),
 }));
+// A plain anchor stands in for next/link, so a click can be observed without
+// an app router: it runs the link's own onClick and stops the browser there.
+vi.mock("next/link", async () => {
+  const { createElement: h } = await import("react");
+  return {
+    default: ({
+      href,
+      onClick,
+      children,
+      ...rest
+    }: {
+      href: string;
+      onClick?: (event: { preventDefault(): void }) => void;
+      children?: unknown;
+    }) =>
+      h(
+        "a",
+        {
+          ...rest,
+          href,
+          onClick: (event: { preventDefault(): void }) => {
+            onClick?.(event);
+            event.preventDefault();
+          },
+        },
+        children as never,
+      ),
+  };
+});
 const routerPush = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(() => ({ push: routerPush })),
@@ -50,12 +104,32 @@ const baseChatState = {
   feedbackSubmittingRunId: null,
   minkCredits: null,
   send: vi.fn(),
+  sendPrepared: vi.fn(() => true),
   cancel: vi.fn(),
   retry: vi.fn(),
   reset: vi.fn(),
+  startNewChat: vi.fn(),
+  addressOpens: 0,
+  showSpotlight: vi.fn(),
   loadConversation: vi.fn(),
   deleteConversation: vi.fn(),
   submitFeedback: vi.fn(),
+  // Chat history (the sidebar and the earlier messages read these).
+  enabled: true,
+  hasMoreConversations: false,
+  historyStatus: { loadingMore: false, error: null, failed: null },
+  refreshConversations: vi.fn(),
+  loadMoreConversations: vi.fn(),
+  historySearchText: "",
+  setHistorySearchText: vi.fn(),
+  historySearch: null,
+  searchConversations: vi.fn(),
+  loadMoreSearchResults: vi.fn(),
+  hasEarlierMessages: false,
+  earlierStatus: { loading: false, error: null },
+  loadEarlierMessages: vi.fn(),
+  revealTarget: null,
+  clearRevealTarget: vi.fn(),
 };
 
 const scrollIntoView = vi.fn();
@@ -86,6 +160,88 @@ beforeEach(() => {
   vi.mocked(useChat).mockReturnValue(
     baseChatState as unknown as ReturnType<typeof useChat>,
   );
+  voiceChat.value.enabled = false;
+  voiceChat.value.notice = null;
+  voiceChat.value.said = null;
+  voiceChat.value.heard = null;
+  voiceChat.value.state = "idle";
+});
+
+describe("★★ voice chat happens inside the chat", () => {
+  it("keeps the thread and its cards on screen, with the voice bar in the composer's place", () => {
+    // Owner's decision (2026-10-20): Mink said "check the review card" while
+    // a full-screen voice view hid the thread, so there was nothing to check.
+    voiceChat.value.enabled = true;
+    voiceChat.value.state = "speaking";
+    voiceChat.value.said = "Your storefront card is ready.";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "u1", role: "user", text: "Personalise my storefront" },
+        {
+          id: "a1",
+          role: "assistant",
+          text: "Your card is ready: review it and apply.",
+          artifacts: [
+            {
+              type: "navigation" as const,
+              title: "Website Builder",
+              path: "/dashboard/builder",
+              label: "Open Website Builder",
+            },
+          ],
+        },
+      ],
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    // The conversation and its card stay usable while Mink talks.
+    expect(screen.getByTestId("mink-message-scroller")).toBeInTheDocument();
+    expect(screen.getByText("Personalise my storefront")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Open Website Builder/i }),
+    ).toHaveAttribute("href", "/dashboard/builder");
+    const bar = screen.getByRole("region", { name: "Voice chat with Mink" });
+    expect(bar).toHaveTextContent("Speaking…");
+    expect(bar).toHaveTextContent("Your storefront card is ready.");
+    // No way into the history while talking.
+    expect(
+      screen.queryByRole("button", { name: /conversation sidebar/i }),
+    ).toBeNull();
+    // The composer survives (its draft and staged uploads with it) but is
+    // out of the way; the bar's buttons are the voice controls.
+    const composer = screen.getByLabelText("Mink AI composer");
+    expect(composer.closest("[hidden]")).not.toBeNull();
+    expect(
+      screen.getAllByRole("button", { name: "Stop Mink AI" }),
+    ).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Stop voice chat" }));
+    expect(voiceChat.value.toggle).toHaveBeenCalledOnce();
+  });
+
+  it("shows the composer again, and no voice bar, once voice chat is off", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "u1", role: "user", text: "How many orders today?" },
+        { id: "a1", role: "assistant", text: "Twelve orders today." },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByTestId("mink-voice-bar")).toBeNull();
+    expect(
+      screen.getByLabelText("Mink AI composer").closest("[hidden]"),
+    ).toBeNull();
+  });
+
+  it("shows the loop's notice above the composer once voice chat is off", () => {
+    voiceChat.value.notice = "Voice chat turned off: nothing was heard.";
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByTestId("mink-voice-bar")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Voice chat turned off: nothing was heard.",
+    );
+  });
 });
 
 describe("Mink full view", () => {
@@ -155,6 +311,125 @@ describe("Mink full view", () => {
     ).not.toBeInTheDocument();
   });
 
+  describe("★★ chat history in the full view (26 Oct 2026)", () => {
+    const chats = [
+      {
+        id: "chat-a",
+        title: "Diwali coupon",
+        lastMessageAt: "2026-10-24T10:00:00.000Z",
+        createdAt: "2026-10-24T09:00:00.000Z",
+        hasRedesignCard: false,
+      },
+      {
+        id: "chat-b",
+        title: "Storefront redesign",
+        lastMessageAt: "2026-10-23T10:00:00.000Z",
+        createdAt: "2026-10-23T09:00:00.000Z",
+        hasRedesignCard: true,
+      },
+    ];
+    const history = () =>
+      screen.queryByRole("complementary", { name: "Mink AI conversations" });
+    let view: ReturnType<typeof render>;
+    async function openHistory(width: number) {
+      Object.defineProperty(window, "innerWidth", {
+        configurable: true,
+        value: width,
+      });
+      vi.mocked(useChat).mockReturnValue({
+        ...baseChatState,
+        conversations: chats,
+      } as unknown as ReturnType<typeof useChat>);
+      view = render(createElement(DashboardChat, { variant: "overlay" }));
+      const toggle = await screen.findByRole("button", {
+        name: /conversation sidebar/,
+      });
+      // The full view decides in a frame whether History starts open.
+      await act(async () => {
+        await new Promise((resolve) =>
+          window.requestAnimationFrame(() => resolve(null)),
+        );
+      });
+      expect(toggle).toHaveAttribute(
+        "aria-expanded",
+        minkHistoryStartsOpen(width) ? "true" : "false",
+      );
+      if (toggle.getAttribute("aria-expanded") !== "true")
+        fireEvent.click(toggle);
+      return screen.findByRole("complementary", {
+        name: "Mink AI conversations",
+      });
+    }
+    const row = (sidebar: HTMLElement, title: string) =>
+      Array.from(sidebar.querySelectorAll("button")).find((button) =>
+        button.textContent?.startsWith(title),
+      )!;
+
+    it("★ R14: on a phone, choosing a chat closes History so the chat is not left under it", async () => {
+      const sidebar = await openHistory(390);
+      fireEvent.click(row(sidebar, "Diwali coupon"));
+      expect(baseChatState.loadConversation).toHaveBeenCalledWith("chat-a");
+      expect(history()).not.toBeInTheDocument();
+    });
+
+    it("on a phone, New conversation closes it too", async () => {
+      const sidebar = await openHistory(390);
+      fireEvent.click(
+        Array.from(sidebar.querySelectorAll("button")).find(
+          (button) => button.textContent === "New conversation",
+        )!,
+      );
+      expect(history()).not.toBeInTheDocument();
+    });
+
+    it("on a wide screen, History stays beside the chat chosen", async () => {
+      const sidebar = await openHistory(1280);
+      fireEvent.click(row(sidebar, "Diwali coupon"));
+      expect(history()).toBeInTheDocument();
+    });
+
+    it("★ the delete dialog says approved work stays, and names the redesign card only where there is one", async () => {
+      const sidebar = await openHistory(1280);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Delete Diwali coupon" }),
+      );
+      expect(screen.getByRole("alertdialog")).toHaveTextContent(
+        "“Diwali coupon” and its messages will be permanently deleted. Changes you approved or published from this chat stay in your store.",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(sidebar).toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "Delete Storefront redesign" }),
+      );
+      expect(screen.getByRole("alertdialog")).toHaveTextContent(
+        "“Storefront redesign” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.",
+      );
+    });
+
+    it("★ the delete dialog reads History again and names a redesign card that became ready after the list was read", async () => {
+      vi.mocked(baseChatState.refreshConversations).mockClear();
+      await openHistory(1280);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Delete Diwali coupon" }),
+      );
+      expect(baseChatState.refreshConversations).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("alertdialog")).toHaveTextContent(
+        "“Diwali coupon” and its messages will be permanently deleted. Changes you approved or published from this chat stay in your store.",
+      );
+      // History's first page comes back: the chat's redesign card is ready now.
+      vi.mocked(useChat).mockReturnValue({
+        ...baseChatState,
+        conversations: chats.map((chat) =>
+          chat.id === "chat-a" ? { ...chat, hasRedesignCard: true } : chat,
+        ),
+      } as unknown as ReturnType<typeof useChat>);
+      view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+      expect(screen.getByRole("alertdialog")).toHaveTextContent(
+        "“Diwali coupon” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.",
+      );
+    });
+  });
+
   it("uses a contained message scroller and a no-zoom mobile composer", () => {
     vi.mocked(useChat).mockReturnValue({
       ...baseChatState,
@@ -171,7 +446,6 @@ describe("Mink full view", () => {
     expect(screen.getByLabelText("Message Mink AI")).toHaveClass(
       "min-w-0",
       "text-base",
-      "sm:text-sm",
     );
   });
 
@@ -619,6 +893,17 @@ describe("★★ panel chrome density", () => {
     expect(screen.queryByText("Mink AI", { selector: "header *" })).toBeNull();
   });
 
+  // ★ ChatGPT and Claude call a chat "New chat" until its title arrives.
+  it("calls a chat with no title yet New chat", () => {
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(
+      screen.getByText("New chat", { selector: "header *" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("New conversation", { selector: "header *" }),
+    ).toBeNull();
+  });
+
   // ★★ Alignment already says who is speaking, so stamping every answer with
   //    the name is repetition down the length of a thread.
   it("does not label each answer with the assistant name", () => {
@@ -661,13 +946,20 @@ describe("★★ streamed answers in the panel", () => {
     render(createElement(DashboardChat, { variant: "overlay" }));
 
     const pending = screen.getByTestId("mink-pending-answer");
+    // ★ One polite live region for the whole pending row: the answer is
+    //   announced as it streams, and the status is not announced twice.
+    expect(pending).toHaveAttribute("aria-live", "polite");
+    expect(pending.querySelector('[role="status"]')).toBeNull();
     expect(pending).toHaveTextContent("Read store details");
     expect(pending).toHaveTextContent("Reading sales…");
     expect(pending).toHaveTextContent("Sales are up");
     expect(pending).toHaveTextContent("Writing…");
-    expect(
-      screen.getByRole("list", { name: "What Mink AI is doing" }).children,
-    ).toHaveLength(2);
+    const details = screen.getByText("1 earlier step").closest("details")!;
+    expect(details.open).toBe(false);
+    expect(screen.getByText("Reading sales…")).toBeVisible();
+    expect(screen.getByText("Read store details")).not.toBeVisible();
+    fireEvent.click(details.querySelector("summary")!);
+    expect(screen.getByText("Read store details")).toBeVisible();
   });
 
   it("labels a finished answer with what was checked, in merchant words", () => {
@@ -788,5 +1080,884 @@ describe("★ Remember this?", () => {
     } as unknown as ReturnType<typeof useChat>);
     view.rerender(createElement(DashboardChat, { variant: "overlay" }));
     expect(screen.queryByTestId("mink-memory-prompt")).not.toBeInTheDocument();
+  });
+});
+
+describe("★★ a followed link leaves the full view", () => {
+  const ORIGIN = "https://echoss.storemink.com";
+  const clickOn = (html: string, overrides: Partial<MouseEvent> = {}) => {
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    const target = host.querySelector("[data-hit]") ?? host.firstElementChild;
+    return isMinkInAppLinkClick(
+      {
+        target,
+        button: 0,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        ...overrides,
+      },
+      ORIGIN,
+    );
+  };
+
+  it("counts a plain click on a dashboard link, including one inside the link", () => {
+    expect(clickOn('<a href="/dashboard/orders?q=ORD1">ORD1</a>')).toBe(true);
+    expect(clickOn('<a href="/dashboard">Home</a>')).toBe(true);
+    expect(
+      clickOn(
+        '<a href="/dashboard/products/p1"><span data-hit>Shoe</span></a>',
+      ),
+    ).toBe(true);
+    expect(clickOn(`<a href="${ORIGIN}/dashboard/orders">Orders</a>`)).toBe(
+      true,
+    );
+  });
+
+  it("ignores new-tab, modified, download and off-dashboard clicks", () => {
+    const link = '<a href="/dashboard/orders">Orders</a>';
+    expect(clickOn('<a href="/dashboard/orders" target="_blank">x</a>')).toBe(
+      false,
+    );
+    expect(clickOn('<a href="/dashboard/orders" download>x</a>')).toBe(false);
+    expect(clickOn(link, { metaKey: true })).toBe(false);
+    expect(clickOn(link, { ctrlKey: true })).toBe(false);
+    expect(clickOn(link, { shiftKey: true })).toBe(false);
+    expect(clickOn(link, { button: 1 })).toBe(false);
+    expect(clickOn('<a href="/shop/almond-shake">Shop</a>')).toBe(false);
+    expect(clickOn('<a href="/dashboardish">x</a>')).toBe(false);
+    expect(
+      clickOn('<a href="https://help.storemink.com/dashboard/x">Help</a>'),
+    ).toBe(false);
+    expect(clickOn("<button data-hit>Send</button>")).toBe(false);
+  });
+
+  const withLink = (isExpanded: boolean) =>
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      isExpanded,
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant" as const,
+          text: "The oldest is [ORD101010726](/dashboard/orders?q=ORD101010726).",
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+  it("collapses the full view to the side panel when an answer link is clicked", () => {
+    withLink(true);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
+    expect(baseChatState.toggleExpand).toHaveBeenCalledTimes(1);
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
+  });
+
+  it("closes the chat on a phone, where any surface covers the page", () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 390,
+    });
+    withLink(false);
+    render(createElement(DashboardChat, { variant: "panel" }));
+    fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
+    expect(baseChatState.closeChat).toHaveBeenCalledTimes(1);
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+  });
+
+  it("leaves the desktop side panel open, beside the page it opened", () => {
+    withLink(false);
+    render(createElement(DashboardChat, { variant: "panel" }));
+    fireEvent.click(screen.getByRole("link", { name: "ORD101010726" }));
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ a page Mink finds opens only when the merchant clicks it", () => {
+  const answer = {
+    id: 7,
+    role: "assistant" as const,
+    text: "Use **New product** on the Products page.",
+    artifacts: [
+      {
+        type: "navigation" as const,
+        title: "Products",
+        path: "/dashboard/products",
+        label: "Open Products",
+        highlight: { target: "add_product" as const, label: "New product" },
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("does not navigate, close or collapse the chat when the answer arrives", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: 6, role: "user", text: "Where do I add a product?" },
+        answer,
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(
+      screen.getByRole("link", { name: /Open Products/i }),
+    ).toHaveAttribute("href", "/dashboard/products");
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(baseChatState.closeChat).not.toHaveBeenCalled();
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+    expect(baseChatState.showSpotlight).not.toHaveBeenCalled();
+  });
+
+  it("opens the page, points out the control and steps the chat aside on a click", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [answer],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Products/i }));
+
+    expect(baseChatState.showSpotlight).toHaveBeenCalledWith(
+      answer.artifacts[0]!.highlight,
+    );
+    // The full view collapses so the page behind it can be seen.
+    expect(baseChatState.toggleExpand).toHaveBeenCalledOnce();
+  });
+
+  it("hands a prefilled form its fields at the click, and only then", () => {
+    const prefilled = {
+      ...answer,
+      artifacts: [
+        {
+          type: "navigation" as const,
+          title: "New product",
+          path: "/dashboard/products/new",
+          label: "Open the product form",
+          prefill: {
+            kind: "product" as const,
+            fields: { name: "Almond shake" },
+          },
+        },
+      ],
+    };
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [prefilled],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    const link = screen.getByRole("link", { name: /Open the product form/i });
+
+    expect(link).toHaveAttribute(
+      "href",
+      "/dashboard/products/new?prefill=mink",
+    );
+    expect(window.sessionStorage.length).toBe(0);
+
+    fireEvent.click(link);
+
+    expect(window.sessionStorage.length).toBe(1);
+  });
+
+  it("asks for no spotlight on a new-tab click, which leaves this page where it is", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [answer],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("link", { name: /Open Products/i }), {
+      metaKey: true,
+    });
+
+    expect(baseChatState.showSpotlight).not.toHaveBeenCalled();
+    expect(baseChatState.toggleExpand).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ New chat and messages with attachments", () => {
+  it("starts a new chat from the header, but not while Mink is answering", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [{ id: "user-1", role: "user", text: "Earlier message" }],
+    } as unknown as ReturnType<typeof useChat>);
+    const view = render(createElement(DashboardChat, { variant: "overlay" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(baseChatState.startNewChat).toHaveBeenCalledOnce();
+
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [{ id: "user-1", role: "user", text: "Earlier message" }],
+      isReplying: true,
+    } as unknown as ReturnType<typeof useChat>);
+    view.rerender(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.getByRole("button", { name: "New chat" })).toBeDisabled();
+  });
+
+  it("shows a sent photo in the message at once while Mink looks at it", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          text: "Is this in stock?",
+          pendingAttachments: [
+            { name: "shoe.jpg", kind: "image", previewUrl: "blob:shoe" },
+            { name: "sizes.pdf", kind: "document", previewUrl: null },
+          ],
+        },
+      ],
+      isReplying: true,
+      statusText: "Looking at your photo…",
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByText("Is this in stock?")).toBeVisible();
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+    expect(screen.getByText("sizes.pdf")).toBeVisible();
+    expect(screen.getByText("Looking at your photo…")).toBeVisible();
+  });
+
+  it("keeps showing this tab's copy of the photo once the message is finished", () => {
+    const url =
+      "https://storage.googleapis.com/storemink-media/stores/s1/media/shoe.webp";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: 1,
+          role: "user",
+          text: addSavedMinkMediaReference("Is this in stock?", {
+            filename: "shoe.jpg",
+            url,
+          }),
+          localPreviews: { [`url:${url}`]: "blob:shoe" },
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+  });
+
+  it("offers no Retry for a failure Retry cannot fix", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      error: {
+        code: "attachment_failed",
+        message: "Busy. Attach the file again to send it.",
+        retryable: false,
+      },
+    } as unknown as ReturnType<typeof useChat>);
+
+    render(createElement(DashboardChat, { variant: "overlay" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Attach the file again to send it.",
+    );
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
+
+describe("★★ a chat opened from the address opens at its newest message (B20)", () => {
+  const chatA = [
+    { id: "a-u1", role: "user" as const, text: "How are sales this week?" },
+    { id: "a-a1", role: "assistant" as const, text: "Up 12% on last week." },
+  ];
+  const chatB = [
+    { id: "b-u1", role: "user" as const, text: "Redesign my store" },
+    {
+      id: "b-a1",
+      role: "assistant" as const,
+      text: "Your storefront redesign is ready. You can review it here.",
+    },
+  ];
+
+  function chat(state: Record<string, unknown>) {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      ...state,
+    } as unknown as ReturnType<typeof useChat>);
+  }
+  const overlay = () => createElement(DashboardChat, { variant: "overlay" });
+  const jumpButton = () =>
+    screen.queryByRole("button", { name: "Jump to latest message" });
+
+  /** jsdom lays nothing out: give the scroller what a browser would measure. */
+  function sized(
+    scroller: HTMLElement,
+    scrollHeight: number,
+    scrollTop: number,
+  ) {
+    Object.defineProperties(scroller, {
+      scrollHeight: { configurable: true, value: scrollHeight },
+      scrollTop: { configurable: true, value: scrollTop, writable: true },
+      clientHeight: { configurable: true, value: 600 },
+    });
+    return scroller;
+  }
+
+  /**
+   * One animation frame, run after every frame queued before it, as a browser
+   * runs them. ★ Waiting on a frame rather than on the jump button: the
+   * button can appear while a frame queued earlier is still pending, and that
+   * stale frame then decides what a test sees.
+   */
+  const nextFrame = () =>
+    act(
+      () =>
+        new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        }),
+    );
+
+  /** The full view on chat A, left scrolled up (it stops following). */
+  async function leftScrolledUp() {
+    chat({ messages: chatA });
+    const view = render(overlay());
+    const scroller = sized(
+      screen.getByTestId("mink-message-scroller"),
+      1600,
+      200,
+    );
+    fireEvent.scroll(scroller);
+    await screen.findByRole("button", { name: "Jump to latest message" });
+    return { view, scroller };
+  }
+
+  it("★★ opens a view last left scrolled up at the chat's newest message, and follows new output", async () => {
+    const { view } = await leftScrolledUp();
+    // The full view is closed; its scroll-follow state outlives it.
+    chat({ messages: chatA, isChatOpen: false });
+    view.rerender(overlay());
+    expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+
+    // The "redesign ready" notice: the address open is counted before the
+    // chat loads, and the full view opens on what it had...
+    chat({ messages: chatA, addressOpens: 1, isHistoryLoading: true });
+    view.rerender(overlay());
+    const reopened = sized(
+      screen.getByTestId("mink-message-scroller"),
+      2400,
+      0,
+    );
+    // ...then the named chat lands.
+    chat({ messages: chatB, addressOpens: 1 });
+    view.rerender(overlay());
+
+    await waitFor(() => expect(reopened.scrollTop).toBe(2400));
+    expect(jumpButton()).toBeNull();
+
+    // ★ And it follows what arrives next (the card a stopped reply kept).
+    sized(reopened, 3200, 2400);
+    chat({
+      messages: [
+        ...chatB,
+        { id: "b-a2", role: "assistant" as const, text: "Here is the card." },
+      ],
+      addressOpens: 1,
+    });
+    view.rerender(overlay());
+    await waitFor(() => expect(reopened.scrollTop).toBe(3200));
+    expect(jumpButton()).toBeNull();
+  });
+
+  it("★★ the chat already open, loaded again from the address, moves to its newest message too, its draft untouched", async () => {
+    chat({ messages: chatA });
+    const view = render(overlay());
+    const scroller = sized(
+      screen.getByTestId("mink-message-scroller"),
+      1600,
+      200,
+    );
+    // ★ The merchant reads scrolled up for a while: every frame the view
+    //   queued has run, so only the address open can hide the button. With a
+    //   frame from the view's mount still pending, that frame hid it and this
+    //   test passed without the address open's own hide.
+    await nextFrame();
+    scroller.scrollTop = 200;
+    fireEvent.scroll(scroller);
+    await nextFrame();
+    expect(jumpButton()).not.toBeNull();
+
+    chat({
+      messages: chatA,
+      addressOpens: 1,
+      isHistoryLoading: true,
+      input: "Make the colours warmer",
+    });
+    view.rerender(overlay());
+    // The button goes before the chat lands, as when History is used.
+    await nextFrame();
+    expect(jumpButton()).toBeNull();
+
+    sized(scroller, 2000, 200);
+    chat({
+      messages: [
+        ...chatA.map((message) => ({ ...message })),
+        {
+          id: "a-a2",
+          role: "assistant" as const,
+          text: "Your storefront redesign is ready. You can review it here.",
+        },
+      ],
+      addressOpens: 1,
+      input: "Make the colours warmer",
+    });
+    view.rerender(overlay());
+
+    await waitFor(() => expect(scroller.scrollTop).toBe(2000));
+    expect(jumpButton()).toBeNull();
+    expect(screen.getByLabelText("Message Mink AI")).toHaveValue(
+      "Make the colours warmer",
+    );
+    expect(baseChatState.setInput).not.toHaveBeenCalled();
+  });
+
+  it("★★ opens at the newest message after the full view was closed mid-reply, not at the question that reply anchored", async () => {
+    const asked = [
+      ...chatA,
+      { id: "a-u2", role: "user" as const, text: "Redesign my store" },
+    ];
+    const answered = [
+      ...asked,
+      {
+        id: "a-a2",
+        role: "assistant" as const,
+        text: "I have started your storefront redesign.",
+      },
+    ];
+    chat({ messages: chatA });
+    const view = render(overlay());
+    sized(screen.getByTestId("mink-message-scroller"), 1200, 600);
+    await nextFrame();
+
+    // A question: the reply runs with it anchored at the top of the view.
+    chat({ messages: asked, isReplying: true, statusText: "Thinking…" });
+    view.rerender(overlay());
+    await nextFrame();
+    expect(scrollIntoView).toHaveBeenCalled();
+
+    // The full view is closed while Mink is still answering, and the answer
+    // lands while it is closed, so nothing positions it.
+    chat({
+      messages: asked,
+      isReplying: true,
+      statusText: "Thinking…",
+      isChatOpen: false,
+    });
+    view.rerender(overlay());
+    chat({ messages: answered, isChatOpen: false });
+    view.rerender(overlay());
+    await nextFrame();
+    scrollIntoView.mockClear();
+
+    // The "redesign ready" notice opens the same chat from the address.
+    chat({ messages: answered, addressOpens: 1, isHistoryLoading: true });
+    view.rerender(overlay());
+    const reopened = sized(
+      screen.getByTestId("mink-message-scroller"),
+      2400,
+      0,
+    );
+    await nextFrame();
+    chat({
+      messages: [
+        ...answered.map((message) => ({ ...message })),
+        {
+          id: "a-a3",
+          role: "assistant" as const,
+          text: "Your storefront redesign is ready. You can review it here.",
+        },
+      ],
+      addressOpens: 1,
+    });
+    view.rerender(overlay());
+
+    // ★ The old question is not scrolled back into view: the card is.
+    await waitFor(() => expect(reopened.scrollTop).toBe(2400));
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(jumpButton()).toBeNull();
+  });
+
+  it("leaves a reader scrolled up where they are while no chat is opened from the address", async () => {
+    const { view, scroller } = await leftScrolledUp();
+    sized(scroller, 2000, 200);
+    chat({
+      messages: [
+        ...chatA,
+        { id: "a-a2", role: "assistant" as const, text: "And one more thing." },
+      ],
+    });
+    view.rerender(overlay());
+
+    await waitFor(() => expect(jumpButton()).not.toBeNull());
+    expect(scroller.scrollTop).toBe(200);
+  });
+
+  it("★ choosing a chat in History does the same, at once", async () => {
+    const { view, scroller } = await leftScrolledUp();
+    chat({
+      messages: chatA,
+      conversations: [
+        {
+          id: "chat-b",
+          title: "Storefront redesign",
+          lastMessageAt: "2026-10-24T10:00:00.000Z",
+          createdAt: "2026-10-24T09:00:00.000Z",
+        },
+      ],
+    });
+    view.rerender(overlay());
+    const history = await screen.findByRole("complementary", {
+      name: "Mink AI conversations",
+    });
+    fireEvent.click(
+      Array.from(history.querySelectorAll("button")).find((button) =>
+        button.textContent?.includes("Storefront redesign"),
+      )!,
+    );
+
+    expect(baseChatState.loadConversation).toHaveBeenCalledWith("chat-b");
+    expect(jumpButton()).toBeNull();
+    sized(scroller, 2400, 200);
+    chat({ messages: chatB });
+    view.rerender(overlay());
+    await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+  });
+
+  describe("★ a search result chosen in History", () => {
+    const searched = (state: Record<string, unknown> = {}) =>
+      chat({
+        messages: chatA,
+        historySearchText: "redesign",
+        historySearch: {
+          query: "redesign",
+          words: ["redesign"],
+          results: [
+            {
+              id: "chat-b",
+              title: "Storefront redesign",
+              lastMessageAt: "2026-10-24T10:00:00.000Z",
+              createdAt: "2026-10-24T09:00:00.000Z",
+              hasRedesignCard: true,
+              snippet: "Your storefront «redesign» is ready.",
+              matchMessageId: "b-a1",
+            },
+          ],
+          cursor: null,
+          loading: false,
+          loadingMore: false,
+          error: null,
+        },
+        ...state,
+      });
+    const chatBWithRuns = [
+      { ...chatB[0], runId: "run-b1" },
+      { ...chatB[1], runId: "run-b1" },
+    ];
+
+    async function chooseResult(view: ReturnType<typeof render>) {
+      searched();
+      view.rerender(overlay());
+      const history = await screen.findByRole("complementary", {
+        name: "Mink AI conversations",
+      });
+      fireEvent.click(
+        Array.from(history.querySelectorAll("button")).find((button) =>
+          button.textContent?.includes("Storefront redesign"),
+        )!,
+      );
+    }
+
+    it("★ F11/F14: asks for its match, and opens at the newest message when the match could not be loaded", async () => {
+      const { view, scroller } = await leftScrolledUp();
+      await chooseResult(view);
+
+      expect(baseChatState.loadConversation).toHaveBeenCalledWith("chat-b", {
+        revealMessageId: "b-a1",
+      });
+      expect(jumpButton()).toBeNull();
+      // The match was further back than the pages read: nothing to reveal,
+      // so the chat starts at its newest message, not where chat A was left.
+      sized(scroller, 2400, 200);
+      searched({ messages: chatBWithRuns, revealTarget: null });
+      view.rerender(overlay());
+      await waitFor(() => expect(scroller.scrollTop).toBe(2400));
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    });
+
+    it("★ F11: a match that loaded is scrolled to after the thread's own scroll, so the match is what shows", async () => {
+      const { view, scroller } = await leftScrolledUp();
+      await chooseResult(view);
+      const scrolledFrom: number[] = [];
+      scrollIntoView.mockImplementation(() => {
+        scrolledFrom.push(scroller.scrollTop);
+      });
+
+      sized(scroller, 2400, 200);
+      searched({
+        messages: chatBWithRuns,
+        revealTarget: { messageId: "b-a1", runId: "run-b1", role: "assistant" },
+      });
+      view.rerender(overlay());
+      // The answer is reached through its question's row, in the middle.
+      await waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" }),
+      );
+      expect(scrolledFrom).toEqual([2400]);
+      expect(baseChatState.clearRevealTarget).toHaveBeenCalled();
+    });
+  });
+
+  // ★★ The thread's scroller is a new element each time the chat appears: the
+  //   panel opened again, or the switch between the side panel and the full
+  //   view (two instances, each with its own scroller). A new element starts
+  //   at its top, and nothing else moved it while the chat itself was
+  //   unchanged.
+  describe("★★ a scroller mounted over a chat in memory starts at its newest message", () => {
+    const panel = () => createElement(DashboardChat, { variant: "panel" });
+    const both = () =>
+      createElement(
+        Fragment,
+        null,
+        createElement(DashboardChat, { variant: "panel" }),
+        createElement(DashboardChat, { variant: "overlay" }),
+      );
+    const scroller = () => screen.getByTestId("mink-message-scroller");
+
+    /** The merchant scrolls up and reads: the view stops following. */
+    async function scrollUp(element: HTMLElement) {
+      element.scrollTop = 200;
+      fireEvent.scroll(element);
+      await nextFrame();
+      expect(jumpButton()).not.toBeNull();
+    }
+
+    it("★★ the panel opened again, even one left scrolled up", async () => {
+      chat({ messages: chatA, isExpanded: false });
+      const view = render(panel());
+      await nextFrame();
+      await scrollUp(sized(scroller(), 1600, 200));
+
+      chat({ messages: chatA, isExpanded: false, isChatOpen: false });
+      view.rerender(panel());
+      expect(screen.queryByTestId("mink-message-scroller")).toBeNull();
+
+      chat({ messages: chatA, isExpanded: false });
+      view.rerender(panel());
+      const reopened = sized(scroller(), 1600, 0);
+      await nextFrame();
+
+      expect(reopened.scrollTop).toBe(1600);
+      expect(jumpButton()).toBeNull();
+    });
+
+    it("★★ the side panel to the full view and back", async () => {
+      chat({ messages: chatA, isExpanded: false });
+      const view = render(both());
+      await nextFrame();
+      await scrollUp(sized(scroller(), 1600, 200));
+
+      chat({ messages: chatA });
+      view.rerender(both());
+      const full = sized(scroller(), 2400, 0);
+      await nextFrame();
+      expect(full.scrollTop).toBe(2400);
+      expect(jumpButton()).toBeNull();
+
+      await scrollUp(full);
+      chat({ messages: chatA, isExpanded: false });
+      view.rerender(both());
+      const side = sized(scroller(), 1600, 0);
+      await nextFrame();
+      expect(side.scrollTop).toBe(1600);
+      expect(jumpButton()).toBeNull();
+    });
+
+    it("★ while Mink is answering, the question stays anchored at the top, with its tail room", async () => {
+      const asked = [
+        ...chatA,
+        { id: "a-u2", role: "user" as const, text: "Redesign my store" },
+      ];
+      chat({ messages: chatA });
+      const view = render(overlay());
+      sized(scroller(), 1200, 600);
+      await nextFrame();
+      chat({ messages: asked, isReplying: true, statusText: "Thinking…" });
+      view.rerender(overlay());
+      await nextFrame();
+      expect(scrollIntoView).toHaveBeenCalledOnce();
+
+      // Closed and opened again before the answer lands.
+      chat({
+        messages: asked,
+        isReplying: true,
+        statusText: "Thinking…",
+        isChatOpen: false,
+      });
+      view.rerender(overlay());
+      chat({ messages: asked, isReplying: true, statusText: "Thinking…" });
+      view.rerender(overlay());
+      const reopened = sized(scroller(), 2400, 0);
+      await nextFrame();
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+      expect(scrollIntoView).toHaveBeenLastCalledWith({
+        block: "start",
+        behavior: "smooth",
+      });
+      expect(reopened.scrollTop).toBe(0);
+      expect(
+        screen.getByTestId("mink-turn-anchor-space").style.minHeight,
+      ).not.toBe("0px");
+    });
+  });
+});
+
+describe("★★ Stop asks the server, and is not offered once it refused (25 Oct 2026)", () => {
+  const REFUSED = "Mink has already started this, so it will finish.";
+  const asking = [{ id: "u1", role: "user", text: "Redesign my store" }];
+
+  it("asks the chat to stop the reply, once per press", () => {
+    const cancel = vi.fn(async () => ({ outcome: "stopped" as const }));
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: asking,
+      isReplying: true,
+      statusText: "Thinking…",
+      cancel,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop Mink AI" }));
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it("★ once refused, offers no Stop; the status line says why and the next message waits", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: asking,
+      input: "Make it blue",
+      isReplying: true,
+      stopRefused: true,
+      statusText: REFUSED,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.queryByRole("button", { name: "Stop Mink AI" })).toBeNull();
+    expect(screen.getByTestId("mink-pending-answer")).toHaveTextContent(
+      REFUSED,
+    );
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  });
+
+  it("★ the voice bar offers no Stop once refused either", () => {
+    voiceChat.value.enabled = true;
+    voiceChat.value.state = "waiting";
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: asking,
+      isReplying: true,
+      stopRefused: true,
+      statusText: REFUSED,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(screen.getByTestId("mink-voice-bar")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop Mink AI" })).toBeNull();
+    expect(screen.getByTestId("mink-pending-answer")).toHaveTextContent(
+      REFUSED,
+    );
+  });
+});
+
+describe("★★ one card per storefront redesign in a thread (25 Oct 2026)", () => {
+  const REVAMP_ID = "44444444-4444-4444-8444-444444444444";
+  const OTHER_ID = "55555555-5555-4555-8555-555555555555";
+  const revamp = (
+    revampId: string,
+    status: RevampStatus = "running",
+  ): RevampArtifact => ({
+    type: "storefront_revamp",
+    revampId,
+    kind: "full",
+    status,
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("revampIdsShownBefore: each message sees the redesigns earlier messages show", () => {
+    const shown = revampIdsShownBefore([
+      { artifacts: [] },
+      { artifacts: [revamp(REVAMP_ID)] },
+      {},
+      { artifacts: [revamp(REVAMP_ID, "queued"), revamp(OTHER_ID)] },
+      { artifacts: [revamp(OTHER_ID, "ready")] },
+    ]);
+    expect(shown.map((ids) => [...ids])).toEqual([
+      [],
+      [],
+      [REVAMP_ID],
+      [REVAMP_ID],
+      [REVAMP_ID, OTHER_ID],
+    ]);
+  });
+
+  it("★★ a later answer with the same redesign points back to its card, and Show it goes there", () => {
+    // The card reads its job on mount; held here, it shows what the answer said.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        { id: "u1", role: "user", text: "Redesign my store" },
+        {
+          id: "a1",
+          role: "assistant",
+          text: "Your storefront redesign has started.",
+          artifacts: [revamp(REVAMP_ID)],
+        },
+        { id: "u2", role: "user", text: "Redesign it again" },
+        {
+          id: "a2",
+          role: "assistant",
+          text: "Your redesign is still being made.",
+          artifacts: [revamp(REVAMP_ID, "queued")],
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    expect(
+      screen.getAllByRole("heading", { name: "Your store redesign" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByText("Your storefront redesign card is above."),
+    ).toBeVisible();
+    const card = document.getElementById(`revamp-card-${REVAMP_ID}`);
+    expect(card).not.toBeNull();
+    const goTo = vi.fn();
+    Object.defineProperty(card!, "scrollIntoView", { value: goTo });
+    fireEvent.click(screen.getByRole("button", { name: "Show it" }));
+    expect(goTo).toHaveBeenCalledOnce();
+    expect(card).toHaveFocus();
   });
 });

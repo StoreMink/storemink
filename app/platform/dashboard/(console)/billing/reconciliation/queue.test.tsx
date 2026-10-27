@@ -78,6 +78,57 @@ describe("the queue", () => {
     expect(screen.getByText(/needs attributing/i)).toBeInTheDocument();
   });
 
+  it("★★ says the store was DELETED, by name, instead of asking to attribute it", () => {
+    // deleteStore detaches the store's open items and marks them; sending the
+    // operator to attribute a payment whose store is gone wastes the one
+    // look it gets.
+    render(
+      <ReconciliationQueue
+        items={[
+          item({
+            storeId: null,
+            storeName: null,
+            detail: {
+              note: "captured amount differs from the attempt",
+              storeDeleted: true,
+              storeName: "Acme Retail",
+            },
+          }),
+        ]}
+        status="open"
+      />,
+    );
+    expect(screen.getByText("Acme Retail (store deleted)")).toBeInTheDocument();
+    expect(screen.queryByText(/needs attributing/i)).toBeNull();
+    // The sweep's reason is shown, not left in a column nobody renders.
+    expect(
+      screen.getByText("captured amount differs from the attempt"),
+    ).toBeInTheDocument();
+  });
+
+  it("★ a payment captured after its store was deleted says so", () => {
+    render(
+      <ReconciliationQueue
+        items={[
+          item({
+            storeId: null,
+            storeName: null,
+            kind: "orphan_payment",
+            detail: {
+              note: "payment captured for a deleted store",
+              storeDeleted: true,
+            },
+          }),
+        ]}
+        status="open"
+      />,
+    );
+    expect(screen.getByText("store deleted")).toBeInTheDocument();
+    expect(
+      screen.getByText("payment captured for a deleted store"),
+    ).toBeInTheDocument();
+  });
+
   it("shows the gateway payment id, which is what an operator searches on", () => {
     render(<ReconciliationQueue items={[item()]} status="open" />);
     expect(screen.getByText("pay_abc123")).toBeInTheDocument();

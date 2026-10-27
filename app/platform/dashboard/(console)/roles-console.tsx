@@ -206,7 +206,7 @@ export function RolesConsole({
                     <div className="dash-cell-sub mono">{role.slug}</div>
                   </td>
                   <td className="dash-cell-sub">
-                    {role.kind === "pos" ? "Register" : "Dashboard"}
+                    {role.kind === "pos" ? "POS" : "Dashboard"}
                   </td>
                   <td className="dash-cell-sub max-w-[360px]">
                     {role.description || "-"}
@@ -215,7 +215,7 @@ export function RolesConsole({
                     {role.slug === "superadmin"
                       ? "Full access"
                       : role.kind === "pos"
-                        ? "Register capabilities (set in code)"
+                        ? "POS capabilities (set in code)"
                         : `${viewable} view · ${manageable} manage`}
                   </td>
                   <td className="dash-cell-sub mono">{role.holders}</td>
@@ -401,7 +401,7 @@ function RoleEditorDialog({
           </DialogTitle>
           <DialogDescription>
             {isRegister
-              ? "A register role: its name and description show on every store's Staff page. What it can do at the counter is set in code."
+              ? "A POS role: its name and description show on every store's Staff page. What it can do in POS is set in code."
               : "Choose which dashboard sections this role can view and manage, on every store."}
           </DialogDescription>
         </DialogHeader>
@@ -471,9 +471,9 @@ function RoleEditorDialog({
               <div className="flex items-start gap-2 rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface-2)] px-3 py-3 text-sm text-[var(--dash-text-2)]">
                 <ScanLine className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  Register roles never reach the dashboard. Their counter
-                  capabilities (selling, returns, stock, the cash drawer) are
-                  fixed in code and cannot be edited here.
+                  POS roles never reach the dashboard. Their POS capabilities
+                  (selling, returns, stock, the cash drawer) are fixed in code
+                  and cannot be edited here.
                 </span>
               </div>
             ) : (

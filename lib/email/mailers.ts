@@ -101,8 +101,7 @@ export const MAILERS: MailerDef[] = [
   {
     key: "pos_staff_invite",
     label: "POS staff invite",
-    description:
-      "An invitation for a cashier or manager to set up register access.",
+    description: "An invitation for a cashier or manager to set up POS access.",
     // The registration link is a single-use token that creates their account.
     sensitive: true,
   },

@@ -11,7 +11,7 @@ import {
 } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 
-// Auth context: mock useAuth itself so AuthProvider's Supabase internals never
+// Auth context: mock useAuth itself so AuthProvider's Firebase internals never
 // run. The source imports via "../../components/auth/AuthProvider"; the "@/..."
 // specifier resolves to the same file (alias "@" -> project root).
 vi.mock("@/app/(storefront)/components/auth/AuthProvider", () => ({

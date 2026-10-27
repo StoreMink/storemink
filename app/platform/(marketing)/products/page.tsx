@@ -65,9 +65,9 @@ export default function ProductsPage() {
                 <RegisterArt compact />
               </div>
               <div className="smm-product-copy">
-                <h2>Point of Sale</h2>
+                <h2>Point of Sale (POS)</h2>
                 <p>
-                  A till for your shop that shares products, customers and stock
+                  A POS for your shop that shares products, customers and stock
                   with your website. Shifts, staff PINs, pickups and returns at
                   the counter.
                 </p>

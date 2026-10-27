@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { THEME_DEFINITIONS } from "@/lib/themes";
 import {
@@ -391,30 +391,54 @@ describe("Theme Studio contracts", () => {
     ).toBe(false);
   });
 
-  it("allows only reviewed lifecycle transitions", () => {
+  it("allows only the lifecycle transitions the database allows", () => {
     expect(canTransitionThemeStudioProject("draft", "generating")).toBe(true);
     expect(canTransitionThemeStudioProject("generating", "ready")).toBe(true);
+    // One-step publish: Publish moves a candidate to `approved`, the state a
+    // publish that did not finish waits in, then to `published`.
     expect(canTransitionThemeStudioProject("candidate", "approved")).toBe(true);
     expect(canTransitionThemeStudioProject("approved", "published")).toBe(true);
     expect(canTransitionThemeStudioProject("ready", "published")).toBe(false);
+    expect(canTransitionThemeStudioProject("ready", "approved")).toBe(false);
     expect(canTransitionThemeStudioProject("published", "generating")).toBe(
       false,
     );
     expect(canTransitionThemeStudioProject("archived", "draft")).toBe(false);
     expect(canTransitionThemeStudioProject("candidate", "ready")).toBe(true);
+    // A re-check before Publish (owner decision 4) steps back to generating,
+    // from Ready to publish and from a publish that did not finish.
+    expect(canTransitionThemeStudioProject("candidate", "generating")).toBe(
+      true,
+    );
+    expect(canTransitionThemeStudioProject("approved", "generating")).toBe(
+      true,
+    );
+    // There is no direct step back: a passed re-check goes ready, then
+    // candidate (re-check contract, item 4).
+    expect(canTransitionThemeStudioProject("generating", "candidate")).toBe(
+      false,
+    );
   });
 
-  it("matches the database project guard exactly (migration 0131)", () => {
+  it("matches the newest database project guard exactly (migration 0151)", () => {
     // The guard is the enforcement; this contract is the copy the actions
-    // read for friendly refusals. Parse the newest guard and compare every
-    // pair, so the two cannot drift apart silently.
-    const sql = readFileSync(
-      join(
-        process.cwd(),
-        "drizzle/migrations/sql/20260924_0131_theme_studio_acceptance.sql",
-      ),
-      "utf8",
-    );
+    // read for friendly refusals. Parse the NEWEST migration that defines the
+    // guard and compare every pair, so the two cannot drift apart silently.
+    const dir = join(process.cwd(), "drizzle/migrations/sql");
+    const definesGuard = readdirSync(dir)
+      .filter((name) => name.endsWith(".sql"))
+      .sort()
+      .filter((name) =>
+        readFileSync(join(dir, name), "utf8").includes(
+          "CREATE OR REPLACE FUNCTION public.theme_studio_project_guard",
+        ),
+      );
+    const newest = definesGuard[definesGuard.length - 1];
+    // One-step publish (0151) is the newest guard today. A later migration
+    // that replaces it must also be the one this test reads, so it fails
+    // here first, by name, rather than comparing against an older copy.
+    expect(newest).toBe("20261003_0151_theme_studio_single_step_publish.sql");
+    const sql = readFileSync(join(dir, newest), "utf8");
     const body = sql.slice(
       sql.indexOf(
         "CREATE OR REPLACE FUNCTION public.theme_studio_project_guard",

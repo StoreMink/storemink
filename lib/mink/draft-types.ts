@@ -34,6 +34,7 @@ export const MINK_DRAFT_KINDS = [
   "storefront_design",
   "website_builder",
   "media_image",
+  "storefront_personalization",
 ] as const;
 
 export type MinkDraftKind = (typeof MINK_DRAFT_KINDS)[number];
@@ -42,7 +43,11 @@ export type MinkDraftCreditSource =
   | "plan"
   | "credit"
   | "mixed"
-  | "plan_unlimited";
+  | "plan_unlimited"
+  // A storefront redesign the store gets at no charge (its first one).
+  // Nothing was taken from the plan or the balance, so it is its own source
+  // rather than a zero-priced "plan" row that would read as a spend.
+  | "free";
 
 export interface MinkDraftField {
   key: string;
@@ -485,6 +490,39 @@ export const MINK_DRAFT_CONFIG: Record<
         required: true,
         multiline: false,
         maxLength: 4,
+      },
+      {
+        key: "explanation",
+        label: "Explanation",
+        required: true,
+        multiline: true,
+        maxLength: 1_000,
+      },
+    ],
+  },
+  storefront_personalization: {
+    label: "Personalised storefront",
+    // ★ A BUNDLE PRICED AT TODAY'S PRICES, NOT A PRICE OF ITS OWN: each page
+    //   at a layout proposal's weight, each photo at a generated image's, the
+    //   look at a design proposal's, the header and footer at a Website
+    //   Builder change's (MINK_PERSONALIZATION_PRICES). The proposal passes
+    //   the total as `expectedCredits`; this figure is only the floor a
+    //   proposal with nothing in it would never reach.
+    expectedCredits: 3,
+    fields: [
+      {
+        key: "plan_digest",
+        label: "Plan digest",
+        required: true,
+        multiline: false,
+        maxLength: 64,
+      },
+      {
+        key: "plan_json",
+        label: "Personalisation plan",
+        required: true,
+        multiline: true,
+        maxLength: 1_500_000,
       },
       {
         key: "explanation",
@@ -949,6 +987,9 @@ export function normalizeMinkDraftContent(
       // and integers -- but its digest is what the approval is bound to, so
       // any rewrite between store and re-read is a false integrity failure.
       (kind === "storefront_design" && field.key === "design_json") ||
+      // The personalisation plan holds page sections and merchant-visible copy
+      // and is bound by its digest, exactly like the layout payload above.
+      (kind === "storefront_personalization" && field.key === "plan_json") ||
       kind === "product_images";
     const text =
       typeof input === "string"

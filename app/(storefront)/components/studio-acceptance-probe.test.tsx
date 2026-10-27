@@ -221,6 +221,62 @@ it("measures a storefront containing SVG icons and still detects clipped HTML te
     .innerText;
 });
 
+// A clip of a pixel or two is a warning and a larger one serious, so the
+// list must keep the largest clips when it is cut: forty card titles clipped
+// by 2px used to fill it before a heading clipped by 14px was ever measured.
+it("measures every clipped element before cutting the list, the largest clip first", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  Object.defineProperty(HTMLElement.prototype, "innerText", {
+    configurable: true,
+    get() {
+      return this.textContent ?? "";
+    },
+  });
+  const { container } = render(
+    <>
+      <StudioAcceptanceProbe />
+      {Array.from({ length: 40 }, (_, i) => (
+        <p
+          key={i}
+          className="card-title"
+          style={{ overflowX: "hidden", opacity: 1 }}
+        >
+          Card {i}
+        </p>
+      ))}
+      <h2 style={{ overflowY: "hidden", opacity: 1 }}>Heading cut in half</h2>
+    </>,
+  );
+  for (const title of container.querySelectorAll("p.card-title")) {
+    Object.defineProperties(title, {
+      scrollWidth: { value: 102 },
+      clientWidth: { value: 100 },
+    });
+  }
+  Object.defineProperties(container.querySelector("h2")!, {
+    scrollHeight: { value: 34 },
+    clientHeight: { value: 20 },
+  });
+  const pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  const evidence = await pending;
+  expect(evidence.clippedTextFound).toBe(41);
+  const listed = evidence.clippedText as {
+    target: string;
+    clippedX: number;
+    clippedY: number;
+  }[];
+  expect(listed).toHaveLength(40);
+  expect(listed[0]).toEqual({ target: "h2", clippedX: 0, clippedY: 14 });
+  // Equal clips keep their page order.
+  expect(listed[1]).toEqual({
+    target: "p.card-title",
+    clippedX: 2,
+    clippedY: 0,
+  });
+});
+
 it("keeps the contrast nodes axe could not judge, and opens the chrome states on the home page only", async () => {
   vi.useFakeTimers();
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
@@ -265,6 +321,7 @@ it("keeps the contrast nodes axe could not judge, and opens the chrome states on
       violations: [],
       contrastUnresolved: [],
       clippedText: [],
+      clippedTextFound: 0,
       smallTapTargets: [],
     })),
   );

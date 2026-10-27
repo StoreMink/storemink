@@ -112,7 +112,7 @@ export const MINK_MEDIA_PURPOSE_SPECS: Record<
     placement: "the editorial cover above a blog post",
   },
   product: {
-    label: "Catalogue product photo",
+    label: "Product photo",
     // The portrait card is the storefront default; a square-card store gets
     // 1:1 through `aspectRatioFor(purpose, "square")`.
     aspectRatio: "3:4",
@@ -159,7 +159,17 @@ export interface MinkMediaGenerationRequest {
   alt: string;
   /** Only for purpose `product`; read from the store, never from the caller. */
   productPhotoShape?: MinkProductPhotoShape;
+  /**
+   * The exact frame of the storefront slot the picture is for, when a
+   * storefront personalisation draws it. ★ SET BY THE SERVER from the
+   * section's own ratio setting, never by the model: the request validator
+   * does not accept the key, so a tool argument cannot reach it.
+   */
+  slotAspectRatio?: MinkSlotAspectRatio;
 }
+
+/** The frames a storefront slot renders in (lib/media/image-specs.ts). */
+export type MinkSlotAspectRatio = "21:9" | "4:5" | "1:1" | "4:3";
 
 export function validateMinkMediaGenerationRequest(
   input: unknown,
@@ -251,7 +261,9 @@ export function validateMinkMediaGenerationRequest(
 export function aspectRatioFor(
   purpose: MinkMediaPurpose,
   productPhotoShape?: MinkProductPhotoShape,
+  slotAspectRatio?: MinkSlotAspectRatio,
 ): string {
+  if (slotAspectRatio && purpose !== "product") return slotAspectRatio;
   if (purpose === "product" && productPhotoShape === "square") return "1:1";
   return MINK_MEDIA_PURPOSE_SPECS[purpose].aspectRatio;
 }
@@ -315,6 +327,19 @@ export function isMinkGeneratedCampaignArtUrl(url: string): boolean {
 /** A URL under the catalogue-photo folder: generated for one product's photo. */
 export function isMinkGeneratedProductPhotoUrl(url: string): boolean {
   return url.includes(`/${MINK_GENERATED_PRODUCT_PHOTO_FOLDER}/`);
+}
+
+/**
+ * A picture Mink AI drew: anything Mink generated in chat, or a scene photo
+ * from the photo editor (`edited/ai-…`). Such a picture can continue a scene,
+ * but it is never the evidence that a product exists: that has to be a real
+ * photo of the item.
+ */
+export function isMinkAiMadePhotoUrl(url: string): boolean {
+  return (
+    url.includes(`/${MINK_GENERATED_MEDIA_FOLDER}/`) ||
+    url.includes("/edited/ai-")
+  );
 }
 
 export class MinkMediaContentError extends Error {

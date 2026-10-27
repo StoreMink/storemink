@@ -13,6 +13,13 @@ const source = () =>
   )
     .webp()
     .toBuffer();
+// ★ These tests push full-page screenshots through sharp, and vitest's 5 s
+// default is a guess about the machine, not a property of the work. The
+// 2880x10000 desktop shot below is the heaviest (about 1.7 s alone) and timed
+// out at 5 s in a full-suite run at about 640% CPU, so it gets 30 s. The two
+// phone-width pages after it do the same prepare and build work on a fraction
+// of the pixels and get 10 s. The cancellation test stops after its first load
+// and keeps the default.
 it("capture preserves a long phone page's width and bounds desktop width before storage", async () => {
   const phone = await prepareVisualScreenshot(await source());
   expect(phone).toMatchObject({ width: 390, height: 6000 });
@@ -25,7 +32,7 @@ it("capture preserves a long phone page's width and bounds desktop width before 
       .toBuffer(),
   );
   expect(desktop).toMatchObject({ width: 1440, height: 5000 });
-});
+}, 30000);
 it("preserves native phone width and shows top, middle and footer instead of a 55px strip", async () => {
   const blocks = await buildVisualEvidence(
     [sample],
@@ -53,7 +60,7 @@ it("preserves native phone width and shows top, middle and footer instead of a 5
   expect(pixel(1216)[1]).toBeGreaterThan(240);
   expect(pixel(2032)[2]).toBeGreaterThan(240);
   expect(blocks.filter((b) => b.type === "image")).toHaveLength(2);
-});
+}, 10000);
 it("stores very tall pages as PNG without exceeding WebP's height limit or shrinking phone text", async () => {
   const original = await sharp({
     create: { width: 390, height: 17000, channels: 3, background: "white" },
@@ -77,7 +84,7 @@ it("stores very tall pages as PNG without exceeding WebP's height limit or shrin
   expect(
     await sharp(Buffer.from(detail.base64, "base64")).metadata(),
   ).toMatchObject({ width: 390, height: 2432, format: "webp" });
-});
+}, 10000);
 it("loads and processes one full screenshot at a time and stops after cancellation", async () => {
   const controller = new AbortController();
   const load = vi.fn(async () => {

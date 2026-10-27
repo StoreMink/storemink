@@ -190,10 +190,6 @@ export function MinkBuilderProposalCard({
       <p className="mt-1 text-gray-600">
         {active?.explanation ?? proposal.explanation}
       </p>
-      <p className="mt-2 text-xs text-gray-500">
-        {proposal.chargedCredits} Mink credit
-        {proposal.chargedCredits === 1 ? "" : "s"} used to prepare this
-      </p>
       {!done && (
         <p className="mt-2 font-medium text-gray-700">
           {(active?.live ?? proposal.live)
@@ -300,8 +296,7 @@ export function MinkBuilderProposalCard({
               ) : (
                 <p className="mt-1 text-gray-600">
                   Review the whole saved draft, including other unpublished
-                  edits, then approve its publication in chat. Preparing that
-                  takes 2 Mink credits.
+                  edits, then approve its publication in chat.
                 </p>
               )}
               {onPrompt ? (

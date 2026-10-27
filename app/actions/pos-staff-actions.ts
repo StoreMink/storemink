@@ -470,7 +470,7 @@ export async function deleteStaff(id: string): Promise<ActionResult> {
     return {
       success: true,
       warning:
-        "Staff member removed, but their sign-in account couldn't be deleted. They can no longer use the register. Remove the account in Identity Platform before inviting this email again.",
+        "Staff member removed, but their sign-in account couldn't be deleted. They can no longer use POS. Remove the account in Identity Platform before inviting this email again.",
     };
   }
   return { success: true };
@@ -622,7 +622,7 @@ export async function completeStaffRegistration(
       error:
         adminRows === null
           ? "Couldn't verify this account. Please try again."
-          : "This email is already a dashboard admin, and staff accounts can't sign in to the dashboard. Ask for the invitation to be sent to a different address - as an owner or admin you can already use the register without one.",
+          : "This email is already a dashboard admin, and staff accounts can't sign in to the dashboard. Ask for the invitation to be sent to a different address - as an owner or admin you can already use POS without one.",
     };
   }
 

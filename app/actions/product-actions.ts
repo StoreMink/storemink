@@ -42,9 +42,16 @@ import {
 } from "@/lib/storage/ownership";
 import { notifyStoreContentPublished } from "@/lib/seo/store-indexing";
 import { TAGS } from "@/lib/storefront/tags";
-import { callGemini, brandSystemText } from "@/lib/ai/gemini";
+import {
+  AI_PROMPT_SHORT_FIELD_MAX,
+  AI_UNUSABLE_MESSAGE,
+  callGemini,
+  brandSystemText,
+  promptText,
+} from "@/lib/ai/gemini";
 import { getBrandSoulForStore } from "@/lib/ai/brand-voice";
-import { consumeAiQuota } from "@/lib/ai/quota";
+import { withAiCredit } from "@/lib/ai/credited-copy";
+import { logWarn } from "@/lib/observability/logger";
 import { storeHasAnalyticsFeature } from "@/lib/analytics/store-entitlement";
 import {
   assertCanCreateProduct,
@@ -650,7 +657,7 @@ export async function createProduct(
         const created = await db
           .insert(products)
           // sku / sku_no are NOT NULL but owned by the BEFORE-INSERT trigger
-          // (identifiers_04_triggers.sql) — the app must never send them, so
+          // (products_set_sku) — the app must never send them, so
           // the insert type is asserted past those two columns.
           .values(row(slug) as typeof products.$inferInsert)
           .returning();
@@ -1135,7 +1142,7 @@ export interface DescriptionResult {
 }
 
 // Used if product-desc.md can't be read, so the button never hard-fails.
-const FALLBACK_TASK = `Write ONE product description of roughly 40–60 words in the brand's voice, using only the product details provided. Output only the description text - no preamble, no options, no notes, no quotation marks, no markdown. Lead with the belief or the real ingredients, never a number. If a detail isn't provided, leave it out - never invent a fact.`;
+const FALLBACK_TASK = `Write ONE product description of roughly 40 to 60 words in the brand's voice, using only the product details provided. Output only the description text - no preamble, no options, no notes, no quotation marks, no markdown. Lead with the belief or the real ingredients, never a number. If a detail isn't provided, leave it out - never invent a fact.`;
 
 // The task layer lives in brand/tasks/ (deployed app content). The /product-desc
 // slash command points to the SAME file, so both surfaces stay in sync.
@@ -1152,9 +1159,25 @@ async function loadTaskRules(): Promise<string> {
   }
 }
 
+/** At most this many variant names go into a prompt (the editor's limit). */
+const MAX_PROMPT_VARIANTS = 100;
+
+/** A positive price as the prompt may state it; anything else is left out. */
+function promptPrice(value: unknown): number | null {
+  const price =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.length <= 20
+        ? Number(value)
+        : Number.NaN;
+  return Number.isFinite(price) && price > 0 ? price : null;
+}
+
 // Turn the form fields into a flat, fact-only list for the prompt. Only fields
 // that are actually present are included — the brand rules forbid inventing
 // anything, so we never send blanks the model might try to fill.
+// ★ Every field is bounded (`promptText`): this is a server action, so the
+//   form's own limits are not what reaches the model.
 function buildProductFacts(input: {
   name: string;
   categoryName?: string | null;
@@ -1164,18 +1187,26 @@ function buildProductFacts(input: {
   description?: string;
   notes?: string;
 }): string[] {
-  const facts: string[] = [`Product name: ${input.name.trim()}`];
-  if (input.categoryName) facts.push(`Category: ${input.categoryName}`);
-  if (input.base_price && input.base_price > 0)
-    facts.push(`Base price (MRP): ₹${input.base_price}`);
-  if (input.selling_price && input.selling_price > 0)
-    facts.push(`Selling price: ₹${input.selling_price}`);
-  if (input.variants && input.variants.length > 0)
-    facts.push(`Variants: ${input.variants.join(", ")}`);
-  if (input.description && input.description.trim())
-    facts.push(`Product description: ${input.description.trim()}`);
-  if (input.notes && input.notes.trim())
-    facts.push(`Notes typed in the description field: ${input.notes.trim()}`);
+  const facts: string[] = [
+    `Product name: ${promptText(input.name, AI_PROMPT_SHORT_FIELD_MAX)}`,
+  ];
+  const category = promptText(input.categoryName, AI_PROMPT_SHORT_FIELD_MAX);
+  if (category) facts.push(`Category: ${category}`);
+  const basePrice = promptPrice(input.base_price);
+  if (basePrice) facts.push(`Base price (MRP): ₹${basePrice}`);
+  const sellingPrice = promptPrice(input.selling_price);
+  if (sellingPrice) facts.push(`Selling price: ₹${sellingPrice}`);
+  const variants = Array.isArray(input.variants)
+    ? input.variants
+        .slice(0, MAX_PROMPT_VARIANTS)
+        .map((variant) => promptText(variant, AI_PROMPT_SHORT_FIELD_MAX))
+        .filter(Boolean)
+    : [];
+  if (variants.length > 0) facts.push(`Variants: ${variants.join(", ")}`);
+  const description = promptText(input.description);
+  if (description) facts.push(`Product description: ${description}`);
+  const notes = promptText(input.notes);
+  if (notes) facts.push(`Notes typed in the description field: ${notes}`);
   return facts;
 }
 
@@ -1185,36 +1216,37 @@ export async function generateProductDescription(
   const admin = await getAdminIdentity();
   if (!admin) return { error: "Not authenticated" };
 
-  if (!input.name?.trim()) {
+  if (!promptText(input?.name, AI_PROMPT_SHORT_FIELD_MAX)) {
     return { error: "Add a product name first." };
   }
 
-  // Meter the generation against the store's plan cap BEFORE calling Gemini.
+  // ★ The credit is taken before the model is asked (the store's rates
+  // first), and every way out that does not hand the merchant a description
+  // gives it back: a failed or busy model, an empty reply, or a throw on the
+  // way (robustness audit B1; lib/ai/credited-copy.ts).
   const storeId = await getActingStoreId();
-  const quota = await consumeAiQuota(storeId);
-  if (!quota.allowed) return { error: quota.error };
+  return withAiCredit({ storeId, actorId: admin.uid }, async () => {
+    // The store's brand soul (per-store, generic fallback when unset) +
+    // product-desc.md (task rules) + form fields → Gemini.
+    const brand = await getBrandSoulForStore(storeId);
 
-  // The store's brand soul (per-store, generic fallback when unset) +
-  // product-desc.md (task rules) + form fields → Gemini.
-  const brand = await getBrandSoulForStore(storeId);
+    const taskRules = await loadTaskRules();
+    const facts = buildProductFacts(input);
 
-  const taskRules = await loadTaskRules();
-  const facts = buildProductFacts(input);
-
-  const userText = `${taskRules}
+    const userText = `${taskRules}
 
 ---
 PRODUCT DETAILS - the only source of facts. Never invent anything beyond these:
 
 ${facts.join("\n")}`;
 
-  const { text, error } = await callGemini(brandSystemText(brand), userText, {
-    temperature: 0.7,
-    maxOutputTokens: 1024,
+    const { text, error } = await callGemini(brandSystemText(brand), userText, {
+      temperature: 0.7,
+      maxOutputTokens: 1024,
+    });
+    if (error || !text) return { error: error ?? AI_UNUSABLE_MESSAGE };
+    return { description: text };
   });
-  if (error) return { error };
-
-  return { description: text };
 }
 
 // ---------------------------------------------------------------------------
@@ -1242,7 +1274,7 @@ export interface SeoResult {
   error?: string;
 }
 
-const FALLBACK_SEO_TASK = `Return ONLY a JSON object with two string keys, "seo_title" and "seo_description". seo_title: ~50–60 characters (never over 60), lead with the product name, plain and searchable, no hype or caps. seo_description: ~140–160 characters (never over 160), one or two calm sentences in the brand's voice saying what it is and why it's real, no hard sell, no urgency, no medical claims. Use only the product details provided - never invent a fact or number. Output the raw JSON only: no markdown, no code fences, no extra text.`;
+const FALLBACK_SEO_TASK = `Return ONLY a JSON object with two string keys, "seo_title" and "seo_description". seo_title: about 50 to 60 characters (never over 60), lead with the product name, plain and searchable, no hype or caps. seo_description: about 140 to 160 characters (never over 160), one or two calm sentences in the brand's voice saying what it is and why it's real, no hard sell, no urgency, no medical claims. Use only the product details provided - never invent a fact or number. Output the raw JSON only: no markdown, no code fences, no extra text.`;
 
 async function loadSeoTaskRules(): Promise<string> {
   try {
@@ -1256,65 +1288,70 @@ async function loadSeoTaskRules(): Promise<string> {
   }
 }
 
-// JSON shape we force Gemini to return (uppercase Type enum, per the REST API).
+// The JSON shape Gemini must return, as a JSON Schema (sent as
+// responseJsonSchema: see GeminiOptions in lib/ai/gemini.ts).
 const SEO_SCHEMA = {
-  type: "OBJECT",
+  type: "object",
   properties: {
-    seo_title: { type: "STRING" },
-    seo_description: { type: "STRING" },
+    seo_title: { type: "string" },
+    seo_description: { type: "string" },
   },
   required: ["seo_title", "seo_description"],
-  propertyOrdering: ["seo_title", "seo_description"],
+  additionalProperties: false,
 };
 
 export async function generateProductSeo(input: SeoInput): Promise<SeoResult> {
   const admin = await getAdminIdentity();
   if (!admin) return { error: "Not authenticated" };
 
-  if (!input.name?.trim()) {
+  if (!promptText(input?.name, AI_PROMPT_SHORT_FIELD_MAX)) {
     return { error: "Add a product name first." };
   }
-  if (!input.description?.trim()) {
+  if (!promptText(input.description)) {
     return { error: "Fill in the product description before generating SEO." };
   }
 
+  // ★ The credit is taken first (the store's rates before it), so a failed
+  // model call, a reply that is not the JSON asked for, or a throw on the way
+  // gives it back (audit B1; lib/ai/credited-copy.ts).
   const storeId = await getActingStoreId();
-  const quota = await consumeAiQuota(storeId);
-  if (!quota.allowed) return { error: quota.error };
+  return withAiCredit({ storeId, actorId: admin.uid }, async () => {
+    const brand = await getBrandSoulForStore(storeId);
 
-  const brand = await getBrandSoulForStore(storeId);
+    const taskRules = await loadSeoTaskRules();
+    const facts = buildProductFacts(input);
 
-  const taskRules = await loadSeoTaskRules();
-  const facts = buildProductFacts(input);
-
-  const userText = `${taskRules}
+    const userText = `${taskRules}
 
 ---
 PRODUCT DETAILS - the only source of facts. Never invent anything beyond these:
 
 ${facts.join("\n")}`;
 
-  const { text, error } = await callGemini(brandSystemText(brand), userText, {
-    temperature: 0.5,
-    maxOutputTokens: 512,
-    responseMimeType: "application/json",
-    responseSchema: SEO_SCHEMA,
+    const { text, error } = await callGemini(brandSystemText(brand), userText, {
+      temperature: 0.5,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+      responseJsonSchema: SEO_SCHEMA,
+    });
+    if (error || !text) return { error: error ?? AI_UNUSABLE_MESSAGE };
+
+    let parsed: { seo_title?: unknown; seo_description?: unknown } | null =
+      null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // Content-free: the reply is product copy, so only its size is logged.
+      logWarn("ai.copy: SEO reply was not JSON", { length: text.length });
+      return { error: AI_UNUSABLE_MESSAGE };
+    }
+
+    const title = parsed?.seo_title;
+    const description = parsed?.seo_description;
+    const seo_title = typeof title === "string" ? title.trim() : "";
+    const seo_description =
+      typeof description === "string" ? description.trim() : "";
+    if (!seo_title || !seo_description) return { error: AI_UNUSABLE_MESSAGE };
+    return { seo_title, seo_description };
   });
-  if (error) return { error };
-
-  let parsed: { seo_title?: string; seo_description?: string } | null = null;
-  try {
-    parsed = JSON.parse(text!);
-  } catch {
-    console.error("SEO JSON parse failed:", text);
-    return { error: "The AI returned an unexpected format. Try again." };
-  }
-
-  const seo_title = parsed?.seo_title?.trim();
-  const seo_description = parsed?.seo_description?.trim();
-  if (!seo_title || !seo_description) {
-    return { error: "The AI response was incomplete. Try again." };
-  }
-
-  return { seo_title, seo_description };
 }

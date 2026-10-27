@@ -1,5 +1,24 @@
-import type { GateResult } from "./acceptance-gates";
+import { gateBlocks, type GateResult } from "./acceptance-gates";
+import { isSeriousFinding } from "./finding-severity";
 import type { Scores } from "./scorecard";
+
+/** Where an axe finding's selectors start in its message: "; examples: "
+ * or "; first: " since severity-v1, and the same after an em dash (written
+ * by its code point, so no dash sits in this file) in evidence stored
+ * before it. */
+const AXE_SELECTORS_RE = new RegExp(
+  `(?:; | ${String.fromCharCode(0x2014)} )(?:examples|first): `,
+);
+
+/** The gates that stop a run, each with the findings that make it stop:
+ * its serious ones. Warnings never count as a fault to repair or as a
+ * pattern that must not return, so they cannot drive a paid revision or
+ * end the repairs early (finding-severity.ts). */
+function seriousFailures(gates: readonly GateResult[]) {
+  return gates
+    .filter(gateBlocks)
+    .map((g) => ({ gate: g, findings: g.findings.filter(isSeriousFinding) }));
+}
 
 export interface QaRepair {
   kind: "settings" | "image" | "renderer";
@@ -30,12 +49,12 @@ export function qaProgress(
   let severity = 0;
   const contrastDeficits: Record<string, number> = {};
   const patternSeverity: Record<string, number> = {};
-  for (const g of gates.filter((g) => g.required && g.status !== "pass")) {
-    if (!g.findings.length) patterns.push(`${g.id}:incomplete`);
-    for (const f of g.findings) {
+  for (const { gate: g, findings } of seriousFailures(gates)) {
+    if (!findings.length) patterns.push(`${g.id}:incomplete`);
+    for (const f of findings) {
       // Browser messages carry a selector in parentheses or axe examples.
       const selector =
-        f.message.split(/ — (?:examples|first): /)[1]?.replace(/: .*$/, "") ??
+        f.message.split(AXE_SELECTORS_RE)[1]?.replace(/: .*$/, "") ??
         (g.id !== "browser.accessibility"
           ? f.message.match(/\(([^)]+)\)/)?.[1]
           : "") ??
@@ -134,29 +153,33 @@ export function qaImproved(current: QaProgress, previous: QaProgress): boolean {
 }
 
 /** Classify deterministic failures by the authority the theme package has.
- * An image redraw cannot change a frame or a button's hit area. */
+ * An image redraw cannot change a frame or a button's hit area. Only the
+ * serious findings of the gates that stop the run are repaired: a warning
+ * never asks for paid work, and a renderer-only warning (a small tap target,
+ * the page's language) can never turn a repairable run into a renderer
+ * stop. Security-like markup (`routes.markup` external_resource) is filed
+ * as renderer work here and stays serious: severity is set by
+ * finding-severity.ts, never by the repair route. */
 export function deterministicRepairs(gates: readonly GateResult[]): QaRepair[] {
-  return gates
-    .filter((g) => g.required && g.status !== "pass")
-    .flatMap((g) => {
-      const findings = g.findings.length
-        ? g.findings
-        : [{ code: "incomplete", message: "Required evidence is incomplete." }];
-      return findings.map((f) => ({
-        // A slow paint or a layout shift is the platform's to fix (image
-        // sizing, preload, reserved space); a settings edit cannot be
-        // trusted to move it, and a paid revision is not the answer.
-        kind: (g.id === "browser.tap_targets" ||
-        g.id === "routes.markup" ||
-        g.id === "browser.performance" ||
-        (g.id === "browser.accessibility" &&
-          !["color-contrast", "contrast"].includes(f.code))
-          ? "renderer"
-          : "settings") as QaRepair["kind"],
-        target: null,
-        reason: `${g.label}: ${f.message}`.slice(0, 800),
-      }));
-    });
+  return seriousFailures(gates).flatMap(({ gate: g, findings: serious }) => {
+    const findings = serious.length
+      ? serious
+      : [{ code: "incomplete", message: "Required evidence is incomplete." }];
+    return findings.map((f) => ({
+      // A slow paint or a layout shift is the platform's to fix (image
+      // sizing, preload, reserved space); a settings edit cannot be
+      // trusted to move it, and a paid revision is not the answer.
+      kind: (g.id === "browser.tap_targets" ||
+      g.id === "routes.markup" ||
+      g.id === "browser.performance" ||
+      (g.id === "browser.accessibility" &&
+        !["color-contrast", "contrast"].includes(f.code))
+        ? "renderer"
+        : "settings") as QaRepair["kind"],
+      target: null,
+      reason: `${g.label}: ${f.message}`.slice(0, 800),
+    }));
+  });
 }
 
 export function parseQaRepairs(raw: unknown): QaRepair[] | null {

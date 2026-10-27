@@ -1,7 +1,7 @@
 import { estimateCostMicroUsd } from "./cost";
 import { abortable } from "./abortable";
 import type { ThemeImagePurpose } from "./image-provider";
-import type { ThemeImageBrief } from "./image-prompt";
+import type { ThemeImageBrief, ThemeImageGoods } from "./image-prompt";
 import type { ThemeStudioModelKey } from "./models";
 import {
   ZERO_USAGE,
@@ -16,11 +16,12 @@ import {
 //
 // The image model follows its prompt most of the time, not every time: a
 // label appears on a mug, a second product wanders into a pack shot, a handle
-// melts into the body. A human reviewer catches these at approval, but by then
-// the image is in a version, and redrawing means another run. So each image is
-// shown, as it will be cropped for its slot, to a fast vision model with the
-// anchor (and, for a product, the first product shot) beside it, and a
-// rejected image is redrawn once with the reviewer's findings.
+// melts into the body. Caught later, by the theme's final checks or by the
+// operator in the preview, the image is already in a version, and redrawing
+// it means another run. So each image is shown, as it will be cropped for its
+// slot, to a fast vision model with the anchor (and, for a product, the first
+// product shot) beside it, and a rejected image is redrawn once with the
+// reviewer's findings.
 //
 // ★ THE REVIEWER NAMES PROBLEMS FROM A FIXED LIST; CODE DECIDES. It never
 // returns a verdict of its own: an image passes when no applicable problem is
@@ -40,10 +41,25 @@ import {
 // allows adults, harm filters) already ran. A reviewer outage must not throw away images that were paid
 // for; the run records which images went unreviewed.
 //
+// ★ A CHECK RUNS EACH TRY ON ITS OWN CLOCK (gemini-vertex.ts,
+// IMAGE_REVIEW_TRY_TIMEOUT_MS) and waits only 10 to 20 s after a 429. How long
+// one image's check may take in all is the caller's to bound, through the
+// signal it passes: the storefront revamp gives each photo about four
+// minutes (photos.ts, REVAMP_PHOTO_CHECK_BUDGET_MS).
+//
 // ★ Everything inside the images, and the brief text (written by the Stage A
 // model), is data. The system prompt says so, and nothing the reviewer writes
 // is ever executed: its problems are enum values and its note is only ever
 // shown to the operator and, cleaned, to the image model on a redraw.
+//
+// ★★ THE MINK STOREFRONT REDESIGN'S GOODS RULE (B16) rides in the content of
+// its own checks only (`goods`): a picture that must show no products fails as
+// wrong_subject when it shows a packaged product, and one of the merchant's
+// goods fails as wrong_subject when it shows a different or invented product.
+// No new problem exists for it, because the problem list is the response
+// schema Theme Studio's checks are keyed on. Without `goods` (every Theme
+// Studio check) the system text and the content are exactly what they were
+// (image-prompt.golden.json).
 // ---------------------------------------------------------------------------
 
 export const THEME_IMAGE_REVIEW_PROMPT_VERSION = "theme-studio-image-review-v7";
@@ -151,6 +167,13 @@ export interface ThemeImageReviewInput {
   set: string | null;
   /** 1 for a first attempt, 2 for a redraw. */
   attempt: number;
+  /**
+   * The goods the CANDIDATE must show, for a Mink storefront redesign picture
+   * only (B16, image-prompt.ts `goodsRule`): the merchant's own products,
+   * whose photographs are shown beside it, or none. Absent on every Theme
+   * Studio check.
+   */
+  goods?: ThemeImageGoods;
 }
 
 export type ThemeImageReview =
@@ -237,6 +260,26 @@ function clean(value: string, max: number): string {
   return value.replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+/** A product's name as the reviewer reads it: data, quoted, bounded. */
+function productName(name: string): string {
+  return `"${clean(name.replace(/["<>]/g, ""), 80) || "the product"}"`;
+}
+
+/**
+ * The redesign's goods rule as the reviewer is told it (B16). ★ It takes
+ * precedence over the general rules where they differ: a merchant's real
+ * product may carry lettering on its own label, which Theme Studio's
+ * fictional goods never do.
+ */
+export function themeImageGoodsReviewText(goods: ThemeImageGoods): string {
+  const lead =
+    "GOODS (StoreMink's own rule for this image; it takes precedence over the general rules where they differ):";
+  if (goods.kind === "none" || goods.products.length === 0) {
+    return `${lead} this image must show no products at all, only a setting, a surface, materials, ingredients or props. Report wrong_subject when the CANDIDATE shows any packaged product, or any item that could be taken for something the store sells (a bottle, jar, tube, box, bag, package, garment, shoe or piece of jewellery), even when the subject mentions one.`;
+  }
+  return `${lead} this image must show the store's own real products, each shown in a PRODUCT image below and named here as data: ${goods.products.map((product) => productName(product.name)).join("; ")}. Report wrong_subject when none of them appears, when a product in the CANDIDATE is not one of them (a different shape, colour, material or packaging, or an invented product), or when the CANDIDATE adds goods beyond them. Label artwork that is on a product in its PRODUCT image, any lettering on it included, is part of that product: do not report text_or_logo for it. Report text_or_logo for any other lettering, number, logo or watermark, including lettering on a product that its PRODUCT image does not show.`;
+}
+
 export function themeImageReviewContent(
   input: ThemeImageReviewInput,
 ): ThemeStudioContentBlock[] {
@@ -253,6 +296,15 @@ export function themeImageReviewContent(
         `Problems you may report for this image: ${applicableProblems(input).join(", ")}.`,
       ].join("\n"),
     },
+    // ★ Only a redesign check carries goods (B16).
+    ...(input.goods
+      ? [
+          {
+            type: "text" as const,
+            text: themeImageGoodsReviewText(input.goods),
+          },
+        ]
+      : []),
     { type: "text", text: "CANDIDATE:" },
     { type: "image", mediaType: "image/webp", base64: input.candidate },
   ];
@@ -273,6 +325,21 @@ export function themeImageReviewContent(
       },
       { type: "image", mediaType: "image/webp", base64: input.set },
     );
+  }
+  if (input.goods?.kind === "merchant") {
+    for (const product of input.goods.products) {
+      blocks.push(
+        {
+          type: "text",
+          text: `PRODUCT (the store's own photograph of ${productName(product.name)}; the CANDIDATE should show this product as it appears here, in its own setting):`,
+        },
+        {
+          type: "image",
+          mediaType: product.reference.mediaType,
+          base64: product.reference.base64,
+        },
+      );
+    }
   }
   return blocks;
 }
@@ -330,9 +397,12 @@ export async function reviewThemeImage(
   try {
     result = await abortable(() => client.generate(request, signal), signal);
   } catch {
+    // ★ A check the caller stopped (its run, or a budget it gave the check)
+    //   is "cancelled", the word the client uses for the same stop; anything
+    //   else that throws is an outage.
     return {
       kind: "unavailable",
-      code: "provider_unavailable",
+      code: signal.aborted ? "cancelled" : "provider_unavailable",
       usage: ZERO_USAGE,
       estimatedCostMicroUsd: 0,
     };

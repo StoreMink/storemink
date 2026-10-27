@@ -1,7 +1,8 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { uploadImage } from "@/lib/storage/uploads";
 import {
   UploadCloud,
@@ -11,12 +12,24 @@ import {
   Sparkles,
   Ruler,
   AlertTriangle,
+  Eraser,
 } from "lucide-react";
 import { Button } from "./button";
 import { ImageSourceMenu } from "./image-source-menu";
-import { useImageRefineAvailable } from "./image-refine-context";
 import {
-  IMAGE_REFINE_CREDITS,
+  useImageBackgroundAvailable,
+  useImageRefineAvailable,
+  useImageRefineScope,
+  useImageRefineView,
+} from "./image-refine-context";
+import {
+  refineMatchKey,
+  releaseImageRefines,
+  settleImageRefine,
+  startImageRefine,
+} from "./image-refine-registry";
+import { BackgroundEditor } from "./background-editor";
+import {
   IMAGE_SPECS,
   imageFitWarning,
   type ImageSpecKey,
@@ -29,14 +42,16 @@ interface ImageUploadProps {
   className?: string;
   /**
    * The slot this image fills (`lib/media/image-specs.ts`). States the exact
-   * size the storefront renders, warns when a photo will be cropped, and —
-   * where the slot allows it — offers Refine with Mink AI.
+   * size the storefront renders, warns when a photo will be cropped, and,
+   * where the slot allows them, offers Refine with Mink AI and a background
+   * change.
    */
   spec?: ImageSpecKey;
   /**
-   * Called instead of `onUploadSuccess` when a refined photo REPLACES the one
-   * just uploaded. Needed by list-style fields (a product gallery) whose
-   * `onUploadSuccess` APPENDS, or accepting a refine would add a second copy.
+   * Called instead of `onUploadSuccess` when a refined photo, or one with a new
+   * background, REPLACES the one just uploaded. Needed by list-style fields (a
+   * product gallery) whose `onUploadSuccess` APPENDS, or accepting it would
+   * add a second copy.
    */
   onReplace?: (previousUrl: string, nextUrl: string) => void;
   /**
@@ -46,8 +61,6 @@ interface ImageUploadProps {
    */
   onChooseFromLibrary?: () => void;
 }
-
-type RefineResult = { url: string; chargedCredits: number };
 
 export function ImageUpload({
   onUploadSuccess,
@@ -66,12 +79,69 @@ export function ImageUpload({
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
-  const [refining, setRefining] = useState(false);
-  const [refined, setRefined] = useState<RefineResult | null>(null);
+  const [editingBackground, setEditingBackground] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // ★ The box follows its slot's photo (the caller's `defaultImage`): undo,
+  //   a moved block or another section of the same type hands it another
+  //   photo while it stays mounted. ★ Only a REAL change of photo resets the
+  //   box: the echo of its own upload or "Use refined photo" (the caller
+  //   writes back the URL the box already shows) must not wipe the measured
+  //   size, because that image has already loaded and fires no second load.
+  const [seenDefault, setSeenDefault] = useState(defaultImage);
+  if (defaultImage !== seenDefault) {
+    setSeenDefault(defaultImage);
+    if (!pendingPreview && (defaultImage || null) !== previewUrl) {
+      setPreviewUrl(defaultImage || null);
+      setNatural(null);
+      setEditingBackground(false);
+    }
+  }
+  // ★★ A REFINE BELONGS TO ITS PAGE AND SLOT, NOT TO THIS BOX
+  //   (image-refine-registry.ts). Unmounting the box (a collapsed group,
+  //   another builder section, a dialog's tab) only detaches it; the page
+  //   sends the refine's stop when it goes away, and the server decides
+  //   whether the stop or the charge came first. A box shows the refine of
+  //   its scope, slot size and the photo it shows now, wherever it mounts.
+  const pathname = usePathname() ?? "";
+  const scope = useImageRefineScope() ?? `route:${pathname}`;
+  const matchKey =
+    previewUrl && spec ? refineMatchKey(scope, spec, previewUrl) : null;
+  const view = useImageRefineView(matchKey);
+  const refining = view?.status === "running";
+  const refined = view?.status === "done" ? { url: view.resultUrl } : null;
+  const refineError = view?.status === "failed" ? view.message : null;
+  // ★ The slot's size changed under its photo (a section's ratio, the hero's
+  //   layout): a photo made for the old size would be the wrong size here,
+  //   so that refine is stopped (nothing charged unless its charge came
+  //   first) or, finished, dropped (it stays in the Media Library).
+  const lastSlot = useRef<{
+    scope: string;
+    spec?: ImageSpecKey;
+    previewUrl: string | null;
+  } | null>(null);
+  useEffect(() => {
+    const previous = lastSlot.current;
+    lastSlot.current = { scope, spec, previewUrl };
+    if (
+      previous?.spec &&
+      previewUrl &&
+      previous.scope === scope &&
+      previous.previewUrl === previewUrl &&
+      previous.spec !== spec
+    ) {
+      releaseImageRefines(
+        (refine) =>
+          refine.scope === previous.scope &&
+          refine.spec === previous.spec &&
+          refine.sourceUrl === previewUrl,
+      );
+    }
+  }, [scope, spec, previewUrl]);
   const refineAvailable = useImageRefineAvailable();
+  const backgroundAvailable = useImageBackgroundAvailable();
   const slot = spec ? IMAGE_SPECS[spec] : null;
   const canRefine = Boolean(slot?.refine && refineAvailable);
+  const canBackground = Boolean(slot?.background && backgroundAvailable);
 
   const validateAndStage = (file: File) => {
     if (!file.type.startsWith("image/")) {
@@ -99,7 +169,6 @@ export function ImageUpload({
     try {
       const uploadedUrl = await uploadImage(pendingFile, { folder });
       setPreviewUrl(uploadedUrl);
-      setRefined(null);
       onUploadSuccess(uploadedUrl);
       setPendingFile(null);
       setPendingPreview(null);
@@ -126,7 +195,7 @@ export function ImageUpload({
   const handleRemoveUploaded = (e: React.MouseEvent) => {
     e.stopPropagation();
     setPreviewUrl(null);
-    setRefined(null);
+    setEditingBackground(false);
     setNatural(null);
     onUploadSuccess("");
   };
@@ -135,40 +204,25 @@ export function ImageUpload({
     if (!pendingPreview) fileInputRef.current?.click();
   };
 
-  const handleRefine = async () => {
+  const handleRefine = () => {
     if (!previewUrl || !spec || refining) return;
-    setRefining(true);
     setError(null);
-    try {
-      const res = await fetch("/api/mink/image-refine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: previewUrl, spec }),
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        url?: string;
-        chargedCredits?: number;
-        error?: string;
-      };
-      if (!res.ok || !body.url) {
-        setError(body.error ?? "Refining failed. Nothing was charged.");
-        return;
-      }
-      setRefined({ url: body.url, chargedCredits: body.chargedCredits ?? 0 });
-    } catch {
-      setError("Refining failed. Check your connection and try again.");
-    } finally {
-      setRefining(false);
-    }
+    startImageRefine({ scope, pathname, spec, sourceUrl: previewUrl });
+  };
+
+  const replaceWith = (nextUrl: string) => {
+    if (!previewUrl) return;
+    if (onReplace) onReplace(previewUrl, nextUrl);
+    else onUploadSuccess(nextUrl);
+    setPreviewUrl(nextUrl);
+    setNatural(null);
   };
 
   const acceptRefined = () => {
-    if (!refined || !previewUrl) return;
-    if (onReplace) onReplace(previewUrl, refined.url);
-    else onUploadSuccess(refined.url);
-    setPreviewUrl(refined.url);
-    setNatural(null);
-    setRefined(null);
+    if (!refined || !matchKey) return;
+    const settled = matchKey;
+    replaceWith(refined.url);
+    settleImageRefine(settled);
   };
 
   const sizeLine = slot && (
@@ -244,6 +298,23 @@ export function ImageUpload({
     );
   }
 
+  // — Background: choose one, compare, then use it or keep the original —
+  if (previewUrl && spec && editingBackground) {
+    return (
+      <div className={`w-full ${className}`}>
+        <BackgroundEditor
+          sourceUrl={previewUrl}
+          spec={spec}
+          onUse={(url) => {
+            replaceWith(url);
+            setEditingBackground(false);
+          }}
+          onClose={() => setEditingBackground(false)}
+        />
+      </div>
+    );
+  }
+
   // — Refined result: compare, then choose —
   if (previewUrl && refined) {
     return (
@@ -263,11 +334,7 @@ export function ImageUpload({
           </figure>
           <figure className="min-w-0">
             <div className="relative h-48 overflow-hidden rounded-lg border-2 border-primary/60 bg-muted/30">
-              <img
-                src={refined.url}
-                alt="Refined with Mink AI"
-                className="absolute inset-0 h-full w-full object-contain"
-              />
+              <RefinedImage key={refined.url} url={refined.url} />
             </div>
             <figcaption className="mt-1 text-xs text-muted-foreground">
               Refined · {slot?.width} × {slot?.height} px
@@ -276,10 +343,7 @@ export function ImageUpload({
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Check that the product looks exactly like the real item before you use
-          it.
-          {refined.chargedCredits > 0 &&
-            ` ${refined.chargedCredits} Mink credits were used.`}{" "}
-          The refined copy is also saved in your Media Library.
+          it. The refined copy is also saved in your Media Library.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <Button
@@ -295,7 +359,9 @@ export function ImageUpload({
             type="button"
             size="sm"
             variant="outline"
-            onClick={() => setRefined(null)}
+            onClick={() => {
+              if (matchKey) settleImageRefine(matchKey);
+            }}
           >
             Keep original
           </Button>
@@ -333,30 +399,59 @@ export function ImageUpload({
         </div>
         {sizeLine}
         {fitWarning && <FitWarning text={fitWarning} />}
-        {canRefine && (
+        {(canRefine || canBackground) && (
           <div className="mt-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={handleRefine}
-              disabled={refining}
-              className="gap-1.5"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              Refine with Mink AI
-              <span className="text-muted-foreground">
-                · {IMAGE_REFINE_CREDITS} credits
-              </span>
-            </Button>
-            <p className="mt-1 text-[11px] text-muted-foreground">
-              Retouches lighting and background and resizes to exactly{" "}
-              {slot?.width} × {slot?.height} px. You&rsquo;ll compare before
-              using it.
-            </p>
+            <div className="flex flex-wrap gap-2">
+              {canRefine && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRefine}
+                  disabled={refining}
+                  className="gap-1.5"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Refine with Mink AI
+                </Button>
+              )}
+              {canBackground && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setError(null);
+                    setEditingBackground(true);
+                  }}
+                  disabled={refining}
+                  className="gap-1.5"
+                >
+                  <Eraser className="h-3.5 w-3.5" />
+                  Change background
+                </Button>
+              )}
+            </div>
+            {canRefine && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Retouches lighting and background and resizes to exactly{" "}
+                {slot?.width} × {slot?.height} px. You&rsquo;ll compare before
+                using it.
+              </p>
+            )}
+            {canBackground && (
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Keeps your real product exactly as photographed and puts it on
+                white, a colour or a transparent background.
+              </p>
+            )}
           </div>
         )}
-        {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
+        {(error ?? refineError) && (
+          <p className="mt-2 text-sm text-destructive">
+            {error ?? refineError}
+          </p>
+        )}
       </div>
     );
   }
@@ -403,6 +498,40 @@ export function ImageUpload({
       {sizeLine}
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
     </div>
+  );
+}
+
+/**
+ * The refined photo in the compare view. ★ It retries a failed load, up to
+ * five times two seconds apart: a refine whose answer was lost can come back
+ * as `too_late` in the moment between its charge and its publish. The retry
+ * asks for `?retry=n`; "Use refined photo" still writes the clean URL.
+ */
+function RefinedImage({ url }: { url: string }) {
+  const [attempt, setAttempt] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  const src = attempt
+    ? `${url}${url.includes("?") ? "&" : "?"}retry=${attempt}`
+    : url;
+  return (
+    <img
+      src={src}
+      alt="Refined with Mink AI"
+      onError={() => {
+        if (attempt >= 5 || timer.current) return;
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          setAttempt((n) => n + 1);
+        }, 2_000);
+      }}
+      className="absolute inset-0 h-full w-full object-contain"
+    />
   );
 }
 

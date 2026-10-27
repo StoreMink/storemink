@@ -65,3 +65,26 @@ export function dbErrorMessage(err: unknown, fallback: string): string {
   }
   return fallback;
 }
+
+/**
+ * A caught error as it may be logged with logError (robustness audit B22).
+ *
+ * ★ CONTENT-FREE, AND STILL TRACEABLE. A failed query's own message is
+ *   Drizzle's "Failed query: … params: …", and the params are often merchant
+ *   text (an offer's name, a product's), so for one only the database's reason
+ *   (`dbErrorMessage`) is logged. Any other Error is logged as it came: its
+ *   stack names the line that broke (a TypeError in the offer engine must not
+ *   read as a database failure at the catch), and its name reaches the log
+ *   (DatabaseBusyError, the pool being out of connections, is what the
+ *   database alerts look for). A thrown value that is not an Error is never
+ *   logged as itself, which read "[object Object]": only its message.
+ */
+export function loggableError(
+  err: unknown,
+  fallback = "unknown error",
+): unknown {
+  if (err instanceof Error && !err.message.startsWith("Failed query:")) {
+    return err;
+  }
+  return dbErrorMessage(err, fallback);
+}

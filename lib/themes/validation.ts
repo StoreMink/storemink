@@ -1028,7 +1028,9 @@ export function validateThemeDesign(theme: ThemeDefinition): ThemeFinding[] {
 export type ThemeDefinitionOptions = CatalogMetaOptions;
 
 /** Every package-level rule in one call. An empty list means the package is
- * valid; it does NOT mean the theme is approved (theme-acceptance.md). */
+ * valid; it does NOT mean the theme may go live: a Studio theme also needs its
+ * automatic checks and design review on today's build, and a hand-built theme
+ * its reviewer (theme-acceptance.md). */
 export function validateThemeDefinition(
   theme: ThemeDefinition,
   options: ThemeDefinitionOptions,

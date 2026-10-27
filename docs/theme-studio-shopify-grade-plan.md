@@ -201,7 +201,10 @@ deploy-and-prove.
    - **Close the manual-acceptance bypass.** `startThemeStudioAcceptance` must
      require a passing visual-QA verdict on the same digest/build before
      `candidate`, or the operator records a human scorecard row. Fix the
-     comment in `publication-core.ts` to match what is enforced.
+     comment in `publication-core.ts` to match what is enforced. (Closed on
+     2026-10-08 by requiring the review; the human scorecard had been removed
+     on 3 Oct. Since 24 Oct 2026 Publish also needs a passed review bound to
+     the very check run it publishes.)
    - **Storefront error boundaries.** `app/(storefront)/error.tsx` plus a
      per-section boundary in `homepage-section-renderer.tsx` so one bad
      section config degrades to nothing, never a blank store.

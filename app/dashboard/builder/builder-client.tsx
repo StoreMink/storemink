@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { releaseImageRefines } from "@/components/ui/image-refine-registry";
 import { slugify } from "@/lib/slug";
 import {
   createPage,
@@ -68,6 +69,9 @@ import { InspectorPanel, PageSettingsForm } from "./inspector-panel";
 import { SectionLibrary } from "./section-library";
 import { useHistory, type HistoryEntry } from "./use-history";
 import { useBuilderShortcuts } from "./use-builder-shortcuts";
+import { builderRefineStillWanted } from "./image-refine-sweep";
+import { useChat } from "../chat-context";
+import { MinkMark } from "../mink-mark";
 
 type Options = {
   products: ProductOption[];
@@ -104,6 +108,11 @@ export function BuilderClient({
   /** What the section colour schemes are built from (lib/themes/schemes). */
   schemeDesign: SchemeDesign;
 }) {
+  // ★★ The builder's full-screen canvas covers the dashboard topbar
+  // (dashboard.css), and with it the topbar's Mink AI button, so the
+  // builder's own top bar carries the same opener. The shared panel floats
+  // above the canvas, and the builder stays mounted while it opens or closes.
+  const { isChatOpen, toggleChat } = useChat();
   const [pages, setPages] = useState(initialPages);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // The site-wide header + footer. Held beside the page draft rather than
@@ -350,6 +359,25 @@ export function BuilderClient({
     const home = initialPages.find((p) => p.slug === "") ?? initialPages[0];
     loadDraft(home.id);
   }, [initialPages, loadDraft]);
+
+  // ★ Refine with Mink AI: a refine survives its box unmounting (another
+  //   tab, section or page) and is stopped only when its slot is destroyed:
+  //   its section deleted, its photo removed or replaced (undo and redo
+  //   included), its page deleted, or the header, footer or brand no longer
+  //   holding it (image-refine-sweep.ts). A stop charges nothing unless the
+  //   charge came first.
+  useEffect(() => {
+    releaseImageRefines(
+      (refine) =>
+        !builderRefineStillWanted(refine, {
+          draftId: draft?.id ?? null,
+          sections: draft?.sections ?? [],
+          pageIds: pages.map((page) => page.id),
+          chrome,
+          brand,
+        }),
+    );
+  }, [draft, pages, chrome, brand]);
 
   // Instant preview: push the latest draft sections into the iframe's
   // DraftCanvas after every mutation. rAF-throttled latest-wins (the send
@@ -821,61 +849,73 @@ export function BuilderClient({
           />
         </div>
 
-        {draft && (
-          <div className="sm-builder-topbar-right">
-            <button
-              className="sm-builder-iconbtn"
-              onClick={handleUndo}
-              disabled={!canUndo}
-              title="Undo (⌘Z)"
-            >
-              <Undo2 className="h-4 w-4" />
-            </button>
-            <button
-              className="sm-builder-iconbtn"
-              onClick={handleRedo}
-              disabled={!canRedo}
-              title="Redo (⇧⌘Z)"
-            >
-              <Redo2 className="h-4 w-4" />
-            </button>
-            <SaveStatusIndicator status={status} onRetry={() => flush()} />
-            <span
-              className={`sm-builder-status ${draft.status === "published" ? "is-live" : ""}`}
-            >
-              {draft.status === "published" ? "Live" : "Draft"}
-            </span>
-            <Link
-              href={`/${draft.slug}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="sm-builder-iconbtn"
-              title="Open live page"
-            >
-              <ExternalLink className="h-4 w-4" />
-            </Link>
-            <Link
-              href="/dashboard/builder/settings"
-              className="sm-builder-iconbtn"
-              title="Website settings"
-            >
-              <Settings className="h-4 w-4" />
-            </Link>
-            {draft.status === "published" ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleUnpublish}
-                disabled={isPending}
+        <div className="sm-builder-topbar-right">
+          <button
+            type="button"
+            className="sm-builder-iconbtn sm-builder-mink"
+            onClick={toggleChat}
+            aria-label="Mink AI"
+            aria-expanded={isChatOpen}
+            title="Mink AI"
+          >
+            <MinkMark size="sm" />
+          </button>
+          {draft && (
+            <>
+              <button
+                className="sm-builder-iconbtn"
+                onClick={handleUndo}
+                disabled={!canUndo}
+                title="Undo (⌘Z)"
               >
-                Unpublish
+                <Undo2 className="h-4 w-4" />
+              </button>
+              <button
+                className="sm-builder-iconbtn"
+                onClick={handleRedo}
+                disabled={!canRedo}
+                title="Redo (⇧⌘Z)"
+              >
+                <Redo2 className="h-4 w-4" />
+              </button>
+              <SaveStatusIndicator status={status} onRetry={() => flush()} />
+              <span
+                className={`sm-builder-status ${draft.status === "published" ? "is-live" : ""}`}
+              >
+                {draft.status === "published" ? "Live" : "Draft"}
+              </span>
+              <Link
+                href={`/${draft.slug}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="sm-builder-iconbtn"
+                title="Open live page"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </Link>
+              <Link
+                href="/dashboard/builder/settings"
+                className="sm-builder-iconbtn"
+                title="Website settings"
+              >
+                <Settings className="h-4 w-4" />
+              </Link>
+              {draft.status === "published" ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleUnpublish}
+                  disabled={isPending}
+                >
+                  Unpublish
+                </Button>
+              ) : null}
+              <Button size="sm" onClick={handlePublish} disabled={isPending}>
+                Publish
               </Button>
-            ) : null}
-            <Button size="sm" onClick={handlePublish} disabled={isPending}>
-              Publish
-            </Button>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </header>
 
       <nav className="sm-builder-mobile-nav" aria-label="Builder panels">

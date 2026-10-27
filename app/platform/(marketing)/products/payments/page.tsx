@@ -62,8 +62,8 @@ export default function PaymentsPage() {
           tone="cream"
         >
           Set your tax classes and business details once. Every order, whether
-          from the website or the till, gets a numbered invoice with the tax
-          broken down the way your accountant expects.
+          from the website or POS, gets a numbered invoice with the tax broken
+          down the way your accountant expects.
         </FeatureRow>
       </FeatureRows>
 

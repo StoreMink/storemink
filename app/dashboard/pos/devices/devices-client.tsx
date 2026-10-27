@@ -131,8 +131,7 @@ export function DevicesClient({
   };
 
   const revoke = (d: PosDeviceRow) => {
-    if (!confirm("Revoke this device? It will be signed out of the register."))
-      return;
+    if (!confirm("Revoke this device? It will be signed out of POS.")) return;
     start(async () => {
       const res = await revokeDevice(d.id);
       if (res.error) {
@@ -149,11 +148,11 @@ export function DevicesClient({
       <header className="dash-page-header">
         <h1>POS Devices</h1>
         <p>
-          Staff can only sign into the register on a device you&apos;ve
-          authorized - their personal phones won&apos;t work. The easiest way is
-          to open /pos on the shop&apos;s device while signed in as the owner
-          and tap &ldquo;Authorize this device&rdquo;; use a code below to set
-          one up remotely.
+          Staff can only sign in to POS on a device you&apos;ve authorized -
+          their personal phones won&apos;t work. The easiest way is to open /pos
+          on the shop&apos;s device while signed in as the owner and tap
+          &ldquo;Authorize this device&rdquo;; use a code below to set one up
+          remotely.
         </p>
       </header>
 
@@ -239,7 +238,7 @@ export function DevicesClient({
                     </div>
                     <div>
                       <div className="font-semibold text-[#111827]">
-                        {d.label || "Register"}
+                        {d.label || "POS device"}
                       </div>
                       <div className="text-xs text-[#5b6472]">
                         {locName(d.locationId)}
@@ -304,7 +303,7 @@ export function DevicesClient({
                     </div>
                     <div>
                       <div className="font-semibold text-[#111827]">
-                        {d.label || "Register"} · {locName(d.locationId)}
+                        {d.label || "POS device"} · {locName(d.locationId)}
                       </div>
                       <div className="mt-0.5 text-xs text-[#5b6472]">
                         {REVOKED_REASON[d.revokedReason ?? ""] ?? "Revoked"}
@@ -313,8 +312,8 @@ export function DevicesClient({
                       {danger && (
                         <p className="mt-1.5 text-xs text-red-700">
                           If this was your own device, authorize it again. If
-                          not, someone copied a register credential - change
-                          affected staff PINs.
+                          not, someone copied this device&apos;s credential -
+                          change affected staff PINs.
                         </p>
                       )}
                     </div>

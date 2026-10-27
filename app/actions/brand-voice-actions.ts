@@ -4,12 +4,9 @@ import { eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { storeBrandProfiles, stores } from "@/drizzle/schema";
 import { getActingStoreId, getManagerUserId } from "@/app/dashboard/lib/access";
-import { callGemini } from "@/lib/ai/gemini";
-import {
-  consumeAiQuota,
-  getAiUsage,
-  type AiUsageSummary,
-} from "@/lib/ai/quota";
+import { AI_UNUSABLE_MESSAGE, callGemini } from "@/lib/ai/gemini";
+import { withAiCredit } from "@/lib/ai/credited-copy";
+import { getAiUsage, type AiUsageSummary } from "@/lib/ai/quota";
 import {
   getBrandVoiceProfile,
   normalizeStructured,
@@ -106,10 +103,26 @@ export async function generateBrandVoice(
     return { error: "Tell us what you sell first - it anchors everything." };
   }
 
+  // ★ The credit is taken before the model is asked (the store's rates
+  // first), and every way out that does not return a draft guide gives it
+  // back: a failed or busy model, an empty reply, or a throw on the way
+  // (robustness audit B1; lib/ai/credited-copy.ts). Each answer is already
+  // bounded (normalizeStructured keeps 600 characters).
   const storeId = await getActingStoreId();
-  const quota = await consumeAiQuota(storeId);
-  if (!quota.allowed) return { error: quota.error };
+  return withAiCredit({ storeId, actorId: userId }, async () => {
+    const content = await composeBrandVoice(storeId, s);
+    if (content.error || !content.text) {
+      return { error: content.error ?? AI_UNUSABLE_MESSAGE };
+    }
+    return { content: content.text };
+  });
+}
 
+/** The model call behind generateBrandVoice, after the credit is taken. */
+async function composeBrandVoice(
+  storeId: string,
+  s: BrandVoiceStructured,
+): Promise<{ text?: string; error?: string }> {
   let storeName = "this store";
   try {
     const rows = await withService((db) =>
@@ -121,7 +134,10 @@ export async function generateBrandVoice(
     );
     storeName = rows[0]?.name || "this store";
   } catch (err) {
-    console.error("generateBrandVoice store read:", err);
+    console.error(
+      "generateBrandVoice store read:",
+      err instanceof Error ? err.message : err,
+    );
   }
 
   const answers = [
@@ -137,10 +153,10 @@ export async function generateBrandVoice(
     .filter(Boolean)
     .join("\n");
 
-  const userText = `Write a brand voice guide for the store below, in markdown, 250–400 words. Structure it as:
+  const userText = `Write a brand voice guide for the store below, in markdown, 250 to 400 words. Structure it as:
 
 # ${storeName} - Brand Voice
-## Who we are        (2–3 sentences: what we sell, who it's for, why we exist)
+## Who we are        (2 to 3 sentences: what we sell, who it's for, why we exist)
 ## How we sound      (voice + tone in concrete terms, with 2 short example lines that SOUND like this brand)
 ## Words we use      (a handful of words/phrases that fit)
 ## Words we avoid    (merchant's avoid-list plus hype/pressure words)
@@ -152,10 +168,8 @@ Use ONLY the merchant's answers below - do not invent products, history, or clai
 MERCHANT'S ANSWERS:
 ${answers}`;
 
-  const { text, error } = await callGemini(STRATEGIST_SYSTEM, userText, {
+  return callGemini(STRATEGIST_SYSTEM, userText, {
     temperature: 0.7,
     maxOutputTokens: 2048,
   });
-  if (error) return { error };
-  return { content: text };
 }

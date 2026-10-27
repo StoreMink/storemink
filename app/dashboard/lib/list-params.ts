@@ -11,19 +11,14 @@ export function pickPage(v: string | string[] | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-/** Strip PostgREST filter-control characters so a search term can't break the
- *  `.or()` expression (it is interpolated straight into the filter string). */
+/** Replace `(),:*%\` with spaces, trim, and cap at 100 characters. Callers bind
+ *  the result inside `%…%` for ILIKE, so dropping `%` and `\` stops a term
+ *  adding its own wildcard or escape. */
 export function sanitizeSearch(q: string): string {
   return q
     .replace(/[(),:*%\\]/g, " ")
     .trim()
     .slice(0, 100);
-}
-
-/** Build a PostgREST `.or()` substring (ILIKE) filter across several columns. */
-export function ilikeOr(columns: string[], term: string): string {
-  const like = `*${term}*`;
-  return columns.map((c) => `${c}.ilike.${like}`).join(",");
 }
 
 /** Default rows per dashboard list page. */

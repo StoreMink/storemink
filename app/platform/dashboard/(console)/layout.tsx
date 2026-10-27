@@ -100,11 +100,20 @@ export default async function PlatformDashboardLayout({
           label: "Help Centre",
           icon: "faq" as const,
         },
-        {
-          href: "/dashboard/themes",
-          label: "Themes",
-          icon: "homepage" as const,
-        },
+        // Themes holds the catalog's demo seeder and Theme Studio, and both
+        // are superadmin-only (themes/page.tsx redirects a member, and
+        // lib/theme-studio/access.ts refuses one), so a member is not shown
+        // an entry that only bounces them back here.
+        ...(viewer.role === "superadmin"
+          ? [
+              {
+                href: "/dashboard/themes",
+                label: "Themes",
+                icon: "homepage" as const,
+                searchAliases: ["Theme Studio", "AI Theme Studio", "New theme"],
+              },
+            ]
+          : []),
         {
           href: "/dashboard/pricing",
           label: "Pricing",

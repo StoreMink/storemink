@@ -417,7 +417,7 @@ export function renewalOverdueTemplate(d: {
           { label: "Pay by", valueHtml: `${deadline} IST` },
         ]),
         emailParagraph(
-          `Pay by <strong>${deadline} IST</strong> to keep everything running. After that the store moves to the Free plan. Your data is safe, but paid features pause, including the point of sale.`,
+          `Pay by <strong>${deadline} IST</strong> to keep everything running. After that the store moves to the Free plan. Your data is safe, but paid features pause, including POS.`,
         ),
         emailButton(d.manageUrl, "Pay now"),
       ],

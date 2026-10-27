@@ -166,7 +166,7 @@ export function LayoutEditMode({
             <span className="font-semibold">Editing layout</span>
             <span className="text-[var(--pos-ink-2)]">
               {" · "}
-              {placed.length} of {catalog.length} on the till
+              {placed.length} of {catalog.length} on the grid
               {placed.length === 0 && " - empty shows everything"}
             </span>
           </div>
@@ -287,8 +287,8 @@ function GridDropArea({
       {empty ? (
         <div className="flex h-full min-h-40 items-center justify-center px-6 text-center">
           <p className="max-w-xs text-sm text-[var(--pos-ink-3)]">
-            Drag products here to build the till grid. Leave it empty and the
-            register keeps showing every product.
+            Drag products here to build the product grid. Leave it empty and POS
+            keeps showing every product.
           </p>
         </div>
       ) : (

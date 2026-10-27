@@ -20,6 +20,8 @@ import { isMinkStoreInvited } from "@/lib/mink/access";
 import { ChatProvider } from "./chat-context";
 import { minkSkillsFor } from "@/lib/mink/skills";
 import { ImageRefineProvider } from "@/components/ui/image-refine-context";
+import { mattingConfigured } from "@/lib/media/matting-client";
+import { gcsPrivateConfigured } from "@/lib/storage/gcs";
 import { DashboardChat } from "./dashboard-chat";
 import {
   SECTIONS,
@@ -300,8 +302,16 @@ export default async function DashboardLayout({
         )}
       >
         <ImageRefineProvider
+          // ★ Refine also needs the private bucket: a result is staged there
+          //   until it is paid for, and without it the server always refuses.
           available={
-            minkEnabled && can(permissions, "media", "manage", isSuperadmin)
+            minkEnabled &&
+            gcsPrivateConfigured &&
+            can(permissions, "media", "manage", isSuperadmin)
+          }
+          background={
+            mattingConfigured() &&
+            can(permissions, "media", "manage", isSuperadmin)
           }
         >
           <MobileNavProvider>

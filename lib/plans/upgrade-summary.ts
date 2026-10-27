@@ -32,7 +32,7 @@ const FEATURE_LABELS: Record<BooleanFeature, string> = {
   emailCampaigns: "Coupon email campaigns",
   advancedAnalytics: "GA4, Meta Pixel and gross margin",
   removeBadge: 'No "Powered by StoreMink" badge',
-  posEnabled: "Point of Sale",
+  posEnabled: "POS",
   whatsapp: "WhatsApp on your own number",
   whatsappBroadcasts: "WhatsApp offer broadcasts",
   aiCreditTopUps: "Mink credit top-ups",

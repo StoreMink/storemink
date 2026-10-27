@@ -9,7 +9,6 @@ import {
   FileText,
   LoaderCircle,
   Maximize2,
-  MessageSquare,
   MessageSquarePlus,
   Minimize2,
   MoreHorizontal,
@@ -24,24 +23,19 @@ import {
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { useChat } from "./chat-context";
+import { usePathname } from "next/navigation";
+import { useChat, useMinkVoice } from "./chat-context";
 import { MinkAnswer } from "./mink-answer";
-import { openMinkNavigation } from "./mink-artifacts";
 import { suggestMinkFollowUps } from "@/lib/mink/follow-ups";
 import { MEMORY_KIND_LABELS } from "@/lib/mink/memory-suggestion";
-import {
-  MINK_REPLY_LANGUAGES,
-  readStoredMinkReplyLanguage,
-  storeMinkReplyLanguage,
-  type MinkReplyLanguage,
-} from "@/lib/mink/reply-language";
 import { MinkLink } from "./mink-link";
 import type { MinkMemoryPrompt } from "./mink-ai";
 import {
@@ -53,16 +47,23 @@ import {
 import {
   ASSISTANT_NAME,
   type MinkConversationSummary,
+  type MinkMessage,
+  type MinkPendingAttachment,
+  type MinkPreparedSend,
   type MinkRunStep,
 } from "./mink-ai";
 import { MinkMark } from "./mink-mark";
+import { MinkEarlierMessages } from "./mink-earlier-messages";
+import { MinkHistorySidebar } from "./mink-history-sidebar";
 import { MinkMultimodalInput } from "./mink-multimodal-input";
+import { MinkVoiceBar } from "./mink-voice-view";
 import { MinkArtifacts } from "./mink-artifacts";
 import { MinkFeedbackControls } from "./mink-feedback";
 import { readMinkCsvReference } from "@/lib/mink/csv-input";
 import { readReviewedMinkDocument } from "@/lib/mink/document-input";
 import { readSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
+import { MINK_NEW_CHAT_TITLE } from "@/lib/mink/chat-session";
 import { BrandMark } from "@/app/platform/brand-mark";
 import { MINK_MAX_RUN_CREDITS } from "@/lib/mink/metering";
 import type { MinkCreditSummary } from "./chat-context";
@@ -109,6 +110,32 @@ export function latestMinkUserMessageId(
     if (message?.role === "user") return message.id;
   }
   return null;
+}
+
+const NO_REVAMPS: ReadonlySet<string> = new Set();
+
+/**
+ * For each message, the storefront redesigns whose card an earlier message
+ * in the thread already shows; that message points back to the card instead
+ * of showing a second one (MinkArtifacts). ★ One redesign can reach a thread
+ * twice: the answer that started it, and a later start or refine answered
+ * with the same card because it is still being made. A set is shared until a
+ * message adds to it, so a long thread costs one set per redesign.
+ */
+export function revampIdsShownBefore(
+  messages: ReadonlyArray<Pick<MinkMessage, "artifacts">>,
+): ReadonlySet<string>[] {
+  const shownBefore: ReadonlySet<string>[] = [];
+  let shown = NO_REVAMPS;
+  for (const message of messages) {
+    shownBefore.push(shown);
+    for (const artifact of message.artifacts ?? []) {
+      if (artifact.type !== "storefront_revamp") continue;
+      if (!shown.has(artifact.revampId))
+        shown = new Set([...shown, artifact.revampId]);
+    }
+  }
+  return shownBefore;
 }
 
 /** How much of the viewport the anchored question is allowed to keep. */
@@ -158,6 +185,49 @@ export function shouldSubmitMinkComposer(input: {
   return input.key === "Enter" && !input.shiftKey && !input.isComposing;
 }
 
+/**
+ * ★★ A LINK THE MERCHANT FOLLOWS LEAVES THE FULL VIEW, as a navigation
+ * artifact does. MinkLink keeps the click client-side so the chat survives
+ * it, but the full view covers the whole dashboard, so the page opened
+ * BEHIND the takeover and a merchant clicking an order reference saw nothing
+ * change and read the link as broken. Only a plain left click on a
+ * same-origin `/dashboard` link counts: a new-tab or modified click, a
+ * download, and a link to the storefront or Help leave the chat as it is.
+ */
+export function isMinkInAppLinkClick(
+  event: {
+    target: EventTarget | null;
+    button: number;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  },
+  origin: string,
+) {
+  if (event.button !== 0) return false;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return false;
+  }
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  const anchor = target.closest("a[href]");
+  if (!anchor) return false;
+  const opensIn = anchor.getAttribute("target");
+  if (opensIn && opensIn !== "_self") return false;
+  if (anchor.hasAttribute("download")) return false;
+  let url: URL;
+  try {
+    url = new URL(anchor.getAttribute("href") ?? "", origin);
+  } catch {
+    return false;
+  }
+  if (url.origin !== origin) return false;
+  return (
+    url.pathname === "/dashboard" || url.pathname.startsWith("/dashboard/")
+  );
+}
+
 // Two surfaces, one conversation (state lives in ChatProvider):
 //  - "panel"   → the resizable right sheet opened from the topbar
 //  - "overlay" → the full-view takeover opened from Home/maximize
@@ -174,12 +244,12 @@ export function DashboardChat({
     closeChat,
     toggleExpand,
     messages,
-    conversations,
     activeConversationId,
     activeConversationTitle,
     input,
     setInput,
     isReplying,
+    stopRefused = false,
     isHistoryLoading,
     deletingConversationId,
     statusText,
@@ -189,28 +259,38 @@ export function DashboardChat({
     feedbackSubmittingRunId,
     minkCredits,
     send,
+    sendPrepared,
     cancel,
     retry,
-    reset,
+    startNewChat,
+    addressOpens,
     loadConversation,
     deleteConversation,
+    conversations,
+    refreshConversations,
     submitFeedback,
     memoryPrompt,
     saveMemorySuggestion,
     dismissMemorySuggestion,
-    showSpotlight,
   } = useChat();
+  // The spoken conversation, run by ChatProvider. While it is on, the thread
+  // stays on screen (cards included) and the voice bar takes the composer's
+  // place; the composer stays mounted but hidden (unmounting it would discard
+  // staged attachments).
+  const voiceChat = useMinkVoice();
   const isOverlay = variant === "overlay";
-  const router = useRouter();
   const pathname = usePathname();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const openedNavigationRef = useRef<Set<number | string>>(new Set());
   const followLatestRef = useRef(true);
   const latestUserMessageIdRef = useRef<number | string | null>(null);
   const anchoredUserMessageIdRef = useRef<number | string | null>(null);
   const autoAnchorSubmissionRef = useRef(true);
   const turnAnchorSpaceRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // A dictated transcript can arrive while the empty box is hidden behind the
+  // recorder, so focusing it inside onAdd misses; this retries after the
+  // render that shows it again.
+  const focusComposerAfterAdd = useRef(false);
   const deleteButtonRef = useRef<HTMLButtonElement>(null);
   const resizeRef = useRef<{
     pointerId: number;
@@ -234,29 +314,26 @@ export function DashboardChat({
       : [];
   const slashOpen = slashMatches.length > 0;
 
-  /**
-   * ★★ A NAVIGATION ARTIFACT THAT ARRIVED LIVE OPENS ITS PAGE ON ITS OWN.
-   * Live messages carry numeric ids (restored history carries strings), so a
-   * page is never re-opened by reloading a conversation; each message opens
-   * at most once. The full-view takeover collapses to the side panel and a
-   * phone-width panel closes, because the point is to look at the page with
-   * the chat still at hand, not to navigate behind a sheet that hides it.
-   */
-  useEffect(() => {
-    const latest = messages[messages.length - 1];
-    if (!latest || latest.role !== "assistant" || typeof latest.id !== "number")
-      return;
-    if (openedNavigationRef.current.has(latest.id)) return;
-    const navigation = latest.artifacts?.find(
-      (artifact) => artifact.type === "navigation",
-    );
-    if (!navigation || navigation.type !== "navigation") return;
-    openedNavigationRef.current.add(latest.id);
-    openMinkNavigation(navigation, (path) => router.push(path));
-    showSpotlight(navigation.highlight ?? null);
+  // The page the merchant is about to look at sits behind the chat: the
+  // full-view takeover collapses to the side panel and a phone-width panel
+  // closes.
+  //
+  // ★★ ONLY WHEN THEY CLICK A LINK. A page Mink finds is a link card in its
+  // answer (mink-artifacts, NavigationArtifact) and never opens by itself:
+  // the panel used to navigate as soon as such an answer arrived, which on a
+  // phone also shut the chat, so the merchant was taken to a page they had
+  // only asked about, mid-conversation.
+  const leaveForPage = useCallback(() => {
     if (window.innerWidth < 640) closeChat();
     else if (isExpanded) toggleExpand();
-  }, [messages, router, isExpanded, toggleExpand, closeChat, showSpotlight]);
+  }, [closeChat, isExpanded, toggleExpand]);
+
+  // Capture phase: MinkLink's own click handler (next/link) cancels the
+  // browser default on the way back up, so a bubbling listener cannot tell a
+  // followed link from one that did nothing.
+  const leaveForLinkedPage = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (isMinkInAppLinkClick(event, window.location.origin)) leaveForPage();
+  };
 
   useEffect(() => {
     if (!isOverlay || !isChatOpen || !isExpanded) return;
@@ -302,9 +379,60 @@ export function DashboardChat({
     }
   }, [isOverlay, panelWidth]);
 
+  /**
+   * A chat opened whole (chosen in History, opened from the address, a new
+   * one, or shown in a new scroller) starts at its newest message and follows
+   * new output. The caller hides the jump button too, at once or in a frame
+   * (`setShowJumpToLatest(false)`).
+   */
+  const followNewestMessage = useCallback(() => {
+    followLatestRef.current = true;
+    latestUserMessageIdRef.current = null;
+    anchoredUserMessageIdRef.current = null;
+    if (turnAnchorSpaceRef.current) {
+      turnAnchorSpaceRef.current.style.minHeight = "0px";
+    }
+  }, []);
+
+  // ★★ A chat opened from the address (`?chat=`, robustness audit B20: the
+  // "redesign ready" notice) opens as one chosen in History does. A view
+  // keeps its scroll-follow state while it is closed, so a view last left
+  // scrolled up opened the named chat at its top, the card it was opened for
+  // out of sight below. A view the address opens gets a new scroller, which
+  // the scroll effect also resets; this reset is what moves a view that was
+  // already open, whose scroller stays. ★ Declared before the scroll effect:
+  // when the count and the loaded chat land in one render, the reset comes
+  // first. The button waits for a frame, as state set in an effect body would
+  // cascade.
+  const seenAddressOpens = useRef(addressOpens);
+  useEffect(() => {
+    if (seenAddressOpens.current === addressOpens) return;
+    seenAddressOpens.current = addressOpens;
+    followNewestMessage();
+    const frame = window.requestAnimationFrame(() =>
+      setShowJumpToLatest(false),
+    );
+    return () => window.cancelAnimationFrame(frame);
+  }, [addressOpens, followNewestMessage]);
+
+  // ★★ A NEW SCROLLER STARTS AT THE NEWEST MESSAGE. The thread's scroller is
+  // a new element each time the chat appears: the panel opened again, the
+  // switch between the side panel and the full view (two instances, each with
+  // its own scroller), or a chat's first message. A new element starts at its
+  // top, and this effect ran only when the chat changed, so opening the panel
+  // over a chat in memory showed its oldest messages. A mount now counts as a
+  // chat opened whole, as one chosen in History. A reply still running loses
+  // nothing: its question is still the newest one, so it is anchored at the
+  // top again, tail room included. `isChatOpen` and `isExpanded` are in the
+  // dependencies for the mount alone.
+  const seenScrollerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const scroller = scrollRef.current;
     if (!scroller) return;
+    if (scroller !== seenScrollerRef.current) {
+      seenScrollerRef.current = scroller;
+      followNewestMessage();
+    }
     const latestUserId = latestMinkUserMessageId(messages);
     const receivedNewUserMessage =
       latestUserId !== null && latestUserId !== latestUserMessageIdRef.current;
@@ -360,7 +488,15 @@ export function DashboardChat({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, isReplying, error, statusText]);
+  }, [
+    messages,
+    isReplying,
+    error,
+    statusText,
+    isChatOpen,
+    isExpanded,
+    followNewestMessage,
+  ]);
 
   useEffect(() => {
     const composer = composerRef.current;
@@ -400,6 +536,76 @@ export function DashboardChat({
     },
     [send],
   );
+
+  // The same anchoring for a message whose attachments Mink reads in the chat.
+  const sendPreparedFromChat = useCallback(
+    (prepared: MinkPreparedSend) => {
+      followLatestRef.current = false;
+      autoAnchorSubmissionRef.current = true;
+      return sendPrepared(prepared);
+    },
+    [sendPrepared],
+  );
+
+  /** New chat, from the header or the History sidebar. */
+  const startFreshChat = useCallback(() => {
+    followNewestMessage();
+    setShowJumpToLatest(false);
+    startNewChat();
+  }, [followNewestMessage, startNewChat]);
+
+  // ★ R14: after a choice the sidebar closes wherever it covers the chat: the
+  // side panel always, and the full view on a phone, where it used to stay
+  // open over the chat just chosen. On a wide full view it stays beside it.
+  const closeHistoryAfterChoice = useCallback(() => {
+    if (!isOverlay || !minkHistoryStartsOpen(window.innerWidth))
+      setHistoryOpen(false);
+  }, [isOverlay]);
+
+  // ★ R17: stable, so History's memoised rows are not rendered again while
+  // an answer streams.
+  const chooseConversation = useCallback(
+    (
+      conversation: MinkConversationSummary,
+      options: { revealMessageId?: string },
+    ) => {
+      // ★ Every chat chosen opens at its newest message. A search result's
+      // match, once loaded, is scrolled to two frames after the thread's own
+      // scroll (mink-earlier-messages.tsx), so it wins; one too far back to
+      // load opens here rather than where the last chat was left.
+      followNewestMessage();
+      setShowJumpToLatest(false);
+      void (options.revealMessageId
+        ? loadConversation(conversation.id, {
+            revealMessageId: options.revealMessageId,
+          })
+        : loadConversation(conversation.id));
+      closeHistoryAfterChoice();
+    },
+    [followNewestMessage, loadConversation, closeHistoryAfterChoice],
+  );
+
+  const newConversationFromHistory = useCallback(() => {
+    startFreshChat();
+    closeHistoryAfterChoice();
+  }, [startFreshChat, closeHistoryAfterChoice]);
+
+  // ★ A row's redesign flag is as old as the list it came in: a redesign card
+  // that became ready after History's first page was last read would get the
+  // plain sentence, although the delete takes that card with it. So History's
+  // first page is read again as the dialog opens, and the dialog reads the
+  // flag from the chat's row as History now has it (`deleteRow`).
+  const askToDelete = useCallback(
+    (conversation: MinkConversationSummary) => {
+      setDeleteFailure(null);
+      setDeleteTarget(conversation);
+      void refreshConversations();
+    },
+    [setDeleteFailure, setDeleteTarget, refreshConversations],
+  );
+  const deleteRow = deleteTarget
+    ? (conversations.find((row) => row.id === deleteTarget.id) ?? deleteTarget)
+    : null;
 
   const chooseSkill = useCallback(
     (skill: MinkSkill) => {
@@ -458,8 +664,49 @@ export function DashboardChat({
     }
   };
 
+  useEffect(() => {
+    if (!focusComposerAfterAdd.current) return;
+    focusComposerAfterAdd.current = false;
+    composerRef.current?.focus();
+  }, [input]);
+
+  // A redesign's card shows once in the thread; later mentions point to it.
+  const revampsShownBefore = useMemo(
+    () => revampIdsShownBefore(messages),
+    [messages],
+  );
+
   if (!isChatOpen) return null;
   if (isOverlay !== isExpanded) return null;
+
+  // ★ Stop ASKS the server (`useMinkAi().cancel`), and is not offered once it
+  // refused: the run had already started something, so a Stop that cannot
+  // stop it is worse than none. The status line says why.
+  const stopReply = (
+    <button
+      type="button"
+      onClick={() => void cancel()}
+      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
+      aria-label="Stop Mink AI"
+    >
+      <Square className="h-4 w-4 fill-current" />
+    </button>
+  );
+  // A photo or a file on its own is a message too, as in ChatGPT and Claude.
+  // `waiting`: a reply Stop could not stop is finishing; the next message
+  // goes once it has.
+  const sendButton = (hasAttachments: boolean, waiting = false) => (
+    <button
+      type="submit"
+      disabled={
+        waiting || (!input.trim() && !hasAttachments) || isHistoryLoading
+      }
+      className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
+      aria-label="Send message"
+    >
+      <ArrowUp className="h-4 w-4" />
+    </button>
+  );
 
   const hasThread = messages.length > 0 || isReplying || Boolean(error);
   const creditWarning = minkCredits ? minkCreditWarning(minkCredits) : null;
@@ -483,6 +730,7 @@ export function DashboardChat({
       data-testid="mink-chat-surface"
       className={wrapperClass}
       style={panelStyle}
+      onClickCapture={leaveForLinkedPage}
     >
       {!isOverlay && (
         <div
@@ -506,23 +754,25 @@ export function DashboardChat({
 
       <header className="flex min-h-[64px] w-full max-w-full shrink-0 items-center justify-between gap-3 border-b border-[#ededed] px-3 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setHistoryOpen((open) => !open)}
-            aria-label={
-              historyOpen
-                ? "Hide conversation sidebar"
-                : "Show conversation sidebar"
-            }
-            aria-expanded={historyOpen}
-            className="rounded-lg p-2 text-[#5c5f62] transition-colors hover:bg-[#f1f1f1] hover:text-[#1a1a1a]"
-          >
-            {historyOpen ? (
-              <PanelLeftClose className="h-4 w-4" />
-            ) : (
-              <PanelLeftOpen className="h-4 w-4" />
-            )}
-          </button>
+          {!voiceChat.enabled && (
+            <button
+              type="button"
+              onClick={() => setHistoryOpen((open) => !open)}
+              aria-label={
+                historyOpen
+                  ? "Hide conversation sidebar"
+                  : "Show conversation sidebar"
+              }
+              aria-expanded={historyOpen}
+              className="rounded-lg p-2 text-[#5c5f62] transition-colors hover:bg-[#f1f1f1] hover:text-[#1a1a1a]"
+            >
+              {historyOpen ? (
+                <PanelLeftClose className="h-4 w-4" />
+              ) : (
+                <PanelLeftOpen className="h-4 w-4" />
+              )}
+            </button>
+          )}
           <MinkMark />
           {/* ★ ONE LINE, NOT TWO. The purple ASSISTANT_NAME wordmark sat above
               the title saying what the avatar beside it and the topbar button
@@ -531,7 +781,7 @@ export function DashboardChat({
               "whic…". The title is the only part of this block that carries
               information the merchant does not already have. */}
           <span className="min-w-0 truncate text-sm font-semibold text-[#1a1a1a]">
-            {activeConversationTitle ?? "New conversation"}
+            {activeConversationTitle ?? MINK_NEW_CHAT_TITLE}
           </span>
           {isHistoryLoading && (
             <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-[#8c9196]" />
@@ -539,6 +789,22 @@ export function DashboardChat({
         </div>
 
         <div className="flex shrink-0 items-center gap-1 text-[#5c5f62]">
+          {!voiceChat.enabled && (
+            <button
+              type="button"
+              onClick={startFreshChat}
+              disabled={isReplying || !hasThread}
+              className="rounded-md p-1.5 transition-colors hover:bg-[#f1f1f1] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+              aria-label="New chat"
+              title={
+                isReplying
+                  ? "Wait for Mink to finish, or stop it, to start a new chat"
+                  : "New chat"
+              }
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+          )}
           <MinkHeaderMenu onNavigate={closeChat} />
           <button
             type="button"
@@ -566,40 +832,12 @@ export function DashboardChat({
       </header>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        {historyOpen && (
-          <ConversationSidebar
-            conversations={conversations}
-            activeConversationId={activeConversationId}
+        {historyOpen && !voiceChat.enabled && (
+          <MinkHistorySidebar
             isOverlay={isOverlay}
-            isReplying={isReplying}
-            isHistoryLoading={isHistoryLoading}
-            deletingConversationId={deletingConversationId}
-            onNewConversation={() => {
-              followLatestRef.current = true;
-              setShowJumpToLatest(false);
-              latestUserMessageIdRef.current = null;
-              anchoredUserMessageIdRef.current = null;
-              if (turnAnchorSpaceRef.current) {
-                turnAnchorSpaceRef.current.style.minHeight = "0px";
-              }
-              reset();
-              if (!isOverlay) setHistoryOpen(false);
-            }}
-            onSelect={(conversation) => {
-              followLatestRef.current = true;
-              setShowJumpToLatest(false);
-              latestUserMessageIdRef.current = null;
-              anchoredUserMessageIdRef.current = null;
-              if (turnAnchorSpaceRef.current) {
-                turnAnchorSpaceRef.current.style.minHeight = "0px";
-              }
-              void loadConversation(conversation.id);
-              if (!isOverlay) setHistoryOpen(false);
-            }}
-            onDelete={(conversation) => {
-              setDeleteFailure(null);
-              setDeleteTarget(conversation);
-            }}
+            onNewConversation={newConversationFromHistory}
+            onSelect={chooseConversation}
+            onDelete={askToDelete}
           />
         )}
 
@@ -673,7 +911,8 @@ export function DashboardChat({
                 }}
                 className="mink-message-scroll h-full min-h-0 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4"
               >
-                <div className={`${columnClass} space-y-4`}>
+                <MinkEarlierMessages />
+                <div className={`${columnClass} space-y-6`}>
                   {messages.map((message, index) =>
                     message.role === "user" ? (
                       <div
@@ -682,7 +921,11 @@ export function DashboardChat({
                         data-mink-message-role="user"
                         className="flex scroll-mt-4 justify-end"
                       >
-                        <MinkUserMessage text={message.text} />
+                        <MinkUserMessage
+                          text={message.text}
+                          pending={message.pendingAttachments}
+                          localPreviews={message.localPreviews}
+                        />
                       </div>
                     ) : (
                       /* ★ NO PER-MESSAGE ATTRIBUTION. The avatar and the name
@@ -705,6 +948,7 @@ export function DashboardChat({
                             artifacts={message.artifacts ?? []}
                             onPrompt={sendFromChat}
                             promptDisabled={isReplying || isHistoryLoading}
+                            shownRevampIds={revampsShownBefore[index]}
                           />
                           {index === latestAssistantIndex &&
                           !isReplying &&
@@ -739,6 +983,10 @@ export function DashboardChat({
                   {isReplying && (
                     <div
                       className="mink-answer-row flex min-w-0 py-1"
+                      // The whole pending row is one polite live region, so a
+                      // screen reader hears the answer as it streams and the
+                      // status beneath it; a second live region nested inside
+                      // would announce the status twice.
                       aria-live="polite"
                       data-testid="mink-pending-answer"
                     >
@@ -749,7 +997,7 @@ export function DashboardChat({
                             <MinkAnswer text={streamingText} />
                           </div>
                         ) : null}
-                        <div className="flex items-center gap-2.5 py-2 text-xs text-[#5c5f62]">
+                        <div className="flex items-center gap-2.5 py-2 text-sm text-[#5c5f62]">
                           <MinkMark size="sm" />
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
                           {statusText ?? "Thinking…"}
@@ -763,17 +1011,19 @@ export function DashboardChat({
                       <MinkMark size="sm" />
                       <div className="max-w-[85%] rounded-2xl rounded-tl-sm bg-[#fff4f4] px-3.5 py-2.5 text-sm text-[#5c1b14]">
                         <div>{error.message}</div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            followLatestRef.current = true;
-                            retry();
-                          }}
-                          className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#6d4dff] hover:underline"
-                        >
-                          <RotateCcw className="h-3 w-3" />
-                          Retry
-                        </button>
+                        {error.retryable !== false && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              followLatestRef.current = true;
+                              retry();
+                            }}
+                            className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-[#6d4dff] hover:underline"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Retry
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
@@ -801,8 +1051,28 @@ export function DashboardChat({
             </div>
           )}
 
-          <div className="shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4">
+          {voiceChat.enabled ? (
+            <MinkVoiceBar
+              voice={voiceChat}
+              isReplying={isReplying}
+              stopRefused={stopRefused}
+              onStopReply={() => void cancel()}
+              columnClass={columnClass}
+            />
+          ) : null}
+          <div
+            hidden={voiceChat.enabled}
+            className="mink-composer-footer shrink-0 border-t border-[#f1f1f1] p-3 sm:p-4"
+          >
             <div className={columnClass}>
+              {voiceChat.notice ? (
+                <div
+                  role="alert"
+                  className="mb-2 rounded-xl border border-[#f2ddb4] bg-[#fdf9ef] px-3 py-2 text-[11px] text-[#8a5a12]"
+                >
+                  {voiceChat.notice}
+                </div>
+              ) : null}
               {creditWarning ? (
                 <div
                   role="status"
@@ -824,13 +1094,23 @@ export function DashboardChat({
                 message={input}
                 onAdd={(value) => {
                   setInput(value);
+                  focusComposerAfterAdd.current = true;
                   composerRef.current?.focus();
                 }}
                 disabled={isReplying || isHistoryLoading}
                 canSaveMedia={canSaveMedia}
                 onSubmit={sendFromChat}
+                onSubmitPrepared={sendPreparedFromChat}
               >
-                {({ attach, attachment, voice, submit }) => (
+                {({
+                  attach,
+                  attachment,
+                  voice,
+                  submit,
+                  recorder,
+                  recording,
+                  hasAttachments,
+                }) => (
                   <form
                     onSubmit={(event) => {
                       event.preventDefault();
@@ -929,7 +1209,11 @@ export function DashboardChat({
                           return;
                         }
                         event.preventDefault();
-                        if (input.trim() && !isHistoryLoading && !isReplying) {
+                        if (
+                          (input.trim() || hasAttachments) &&
+                          !isHistoryLoading &&
+                          !isReplying
+                        ) {
                           void submit();
                         }
                       }}
@@ -950,33 +1234,27 @@ export function DashboardChat({
                       autoComplete="off"
                       autoCapitalize="sentences"
                       autoCorrect="on"
-                      className="min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#8c9196] sm:text-sm sm:leading-5"
+                      className={`min-h-6 max-h-40 w-full min-w-0 resize-none border-none bg-transparent px-2 py-0.5 text-base leading-6 text-[#1a1a1a] outline-none placeholder:text-[#71757a] ${
+                        recording === "dictation" && !input ? "hidden" : ""
+                      }`}
                     />
-                    <div className="flex w-full items-center justify-between">
-                      {attach}
-                      <div className="flex items-center gap-2">
-                        {voice}
-                        {isReplying ? (
-                          <button
-                            type="button"
-                            onClick={cancel}
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1a1a1a] text-white"
-                            aria-label="Stop Mink AI"
-                          >
-                            <Square className="h-4 w-4 fill-current" />
-                          </button>
-                        ) : (
-                          <button
-                            type="submit"
-                            disabled={!input.trim() || isHistoryLoading}
-                            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#6d4dff] text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30"
-                            aria-label="Send message"
-                          >
-                            <ArrowUp className="h-4 w-4" />
-                          </button>
-                        )}
+                    {recording ? (
+                      <div className="flex w-full min-w-0 items-center gap-2">
+                        {recorder}
                       </div>
-                    </div>
+                    ) : (
+                      <div className="flex w-full items-center justify-between">
+                        {attach}
+                        <div className="flex items-center gap-2">
+                          {voice}
+                          {isReplying
+                            ? stopRefused
+                              ? sendButton(hasAttachments, true)
+                              : stopReply
+                            : sendButton(hasAttachments)}
+                        </div>
+                      </div>
+                    )}
                   </form>
                 )}
               </MinkMultimodalInput>
@@ -1017,8 +1295,9 @@ export function DashboardChat({
                   id="mink-delete-description"
                   className="mt-1 text-sm leading-5 text-[#5c5f62]"
                 >
-                  “{deleteTarget.title}” and its messages will be permanently
-                  deleted.
+                  {deleteRow?.hasRedesignCard
+                    ? `“${deleteTarget.title}” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.`
+                    : `“${deleteTarget.title}” and its messages will be permanently deleted. Changes you approved or published from this chat stay in your store.`}
                 </p>
                 {deleteFailure && (
                   <p
@@ -1086,11 +1365,6 @@ export function DashboardChat({
 function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  // Lazy, not an effect: the menu only ever renders on the client, inside an
-  // open panel, so the stored choice can be read on first render.
-  const [replyLanguage, setReplyLanguage] = useState<MinkReplyLanguage>(() =>
-    typeof window === "undefined" ? "auto" : readStoredMinkReplyLanguage(),
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -1149,27 +1423,6 @@ function MinkHeaderMenu({ onNavigate }: { onNavigate: () => void }) {
           >
             Watches
           </Link>
-          <label className="block px-3 pb-2 pt-2 text-[11px] text-[#6f6a8a]">
-            <span className="mb-1 block font-semibold uppercase tracking-wide">
-              Reply language
-            </span>
-            <select
-              aria-label="Reply language"
-              value={replyLanguage}
-              onChange={(event) => {
-                const next = event.target.value as MinkReplyLanguage;
-                setReplyLanguage(next);
-                storeMinkReplyLanguage(next);
-              }}
-              className="w-full rounded-md border border-[#e5e5e5] bg-white px-2 py-1 text-xs text-[#1a1a1a]"
-            >
-              {MINK_REPLY_LANGUAGES.map((entry) => (
-                <option key={entry.code} value={entry.code}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
-          </label>
         </div>
       )}
     </div>
@@ -1327,7 +1580,7 @@ export function minkCreditWarning(
   if (totalLeft < MINK_MAX_RUN_CREDITS)
     return {
       level: "low",
-      message: `Only ${totalLeft} Mink credit${totalLeft === 1 ? "" : "s"} left - a large request can use up to ${MINK_MAX_RUN_CREDITS}. Top up under Plans & Billing.`,
+      message: `Only ${totalLeft} Mink credit${totalLeft === 1 ? "" : "s"} left. Top up under Plans & Billing to keep using Mink.`,
     };
   return null;
 }
@@ -1355,35 +1608,55 @@ export function minkCreditIndicatorState(summary: MinkCreditSummary) {
  * twelve-second run is a single pulsing dot and nothing says what is taking
  * the time.
  */
-function MinkRunSteps({ steps }: { steps: MinkRunStep[] }) {
+export function MinkRunSteps({ steps }: { steps: MinkRunStep[] }) {
   if (steps.length === 0) return null;
+  const current =
+    [...steps].reverse().find((step) => step.state === "running") ??
+    steps[steps.length - 1];
+  const previous = steps.filter((step) => step.sequence !== current.sequence);
+  const stepLine = (step: MinkRunStep) => (
+    <span className="flex items-start gap-2">
+      {step.state === "running" ? (
+        <LoaderCircle
+          className="mt-1 h-3.5 w-3.5 shrink-0 animate-spin text-[#6d4dff] motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+      ) : step.state === "failed" ? (
+        <AlertTriangle
+          className="mt-1 h-3.5 w-3.5 shrink-0 text-[#b45309]"
+          aria-hidden="true"
+        />
+      ) : (
+        <Check
+          className="mt-1 h-3.5 w-3.5 shrink-0 text-emerald-700"
+          aria-hidden="true"
+        />
+      )}
+      <span className="min-w-0 break-words">{step.status}</span>
+    </span>
+  );
   return (
-    <ol
+    <div
       aria-label="What Mink AI is doing"
-      className="mb-2 space-y-1 text-xs text-[#5c5f62]"
+      className="mb-3 space-y-1 text-sm text-[#5c5f62]"
     >
-      {steps.map((step) => (
-        <li key={step.sequence} className="flex items-center gap-2">
-          {step.state === "running" ? (
-            <LoaderCircle
-              className="h-3 w-3 shrink-0 animate-spin text-[#6d4dff]"
-              aria-hidden="true"
-            />
-          ) : step.state === "failed" ? (
-            <AlertTriangle
-              className="h-3 w-3 shrink-0 text-[#b45309]"
-              aria-hidden="true"
-            />
-          ) : (
-            <Check
-              className="h-3 w-3 shrink-0 text-emerald-600"
-              aria-hidden="true"
-            />
-          )}
-          <span>{step.status}</span>
-        </li>
-      ))}
-    </ol>
+      {stepLine(current)}
+      {previous.length > 0 && (
+        <details className="mink-progress-details">
+          <summary className="cursor-pointer py-2 text-xs font-medium text-[#67616f] focus-visible:outline-[#6d4dff]">
+            {previous.length} earlier {previous.length === 1 ? "step" : "steps"}
+            {previous.some((step) => step.state === "failed")
+              ? " · Includes an issue"
+              : ""}
+          </summary>
+          <ol className="space-y-2 border-l border-[#e5e5e5] py-1 pl-3">
+            {previous.map((step) => (
+              <li key={step.sequence}>{stepLine(step)}</li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </div>
   );
 }
 
@@ -1535,47 +1808,100 @@ function MinkMemoryPromptCard({
   );
 }
 
-function MinkUserMessage({ text }: { text: string }) {
+/**
+ * The merchant's own message. ★ A message that is still being read carries
+ * its attachments as `pending` (the photo they picked, from this tab), so it
+ * shows in full the moment they press Enter, the way ChatGPT and Claude show
+ * a sent photo, instead of waiting in the composer under a spinner. Once read,
+ * the finished text's file references take over, and `localPreviews` keeps the
+ * same picture on screen rather than reloading it from storage.
+ */
+function MinkUserMessage({
+  text,
+  pending,
+  localPreviews,
+}: {
+  text: string;
+  pending?: MinkPendingAttachment[];
+  localPreviews?: Record<string, string>;
+}) {
   const [viewingImage, setViewingImage] = useState<{
     filename: string;
-    url: string;
+    src: string;
   } | null>(null);
   let visibleText = text;
   const attachments: Array<
-    | { kind: "media"; filename: string; url: string }
+    | { kind: "media"; filename: string; src: string }
     | { kind: "reference"; filename: string; sourceKind: string }
   > = [];
 
-  while (true) {
-    const csv = readMinkCsvReference(visibleText);
-    if (csv) {
-      visibleText = csv.message;
-      attachments.unshift({
-        kind: "reference",
-        filename: csv.file.filename,
-        sourceKind: "Product CSV",
-      });
-      continue;
+  if (pending?.length) {
+    for (const item of pending) {
+      if (item.previewUrl)
+        attachments.push({
+          kind: "media",
+          filename: item.name,
+          src: item.previewUrl,
+        });
+      else
+        attachments.push({
+          kind: "reference",
+          filename: item.name,
+          sourceKind: item.kind === "image" ? "Image" : "Document",
+        });
     }
-    const document = readReviewedMinkDocument(visibleText);
-    if (document) {
-      visibleText = document.message;
-      attachments.unshift({
-        kind: "reference",
-        filename: document.attachment.filename || "Reviewed reference",
-        sourceKind: document.attachment.kind === "image" ? "Image" : "Document",
-      });
-      continue;
+  } else {
+    while (true) {
+      const csv = readMinkCsvReference(visibleText);
+      if (csv) {
+        visibleText = csv.message;
+        attachments.unshift({
+          kind: "reference",
+          filename: csv.file.filename,
+          sourceKind: "Product CSV",
+        });
+        continue;
+      }
+      const document = readReviewedMinkDocument(visibleText);
+      if (document) {
+        visibleText = document.message;
+        const filename = document.attachment.filename || "Reviewed reference";
+        const local =
+          document.attachment.kind === "image"
+            ? localPreviews?.[`file:${document.attachment.filename}`]
+            : undefined;
+        attachments.unshift(
+          local
+            ? { kind: "media", filename, src: local }
+            : {
+                kind: "reference",
+                filename,
+                sourceKind:
+                  document.attachment.kind === "image" ? "Image" : "Document",
+              },
+        );
+        continue;
+      }
+      const media = readSavedMinkMediaReference(visibleText);
+      if (media) {
+        visibleText = media.message;
+        const local = localPreviews?.[`url:${media.asset.url}`];
+        const src =
+          local ??
+          (isRenderableMinkMediaUrl(media.asset.url)
+            ? `/api/og-image?url=${encodeURIComponent(media.asset.url)}`
+            : "");
+        attachments.unshift({
+          kind: "media",
+          filename: media.asset.filename,
+          src,
+        });
+        continue;
+      }
+      break;
     }
-    const media = readSavedMinkMediaReference(visibleText);
-    if (media) {
-      visibleText = media.message;
-      attachments.unshift({ kind: "media", ...media.asset });
-      continue;
-    }
-    break;
   }
-  const savedImageNames = new Set(
+  const imageNames = new Set(
     attachments
       .filter((attachment) => attachment.kind === "media")
       .map((attachment) => attachment.filename),
@@ -1584,12 +1910,12 @@ function MinkUserMessage({ text }: { text: string }) {
     (attachment) =>
       attachment.kind === "media" ||
       attachment.sourceKind !== "Image" ||
-      !savedImageNames.has(attachment.filename),
+      !imageNames.has(attachment.filename),
   );
 
   return (
     <>
-      <div className="max-w-[85%] space-y-2 rounded-2xl rounded-br-sm bg-[#f4f0ff] px-3.5 py-2.5 text-sm text-[#1a1a1a]">
+      <div className="max-w-[85%] space-y-2 rounded-2xl rounded-br-sm bg-[#f4f0ff] px-3.5 py-2.5 text-[15px] leading-6 text-[#1a1a1a]">
         {renderedAttachments.length > 0 && (
           <div
             className="flex flex-wrap gap-2"
@@ -1598,10 +1924,10 @@ function MinkUserMessage({ text }: { text: string }) {
             {renderedAttachments.map((attachment, index) =>
               attachment.kind === "media" ? (
                 <div
-                  key={`${attachment.url}:${index}`}
+                  key={`${attachment.filename}:${index}`}
                   className="min-w-0 overflow-hidden rounded-xl border border-black/10 bg-white/80"
                 >
-                  {isRenderableMinkMediaUrl(attachment.url) && (
+                  {attachment.src && (
                     <button
                       type="button"
                       aria-label={`View ${attachment.filename || "attached image"}`}
@@ -1610,7 +1936,7 @@ function MinkUserMessage({ text }: { text: string }) {
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={`/api/og-image?url=${encodeURIComponent(attachment.url)}`}
+                        src={attachment.src}
                         alt={attachment.filename || "Attached storefront image"}
                         className="h-28 w-44 max-w-full object-cover"
                       />
@@ -1668,7 +1994,7 @@ function MinkUserMessage({ text }: { text: string }) {
             </button>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={`/api/og-image?url=${encodeURIComponent(viewingImage.url)}`}
+              src={viewingImage.src}
               alt={viewingImage.filename || "Attached image"}
               className="max-h-[82dvh] max-w-full rounded-xl object-contain"
             />
@@ -1692,130 +2018,4 @@ function isRenderableMinkMediaUrl(value: string) {
   } catch {
     return false;
   }
-}
-
-function ConversationSidebar({
-  conversations,
-  activeConversationId,
-  isOverlay,
-  isReplying,
-  isHistoryLoading,
-  deletingConversationId,
-  onNewConversation,
-  onSelect,
-  onDelete,
-}: {
-  conversations: MinkConversationSummary[];
-  activeConversationId: string | null;
-  isOverlay: boolean;
-  isReplying: boolean;
-  isHistoryLoading: boolean;
-  deletingConversationId: string | null;
-  onNewConversation: () => void;
-  onSelect: (conversation: MinkConversationSummary) => void;
-  onDelete: (conversation: MinkConversationSummary) => void;
-}) {
-  return (
-    <aside
-      aria-label="Mink AI conversations"
-      className={
-        isOverlay
-          ? "absolute inset-y-0 left-0 z-40 flex w-[min(320px,100%)] shrink-0 flex-col overscroll-contain border-r border-[#e7e7e7] bg-[#f7f7f8] shadow-xl md:static md:z-auto md:w-72 md:shadow-none"
-          : "absolute inset-y-0 left-0 z-40 flex w-[min(300px,100%)] flex-col overscroll-contain border-r border-[#e7e7e7] bg-[#f7f7f8] shadow-xl"
-      }
-    >
-      <div className="p-3">
-        <button
-          type="button"
-          onClick={onNewConversation}
-          disabled={isReplying}
-          className="flex w-full items-center gap-2 rounded-xl border border-[#dedede] bg-white px-3 py-2.5 text-left text-sm font-semibold text-[#1a1a1a] shadow-sm transition-colors hover:border-[#cfc4ff] hover:bg-[#fbfaff] disabled:opacity-50"
-        >
-          <MessageSquarePlus className="h-4 w-4 text-[#6d4dff]" />
-          New conversation
-        </button>
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col px-2 pb-3">
-        <div className="flex h-8 items-center justify-between px-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#8c9196]">
-          <span>Recent</span>
-          {isHistoryLoading && (
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-          )}
-        </div>
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
-          {conversations.map((conversation) => {
-            const selected = conversation.id === activeConversationId;
-            const deleting = deletingConversationId === conversation.id;
-            return (
-              <div
-                key={conversation.id}
-                className={`group relative rounded-xl transition-colors ${
-                  selected
-                    ? "bg-[#eee9ff]"
-                    : "hover:bg-[#ededee] focus-within:bg-[#ededee]"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelect(conversation)}
-                  disabled={isReplying || deleting}
-                  aria-current={selected ? "page" : undefined}
-                  className="flex w-full items-start gap-2.5 rounded-xl px-3 py-2.5 pr-10 text-left disabled:opacity-50"
-                >
-                  <MessageSquare
-                    className={`mt-0.5 h-4 w-4 shrink-0 ${
-                      selected ? "text-[#6d4dff]" : "text-[#8c9196]"
-                    }`}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-[#1a1a1a]">
-                      {conversation.title}
-                    </span>
-                    <span className="mt-0.5 block text-[11px] text-[#8c9196]">
-                      {formatConversationDate(conversation.lastMessageAt)}
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDelete(conversation)}
-                  disabled={isReplying || deleting}
-                  aria-label={`Delete ${conversation.title}`}
-                  title="Delete conversation"
-                  className={`absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-[#8c9196] transition hover:bg-white hover:text-[#b42318] focus:opacity-100 disabled:opacity-40 ${
-                    selected
-                      ? "opacity-100"
-                      : "opacity-0 group-hover:opacity-100"
-                  }`}
-                >
-                  {deleting ? (
-                    <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              </div>
-            );
-          })}
-          {conversations.length === 0 && !isHistoryLoading && (
-            <div className="px-3 py-5 text-center text-xs leading-5 text-[#8c9196]">
-              Your recent conversations will appear here.
-            </div>
-          )}
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-function formatConversationDate(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Recent";
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
 }

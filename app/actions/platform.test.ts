@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeDbMock, sqlParamValues } from "./_test-helpers";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { makeDbMock, sqlParamValues, sqlText } from "./_test-helpers";
 
 vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
@@ -75,8 +76,21 @@ import { gcsDeletePrefix } from "@/lib/storage/gcs";
 import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
 import { removeAuthorizedHosts } from "@/lib/auth/authorized-domains";
 import { ROOT_DOMAIN } from "@/lib/store/host";
-import { stores } from "@/drizzle/schema";
+import {
+  billingInvoices,
+  billingReconciliationItems,
+  stores,
+} from "@/drizzle/schema";
+import { withService } from "@/lib/db/client";
 import { revalidateTag } from "next/cache";
+
+/** When the store row itself was deleted (drafts go first, see deleteStore). */
+function storeDeleteOrder(db: any): number {
+  const index = vi
+    .mocked(db.delete)
+    .mock.calls.findIndex(([table]: unknown[]) => table === stores);
+  return vi.mocked(db.delete).mock.invocationCallOrder[index]!;
+}
 
 const OPERATOR_EMAIL = "op@storemink.com";
 const FUTURE = "2030-01-01T00:00:00.000Z";
@@ -435,6 +449,57 @@ describe("deleteStore", () => {
     );
   });
 
+  it("collects only Google Cloud Storage URLs for the media sweep", async () => {
+    const gcs = "https://storage.googleapis.com/media/stores/s1/logo.webp";
+    setup([
+      viewer(),
+      [
+        {
+          id: "s1",
+          settings: {
+            logo: gcs,
+            banner: "https://cdn.example.com/media/banner.png",
+          },
+          custom_domain: null,
+        },
+      ],
+      [],
+      [],
+      [],
+      ...Array.from({ length: 15 }, () => []),
+    ]);
+
+    expect(await deleteStore("s1")).toEqual({ success: true });
+    expect(deleteStorageUrls).toHaveBeenCalledWith([gcs]);
+  });
+
+  it("★ takes an image inside an HTML body without the backslash JSON adds", async () => {
+    // The rows are scanned as JSON, which writes src="..." as src=\"...\" and
+    // a newline as \n. A URL that kept that backslash resolves to `<path>/`,
+    // which names no object, so the image would quietly stay in the bucket.
+    const inBlog = "https://storage.googleapis.com/media/blog/old-cover.png";
+    const inSection = "https://storage.googleapis.com/media/sections/hero.webp";
+    setup([
+      viewer(),
+      [{ id: "s1", settings: {}, custom_domain: null }],
+      [],
+      [],
+      [],
+      // MEDIA_TABLES order: products, product_variants, categories, blogs (3),
+      // blog_comments, homepage_sections (5), then the rest.
+      ...Array.from({ length: 15 }, (_, table) =>
+        table === 3
+          ? [{ id: "b1", content: `<p><img src="${inBlog}" alt="Cover"></p>` }]
+          : table === 5
+            ? [{ id: "h1", config: { text: `${inSection}\nSee you soon` } }]
+            : [],
+      ),
+    ]);
+
+    expect(await deleteStore("s1")).toEqual({ success: true });
+    expect(deleteStorageUrls).toHaveBeenCalledWith([inBlog, inSection]);
+  });
+
   // Phone sign-in needs each store's EXACT subdomain host in Identity
   // Platform's authorizedDomains, so deleting a store must take its host out.
   describe("the store's own sign-in host", () => {
@@ -460,8 +525,7 @@ describe("deleteStore", () => {
       expect(await deleteStore("s1")).toEqual({ success: true });
 
       expect(removeAuthorizedHosts).toHaveBeenCalledWith([HOST], ROOT_DOMAIN);
-      const deleted = vi.mocked(dbHolder.current.db.delete).mock
-        .invocationCallOrder[0];
+      const deleted = storeDeleteOrder(dbHolder.current.db);
       const removed = vi.mocked(removeAuthorizedHosts).mock
         .invocationCallOrder[0];
       expect(deleted).toBeLessThan(removed!);
@@ -578,6 +642,181 @@ describe("deleteStore", () => {
     const res = await deleteStore("s1");
     expect(res.warning).toMatch(/Identity Platform is not configured/i);
     expect(deleteAuthUser).not.toHaveBeenCalled();
+  });
+
+  it("★★ gives the cascade its own 5-minute statement limit, inside the delete's transaction", async () => {
+    // Every pool cuts a statement at 30 s; the one DELETE that removes a
+    // whole store measured 13.9 s locally for a 200k-order store, so it sets
+    // its own bound with SET LOCAL, which ends with its transaction.
+    setup([
+      viewer(),
+      [{ id: "s1", settings: {}, custom_domain: null }],
+      [],
+      [],
+      [],
+      ...Array.from({ length: 15 }, () => []),
+    ]);
+
+    expect(await deleteStore("s1")).toEqual({ success: true });
+
+    const db = dbHolder.current.db;
+    const statements = dbHolder.current.calls.execute.map((query: unknown) =>
+      sqlText(query),
+    );
+    // The transaction's first two statements; the third files unissued AI
+    // credit receipts (pinned below).
+    expect(statements.slice(0, 2)).toEqual([
+      "set local statement_timeout = '5min'",
+      "set constraints all deferred",
+    ]);
+    const [limitAt, deferAt] = vi.mocked(db.execute).mock.invocationCallOrder;
+    const deleteAt = storeDeleteOrder(db);
+    // ★ The same transaction as the DELETE: set after that withService call
+    //   began (the scan is an earlier one), and before the cascade runs.
+    const opened = vi
+      .mocked(withService)
+      .mock.invocationCallOrder.filter((order) => order < deleteAt);
+    expect(limitAt).toBeGreaterThan(Math.max(...opened));
+    expect(limitAt).toBeLessThan(deferAt!);
+    expect(deferAt).toBeLessThan(deleteAt);
+  });
+
+  it("★★ deletes the store's DRAFT invoices first, in the cascade's transaction, keeping payment evidence", async () => {
+    // StoreMink's issued invoices outlive the store (migration 0243: SET NULL),
+    // so the cascade no longer removes drafts either. A draft is no document,
+    // so it is deleted here, unless a payment against it may have reached the
+    // gateway: that attempt is the only record of the money.
+    setup([
+      viewer(),
+      [{ id: "s1", settings: {}, custom_domain: null }],
+      [],
+      [],
+      [],
+      ...Array.from({ length: 15 }, () => []),
+    ]);
+
+    expect(await deleteStore("s1")).toEqual({ success: true });
+
+    const db = dbHolder.current.db;
+    expect(
+      vi.mocked(db.delete).mock.calls.map(([table]: unknown[]) => table),
+    ).toEqual([billingInvoices, stores]);
+    const draftsAt = vi.mocked(db.delete).mock.invocationCallOrder[0]!;
+    const storeAt = storeDeleteOrder(db);
+    const [, deferAt] = vi.mocked(db.execute).mock.invocationCallOrder;
+    // After the checks are deferred, before the store row, and in the SAME
+    // withService call: no transaction began between them.
+    expect(deferAt).toBeLessThan(draftsAt);
+    expect(draftsAt).toBeLessThan(storeAt);
+    const opened = vi.mocked(withService).mock.invocationCallOrder;
+    expect(opened.some((at) => at > draftsAt && at < storeAt)).toBe(false);
+
+    // Only this store's unissued rows, and never one with live evidence.
+    // ★ Rendered by the real dialect, so the COLUMN each predicate names is
+    //   pinned: sqlText keeps only the literal chunks, and " is null" held just
+    //   as well for paid_at, which would delete every issued but unpaid invoice.
+    const where = dbHolder.current.calls.where.find((clause: unknown) =>
+      sqlText(clause).includes("billing_payment_attempts"),
+    );
+    const rendered = new PgDialect().sqlToQuery(where);
+    expect(rendered.sql).toContain('"billing_invoices"."store_id" = $1');
+    expect(rendered.sql).toContain('"billing_invoices"."finalized_at" is null');
+    expect(rendered.sql).not.toContain("paid_at");
+    expect(rendered.sql).toContain("not exists (select 1 from");
+    expect(rendered.sql).toContain('a.invoice_id = "billing_invoices"."id"');
+    expect(rendered.sql).toContain("a.provider_order_id is not null");
+    expect(rendered.sql).toContain("a.state not in ('failed', 'cancelled')");
+    expect(rendered.params).toEqual(["s1"]);
+  });
+
+  it("★ keeps the store's OPEN reconciliation items, detached, in the cascade's transaction", async () => {
+    // Their store key cascades (migration 0014), and an open or "needs
+    // chasing" item can be the only record of a payment: an amount
+    // mismatch's observed amount lives nowhere else. A closed item is history.
+    setup([
+      viewer(),
+      [{ id: "s1", settings: {}, custom_domain: null }],
+      [],
+      [],
+      [],
+      ...Array.from({ length: 15 }, () => []),
+    ]);
+
+    expect(await deleteStore("s1")).toEqual({ success: true });
+
+    const db = dbHolder.current.db;
+    expect(
+      vi.mocked(db.update).mock.calls.map(([table]: unknown[]) => table),
+    ).toEqual([billingReconciliationItems]);
+    const detachAt = vi.mocked(db.update).mock.invocationCallOrder[0]!;
+    const [, deferAt] = vi.mocked(db.execute).mock.invocationCallOrder;
+    const storeAt = storeDeleteOrder(db);
+    expect(deferAt).toBeLessThan(detachAt);
+    expect(detachAt).toBeLessThan(storeAt);
+    const opened = vi.mocked(withService).mock.invocationCallOrder;
+    expect(opened.some((at) => at > detachAt && at < storeAt)).toBe(false);
+
+    const set = dbHolder.current.calls.set[0];
+    expect(set.storeId).toBeNull();
+    const detail = new PgDialect().sqlToQuery(set.detail);
+    expect(detail.sql).toBe(
+      `"billing_reconciliation_items"."detail" || jsonb_build_object('storeDeleted', true, 'storeName', (select s.name from public.stores s where s.id = $1))`,
+    );
+    expect(detail.params).toEqual(["s1"]);
+    const where = dbHolder.current.calls.where
+      .map((clause: any) => new PgDialect().sqlToQuery(clause))
+      .find((query: { sql: string }) =>
+        query.sql.includes('"billing_reconciliation_items"."status"'),
+      );
+    expect(where).toMatchObject({
+      sql: '("billing_reconciliation_items"."store_id" = $1 and "billing_reconciliation_items"."status" in ($2, $3))',
+      params: ["s1", "open", "manual_review"],
+    });
+  });
+
+  it("★ files a PAID AI credit purchase whose receipt never issued before its row cascades, and says so", async () => {
+    // No invoice to keep, no payment attempt, and ai_credit_purchases
+    // cascades: without this the payment ids and amount of a paid sale left
+    // no trace at all.
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        viewer(),
+        [{ id: "s1", settings: {}, custom_domain: null }],
+        [],
+        [],
+        [],
+        ...Array.from({ length: 15 }, () => []),
+      ],
+      executeQueue: [[], [], [{ id: "item-9" }]],
+    });
+
+    expect(await deleteStore("s1")).toEqual({
+      success: true,
+      warning:
+        "1 paid AI credit purchase has no issued receipt. It is now in Billing & tax > Reconciliation, so the payment is not lost.",
+    });
+
+    const db = dbHolder.current.db;
+    const filing = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.execute[2],
+    );
+    expect(filing.sql).toContain(
+      "insert into public.billing_reconciliation_items",
+    );
+    expect(filing.sql).toContain("select null, 'orphan_payment', 'open'");
+    expect(filing.sql).toContain(
+      "join public.billing_invoices i on i.id = p.invoice_id",
+    );
+    expect(filing.sql).toContain("p.store_id = $1");
+    expect(filing.sql).toContain("p.status = 'paid'");
+    expect(filing.sql).toContain("i.finalized_at is null");
+    expect(filing.sql).toContain("on conflict do nothing");
+    expect(filing.params).toEqual(["s1"]);
+    // ★ Before the drafts go: the receipt it joins on is one of them.
+    const fileAt = vi.mocked(db.execute).mock.invocationCallOrder[2]!;
+    const draftsAt = vi.mocked(db.delete).mock.invocationCallOrder[0]!;
+    expect(fileAt).toBeLessThan(draftsAt);
+    expect(fileAt).toBeLessThan(storeDeleteOrder(db));
   });
 });
 

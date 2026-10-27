@@ -305,7 +305,14 @@ export async function getMyOrder(
   const storeId = await requireStorefrontStoreId();
 
   try {
-    return await withUser(
+    // ★ ONE DATABASE SCOPE AT A TIME. The order and its items are read under
+    // the shopper's own scope (RLS plus the host store), and that scope
+    // CLOSES before the shipment read below opens its own. The shipment reads
+    // used to run inside this callback, so one order page held two pooled
+    // connections at once: a few shoppers opening order pages together could
+    // take every connection a server has and then wait on each other until
+    // the pool's 5 s limit failed every one of them.
+    const found = await withUser(
       { uid: user.id, email: user.email ?? null },
       async (db) => {
         const rows = await db
@@ -359,7 +366,7 @@ export async function getMyOrder(
           .limit(1);
 
         const order = rows[0];
-        if (!order) return { error: "Not found." };
+        if (!order) return null;
 
         const items = await db
           .select({
@@ -378,84 +385,89 @@ export async function getMyOrder(
           .where(eq(orderItems.orderId, orderId))
           .orderBy(asc(orderItems.createdAt));
 
-        // Shipments are service-only because they contain provider internals.
-        // The ownership + host-store check above has already proven this is
-        // the shopper's order; return only the customer-safe tracking fields.
-        const shipmentRows = await withService((service) =>
-          service
+        return { order, items };
+      },
+    );
+    if (!found) return { error: "Not found." };
+    const { order, items } = found;
+
+    // Shipments are service-only because they contain provider internals.
+    // The ownership + host-store check above has already proven this is the
+    // shopper's order; return only the customer-safe tracking fields. Both
+    // reads share ONE service scope, opened only now that the shopper's scope
+    // has closed.
+    const { shipmentRows, eventRows } = await withService(async (service) => {
+      const shipmentRows = await service
+        .select({
+          id: shipments.id,
+          status: shipments.status,
+          courier_name: shipments.courierName,
+          awb: shipments.awb,
+          tracking_url: shipments.trackingUrl,
+          estimated_delivery_at: shipments.estimatedDeliveryAt,
+        })
+        .from(shipments)
+        .where(
+          and(eq(shipments.orderId, orderId), eq(shipments.storeId, storeId)),
+        )
+        .orderBy(asc(shipments.createdAt));
+      const eventRows = shipmentRows.length
+        ? await service
             .select({
-              id: shipments.id,
-              status: shipments.status,
-              courier_name: shipments.courierName,
-              awb: shipments.awb,
-              tracking_url: shipments.trackingUrl,
-              estimated_delivery_at: shipments.estimatedDeliveryAt,
+              id: shipmentEvents.id,
+              shipment_id: shipmentEvents.shipmentId,
+              description: shipmentEvents.description,
+              status: shipmentEvents.status,
+              location: shipmentEvents.location,
+              occurred_at: shipmentEvents.occurredAt,
             })
-            .from(shipments)
+            .from(shipmentEvents)
             .where(
               and(
-                eq(shipments.orderId, orderId),
-                eq(shipments.storeId, storeId),
+                inArray(
+                  shipmentEvents.shipmentId,
+                  shipmentRows.map((shipment) => shipment.id),
+                ),
+                eq(shipmentEvents.storeId, storeId),
               ),
             )
-            .orderBy(asc(shipments.createdAt)),
-        );
-        const eventRows = shipmentRows.length
-          ? await withService((service) =>
-              service
-                .select({
-                  id: shipmentEvents.id,
-                  shipment_id: shipmentEvents.shipmentId,
-                  description: shipmentEvents.description,
-                  status: shipmentEvents.status,
-                  location: shipmentEvents.location,
-                  occurred_at: shipmentEvents.occurredAt,
-                })
-                .from(shipmentEvents)
-                .where(
-                  inArray(
-                    shipmentEvents.shipmentId,
-                    shipmentRows.map((shipment) => shipment.id),
-                  ),
-                )
-                .orderBy(desc(shipmentEvents.occurredAt)),
-            )
-          : [];
-        const customerShipments: MyOrderShipment[] = shipmentRows.map(
-          (shipment) => {
-            const status = shipment.status as ShipmentStatus;
-            return {
-              ...shipment,
-              status,
-              status_label: shipmentStatusLabel(status),
-              events: eventRows
-                .filter((event) => event.shipment_id === shipment.id)
-                .map((event) => ({
-                  id: event.id,
-                  description: event.description,
-                  status: event.status,
-                  location: event.location,
-                  occurred_at: event.occurred_at,
-                })),
-            };
-          },
-        );
-
+            .orderBy(desc(shipmentEvents.occurredAt))
+        : [];
+      return { shipmentRows, eventRows };
+    });
+    const customerShipments: MyOrderShipment[] = shipmentRows.map(
+      (shipment) => {
+        const status = shipment.status as ShipmentStatus;
         return {
-          order: {
-            ...order,
-            shipping_address: (order.shipping_address ?? {}) as Record<
-              string,
-              unknown
-            >,
-            item_count: items.reduce((n, i) => n + i.quantity, 0),
-            first_item: items[0]?.name ?? null,
-            items,
-            shipments: customerShipments,
-          },
+          ...shipment,
+          status,
+          status_label: shipmentStatusLabel(status),
+          events: eventRows
+            .filter((event) => event.shipment_id === shipment.id)
+            .map((event) => ({
+              id: event.id,
+              description: event.description,
+              status: event.status,
+              location: event.location,
+              occurred_at: event.occurred_at,
+            })),
         };
       },
     );
+
+    return {
+      order: {
+        ...order,
+        shipping_address: (order.shipping_address ?? {}) as Record<
+          string,
+          unknown
+        >,
+        item_count: items.reduce((n, i) => n + i.quantity, 0),
+        first_item: items[0]?.name ?? null,
+        items,
+        shipments: customerShipments,
+      },
+    };
   } catch (error) {
     logError("customer orders: detail failed", error, { orderId });
     return { error: "Couldn't load that order." };

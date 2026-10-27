@@ -233,6 +233,16 @@ describe("ShopClient filtering, sorting and pagination", () => {
     expect(names()).toEqual(["Mango", "Apple", "Chips"]);
   });
 
+  it("names a price range chip in words, never with a long dash", () => {
+    renderShop({
+      initialShop: { ...DEFAULT_SHOP_QUERY, min: 100, max: 500 },
+    });
+    const chip = screen.getByRole("button", {
+      name: /^₹100 to ₹500\s*-\s*remove filter$/,
+    });
+    expect(chip.textContent).not.toMatch(/[\u2013\u2014]/);
+  });
+
   it("shows 24 at a time and reveals the next page on Load more", () => {
     const many = Array.from({ length: 30 }, (_, i) =>
       product(`p${i}`, `Product ${i}`, 100 + i),
@@ -541,7 +551,7 @@ describe("ShopClient collection template", () => {
       />,
     );
     expect(names()).toHaveLength(24);
-    expect(screen.getByText("Showing 1–24 of 30 products")).toBeTruthy();
+    expect(screen.getByText("Showing 1 to 24 of 30 products")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     const nav = screen.getByRole("navigation", { name: "Pages" });
     expect(

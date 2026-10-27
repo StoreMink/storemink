@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   THEME_STUDIO_LIMITS,
@@ -663,6 +666,8 @@ describe("theme generation pipeline", () => {
       expect(page.seo_description?.length ?? 0).toBeGreaterThanOrEqual(20);
       expect(page.seo_description!.length).toBeLessThanOrEqual(160);
       expect(page.seo_description).toContain(base.name);
+      // A shopper reads it: no em dash or en dash (the product's dash rule).
+      expect(page.seo_description).not.toMatch(/[\u2013\u2014]/);
     }
   });
 
@@ -1825,5 +1830,257 @@ describe("theme generation pipeline", () => {
       source: "generated",
     });
     expect(revised.placeholders.has(slotId)).toBe(false);
+  });
+});
+
+// 25 Oct 2026: every operator change that reached Stage B under prompt v32
+// was refused by Vertex with 400 INVALID_ARGUMENT, because the templates
+// object pushed the revision schemas past its size limit. Bubble's intent
+// carries a design direction (schema 2), so its changes take the variety
+// draft schema. v33 sends the templates as one JSON string and shows the
+// revision the base theme's templates and announcement bar to keep.
+describe("an operator change under prompt v33", () => {
+  it("sends the variety draft schema with templatesJson, shows the base theme's templates, and keeps templates in the new version", async () => {
+    const { THEME_STUDIO_PROMPT_VERSION } = await import("./prompt-features");
+    const { STAGE_B_VARIETY_DRAFT_SCHEMA } = await import("./schemas");
+    const { templatesForDraft } = await import("./compiler");
+    const { templateIssues, themeTemplates } =
+      await import("@/lib/themes/templates");
+    const current = { ...input(), promptVersion: THEME_STUDIO_PROMPT_VERSION };
+    const first = await runThemeGeneration(
+      createFakeModelClient(base),
+      current,
+      new AbortController().signal,
+    );
+    if (first.kind !== "version") throw new Error("fixture failed");
+    expect(first.intent.schemaVersion).toBe(2);
+    expect(first.package.definition.preset.templates).toBeDefined();
+    // Bubble itself was built before the templates existed: a base without
+    // them is shown the composition its storefront renders today.
+    const withoutTemplates = structuredClone(first.package);
+    delete withoutTemplates.definition.preset.templates;
+    delete withoutTemplates.definition.preset.announcement;
+    for (const basePackage of [first.package, withoutTemplates]) {
+      const body = "Make the homepage feel warmer.";
+      const fake = createFakeModelClient({ ...base, brief: body });
+      const seen: StructuredRequest[] = [];
+      const revised = await runThemeGeneration(
+        {
+          provider: "fake",
+          generate: (request, signal) => {
+            seen.push(request);
+            return fake.generate(request, signal);
+          },
+        },
+        {
+          ...current,
+          compile: { ...current.compile, versionNumber: 2 },
+          messages: [{ kind: "revision", body }],
+          revision: { baseIntent: first.intent, basePackage },
+          operatorChange: {
+            recreateContext: async () => ({
+              messages: [{ kind: "brief", body: base.brief }],
+              references: [],
+            }),
+          },
+        },
+        new AbortController().signal,
+      );
+      if (revised.kind !== "version")
+        throw new Error(`expected a version: ${JSON.stringify(revised)}`);
+      expect(revised.change?.scope).toBe("revise");
+      const stageB = seen.find((r) => r.stage === "draft")!;
+      // The schema itself (no twin), carrying the string in the templates'
+      // place and within what Vertex accepted.
+      expect(stageB.schema).toBe(STAGE_B_VARIETY_DRAFT_SCHEMA);
+      const properties = (stageB.schema as { properties: object }).properties;
+      expect(properties).toHaveProperty("templatesJson", { type: "string" });
+      expect(properties).not.toHaveProperty("templates");
+      expect(JSON.stringify(stageB.schema).length).toBeLessThanOrEqual(14_240);
+      expect(stageB.system).toContain(
+        '- Templates: write a top-level "templatesJson" string',
+      );
+      const text =
+        stageB.content[0].type === "text" ? stageB.content[0].text : "";
+      const preset = basePackage.definition.preset;
+      const shown = JSON.stringify(templatesForDraft(themeTemplates(preset)));
+      expect(text).toContain(`"templatesJson":${JSON.stringify(shown)}`);
+      expect(text).toContain(
+        `"announcement":${JSON.stringify({
+          text: preset.announcement?.text ?? "",
+          href: preset.announcement?.href ?? "",
+        })}`,
+      );
+      expect(text).toContain(
+        "page templates (templatesJson) and announcement bar",
+      );
+      // The new version's templates came from the draft's string.
+      const templates = revised.package.definition.preset.templates;
+      expect(templates?.product.gallery).toBe("thumbs-left");
+      expect(templateIssues(templates)).toEqual([]);
+    }
+  });
+});
+
+// stage-b-request.golden.test.ts pins what each Stage B builder returns for
+// the flags a prompt revision should pass; these runs prove the pipeline
+// passes them. stageBSchemaFor's templatesJson flag defaults to the current
+// shape, so a call site that lost it would quietly send v33's schema for a
+// persisted v32 request, and only a run through the pipeline would show it.
+describe("the Stage B request a run sends, against the golden pins", () => {
+  const GOLDEN = JSON.parse(
+    readFileSync(join(__dirname, "stage-b-request.golden.json"), "utf8"),
+  ) as { schemas: Record<string, string>; prompts: Record<string, string> };
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  const textOf = (request: StructuredRequest) =>
+    request.content[0].type === "text" ? request.content[0].text : "";
+  const propertiesOf = (request: StructuredRequest) =>
+    (request.schema as { properties: object }).properties;
+
+  /** A fake client that keeps every request it answers. */
+  function recording(brief: string) {
+    const fake = createFakeModelClient({ ...base, brief });
+    const seen: StructuredRequest[] = [];
+    const client: ThemeStudioModelClient = {
+      provider: "fake",
+      generate: (request, signal) => {
+        seen.push(request);
+        return fake.generate(request, signal);
+      },
+    };
+    return { client, seen };
+  }
+
+  /** A new theme built offline under `promptVersion`, and its Stage B
+   * request. */
+  async function build(promptVersion: string) {
+    const { client, seen } = recording(base.brief);
+    const result = await runThemeGeneration(
+      client,
+      { ...input(), promptVersion },
+      new AbortController().signal,
+    );
+    if (result.kind !== "version")
+      throw new Error(`expected a version: ${JSON.stringify(result)}`);
+    return { result, stageB: seen.find((r) => r.stage === "draft")! };
+  }
+
+  /** An operator change of `first` under `promptVersion`, and its Stage B
+   * request. */
+  async function change(
+    promptVersion: string,
+    first: Awaited<ReturnType<typeof build>>["result"],
+  ) {
+    const body = "Make the homepage feel warmer.";
+    const { client, seen } = recording(body);
+    const current = { ...input(), promptVersion };
+    const revised = await runThemeGeneration(
+      client,
+      {
+        ...current,
+        compile: { ...current.compile, versionNumber: 2 },
+        messages: [{ kind: "revision", body }],
+        revision: { baseIntent: first.intent, basePackage: first.package },
+        operatorChange: {
+          recreateContext: async () => ({
+            messages: [{ kind: "brief", body: base.brief }],
+            references: [],
+          }),
+        },
+      },
+      new AbortController().signal,
+    );
+    if (revised.kind !== "version")
+      throw new Error(`expected a version: ${JSON.stringify(revised)}`);
+    expect(revised.change?.scope).toBe("revise");
+    return { revised, stageB: seen.find((r) => r.stage === "draft")! };
+  }
+
+  /** A schema-1 base's change sends the plain system prompt, which reads no
+   * intent, so it is held to its own pin and the hero-contrast one. */
+  const expectPlainSystemPinned = async (
+    request: StructuredRequest,
+    revision: number,
+  ) => {
+    const { heroContrastPrompt } = await import("./prompts");
+    const hero = heroContrastPrompt(true);
+    expect(sha(hero)).toBe(GOLDEN.prompts[`heroContrast@v${revision}`]);
+    expect(request.system.endsWith(hero)).toBe(true);
+    expect(sha(request.system.slice(0, -hero.length))).toBe(
+      GOLDEN.prompts[`stageB@v${revision}`],
+    );
+  };
+
+  it("sends v32's requests under v32: the templates object, its bullet and its revision sentence", async () => {
+    const built = await build("theme-studio-v32");
+    expect(built.result.intent.schemaVersion).toBe(2);
+    expect(sha(JSON.stringify(built.stageB.schema))).toBe(
+      GOLDEN.schemas["varietyInitial@v32"],
+    );
+    // A change of a theme with a design direction (schema 2, like Bubble's)
+    // and of one built before directions existed (schema 1).
+    const older = await build("theme-studio-v20");
+    expect(older.result.intent.schemaVersion).toBe(1);
+    for (const [first, pin] of [
+      [built.result, "varietyDraft@v32"],
+      [older.result, "draft@v32"],
+    ] as const) {
+      const { revised, stageB } = await change("theme-studio-v32", first);
+      expect(sha(JSON.stringify(stageB.schema)), pin).toBe(GOLDEN.schemas[pin]);
+      expect(propertiesOf(stageB)).toHaveProperty("templates");
+      expect(propertiesOf(stageB)).not.toHaveProperty("templatesJson");
+      expect(stageB.system).toContain(
+        '- Templates: write a top-level "templates" object',
+      );
+      expect(stageB.system).not.toContain("templatesJson");
+      if (pin === "draft@v32") await expectPlainSystemPinned(stageB, 32);
+      const text = textOf(stageB);
+      expect(text).toContain(
+        "Keep its copy, sections, navigation and catalogue wherever the revised intent does not change them",
+      );
+      expect(text).not.toContain("templatesJson");
+      expect(revised.package.definition.preset.templates?.product.gallery).toBe(
+        "thumbs-left",
+      );
+    }
+  });
+
+  it("sends the templates as one JSON string under v33, for a new theme and a change of either base", async () => {
+    const built = await build("theme-studio-v33");
+    expect(sha(JSON.stringify(built.stageB.schema))).toBe(
+      GOLDEN.schemas["varietyInitial@v33"],
+    );
+    expect(propertiesOf(built.stageB)).toHaveProperty("templatesJson", {
+      type: "string",
+    });
+    expect(built.stageB.system).toContain(
+      '- Templates: write a top-level "templatesJson" string',
+    );
+    expect(built.result.package.definition.preset.templates).toBeDefined();
+    const older = await build("theme-studio-v20");
+    for (const [first, pin] of [
+      [built.result, "varietyDraft@v33"],
+      [older.result, "draft@v33"],
+    ] as const) {
+      const { revised, stageB } = await change("theme-studio-v33", first);
+      expect(sha(JSON.stringify(stageB.schema)), pin).toBe(GOLDEN.schemas[pin]);
+      expect(propertiesOf(stageB)).toHaveProperty("templatesJson", {
+        type: "string",
+      });
+      expect(propertiesOf(stageB)).not.toHaveProperty("templates");
+      expect(JSON.stringify(stageB.schema).length).toBeLessThanOrEqual(14_240);
+      expect(stageB.system).toContain(
+        '- Templates: write a top-level "templatesJson" string',
+      );
+      if (pin === "draft@v33") await expectPlainSystemPinned(stageB, 33);
+      const text = textOf(stageB);
+      expect(text).toContain('"templatesJson":"');
+      expect(text).toContain(
+        "page templates (templatesJson) and announcement bar",
+      );
+      expect(revised.package.definition.preset.templates?.product.gallery).toBe(
+        "thumbs-left",
+      );
+    }
   });
 });

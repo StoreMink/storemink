@@ -51,8 +51,8 @@ two-thirds of the raw gap but a much smaller share of the risk.
 ## 3. The house pattern for an action test
 
 Established across the six files below; copy it rather than inventing a new
-shape. `app/actions/_test-helpers.ts` has `makeDbMock`, `makeChain`,
-`sqlParamValues` and `sqlText`.
+shape. `app/actions/_test-helpers.ts` has `makeDbMock`, `sqlParamValues` and
+`sqlText`.
 
 ```ts
 const dbHolder = vi.hoisted(() => ({ current: null as any }));

@@ -311,6 +311,15 @@
   background: var(--sm-surface);
 }
 
+/* 16px stops iOS zooming the page when a checkout box takes focus (every
+   iPhone browser is Safari underneath). Larger screens keep 15px.
+   Pinned by app/(storefront)/input-zoom-coverage.test.ts. */
+@media (max-width: 600px) {
+  .input {
+    font-size: 16px;
+  }
+}
+
 .formError {
   font-size: 13px;
   font-weight: 500;
@@ -1030,6 +1039,13 @@
 }
 .pickerInput:focus {
   border-color: var(--sm-ink, #111827);
+}
+/* 16px stops iOS zooming the page when the store search takes focus. Larger
+   screens keep 15px. Pinned by app/(storefront)/input-zoom-coverage.test.ts. */
+@media (max-width: 600px) {
+  .pickerInput {
+    font-size: 16px;
+  }
 }
 .pickerCount {
   padding: 12px 20px 4px;

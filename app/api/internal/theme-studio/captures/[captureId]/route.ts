@@ -4,6 +4,7 @@ import {
   MAX_CAPTURE_BYTES,
   MAX_QA_SCREENSHOT_BYTES,
   finishThemeStudioCapture,
+  type CaptureFinish,
 } from "@/lib/theme-studio/capture";
 import { cronAuthorized } from "../auth";
 
@@ -13,9 +14,19 @@ import { cronAuthorized } from "../auth";
 // capture another claim now holds) is told it lost, and its pictures are
 // discarded. Every picture is re-decoded, cropped and compressed server-side
 // (capture.ts); the body is read with a hard ceiling before any of that.
+//
+// ★ A report this route refuses as invalid (a malformed picture or QA
+// report, a screenshot set it cannot take) is the same on every try, so once
+// the body names its lease it is answered as that try's error, which fails
+// the capture at once (capture-core.ts `captureErrorKind`). Answering 400
+// instead stopped the job and left the lease to lapse, and the capture was
+// tried again, identically, up to five times.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 240;
+
+/** A preview surface name, as preview.ts names them. */
+const SURFACE_RE = /^[a-z_]{1,32}$/;
 
 /** Three JPEG shots, base64 in JSON, with room to spare. */
 const MAX_BODY_BYTES =
@@ -46,6 +57,26 @@ async function readBody(request: Request): Promise<unknown | null> {
   }
 }
 
+/** Answer a settlement: 409 to a job that lost its lease, 503 if it threw. */
+async function answer(
+  captureId: string,
+  finish: () => Promise<CaptureFinish>,
+): Promise<NextResponse> {
+  try {
+    const result = await finish();
+    return NextResponse.json(result, {
+      status: result.status === "lost" ? 409 : 200,
+      headers: { "Cache-Control": "no-store" },
+    });
+  } catch (error) {
+    logError("theme studio capture finish failed", error, { captureId });
+    return NextResponse.json(
+      { error: "The capture could not be saved." },
+      { status: 503 },
+    );
+  }
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ captureId: string }> },
@@ -57,12 +88,19 @@ export async function POST(
   const body = (await readBody(request)) as {
     leaseToken?: unknown;
     error?: unknown;
+    failedSurface?: unknown;
     images?: unknown;
     qa?: unknown;
   } | null;
   if (!body || typeof body.leaseToken !== "string") {
     return NextResponse.json({ error: "Malformed body." }, { status: 400 });
   }
+  const leaseToken = body.leaseToken;
+  /** A refused report, answered as this try's error under its lease. */
+  const refused = (error: string) =>
+    answer(captureId, () =>
+      finishThemeStudioCapture({ captureId, leaseToken, error }),
+    );
   let images: { slotId: string; bytes: Uint8Array }[] | undefined;
   if (Array.isArray(body.images)) {
     images = [];
@@ -70,10 +108,7 @@ export async function POST(
       const slotId = (item as { slotId?: unknown })?.slotId;
       const data = (item as { base64?: unknown })?.base64;
       if (typeof slotId !== "string" || typeof data !== "string") {
-        return NextResponse.json(
-          { error: "Malformed image." },
-          { status: 400 },
-        );
+        return refused("capture_unusable");
       }
       images.push({
         slotId,
@@ -107,10 +142,7 @@ export async function POST(
       screenshots?: unknown;
     };
     if (!raw || !Array.isArray(raw.screenshots)) {
-      return NextResponse.json(
-        { error: "Malformed QA report." },
-        { status: 400 },
-      );
+      return refused("qa_report_invalid");
     }
     const screenshots = [];
     for (const item of raw.screenshots) {
@@ -122,20 +154,12 @@ export async function POST(
         typeof shot.path !== "string" ||
         typeof shot.base64 !== "string"
       ) {
-        return NextResponse.json(
-          { error: "Malformed QA screenshot." },
-          { status: 400 },
-        );
+        return refused("qa_screenshots_invalid");
       }
       const bytes = new Uint8Array(Buffer.from(shot.base64, "base64"));
-      if (
-        bytes.byteLength === 0 ||
-        bytes.byteLength > MAX_QA_SCREENSHOT_BYTES
-      ) {
-        return NextResponse.json(
-          { error: "QA screenshot is too large." },
-          { status: 400 },
-        );
+      if (bytes.byteLength === 0) return refused("qa_screenshot_unusable");
+      if (bytes.byteLength > MAX_QA_SCREENSHOT_BYTES) {
+        return refused("qa_screenshot_too_large");
       }
       screenshots.push({
         key: shot.key,
@@ -155,23 +179,23 @@ export async function POST(
       screenshots,
     };
   }
-  try {
-    const result = await finishThemeStudioCapture({
+  // The page a status error came from (`preview_status_404` on the home
+  // page, say), logged with the failed try. It does not decide how the error
+  // is retried: a preview answers 404 during a short database outage too, so
+  // a 4xx fails only when the next try reports it again.
+  const errorSurface =
+    typeof body.failedSurface === "string" &&
+    SURFACE_RE.test(body.failedSurface)
+      ? body.failedSurface
+      : undefined;
+  return answer(captureId, () =>
+    finishThemeStudioCapture({
       captureId,
-      leaseToken: body.leaseToken,
+      leaseToken,
       images,
       qa,
       error: typeof body.error === "string" ? body.error : undefined,
-    });
-    return NextResponse.json(result, {
-      status: result.status === "lost" ? 409 : 200,
-      headers: { "Cache-Control": "no-store" },
-    });
-  } catch (error) {
-    logError("theme studio capture finish failed", error, { captureId });
-    return NextResponse.json(
-      { error: "The capture could not be saved." },
-      { status: 503 },
-    );
-  }
+      ...(errorSurface ? { errorSurface } : {}),
+    }),
+  );
 }

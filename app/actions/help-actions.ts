@@ -99,22 +99,27 @@ export interface GroundedHelpSearchResult {
 }
 
 const PUBLIC_HELP_QUERY_MAX = 300;
+// A JSON Schema, sent as responseJsonSchema (GeminiOptions, lib/ai/gemini.ts):
+// the field and the lowercase-type subset lib/mink and lib/theme-studio send
+// live, which the SDK passes through unchanged on both backends.
+// propertyOrdering belonged to the old responseSchema field, not JSON Schema;
+// the reply is read by key, so its order does not matter.
 const AI_HELP_SEARCH_SCHEMA = {
-  type: "OBJECT",
+  type: "object",
   properties: {
     queries: {
-      type: "ARRAY",
-      items: { type: "STRING" },
+      type: "array",
+      items: { type: "string" },
       maxItems: 3,
     },
     slugs: {
-      type: "ARRAY",
-      items: { type: "STRING" },
+      type: "array",
+      items: { type: "string" },
       maxItems: 10,
     },
   },
   required: ["queries", "slugs"],
-  propertyOrdering: ["queries", "slugs"],
+  additionalProperties: false,
 };
 
 function searchText(value: string): string {
@@ -365,10 +370,18 @@ export async function suggestHelpArticles(
  * exact slugs from the supplied catalogue, but it never writes an answer or a
  * URL. Every returned item is re-validated against a published database row;
  * keyword search remains the fallback when AI is unavailable or throttled.
+ *
+ * `options.signal` is the Help assistant's one budget for a whole turn: when
+ * it fires, the model call ends and the keyword results are what come back.
+ * ★ A server action is public, so whatever arrives there is used only when it
+ *   really is an AbortSignal (a browser cannot send one).
  */
 export async function searchPublishedHelpWithAi(
   rawQuery: string,
+  options: { signal?: AbortSignal } = {},
 ): Promise<GroundedHelpSearchResult> {
+  const signal =
+    options?.signal instanceof AbortSignal ? options.signal : undefined;
   const query = rawQuery.trim().slice(0, PUBLIC_HELP_QUERY_MAX);
   if (query.length < 2) return { results: [], mode: "keyword" };
 
@@ -446,7 +459,8 @@ You must only use the PUBLISHED DOCUMENT CATALOGUE supplied by the application.
       temperature: 0,
       maxOutputTokens: 512,
       responseMimeType: "application/json",
-      responseSchema: AI_HELP_SEARCH_SCHEMA,
+      responseJsonSchema: AI_HELP_SEARCH_SCHEMA,
+      ...(signal ? { signal } : {}),
     },
   );
   if (error || !text) {
@@ -1078,7 +1092,7 @@ export async function reorderHelpCategories(
 // ─────────────────────────────── AI ────────────────────────────────────────
 
 // The help-writer system prompt lives in brand/tasks/help-article.md (deployed
-// app content, traced into the serverless bundle by next.config.ts alongside
+// app content, traced into the standalone server bundle by next.config.ts alongside
 // the other brand/tasks/*.md). Read at runtime; the fallback keeps the button
 // working if the file can't be read.
 const HELP_WRITER_FALLBACK = `You are a senior technical writer for StoreMink, an India-first no-code e-commerce store builder (like Shopify). You write clear, friendly, task-oriented help-centre articles for non-technical merchants.
@@ -1130,25 +1144,19 @@ export interface HelpAiResult {
 // Gemini structured-output schema (uppercase OpenAPI types, per the codebase's
 // existing SEO_SCHEMA). Forcing JSON lets one call fill the body AND the SEO
 // fields, and lets the model ask a question instead of guessing.
+// A JSON Schema, sent as responseJsonSchema (see AI_HELP_SEARCH_SCHEMA).
 const AI_ARTICLE_SCHEMA = {
-  type: "OBJECT",
+  type: "object",
   properties: {
-    action: { type: "STRING", enum: ["apply", "clarify"] },
-    question: { type: "STRING" },
-    body: { type: "STRING" },
-    excerpt: { type: "STRING" },
-    seoTitle: { type: "STRING" },
-    seoDescription: { type: "STRING" },
+    action: { type: "string", enum: ["apply", "clarify"] },
+    question: { type: "string" },
+    body: { type: "string" },
+    excerpt: { type: "string" },
+    seoTitle: { type: "string" },
+    seoDescription: { type: "string" },
   },
   required: ["action"],
-  propertyOrdering: [
-    "action",
-    "question",
-    "body",
-    "excerpt",
-    "seoTitle",
-    "seoDescription",
-  ],
+  additionalProperties: false,
 };
 
 /**
@@ -1197,7 +1205,7 @@ ${hasContent ? `Current article HTML:\n${current}` : "The article body is curren
     temperature: 0.5,
     maxOutputTokens: 2048,
     responseMimeType: "application/json",
-    responseSchema: AI_ARTICLE_SCHEMA,
+    responseJsonSchema: AI_ARTICLE_SCHEMA,
   });
   if (error || !text) return { error: error ?? "AI did not return anything." };
 

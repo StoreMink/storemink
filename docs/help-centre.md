@@ -82,6 +82,33 @@ removed every existing one; `help:lint` fails any later Help migration that
 publishes or quotes one, and `help:audit` reports one an operator typed in the
 console.
 
+En dashes and dashes written as HTML entities (`&mdash;`, `&ndash;`,
+`&#8212;`, `&#8211;`) count too: write "to" in a range ("10 to 30
+minutes"). `help:lint` fails any Help migration after `20261026_0254` that
+publishes one (quoting one in `$old$` to remove it is fine), and `help:audit`
+reports them in served rows. The plan guide
+(`manage-your-storemink-plan-and-subscription`) still holds five `&mdash;`
+from 0079 and 0080 until the Help edit that rewrites its billing paragraphs.
+
+### POS, never register or till
+
+The in-person selling feature is "POS" in every guide (owner's rule,
+2026-10-26), and the category is titled POS. Write "in POS", "a POS sale",
+"POS staff", "POS device", "sign in to POS", "open a shift", "count the
+drawer and close the shift"; introduce the name once as "POS (point of sale)"
+where needed. Other meanings stay: signing up ("registration link"), GST, DLT
+and WhatsApp registration, the registered office, "till" meaning until, and
+the physical counter ("at the counter", "counter returns"). Migration
+`20261026_0253` rewrote every guide. `help:lint` fails any Help migration
+after 0253 that publishes register(s) or till(s) in the POS sense (the word is
+banned unless it registers something, signs someone up, or means until before
+a date), "Point of Sale" except as "POS (point of sale)", or "counter" as the
+feature name; short single-quoted titles and SEO values count. `help:audit`
+reports the same in guides, SEO fields, category titles and descriptions, and
+platform role names and descriptions an operator edited. The word list is
+`scripts/pos-wording.mjs`, shared with the product's own guard. Slugs such as
+`configure-pos-register-settings` and the category URL `point-of-sale` stay.
+
 ---
 
 ## 3. How to change published content

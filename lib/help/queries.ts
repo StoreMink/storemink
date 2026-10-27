@@ -404,6 +404,22 @@ export const getPublishedHelpArticleParams = unstable_cache(
 );
 
 /**
+ * People still call POS a "register", a "till" or "Point of Sale" (the guides
+ * and the category title said so until the POS rename of 26 Oct 2026). A
+ * search with any of them also searches for "POS", so it still finds the POS
+ * guides. "registered" and "registration" (signing up, GST, DLT) are whole
+ * different words and are not matched.
+ */
+const POS_SYNONYM =
+  /\b(?:cash\s+)?(?:registers?|tills?)\b|\bpoint[\s-]+of[\s-]+sale\b/gi;
+
+/** The query with "register"/"till"/"point of sale" read as POS, or null when it has none. */
+export function withPosSynonym(query: string): string | null {
+  const swapped = query.replace(POS_SYNONYM, "POS");
+  return swapped === query ? null : swapped;
+}
+
+/**
  * Full-text search over published articles. NOT cached — the query string
  * varies per request. Ranks by weighted tsvector match then popularity, and
  * falls back to an ILIKE prefix scan when the query has no lexemes (e.g. a very
@@ -416,7 +432,12 @@ export async function searchHelpArticles(
   const q = query.trim();
   if (!q) return [];
   try {
-    const tsq = sql`websearch_to_tsquery('english', ${q})`;
+    // The original words are still searched, so a "till" that means "until"
+    // loses nothing: the POS reading is only added.
+    const pos = withPosSynonym(q);
+    const tsq = pos
+      ? sql`(websearch_to_tsquery('english', ${q}) || websearch_to_tsquery('english', ${pos}))`
+      : sql`websearch_to_tsquery('english', ${q})`;
     const rows = await readHelp((db) =>
       db
         .select(CARD_COLS)

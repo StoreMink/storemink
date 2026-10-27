@@ -5,11 +5,13 @@ import {
   ExternalLink,
   ImagePlus,
   LoaderCircle,
+  RotateCcw,
   TriangleAlert,
 } from "lucide-react";
 import { useState } from "react";
 import { saveMinkGeneratedImage } from "@/app/actions/mink-media-actions";
 import type { MinkArtifact } from "@/lib/mink/types";
+import { useChat } from "./chat-context";
 import { MinkLink } from "./mink-link";
 
 type Proposal = Extract<MinkArtifact, { type: "media_image_proposal" }>;
@@ -31,8 +33,25 @@ type Proposal = Extract<MinkArtifact, { type: "media_image_proposal" }>;
  * ★ THE ALT TEXT IS SHOWN AND NOT HIDDEN BEHIND A DISCLOSURE. Proposal time
  * is the only moment anything in this product asks for it, so a merchant who
  * never reads it here never reads it at all.
+ *
+ * ★ A PRODUCT PHOTO HAS TWO NEXT STEPS ON THE CARD, the way Sidekick offers
+ * them: put it on the product, or try again. Each is an ordinary chat message
+ * carrying the photo's exact URL, so Mink does the work through its usual
+ * tools (a product-photo proposal the merchant approves, or a new photo at
+ * the usual price). Nothing here writes anything itself.
  */
+export function productPhotoFollowUps(url: string): {
+  use: string;
+  again: string;
+} {
+  return {
+    use: `Use this photo as the product's main photo: ${url}`,
+    again: `Make another version of this product photo, in the same scene: ${url}`,
+  };
+}
+
 export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
+  const { send, isReplying } = useChat();
   const [saved, setSaved] = useState(proposal.saved);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,8 +88,7 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
                 {proposal.destinationLabel}
               </h3>
               <p className="mt-0.5 text-[9px] text-[#716d78]">
-                Private image · {proposal.expectedCredits} Mink credits ·{" "}
-                {proposal.aspectRatio}
+                Private image · {proposal.aspectRatio}
               </p>
             </div>
           </div>
@@ -166,6 +184,29 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
           </div>
         )}
 
+        {proposal.purpose === "product" ? (
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={isReplying}
+              onClick={() => send(productPhotoFollowUps(proposal.url).use)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#6d4dff] px-3 py-1.5 text-[10px] font-semibold text-white hover:bg-[#5b3df0] disabled:cursor-not-allowed disabled:bg-[#c9c2e8]"
+            >
+              <ImagePlus className="h-3.5 w-3.5" />
+              Use as product photo
+            </button>
+            <button
+              type="button"
+              disabled={isReplying}
+              onClick={() => send(productPhotoFollowUps(proposal.url).again)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#6d4dff] bg-white px-3 py-1.5 text-[10px] font-semibold text-[#5132d2] hover:bg-[#f5f1ff] disabled:cursor-not-allowed disabled:border-[#d7d2df] disabled:text-[#9a95a0]"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Try again
+            </button>
+          </div>
+        ) : null}
+
         {error ? (
           <div className="flex gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-[10px] leading-4 text-rose-800">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -174,9 +215,9 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
         ) : null}
 
         <div className="rounded-xl border border-[#e5e1eb] bg-[#f8f7fa] px-3 py-2 text-[9px] leading-4 text-[#65616b]">
-          AI-generated ecommerce artwork with an invisible SynthID watermark.
-          Store images may guide it, but it does not replace an original
-          catalogue product photograph.
+          {proposal.purpose === "product"
+            ? "Made by Mink AI from your own photo, with an invisible SynthID watermark. Mink redraws the product in the scene, so compare it with the real item before you use it: small details such as a print or a label can change."
+            : "AI-generated ecommerce artwork with an invisible SynthID watermark. Store images may guide it, but it does not replace an original catalogue product photograph."}
         </div>
       </div>
     </section>

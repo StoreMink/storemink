@@ -338,7 +338,7 @@ export async function seedSampleCatalogue(
         db
           .insert(products)
           // sku / sku_no are NOT NULL but owned by the BEFORE-INSERT trigger
-          // (identifiers_04_triggers.sql) — the app never sends them, so the
+          // (products_set_sku) — the app never sends them, so the
           // insert type is asserted past those two columns.
           .values({
             storeId,

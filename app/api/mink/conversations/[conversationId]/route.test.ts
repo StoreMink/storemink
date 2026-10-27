@@ -28,6 +28,7 @@ vi.mock("@/lib/observability/logger", () => ({
   logWarn: vi.fn(),
 }));
 
+import { MinkRequestError } from "@/lib/mink/errors";
 import { DELETE, GET } from "./route";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -47,9 +48,10 @@ beforeEach(() => {
       { id: "message-1", role: "user", text: "How many?" },
       { id: "message-2", role: "assistant", text: "**14** products." },
     ],
+    earlierCursor: "earlier-page",
   });
-  holder.delete.mockResolvedValue(undefined);
-  holder.list.mockResolvedValue([]);
+  holder.delete.mockResolvedValue("deleted");
+  holder.list.mockResolvedValue({ conversations: [], nextCursor: null });
 });
 
 describe("GET /api/mink/conversations/[conversationId]", () => {
@@ -61,8 +63,30 @@ describe("GET /api/mink/conversations/[conversationId]", () => {
     expect(holder.get).toHaveBeenCalledWith(
       expect.objectContaining({ storeId: "store-1", adminId: "admin-1" }),
       ID,
+      { before: null },
     );
     expect(body.conversation.messages).toHaveLength(2);
+    expect(body.conversation.earlierCursor).toBe("earlier-page");
+  });
+
+  it("reads earlier messages below the cursor it is given", async () => {
+    await GET(request({}, "?before=abc_DEF-1"), context(ID));
+    expect(holder.get).toHaveBeenCalledWith(expect.anything(), ID, {
+      before: "abc_DEF-1",
+    });
+  });
+
+  it("answers 400 for an earlier-messages cursor the server refuses", async () => {
+    holder.get.mockRejectedValueOnce(
+      new MinkRequestError(
+        "invalid_cursor",
+        "That list of chats is out of date. Close and reopen your chats.",
+        400,
+      ),
+    );
+    const response = await GET(request({}, "?before=%25"), context(ID));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "invalid_cursor" });
   });
 
   it("rejects an invalid id before resolving dashboard authority", async () => {
@@ -90,8 +114,30 @@ describe("DELETE /api/mink/conversations/[conversationId]", () => {
       expect.objectContaining({ storeId: "store-1", adminId: "admin-1" }),
       ID,
     );
+    // ★ The first page, for a browser still on the previous bundle.
     expect(holder.list).toHaveBeenCalledOnce();
-    expect(await response.json()).toEqual({ conversations: [] });
+    expect(holder.list).toHaveBeenCalledWith(
+      expect.objectContaining({ storeId: "store-1", adminId: "admin-1" }),
+    );
+    expect(await response.json()).toEqual({
+      conversations: [],
+      nextCursor: null,
+    });
+  });
+
+  it("passes a still-building redesign's refusal through in its own words", async () => {
+    const message =
+      "A storefront redesign from this chat is still being made. Wait for it to finish, or stop it from its card, then delete this chat.";
+    holder.delete.mockRejectedValueOnce(
+      new MinkRequestError("conversation_has_redesign", message, 409),
+    );
+    const response = await DELETE(request(), context(ID));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: message,
+      code: "conversation_has_redesign",
+    });
+    expect(holder.list).not.toHaveBeenCalled();
   });
 
   it("rejects a cross-origin deletion before resolving dashboard authority", async () => {
@@ -106,9 +152,9 @@ describe("DELETE /api/mink/conversations/[conversationId]", () => {
   });
 });
 
-function request(headers: Record<string, string> = {}) {
+function request(headers: Record<string, string> = {}, query = "") {
   return new Request(
-    `https://echos.storemink.com/api/mink/conversations/${ID}`,
+    `https://echos.storemink.com/api/mink/conversations/${ID}${query}`,
     { headers },
   );
 }

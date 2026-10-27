@@ -11,6 +11,10 @@ import {
   FINISH_TIMEOUT_MS,
   MIN_CAPTURE_MS,
   MAX_QA_CONTEXTS,
+  MIN_WAKE_MS,
+  WAKE_TIMEOUT_MS,
+  errorSurface,
+  wakeReviews,
 } from "./capture-job.mjs";
 
 const claim = {
@@ -279,8 +283,10 @@ describe("taking the shots", () => {
 
   it("refuses a page that is not the storefront, and still closes the context", async () => {
     const { browser, contexts } = fakeBrowser({ status: 404 });
+    // The home page answering 404 names its page (TS-3A), so the web app
+    // can fail it at once instead of trying it four more times.
     await expect(takeShots(browser, claim, { settleMs: 0 })).rejects.toEqual(
-      new CaptureError("preview_status_404"),
+      new CaptureError("preview_status_404", "home"),
     );
     expect(contexts[0].closed).toBe(true);
   });
@@ -698,4 +704,194 @@ it("never measures more QA contexts at once than MAX_QA_CONTEXTS, whatever is as
     { settleMs: 0, concurrency: 9 },
   );
   expect(peak).toBe(MAX_QA_CONTEXTS);
+});
+
+// ── TS-3A ────────────────────────────────────────────────────────────────
+
+it("measures three QA contexts at once (plan optimisation 6)", () => {
+  // Two peaked at 24% of the job's 2 GiB (4 Oct); the first production
+  // theme measures three.
+  expect(MAX_QA_CONTEXTS).toBe(3);
+});
+
+describe("the page a status error came from", () => {
+  it("is reported with the error, so the web app can fail a repeat at once", async () => {
+    const qaClaim = {
+      ...claim,
+      shots: [],
+      qa: {
+        phase: "final",
+        buildId: "build",
+        pages: [{ surface: "shop", path: "/shop" }],
+        viewports: { phone360: { width: 360, height: 800 } },
+      },
+    };
+    const { browser } = fakeBrowser({ status: 404 });
+    const bodies = [];
+    const answers = [
+      response(200, qaClaim),
+      response(200, { status: "failed" }),
+      response(204),
+    ];
+    await runCaptureJob({
+      appOrigin: claim.origin,
+      cronSecret: "s",
+      launch: async () => browser,
+      fetchImpl: async (_url, init) => {
+        if (init.body) bodies.push(JSON.parse(init.body));
+        return answers.shift();
+      },
+      log: {},
+    });
+    expect(bodies).toEqual([
+      {
+        leaseToken: claim.leaseToken,
+        error: "preview_status_404",
+        failedSurface: "shop",
+      },
+    ]);
+    expect(errorSurface(new CaptureError("capture_timeout"))).toBeUndefined();
+    expect(errorSurface(new Error("preview_status_404"))).toBeUndefined();
+  });
+});
+
+describe("waking the design review when the captures are done", () => {
+  const wakeUrl = `${claim.origin}/api/internal/theme-studio/qa`;
+
+  /** The job's calls, in order, with the answers given. */
+  function job(answers, options = {}) {
+    const { browser } = fakeBrowser();
+    const calls = [];
+    const fetchImpl = vi.fn(async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url) === wakeUrl)
+        return options.wake ? options.wake() : response(200, { ok: true });
+      return answers.shift();
+    });
+    const run = runCaptureJob({
+      appOrigin: claim.origin,
+      cronSecret: "s3cret",
+      launch: async () => browser,
+      fetchImpl,
+      log: {},
+      ...options.job,
+    });
+    return { run, calls };
+  }
+
+  it("★ wakes the review route with the job's own secret once nothing is left to capture, and waits for it", async () => {
+    let answered = false;
+    const { run, calls } = job(
+      [
+        response(200, claim),
+        response(200, {
+          status: "succeeded",
+          versionId: "v",
+          designReview: "waiting",
+        }),
+        response(204),
+      ],
+      {
+        wake: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          answered = true;
+          return response(200, { ok: true });
+        },
+      },
+    );
+    await run;
+    expect(calls.map((c) => c.url)).toEqual([
+      `${claim.origin}/api/internal/theme-studio/captures/claim`,
+      `${claim.origin}/api/internal/theme-studio/captures/c-1`,
+      `${claim.origin}/api/internal/theme-studio/captures/claim`,
+      wakeUrl,
+    ]);
+    const wake = calls.at(-1).init;
+    expect(wake.method).toBe("POST");
+    expect(wake.headers.authorization).toBe("Bearer s3cret");
+    // The review's paid work runs inside that request: the job waits.
+    expect(answered).toBe(true);
+  });
+
+  it("wakes nothing when no review waits and the queue is empty", async () => {
+    const { run, calls } = job([
+      response(200, claim),
+      response(200, { status: "succeeded", versionId: "v" }),
+      response(204),
+    ]);
+    await run;
+    expect(calls.map((c) => c.url)).not.toContain(wakeUrl);
+  });
+
+  it("wakes it when it stops at its capture limit, so the route starts the job again for what is left", async () => {
+    const { run, calls } = job(
+      [response(200, claim), response(200, { status: "succeeded" })],
+      { job: { maxCaptures: 1 } },
+    );
+    await run;
+    expect(calls.at(-1).url).toBe(wakeUrl);
+  });
+
+  it("leaves the review to the minute schedule with under a minute of budget left", async () => {
+    const fetchImpl = vi.fn();
+    expect(
+      await wakeReviews({
+        appOrigin: claim.origin,
+        headers: {},
+        fetchImpl,
+        log: {},
+        timeLeftMs: MIN_WAKE_MS - 1,
+      }),
+    ).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("waits no longer than the review route's own limit, and never throws", async () => {
+    let signal;
+    expect(
+      await wakeReviews({
+        appOrigin: claim.origin,
+        headers: {},
+        fetchImpl: async (_url, init) => {
+          signal = init.signal;
+          return response(200, {});
+        },
+        log: {},
+        timeLeftMs: 10 * WAKE_TIMEOUT_MS,
+      }),
+    ).toBe(200);
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(
+      await wakeReviews({
+        appOrigin: claim.origin,
+        headers: {},
+        fetchImpl: async () => {
+          throw new Error("connect ECONNREFUSED");
+        },
+        log: {},
+        timeLeftMs: WAKE_TIMEOUT_MS,
+      }),
+    ).toBeNull();
+    // A wake that fails leaves the job's own results as they were.
+    const { run } = job(
+      [
+        response(200, claim),
+        response(200, { status: "succeeded", designReview: "waiting" }),
+        response(204),
+      ],
+      {
+        wake: async () => {
+          throw new Error("route down");
+        },
+      },
+    );
+    expect(await run).toEqual([
+      {
+        captureId: "c-1",
+        http: 200,
+        status: "succeeded",
+        designReview: "waiting",
+      },
+    ]);
+  });
 });

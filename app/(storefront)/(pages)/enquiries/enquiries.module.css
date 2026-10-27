@@ -508,4 +508,14 @@
   .otpInput {
     font-size: 18px;
   }
+
+  /* 16px stops iOS zooming the page when a box takes focus (every iPhone
+     browser is Safari underneath): name, email, phone, subject and message.
+     Larger screens keep 15px. Pinned by
+     app/(storefront)/input-zoom-coverage.test.ts. */
+  .input,
+  .phoneInput,
+  .select {
+    font-size: 16px;
+  }
 }

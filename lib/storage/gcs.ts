@@ -1,12 +1,11 @@
-// Google Cloud Storage backend for media (GCP migration Phase 3 — see
-// docs/gcp-migration-phase5-6.md and CODEBASE.md §7).
+// Google Cloud Storage backend for media (see CODEBASE.md §7).
 //
-// GCS is the media backend (GCS_BUCKET required — the Supabase Storage fallback
-// was removed). Auth is Application Default Credentials (ADC) — automatic on Cloud Run's default
-// service account, local dev via `gcloud auth application-default login`. An
-// optional base64 service-account JSON (GCP_SA_KEY) is honoured for hosts
-// without ADC (e.g. Vercel) and is REQUIRED to sign video upload URLs off
-// Cloud Run (user ADC can't sign; Cloud Run signs via IAM SignBlob).
+// GCS is the media backend (GCS_BUCKET required). Auth is Application Default
+// Credentials (ADC): automatic on Cloud Run's default service account, local
+// dev via `gcloud auth application-default login`. An optional base64
+// service-account JSON (GCP_SA_KEY) is honoured for hosts without ADC, and is
+// REQUIRED to sign video upload URLs off Cloud Run (user ADC can't sign; Cloud
+// Run signs via IAM SignBlob).
 //
 // Server-only (the @google-cloud/storage SDK is Node-only). Objects are served
 // from a PUBLIC bucket (uniform bucket-level access + allUsers:objectViewer),
@@ -19,6 +18,11 @@
 // public access, public access prevention enforced), read only through an
 // authenticated route that streams it. There is deliberately no fallback to
 // the public bucket when the private one is not configured.
+//
+// ★ The private bucket also holds Refine with Mink AI results until they are
+// paid for (lib/mink/refine-stages.ts), under `refine-stage/{DB_NAME}/`: one
+// prefix per database, because local development shares the dev and staging
+// bucket, and a stage is decided by rows only its own database holds.
 
 import type { Readable } from "node:stream";
 import type { Storage } from "@google-cloud/storage";
@@ -189,12 +193,13 @@ export async function gcsObjectStream(
 export async function gcsDownloadObject(
   path: string,
   maxBytes: number,
+  kind: GcsBucketKind = "public",
 ): Promise<Uint8Array> {
   assertObjectPath(path);
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) {
     throw new Error("Invalid GCS download limit.");
   }
-  const file = (await bucket()).file(path);
+  const file = (await bucketFor(kind)).file(path);
   const [metadata] = await file.getMetadata();
   const declaredSize = Number(metadata.size ?? 0);
   if (!Number.isFinite(declaredSize) || declaredSize < 1) {
@@ -211,8 +216,8 @@ export async function gcsDownloadObject(
 }
 
 /**
- * Mint a one-time v4 signed URL the client can PUT a video to directly (the
- * serverless body cap makes proxying large files impossible). The signed URL
+ * Mint a one-time v4 signed URL the client can PUT a video to directly (Cloud
+ * Run's 32 MiB request cap makes proxying large files impossible). The signed URL
  * binds the content type, so the client MUST send the same Content-Type header.
  */
 export async function gcsSignUploadUrl(
@@ -254,6 +259,31 @@ export async function gcsDeletePaths(
     return [...paths];
   }
   return failed;
+}
+
+/**
+ * List up to `maxResults` objects below a prefix, with their creation times
+ * (one call, no paging). An empty prefix is refused before GCS is touched, so
+ * a caller can never list a whole bucket by accident.
+ */
+export async function gcsListObjects(
+  kind: GcsBucketKind,
+  prefix: string,
+  maxResults: number,
+): Promise<{ name: string; createdAt: number | null }[]> {
+  if (!prefix.trim()) {
+    throw new Error("Refusing to list an empty prefix.");
+  }
+  const b = await bucketFor(kind);
+  const [files] = await b.getFiles({
+    prefix,
+    maxResults,
+    autoPaginate: false,
+  });
+  return files.map((file) => ({
+    name: file.name,
+    createdAt: Date.parse(String(file.metadata?.timeCreated ?? "")) || null,
+  }));
 }
 
 /**

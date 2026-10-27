@@ -210,7 +210,9 @@ by this recovery path. Model selection and all acceptance gates are unchanged.
 Every run records per-call token usage (input — which INCLUDES cached
 tokens —, cached, output and thinking), repair counts, and an **estimated**
 cost in micro-USD with a pricing version (`lib/theme-studio/cost.ts`,
-`gemini-api-list-2026-09`). Thinking is billed at the output rate. Each call is
+`gemini-api-list-2026-09`; since 25 Oct 2026 `gemini-api-list-2026-09-us-1.1x`,
+which prices a call answered at the US, in practice a photo check, at 1.1
+times global). Thinking is billed at the output rate. Each call is
 priced on its own and then summed, because Pro's rate tier is chosen by that
 request's prompt size (above 200k tokens it doubles). Flash's introductory
 rate ends on 2027-01-01 and the estimate switches with it.
@@ -224,15 +226,33 @@ found and repriced later from the stored raw counts.
 | `THEME_STUDIO_PROVIDER`              | `fake`                   | `vertex-gemini` sends new runs to the models                         |
 | `THEME_STUDIO_GENERATION_ENABLED`    | on                       | `false` stops new runs; viewing, cancel and archive keep working     |
 | `THEME_STUDIO_DISABLED_MODELS`       | none                     | comma-separated model **keys** to switch off (e.g. `gemini-3.1-pro`) |
-| `THEME_STUDIO_DAILY_SPEND_USD`       | `25`                     | per-operator ceiling on estimated spend in any rolling 24 hours      |
+| `THEME_STUDIO_DAILY_SPEND_USD`       | none                     | per-operator ceiling on estimated spend in any rolling 24 hours      |
 | `THEME_STUDIO_GCP_PROJECT_ID`        | `GCP_PROJECT_ID`         | Vertex project for the models                                        |
 | `THEME_STUDIO_VERTEX_LOCATION`       | `global`                 | Vertex region                                                        |
 | `THEME_STUDIO_GEMINI_38_FLASH_MODEL` | `gemini-3.8-flash`       | pin a dated version of Flash (same family only)                      |
 | `THEME_STUDIO_GEMINI_31_PRO_MODEL`   | `gemini-3.1-pro-preview` | pin a dated version of Pro (same family only)                        |
 
-A disabled model is hidden from intake and refused at queue time. The spend
-ceiling is checked at queue, retry and answer time; the offline provider is
-exempt because it spends nothing. None of these touch merchant Mink.
+A disabled model is hidden from intake and refused at queue time; a run
+already queued on it fails as `model_disabled`, and a design review on it
+fails its tries and stops the theme (`qa_provider_failed`).
+`THEME_STUDIO_DISABLED_MODELS` is the emergency switch for one model: set it
+with `gcloud run services update --update-env-vars`, with no build. The next
+deploy's `--set-env-vars` replaces the whole environment and drops it unless
+it is added to `cloudbuild.yaml` (runbook: `CODEBASE.md` §7 and
+`docs/mink-ai-theme-studio-phase6.md` §9). `gemini-3.8-flash` is also the
+per-photo checker, which the merchant storefront revamp shares: switching it
+off leaves those photos unreviewed, and a Theme Studio theme whose photos are
+unchecked stops at its final check. The spend ceiling is checked at queue,
+retry and answer time (and for a change or a photo run); it applies only
+when set to a positive number (Cloud Build set `unlimited` until the Theme
+Studio release, which sets `50`, owner-approved 24 Oct 2026), and the
+offline provider is exempt because it spends nothing. Past it, new
+operator-started work is refused with "You have reached today's Theme
+Studio spending limit. Try again tomorrow."; a build already running is
+never stopped (its automatic repairs and fill rounds count but are never
+refused, and design reviews are neither counted nor refused). Apart from
+that photo check and the Vertex project and location,
+which the storefront revamp also reads, none of these touch merchant Mink.
 
 ## 8. Evaluation harness
 

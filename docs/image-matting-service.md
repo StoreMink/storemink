@@ -7,8 +7,11 @@ pixels onto a white, coloured or generated background, instead of asking an
 image model to redraw the product (which is what Refine with Mink AI and the
 catalogue-photo purpose do today, and why their products can drift).
 
-Status (2026-10-17): built, deployed privately and benchmarked. **Not yet
-called by the web app.** Nothing a merchant sees has changed.
+Status (2026-10-17): built, deployed privately and benchmarked, and called by
+the web app's **Change background** button in the product and category image
+boxes (`lib/media/background-edit.ts`, `POST /api/mink/image-background`).
+Live once the web app deploys with `IMAGE_MATTING_URL`; see "The web app's
+side" below.
 
 ## Why a self-hosted model
 
@@ -61,6 +64,12 @@ POST /v1/matte?output=mask|cutout
                   bad_output, empty_body, unauthorized
 GET /healthz      {"model": "...", "ready": true}
 ```
+
+⚠ `/healthz` cannot be reached from outside: Cloud Run's front end reserves
+some paths ending in `z` and answers 404 for them before the request reaches
+the container (measured 2026-10-17, with and without a token). Probe the
+service with an authenticated `POST /v1/matte` instead; an empty body answers
+`400 empty_body` and a non-image `415 unsupported_type`.
 
 The mask is always returned at the photo's own size (after EXIF rotation, and
 scaled down to fit 4096 px if larger). The web app should ask for the mask,
@@ -145,10 +154,27 @@ Cloud Run's regional quotas in `storemink-prod` are **40 GiB of memory and
 20 vCPU for asia-south1, shared by every service in the region**, including
 `storemink-web-prod`. During this benchmark, a 16 GB test instance plus a
 second deploy were refused with "Quota exceeded for total allowable memory
-per project per region". The matting service is therefore deployed with
-`--max-instances=1` (8 GiB, 4 vCPU).
+per project per region". The service runs with **`--max-instances=2`**
+(raised from 1 on 2026-10-17, revision `00009`): 2 × 4 vCPU / 8 GiB. With
+every service at its maximum the region then holds 18 of 20 vCPU and 25 of
+40 GiB (web-prod 4 × 1 vCPU, web-dev 2 × 1, the two Theme Studio workers
+2 vCPU each, this service 8), so a third instance does not fit.
 
-Before launch, pick one:
+Capacity, measured 2026-10-17 by sending photos at the same moment (one
+photo per instance at a time, about 12 to 15 s each when warm):
+
+| Max instances | Sent at once | Served          | Refused (429 busy) |
+| ------------- | ------------ | --------------- | ------------------ |
+| 1             | 3            | 3, last at 56 s | 0                  |
+| 1             | 7            | 5, last at 68 s | 2, at 46 s         |
+| 2 (warm)      | 7            | 6, last at 50 s | 1, at 49 s         |
+
+Cloud Run holds a waiting request for roughly 45 to 50 seconds and then
+answers 429, which the web app shows as "busy, try again in a minute"
+(nothing is charged). Two instances serve about 8 to 10 photos a minute.
+Idle cost is unchanged: min instances stay 0, so only photos are billed.
+
+Before raising it further, pick one:
 
 1. Request a higher asia-south1 memory and CPU quota (free; usually approved
    quickly), then raise max instances; or
@@ -174,7 +200,7 @@ gcloud run deploy storemink-image-matting \
   --project=storemink-prod --region=asia-south1 \
   --service-account=storemink-matting@storemink-prod.iam.gserviceaccount.com \
   --no-allow-unauthenticated --ingress=all \
-  --concurrency=1 --min-instances=0 --max-instances=1 \
+  --concurrency=1 --min-instances=0 --max-instances=2 \
   --cpu=4 --memory=8Gi --timeout=300 --cpu-boost --execution-environment=gen2 \
   --set-env-vars=MATTING_THREADS=4
 ```
@@ -219,12 +245,37 @@ gcloud artifacts docker images delete \
 gcloud iam service-accounts delete storemink-matting@storemink-prod.iam.gserviceaccount.com
 ```
 
+## The web app's side
+
+- **Client** (`lib/media/matting-client.ts`): reads `IMAGE_MATTING_URL`
+  (https, or plain http to localhost), sends the photo with a Google identity
+  token minted for that URL (`google-auth-library`'s `getIdTokenClient` on
+  Cloud Run), one attempt, 90 s. Outside production it falls back to
+  `gcloud auth print-identity-token`, so a developer can point a local dev
+  server at the deployed service by setting the URL in `.env.local`.
+- **Access**: `storemink-run@storemink-prod.iam.gserviceaccount.com` (the
+  account both `storemink-web-dev` and `storemink-web-prod` run as) holds
+  `roles/run.invoker` on this service, granted 2026-10-17. Undo with
+  `gcloud run services remove-iam-policy-binding storemink-image-matting
+--region=asia-south1 --project=storemink-prod
+--member=serviceAccount:storemink-run@storemink-prod.iam.gserviceaccount.com
+--role=roles/run.invoker`.
+- **Configuration**: `cloudbuild.yaml` passes `_IMAGE_MATTING_URL` (default:
+  this service's deterministic URL). A trigger that sets it empty hides the
+  button; there is no other switch.
+- **Price**: 1 Mink credit per photo (owner's decision), taken once; every
+  further background for the same photo bytes reuses the stored cut-out free
+  (`mink_image_cutouts`, migration `20261017_0218`).
+- **End to end, 2026-10-17**: the sandals photo from the benchmark set came
+  back from the deployed service in 28.9 s (cold start; 17.8 s inference),
+  `cutOut` produced a 749 × 378 product, and white, cream and transparent
+  1200 × 1600 results composed in 0.1 to 0.4 s each. Checked by eye: clean
+  edges, no floor or leaves left, the product centred.
+
 ## Not built yet
 
-- The web app's client: grant `storemink-run@` `roles/run.invoker` on the
-  service, call it with an identity token (google-auth-library is already a
-  dependency), and set the URL in the web service's environment.
-- The merchant features: Remove background, Background colour, New background
-  (scene generation plus compositing), Extend, and the chat edit tool.
+- Scenes and the soft shadow shipped the same day (see `CODEBASE.md`,
+  "Change background: soft shadow and scenes"). Still to come: Extend, the
+  chat edit tool, and catalogue photos routed through the cut-out.
 - Subject correction (click to include or exclude) and harmonisation
   (contact shadow, colour-temperature match, relight).

@@ -23,7 +23,7 @@ export interface TotalSalesReportRow {
 }
 
 function channelLabel(value: string): string {
-  if (value === "pos") return "Point of sale";
+  if (value === "pos") return "POS";
   if (value === "online") return "Online store";
   return value
     .split("_")

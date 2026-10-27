@@ -2,7 +2,10 @@
  * No network, database or provider calls. The measured cases model the height
  * published by useHeaderFit; its observer/lifecycle is tested in Vitest. Eight
  * header variants: the four originals plus transparent, hamburger, stacked and
- * utility (2026-10-09); the last two are two rows tall on desktop.
+ * utility (2026-10-09); the last two are two rows tall on desktop. Every
+ * photograph-led opening (hero, carousel, and both full width) is measured
+ * with and without the announcement bar: under a transparent header it runs
+ * under the bar, under every other header it starts below the whole header.
  * Run: node scripts/storefront-header-layout-check.mjs
  * --css-ref=<revision> diagnoses old CSS; --screenshots=<dir> saves fixtures,
  * not live storefront evidence.
@@ -47,9 +50,22 @@ const first = {
   hero: `<section class="home-section">${hero}</section>`,
   carousel:
     '<section class="home-section"><div class="home-carousel" style="height:300px">Photo carousel</div></section>',
+  // The opening every new theme and every revamp leads with (Theme Studio
+  // v26/v27): a photograph that fills the band, edge to edge.
+  heroFull: `<section class="home-section is-fullbleed">${hero.replace("variant-minimal", "variant-fullbleed height-large")}</section>`,
+  carouselFull:
+    '<section class="home-section is-fullbleed"><div class="home-carousel has-arrows height-large" style="background:#2a211f">Photo carousel</div></section>',
   custom:
     '<section class="home-section home-custom-code"><div style="height:300px;background:#eee">Custom hero</div></section>',
 };
+// The openings a page can lead with that are photographs (plan Phase 2d):
+// a transparent header floats over them (they start under the opaque
+// announcement bar only); under every other header they start below the
+// whole header, announcement bar included.
+const HERO_LED = ["hero", "carousel", "heroFull", "carouselFull"];
+// The section gap (homepage.css `.home-sections` padding), where a hero-led
+// page used to start whatever the header measured.
+const sectionGap = (width) => Math.min(72, Math.max(40, width * 0.06));
 const announcement =
   '<div class="announcement" data-sm="announcement"><a class="announcementLink" href="/shop"><span class="announcementText">Free delivery on orders over ₹999, easy 14-day returns</span></a></div>';
 function fixture(header, content, width, order, announce = false) {
@@ -100,10 +116,15 @@ try {
         for (const order of ["forward", "reverse"])
           for (const mode of ["server", "measured"])
             // The announcement bar (lib/themes/announcement.ts) rides in the
-            // header's top border: one content and one order per variant and
-            // width is enough to prove it sits above the controls, spans the
-            // viewport and is counted in the height the page reserves.
-            for (const announce of content === "ticker" && order === "forward"
+            // header's top border: one order per variant and width is enough
+            // to prove it sits above the controls, spans the viewport and is
+            // counted in the height the page reserves, for a leading ticker
+            // AND for every photograph-led opening (★★ L2-J, 2026-10-22: the
+            // revamped homepages put the logo and menu half over the photo
+            // with the bar on, because a hero-led page reserved none of it),
+            // and a custom-code opening, which the opaque bar must not cover.
+            for (const announce of order === "forward" &&
+            ["ticker", "custom", ...HERO_LED].includes(content)
               ? [false, true]
               : [false]) {
               await page.setViewportSize({ width, height });
@@ -137,8 +158,20 @@ try {
                 const bar = document.querySelector(".announcement");
                 const barRect = bar ? bar.getBoundingClientRect() : null;
                 const logo = document.querySelector("header .logo");
+                // What a shopper reads in the bar: the logo, the menu and
+                // the icons. Where the opening starts above their bottom
+                // edge, they sit half over the photograph (L2-J).
+                const readable = [
+                  ...document.querySelectorAll(
+                    "header .logo,header .navLinks a,header .headerRight > *,header .iconGroup > *",
+                  ),
+                ]
+                  .map((el) => el.getBoundingClientRect())
+                  .filter((r) => r.width && r.height);
                 return {
                   headerHeight: header.height,
+                  headerBottom: header.bottom,
+                  controlsBottom: Math.max(...readable.map((r) => r.bottom)),
                   contentTop: first.top,
                   gap: first.top - header.bottom,
                   controlsPadding: Math.min(
@@ -195,31 +228,70 @@ try {
                 );
               if (width <= 768 && result.overflow)
                 problems.push("phone viewport overflow");
-              // Photo/custom-led transparent headers keep their existing origin;
-              // the opaque market bar reserves space once, including in landscape.
+              // A custom-code opening floats under every header but the market
+              // bar, which reserves space once, including in landscape. ★ The
+              // announcement bar is OPAQUE, so with it on the custom opening
+              // starts under the bar, never behind it: the header row then
+              // floats over the same top edge it floats over without a bar.
               if (
                 content === "custom" &&
                 Math.abs(
                   result.contentTop -
-                    (header === "market" ? result.headerHeight : 0),
+                    (header === "market"
+                      ? result.headerHeight
+                      : announce
+                        ? 36
+                        : 0),
                 ) > (mode === "server" ? 16 : 1)
               )
                 problems.push("custom hero clearance changed");
-              if (["hero", "carousel"].includes(content)) {
-                // The transparent header floats over the opening photograph,
-                // which therefore starts at the top of the page.
-                const expected =
-                  header === "market"
-                    ? result.headerHeight +
-                      Math.min(32, Math.max(16, width * 0.025))
-                    : header === "transparent"
-                      ? 0
-                      : Math.min(72, Math.max(40, width * 0.06));
-                if (
-                  Math.abs(result.contentTop - expected) >
-                  (mode === "server" ? 16 : 1)
-                )
-                  problems.push("native hero origin changed");
+              if (HERO_LED.includes(content)) {
+                if (header === "transparent") {
+                  // ★ The transparent header floats over the opening
+                  // photograph as designed, which starts at the top of the
+                  // page, under the opaque bar when there is one.
+                  if (Math.abs(result.contentTop - (announce ? 36 : 0)) > 1)
+                    problems.push(
+                      `the transparent header's opening moved (${result.contentTop}px)`,
+                    );
+                } else if (header === "market") {
+                  const expected =
+                    result.headerHeight +
+                    Math.min(32, Math.max(16, width * 0.025));
+                  if (
+                    Math.abs(result.contentTop - expected) >
+                    (mode === "server" ? 16 : 1)
+                  )
+                    problems.push("native hero origin changed");
+                } else {
+                  // ★★ Every other header: the opening starts below the
+                  // WHOLE header, bar included, before hydration (the
+                  // server fallback) and after it (the measured height).
+                  // Never above the controls' bottom edge, which is what put
+                  // the logo and menu half over the photo (L2-J).
+                  if (
+                    result.contentTop < result.headerBottom - 0.5 ||
+                    result.controlsBottom > result.contentTop + 0.5
+                  )
+                    problems.push(
+                      `the opening starts under the header (top ${result.contentTop}px, header ${result.headerHeight}px, controls end ${result.controlsBottom}px)`,
+                    );
+                  // And no further down than the header, or the page's own
+                  // section gap where that is larger: flush under the bar,
+                  // the way a solid header meets a full-width photograph.
+                  const expected = Math.max(
+                    sectionGap(width),
+                    result.headerHeight,
+                  );
+                  if (
+                    mode === "measured"
+                      ? Math.abs(result.contentTop - expected) > 1
+                      : result.contentTop > expected + 16
+                  )
+                    problems.push(
+                      `the opening is not flush under the header (top ${result.contentTop}px, expected ${expected}px)`,
+                    );
+                }
               }
               if (problems.length) failures.push({ label, problems });
               if (announce) continue;

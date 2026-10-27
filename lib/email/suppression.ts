@@ -1,7 +1,7 @@
 import "server-only";
 
 // ---------------------------------------------------------------------------
-// The email suppression list — see supabase/notifications_05_suppressions.sql.
+// The email suppression list (the email_suppressions table).
 //
 // Resend accepting a message is not delivery. Before this existed, an address
 // that hard-bounced was re-mailed on every future notification forever: the

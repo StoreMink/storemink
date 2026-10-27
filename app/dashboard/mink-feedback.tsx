@@ -39,6 +39,7 @@ export function MinkFeedbackControls({
   const [details, setDetails] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   if (!message.runId) return null;
   const selected = message.feedback?.rating;
 
@@ -61,20 +62,25 @@ export function MinkFeedbackControls({
   };
 
   return (
-    <div className="mink-feedback mt-1.5">
+    <div
+      className={`mink-feedback mt-1.5 ${copyError || reporting ? "mink-feedback-visible" : ""}`}
+    >
       <div className="flex items-center gap-1 text-[#8c9196]">
         <button
           type="button"
           onClick={async () => {
+            setCopyError(false);
             try {
               await navigator.clipboard.writeText(message.text);
               setCopied(true);
               window.setTimeout(() => setCopied(false), 1_500);
             } catch {
               setCopied(false);
+              setCopyError(true);
             }
           }}
           aria-label="Copy answer"
+          title={copied ? "Copied" : "Copy answer"}
           className="rounded-md p-1.5 hover:bg-[#f1f1f1]"
         >
           {copied ? (
@@ -111,6 +117,16 @@ export function MinkFeedbackControls({
           <span className="ml-1 text-[10px]">Feedback saved</span>
         ) : null}
       </div>
+      <p
+        role="status"
+        className={copyError ? "mt-1 text-xs text-[#8a1c13]" : "sr-only"}
+      >
+        {copyError
+          ? "Could not copy. Select the answer text to copy it."
+          : copied
+            ? "Answer copied."
+            : ""}
+      </p>
       {reporting ? (
         <div className="mt-2 rounded-xl border border-[#e4e0ef] bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between text-xs font-semibold text-[#3e3262]">

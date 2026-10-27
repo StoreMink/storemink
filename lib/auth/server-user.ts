@@ -1,17 +1,16 @@
-// The single server-side identity seam (GCP migration — see
-// docs/gcp-migration-phase5-6.md §5.3).
+// The single server-side identity seam (see CODEBASE.md §7, Identity Platform).
 //
 // WHY THIS EXISTS: Phase 5 moves the database to Cloud SQL, where tenant
 // isolation is enforced by a per-request `SET LOCAL app.current_user_id = <uid>`
 // (the 2A model). That wrapper needs ONE thing: a *verified* user id. It does
-// not care whether the id came from Supabase or Google Identity Platform. So
+// not care which identity provider issued the id. So
 // every server caller that needs "who is signed in" goes through THIS function
 // instead of touching the auth provider directly — making the Phase 6 provider
 // swap a one-file change.
 //
 // Phase 6: the identity source is now Identity Platform — this reads and
 // verifies the Firebase SESSION COOKIE (`sm_session`, minted by the client auth
-// flows via POST /api/auth/session). There is no Supabase fallback: the auth
+// flows via POST /api/auth/session). There is no fallback provider: the auth
 // flows, proxy, and this seam cut over together, and the app requires Identity
 // Platform to be provisioned + users imported to authenticate (mirrors how the
 // data layer requires Cloud SQL).
@@ -48,7 +47,7 @@ export async function getServerUser(): Promise<ServerUser | null> {
     emailConfirmed: fb.emailConfirmed,
     phone: fb.phone,
     phoneConfirmed: fb.phoneConfirmed,
-    // Mirror the Supabase user_metadata name fields the signup wizard reads.
+    // The name fields the signup wizard reads (metadata.name / full_name).
     metadata: fb.name ? { name: fb.name, full_name: fb.name } : {},
   };
 }

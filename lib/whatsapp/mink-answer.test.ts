@@ -164,7 +164,7 @@ import {
   type ProductCardRow,
 } from "@/lib/storefront/queries";
 import { estimateProductDelivery } from "@/lib/shipping/product-delivery";
-import { logWarn } from "@/lib/observability/logger";
+import { logError, logWarn } from "@/lib/observability/logger";
 
 const STORE = "11111111-1111-4111-8111-111111111111";
 const CONV = "22222222-2222-4222-8222-222222222222";
@@ -546,22 +546,96 @@ describe("answerWithMink: helps", () => {
     );
   });
 
-  it("★ an answer that needed the second attempt is sent, charged once and logged", async () => {
+  it("★ an answer that needed a retry is sent, charged once and logged with the model that answered", async () => {
     vi.mocked(callMinkWhatsAppModelWithRetry).mockResolvedValueOnce({
       parsed: { outcome: "answer", reply: "₹120, in stock.", reason: "facts" },
       finishReason: "STOP",
-      model: "gemini-test",
+      // The Mink fallback answered, on the third attempt.
+      model: "gemini-3.5-flash",
       inputTokens: 900,
       outputTokens: 40,
-      attempts: 2,
+      attempts: 3,
     });
     const r = await answerWithMink(input());
     expect(r).toMatchObject({ outcome: "sent", needsHuman: false });
     expect(chargeMinkAnswer).toHaveBeenCalledTimes(1);
     expect(logWarn).toHaveBeenCalledWith(
-      "whatsapp mink: model stalled once, answered on the retry",
-      expect.objectContaining({ attempts: 2 }),
+      "whatsapp mink: answered after a retry",
+      {
+        storeId: STORE,
+        conversationId: CONV,
+        attempts: 3,
+        model: "gemini-3.5-flash",
+      },
     );
+  });
+
+  it("★★ a 429 or a 5xx still there after every attempt is 'busy', a warning and not a bug", async () => {
+    for (const status of [429, 503]) {
+      setup();
+      vi.mocked(logWarn).mockClear();
+      vi.mocked(logError).mockClear();
+      vi.mocked(callMinkWhatsAppModelWithRetry).mockRejectedValueOnce(
+        Object.assign(new Error(`provider said ${status}: quota text`), {
+          status,
+        }),
+      );
+      expect(await answerWithMink(input())).toEqual({
+        outcome: "failed",
+        needsHuman: true,
+        answerId: null,
+        reason: "busy",
+      });
+      // Content-free: the status, never the provider's words.
+      expect(logWarn).toHaveBeenCalledWith("whatsapp mink: model busy", {
+        storeId: STORE,
+        conversationId: CONV,
+        status,
+      });
+      expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toContain(
+        "quota text",
+      );
+      expect(logError).not.toHaveBeenCalled();
+    }
+    expect(chargeMinkAnswer).not.toHaveBeenCalled();
+    expect(replyInChat).not.toHaveBeenCalled();
+  });
+
+  it("★ a refusal of the request, a dropped connection, or a 5xx from anything but the model stays an error", async () => {
+    const cases: Array<() => void> = [
+      () =>
+        vi
+          .mocked(callMinkWhatsAppModelWithRetry)
+          .mockRejectedValueOnce(
+            Object.assign(new Error("bad request"), { status: 400 }),
+          ),
+      () =>
+        vi
+          .mocked(callMinkWhatsAppModelWithRetry)
+          .mockRejectedValueOnce(new TypeError("fetch failed")),
+      // The model answered; a later step failed with a status of its own.
+      () =>
+        vi
+          .mocked(personRepliedSince)
+          .mockRejectedValueOnce(
+            Object.assign(new Error("upstream"), { status: 503 }),
+          ),
+    ];
+    for (const arrange of cases) {
+      setup();
+      vi.mocked(logError).mockClear();
+      arrange();
+      expect(await answerWithMink(input())).toMatchObject({
+        outcome: "failed",
+        needsHuman: true,
+        reason: "error",
+      });
+      expect(logError).toHaveBeenCalledWith(
+        "whatsapp mink: answer failed",
+        expect.anything(),
+        { storeId: STORE, conversationId: CONV },
+      );
+    }
   });
 });
 

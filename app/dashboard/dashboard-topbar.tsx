@@ -90,10 +90,13 @@ function searchItemsFor(groups: DashboardSearchGroup[]): DashboardSearchItem[] {
         aliases: item.searchAliases,
       });
       for (const child of item.children ?? []) {
+        // A child answers to its section's old names too: "register settings"
+        // finds POS settings the way "pos settings" does.
         add({
           label: child.label,
           href: child.href,
           context: `${item.label} · ${group.group}`,
+          aliases: item.searchAliases,
         });
       }
     }

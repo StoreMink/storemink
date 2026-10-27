@@ -47,6 +47,7 @@ import {
 } from "./image-provider";
 import { getVertexConfig } from "./gemini-vertex";
 import { PLACEHOLDER_LICENSE_NOTE } from "./compiler";
+import { captureBlockers, versionPassedChecks } from "./capture-core";
 import {
   getThemeStudioConfig,
   isImplementedProvider,
@@ -104,6 +105,13 @@ export interface ThemeStudioProjectSummary {
   versionCount: number;
   /** Automatic QA status of the current version, when there is one. */
   currentQaStatus: string | null;
+  /** Whether the current version's newest checks stopped on it: the newest
+   * `auto_qa_passed` or `auto_qa_failed` naming it decides, and the version's
+   * own mark only without one. A re-check cannot rewrite the mark (migration
+   * 0144), so a version that passed and then failed Check again or a Publish
+   * re-check still says "passed" (re-check contract item 4; the project page
+   * applies the same rule, studio-ui.tsx currentChecksFailed). */
+  currentChecksFailed: boolean;
 }
 
 export interface ThemeStudioReferenceView {
@@ -269,6 +277,11 @@ export interface ThemeStudioPreviewView {
   expiresAt: string;
 }
 
+/** ⚠ No screen calls this since TS-2: the list reads progress.ts
+ * `listThemeStudioProjectsForConsole` and `studioStatus` decides its words,
+ * so this copy of the "newest checks" rule (and studio-ui.tsx
+ * `currentChecksFailed`) can drift unnoticed. Only its test imports it; it
+ * is listed for the TS-4C clean-up (Theme Studio plan, section 8, row 4). */
 export async function listThemeStudioProjects(): Promise<
   ThemeStudioProjectSummary[]
 > {
@@ -319,8 +332,31 @@ export async function listThemeStudioProjects(): Promise<
         ),
       )
       .groupBy(themeStudioVersions.projectId);
+    // The newest outcome of each current version's checks.
+    const outcomes = await db
+      .selectDistinctOn([themeStudioEvents.projectId], {
+        projectId: themeStudioEvents.projectId,
+        eventType: themeStudioEvents.eventType,
+      })
+      .from(themeStudioEvents)
+      .innerJoin(
+        themeStudioProjects,
+        eq(themeStudioProjects.id, themeStudioEvents.projectId),
+      )
+      .where(
+        and(
+          inArray(themeStudioEvents.projectId, ids),
+          inArray(themeStudioEvents.eventType, [
+            "auto_qa_passed",
+            "auto_qa_failed",
+          ]),
+          sql`${themeStudioEvents.detail}->>'versionId' = ${themeStudioProjects.currentVersionId}::text`,
+        ),
+      )
+      .orderBy(themeStudioEvents.projectId, desc(themeStudioEvents.createdAt));
     const activeBy = new Map(active.map((r) => [r.projectId, r.status]));
     const versionsBy = new Map(versions.map((r) => [r.projectId, Number(r.n)]));
+    const outcomeBy = new Map(outcomes.map((r) => [r.projectId, r.eventType]));
     return projects.map((p) => ({
       ...p,
       status: p.status as ThemeStudioProjectState,
@@ -328,6 +364,9 @@ export async function listThemeStudioProjects(): Promise<
       activeRunStatus:
         (activeBy.get(p.id) as "queued" | "running" | undefined) ?? null,
       versionCount: versionsBy.get(p.id) ?? 0,
+      currentChecksFailed: outcomeBy.has(p.id)
+        ? outcomeBy.get(p.id) === "auto_qa_failed"
+        : p.currentQaStatus === "failed",
     }));
   });
 }
@@ -955,7 +994,7 @@ export function validateProjectInput(
   if (themeId.length < 3 || themeId.length > 80 || !THEME_ID_RE.test(themeId)) {
     throw new ThemeStudioError(
       "invalid_input",
-      "The theme id must be 3–80 lowercase letters, numbers and single hyphens.",
+      "The theme id must be 3 to 80 lowercase letters, numbers and single hyphens.",
     );
   }
   if (themeId.startsWith("demo-")) {
@@ -1396,6 +1435,27 @@ async function assertSpendHeadroom(
   }
 }
 
+/** The key prefix of a round that fills what a photo run missed
+ * (worker.ts `queueFillImages`): queued by the worker, never an operator. */
+const FILL_RUN_KEY_PREFIX = "images_fill_";
+
+/**
+ * A run an operator started: a generation, a revision, an answer, a photo
+ * run, or a Retry. Not one Theme Studio queued by itself (an `automatic`
+ * step, or a fill round) even though it carries the operator who started the
+ * theme, except a Retry, which an operator presses even when it keeps an
+ * automatic run's flags.
+ */
+const operatorStartedRun = sql`(${themeStudioRuns.retryOfRunId} IS NOT NULL OR (NOT ${themeStudioRuns.automatic} AND left(${themeStudioRuns.idempotencyKey}, ${FILL_RUN_KEY_PREFIX.length}) <> ${FILL_RUN_KEY_PREFIX}))`;
+
+/**
+ * ★ The concurrency cap counts only work the operator STARTED (TS-1D).
+ * Counting the theme's own background work (its photos, repairs and fill
+ * rounds, all recorded under the operator who started it) let two themes in
+ * their photo stage refuse a third theme or an answer to a question. The
+ * worker lanes still bound the load, and a project holds one active run at
+ * most (a unique index).
+ */
 async function assertRunCapacity(db: Db, actor: ThemeStudioActor) {
   await lockActor(db, "runs", actor.id);
   const [{ n }] = await db
@@ -1405,6 +1465,7 @@ async function assertRunCapacity(db: Db, actor: ThemeStudioActor) {
       and(
         eq(themeStudioRuns.createdBy, actor.id),
         inArray(themeStudioRuns.status, ["queued", "running"]),
+        operatorStartedRun,
       ),
     );
   if (Number(n) >= THEME_STUDIO_LIMITS.concurrentRunsPerOperator) {
@@ -1635,10 +1696,33 @@ export async function cancelThemeStudioRun(
           updatedAt: sql`now()`,
         })
         .where(eq(themeStudioRuns.id, run.id));
+      // ★ A queued automatic step's base is the hidden version its theme
+      // was building (the theme's own photos, or a round filling a checked
+      // photo run). It is revealed as a failed result and shown, as the
+      // worker does when a running step is cancelled; otherwise the pictures
+      // already drawn would stay hidden for good. The 0144 guard allows only
+      // this move, so a visible base is left exactly as it is.
+      const revealed =
+        run.automatic && run.baseVersionId
+          ? await db
+              .update(themeStudioVersions)
+              .set({ visibility: "operator", qaStatus: "failed" })
+              .where(
+                and(
+                  eq(themeStudioVersions.id, run.baseVersionId),
+                  eq(themeStudioVersions.projectId, project.id),
+                  eq(themeStudioVersions.visibility, "internal"),
+                  eq(themeStudioVersions.qaStatus, "pending"),
+                ),
+              )
+              .returning({ id: themeStudioVersions.id })
+          : [];
       await db
         .update(themeStudioProjects)
         .set({
-          status: restingState(project.currentVersionId),
+          ...(revealed.length
+            ? { status: "ready", currentVersionId: revealed[0].id }
+            : { status: restingState(project.currentVersionId) }),
           revision: project.revision + 1,
         })
         .where(eq(themeStudioProjects.id, project.id));
@@ -1648,6 +1732,15 @@ export async function cancelThemeStudioRun(
         actor,
         eventType: "run_cancelled",
       });
+      if (revealed.length) {
+        await recordEvent(db, {
+          projectId: project.id,
+          runId: run.id,
+          actor,
+          eventType: "auto_qa_failed",
+          detail: { versionId: revealed[0].id, errorCode: "cancelled" },
+        });
+      }
       return { status: "cancelled" as const };
     }
     if (run.status === "running") {
@@ -1720,6 +1813,13 @@ export async function retryThemeStudioRun(
       : resolveProviderForQueue(project.modelKey as ThemeStudioModelKey);
     await assertRunCapacity(db, actor);
     await assertSpendHeadroom(db, actor, resolved);
+    // ★ A Retry keeps an automatic step's flags (TS-1D): what it makes is a
+    // hidden version that goes through the automatic checks, with the repair
+    // rounds the step had left, never an unchecked version Publish refuses.
+    // Only while the checks are on: without them an automatic step fails as
+    // `auto_qa_disabled` after its paid call, so it retries as the operator's
+    // own run, as before.
+    const automatic = run.automatic && getThemeStudioConfig().autoQaEnabled;
     const [retry] = await db
       .insert(themeStudioRuns)
       .values({
@@ -1742,6 +1842,8 @@ export async function retryThemeStudioRun(
         contextMessageIds: run.contextMessageIds,
         // A retried redraw redraws the same slots.
         imageSlotIds: run.imageSlotIds,
+        automatic,
+        qaIteration: automatic ? run.qaIteration : 0,
         createdBy: actor.id,
       })
       .returning({ id: themeStudioRuns.id });
@@ -1754,7 +1856,10 @@ export async function retryThemeStudioRun(
       runId: retry.id,
       actor,
       eventType: "run_retried",
-      detail: { retryOfRunId: run.id },
+      detail: {
+        retryOfRunId: run.id,
+        ...(automatic ? { automatic, qaIteration: run.qaIteration } : {}),
+      },
     });
     return { runId: retry.id, duplicate: false };
   });
@@ -1901,12 +2006,45 @@ export async function submitThemeStudioDetails(
  * Mirrors the cardinality bound in theme_studio_runs_base_check. */
 const MAX_REVISION_MESSAGES = 20;
 
-/** States a version can be revised from. Each may move to `generating`. */
+/** States a version can be revised from. Each may move to `generating`.
+ * `blocked` may too, when no questions are open (`questionsOpen`). */
 const REVISABLE_STATES: readonly ThemeStudioProjectState[] = [
   "ready",
   "candidate",
   "approved",
 ];
+
+/**
+ * Whether the model's questions are waiting for an answer: the theme's newest
+ * run ended by asking them (a `clarify` outcome, which is what moves a theme
+ * to `blocked` from a run), and no version was made current since, which
+ * sets them aside. A theme its checks blocked (a security finding) has none
+ * open, so it may be revised: otherwise a blocked theme with one version had
+ * no way forward at all (TS-1D).
+ */
+async function questionsOpen(db: Db, projectId: string): Promise<boolean> {
+  const rows = await db.execute(sql`
+    WITH latest AS (
+      SELECT status, outcome_detail, finished_at
+        FROM theme_studio_runs
+       WHERE project_id = ${projectId}::uuid
+       ORDER BY created_at DESC
+       LIMIT 1
+    )
+    SELECT 1 AS open
+      FROM latest
+     WHERE latest.status = 'succeeded'
+       AND latest.outcome_detail ->> 'kind' = 'clarify'
+       AND NOT EXISTS (
+         SELECT 1
+           FROM theme_studio_events e
+          WHERE e.project_id = ${projectId}::uuid
+            AND e.event_type = 'version_restored'
+            AND e.created_at >= latest.finished_at
+       )
+  `);
+  return rows.rows.length > 0;
+}
 
 /**
  * Ask for a revision of one version. Bound to that version and to the content
@@ -1964,7 +2102,17 @@ export async function reviseThemeStudioVersion(
         "This project changed in another tab. Reload to see it.",
       );
     }
-    if (!REVISABLE_STATES.includes(project.status as ThemeStudioProjectState)) {
+    if (project.status === "blocked") {
+      // 0151 allows blocked -> generating.
+      if (await questionsOpen(db, project.id)) {
+        throw new ThemeStudioError(
+          "illegal_state",
+          "Answer the questions first, or make a version current to set them aside.",
+        );
+      }
+    } else if (
+      !REVISABLE_STATES.includes(project.status as ThemeStudioProjectState)
+    ) {
       throw new ThemeStudioError(
         "illegal_state",
         "This project can't start a revision right now.",
@@ -2254,16 +2402,47 @@ export async function queueThemeStudioImages(
   });
 }
 
+/** Where "Make current" left the theme. */
+export type ThemeStudioRestoreOutcome =
+  /** Current, nothing to check: the automatic checks are off here, or the
+   * version cannot be captured yet (a placeholder left). */
+  | "ready"
+  /** A version that passed whose evidence still holds: Ready to publish. */
+  | "ready_to_publish"
+  /** A version that passed, measured again in place on today's build (its
+   * evidence is from an earlier build, or has no design review bound to it). */
+  | "rechecking"
+  /** A version that never passed, checked on a new hidden version. */
+  | "checking";
+
 /**
- * Make an earlier version current again. Nothing is copied or deleted —
- * versions are immutable — so restoring is only a pointer move, and the
- * version that was current stays one click away. From `blocked` (a revision
- * waiting on answers) it also sets those questions aside.
+ * Make an earlier version current again. Nothing is copied or deleted:
+ * versions are immutable, so restoring is a pointer move, and the version
+ * that was current stays one click away. From `blocked` (a revision waiting
+ * on answers) it also sets those questions aside.
+ *
+ * ★ MAKE CURRENT IS NEVER A DEAD END (TS-1D). It used to land every version
+ * on Ready, where Publish refuses anything without passing checks. With the
+ * automatic checks on, in the same transaction:
+ *   - a version that PASSED (`versionPassedChecks`) whose evidence still
+ *     holds (`currentPublishEvidence`: a passed check run on today's build
+ *     with a passed design review bound to it) is Ready to publish at once:
+ *     ready, then candidate, the two steps 0151 allows;
+ *   - a version that passed but whose evidence does not hold is re-measured
+ *     in place on today's build (`queueThemeStudioRecheckWithDb`, the
+ *     re-check contract: nothing redrawn, no paid restyle);
+ *   - a version that never passed is checked on a new hidden version with
+ *     fresh catalogue pictures (the same function; the capture settle makes
+ *     the new version because the version never passed);
+ *   - one with a placeholder left has nothing to check yet and waits on
+ *     Ready.
+ * A hidden version is part of a check (one under way, or a step a passed
+ * check went beyond) and cannot be made current.
  */
 export async function restoreThemeStudioVersion(
   actor: ThemeStudioActor,
   input: { projectId: string; versionId: string; expectedRevision: number },
-): Promise<{ changed: boolean }> {
+): Promise<{ changed: boolean; outcome: ThemeStudioRestoreOutcome }> {
   if (!isUuid(input.projectId) || !isUuid(input.versionId)) {
     throw new ThemeStudioError("not_found", "That version no longer exists.");
   }
@@ -2285,7 +2464,7 @@ export async function restoreThemeStudioVersion(
       throw new ThemeStudioError(
         "illegal_state",
         project.status === "generating"
-          ? "Wait for the active run to finish, or cancel it, before restoring."
+          ? "Theme Studio is still working on this theme. Wait for it to finish, or press Stop at the top of the page, then make a version current."
           : "This project can't change its current version right now.",
       );
     }
@@ -2293,7 +2472,10 @@ export async function restoreThemeStudioVersion(
       .select({
         id: themeStudioVersions.id,
         versionNumber: themeStudioVersions.versionNumber,
+        packageJson: themeStudioVersions.packageJson,
         packageDigest: themeStudioVersions.packageDigest,
+        visibility: themeStudioVersions.visibility,
+        qaStatus: themeStudioVersions.qaStatus,
       })
       .from(themeStudioVersions)
       .where(
@@ -2306,6 +2488,12 @@ export async function restoreThemeStudioVersion(
     if (!version) {
       throw new ThemeStudioError("not_found", "That version no longer exists.");
     }
+    if (version.visibility !== "operator") {
+      throw new ThemeStudioError(
+        "illegal_state",
+        "That version is part of a check, so it can't be made current. Pick a version from the list.",
+      );
+    }
     if (!version.packageDigest) {
       throw new ThemeStudioError(
         "illegal_state",
@@ -2316,16 +2504,21 @@ export async function restoreThemeStudioVersion(
       version.id === project.currentVersionId &&
       (project.status === "ready" || project.status === "candidate")
     ) {
-      return { changed: false };
+      return {
+        changed: false,
+        outcome: project.status === "candidate" ? "ready_to_publish" : "ready",
+      };
     }
+    const revision = project.revision + 1;
     await db
       .update(themeStudioProjects)
-      .set({
-        status: "ready",
-        currentVersionId: version.id,
-        revision: project.revision + 1,
-      })
+      .set({ status: "ready", currentVersionId: version.id, revision })
       .where(eq(themeStudioProjects.id, project.id));
+    const checked = await checkRestoredVersion(db, actor, {
+      projectId: project.id,
+      version,
+      revision,
+    });
     await recordEvent(db, {
       projectId: project.id,
       actor,
@@ -2334,10 +2527,72 @@ export async function restoreThemeStudioVersion(
         versionId: version.id,
         versionNumber: version.versionNumber,
         previousVersionId: project.currentVersionId,
+        outcome: checked.outcome,
+        ...checked.detail,
       },
     });
-    return { changed: true };
+    return { changed: true, outcome: checked.outcome };
   });
+}
+
+/** The automatic half of Make current: see `restoreThemeStudioVersion`. The
+ * project is `ready` at `revision` with this version current, in `db`'s
+ * transaction. */
+async function checkRestoredVersion(
+  db: Db,
+  actor: ThemeStudioActor,
+  input: {
+    projectId: string;
+    revision: number;
+    version: {
+      id: string;
+      packageJson: unknown;
+      visibility: string;
+      qaStatus: string;
+    };
+  },
+): Promise<{
+  outcome: ThemeStudioRestoreOutcome;
+  detail: Record<string, unknown>;
+}> {
+  if (!getThemeStudioConfig().autoQaEnabled) {
+    return { outcome: "ready", detail: {} };
+  }
+  const { version } = input;
+  if (versionPassedChecks(version)) {
+    // Loaded here, not at the top: acceptance.ts and capture.ts import this
+    // module, and only Make current needs them.
+    const { currentPublishEvidence } = await import("./acceptance");
+    const evidence = await currentPublishEvidence(db, {
+      projectId: input.projectId,
+    });
+    if (evidence.ok) {
+      // ready -> candidate: 0151 re-checks the passed check run itself.
+      await db
+        .update(themeStudioProjects)
+        .set({ status: "candidate" })
+        .where(eq(themeStudioProjects.id, input.projectId));
+      return {
+        outcome: "ready_to_publish",
+        detail: { acceptanceRunId: evidence.acceptanceRunId },
+      };
+    }
+  }
+  const pkg = validateThemePackageV2(version.packageJson);
+  if (!pkg.ok || captureBlockers(pkg.value).length > 0) {
+    return { outcome: "ready", detail: {} };
+  }
+  const { queueThemeStudioRecheckWithDb } = await import("./capture");
+  const queued = await queueThemeStudioRecheckWithDb(db, actor, {
+    projectId: input.projectId,
+    versionId: version.id,
+    expectedRevision: input.revision,
+    reason: "check_again",
+  });
+  return {
+    outcome: queued.inPlace ? "rechecking" : "checking",
+    detail: { captureId: queued.captureId },
+  };
 }
 
 export async function archiveThemeStudioProject(
@@ -2358,7 +2613,7 @@ export async function archiveThemeStudioProject(
     if (project.status === "generating") {
       throw new ThemeStudioError(
         "illegal_state",
-        "Cancel the active run before archiving.",
+        "Theme Studio is still working on this theme. Wait for it to finish, or press Stop at the top of the page, then remove it from the list.",
       );
     }
     if (project.status === "archived") return;

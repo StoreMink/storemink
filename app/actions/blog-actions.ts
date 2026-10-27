@@ -117,9 +117,8 @@ function calculateReadingTime(html: string): number {
  *
  * ★ A URL OUTSIDE OUR BUCKET IS ALLOWED THROUGH, deliberately. `gcsPathFromUrl`
  *   returns null for it, so the sweep already treats it as unmanaged and never
- *   deletes it - and refusing it here would break every blog still carrying a
- *   legacy Supabase-hosted cover, which CODEBASE records as serving until the
- *   media backfill.
+ *   deletes it - and refusing it here would break every blog whose cover is
+ *   still hosted outside our bucket.
  *
  * ★★ AND ONLY A CHANGED VALUE IS JUDGED. `/api/upload` wrote bare
  *    `blog-covers/<file>` paths with no store prefix until 2026-08-23, so a

@@ -17,7 +17,10 @@ vi.mock("@/lib/observability/logger", () => ({
   logInfo: vi.fn(),
   logError: vi.fn(),
 }));
-import { setMinkVoiceProvider } from "./mink-operator-actions";
+import {
+  setMinkSpeechSettings,
+  setMinkVoiceProvider,
+} from "./mink-operator-actions";
 import { minkVoiceSettings } from "@/drizzle/schema";
 const storeId = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => {
@@ -55,6 +58,63 @@ describe("single global Mink voice switch", () => {
     h.viewer.mockResolvedValueOnce({ role: "member" });
     expect((await setMinkVoiceProvider("chirp_3")).error).toMatch(/superadmin/);
     expect((await setMinkVoiceProvider("other")).error).toMatch(/Chirp 3/);
+    expect(h.service).not.toHaveBeenCalled();
+  });
+});
+
+describe("global read-aloud switch", () => {
+  it("stores whether a model reads answers, and which", async () => {
+    expect(
+      await setMinkSpeechSettings({
+        enabled: true,
+        provider: "bulbul_v4_flash",
+      }),
+    ).toEqual({
+      success: true,
+      settings: { enabled: true, provider: "bulbul_v4_flash" },
+    });
+    expect(h.insert).toHaveBeenCalledWith(minkVoiceSettings);
+    expect(h.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: true,
+        speechEnabled: true,
+        speechProvider: "bulbul_v4_flash",
+      }),
+    );
+    // The transcription model is a separate choice and is left alone.
+    expect(h.values.mock.calls[0][0]).not.toHaveProperty("provider");
+    expect(h.conflict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        set: expect.objectContaining({
+          speechEnabled: true,
+          speechProvider: "bulbul_v4_flash",
+        }),
+      }),
+    );
+  });
+
+  it("rejects staff, unknown models and a non-boolean switch", async () => {
+    h.viewer.mockResolvedValueOnce({ role: "member" });
+    expect(
+      (
+        await setMinkSpeechSettings({
+          enabled: true,
+          provider: "bulbul_v4_flash",
+        })
+      ).error,
+    ).toMatch(/superadmin/);
+    expect(
+      (await setMinkSpeechSettings({ enabled: true, provider: "elevenlabs" }))
+        .error,
+    ).toMatch(/Gemini 3.8 Flash-Lite TTS or Sarvam Bulbul V4 Flash/);
+    expect(
+      (
+        await setMinkSpeechSettings({
+          enabled: "yes",
+          provider: "bulbul_v4_flash",
+        })
+      ).error,
+    ).toMatch(/Choose whether/);
     expect(h.service).not.toHaveBeenCalled();
   });
 });

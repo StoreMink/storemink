@@ -34,17 +34,21 @@ yarn-error.log*
 .env
 .env*.local
 
-# vercel
-.vercel
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python bytecode (written whenever a scripts/*.py file runs)
+__pycache__/
+*.py[cod]
 
 .mcp.json
 
 # staging data dump (test-user contact data — local re-seed source only)
 db-data.sql
+# Database copies (pg_dump custom format) never belong in the repository,
+# wherever they sit (former-providers-coverage.test.ts fails on one too).
+*.dump
 
 # The capture job installs its own dependency (Track 3.6).
 /jobs/*/node_modules

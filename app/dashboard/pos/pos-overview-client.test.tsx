@@ -14,7 +14,7 @@ import { PosOverviewClient } from "./pos-overview-client";
 
 describe("POS overview upgrade banner", () => {
   it("shows the feature story and links to the POS product site", () => {
-    render(
+    const { container } = render(
       <PosOverviewClient
         state={{
           plan: "basic",
@@ -34,11 +34,12 @@ describe("POS overview upgrade banner", () => {
     expect(screen.getByText("Live multi-location inventory")).toBeVisible();
     expect(screen.getByText("GST receipts & cash-up")).toBeVisible();
     expect(screen.getByText("Pickup, returns & store credit")).toBeVisible();
+    // ★ NO PRODUCT PICTURE (owner, 26 Oct 2026): the promo picture shows
+    // "Register" on its screens, so it stays out until a new one exists.
+    expect(container.querySelector("img")).toBeNull();
     expect(
-      screen.getByRole("img", {
-        name: /StoreMink POS running across a desktop register/i,
-      }),
-    ).toHaveAttribute("loading", "eager");
+      screen.getByText(/Run in-store sales, click-and-collect/),
+    ).toBeVisible();
     expect(screen.queryByText("Staff roles & access")).not.toBeInTheDocument();
 
     expect(

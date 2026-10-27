@@ -14,7 +14,7 @@ import type { PageSectionItem } from "@/lib/sections/registry";
 //   • authorizes via getManagerUserId("builder") — the exact gate the builder's
 //     server actions use — so only a store admin sees unpublished content,
 //   • reads with the SERVICE scope, because the draft `sections` column is
-//     revoked from anon+authenticated at the DB layer (store_pages.sql),
+//     revoked from anon+authenticated at the DB layer (store_pages column grants),
 //   • is store-scoped explicitly (the service scope bypasses RLS).
 // Returns null when unauthorized or missing — the caller then falls back to the
 // published render, so preview never leaks and never errors.

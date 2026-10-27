@@ -37,7 +37,7 @@
     {
       "id": "20260814_0001_logistics_shiprocket",
       "description": "Shiprocket logistics, fulfilment orders, shipments, and immutable parcel snapshots",
-      "file": "../../supabase/logistics_01_shiprocket.sql",
+      "file": "sql/20260814_0001_logistics_shiprocket.sql",
       "transaction": true,
       "requires": ["baseline:cloudsql-2026-08-14"],
       "verify": {
@@ -145,7 +145,7 @@
     {
       "id": "20260818_0005_analytics_dashboard_layouts",
       "description": "Persist bounded personal Analytics dashboard layouts per store admin",
-      "file": "../../supabase/analytics_01_dashboard_layouts.sql",
+      "file": "sql/20260818_0005_analytics_dashboard_layouts.sql",
       "transaction": true,
       "requires": ["20260816_0004_ai_credit_invoice_paid_repair"],
       "verify": {
@@ -161,7 +161,7 @@
     {
       "id": "20260819_0006_search_metrics",
       "description": "Persist tenant-safe Search Console source epochs, metric buckets, leased work, and fleet rate limits",
-      "file": "../../supabase/search_metrics_01_schema.sql",
+      "file": "sql/20260819_0006_search_metrics.sql",
       "transaction": true,
       "requires": ["20260818_0005_analytics_dashboard_layouts"],
       "verify": {
@@ -8138,6 +8138,1571 @@
           {
             "name": "the product-images guide names the chat catalogue photo",
             "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%keeps it under Media and proposes it%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261017_0218_image_cutouts",
+      "description": "Background removal: one cut-out per photo (mink_image_cutouts), charged 1 Mink credit once and reused for every background tried, through an atomic, idempotent charge; media_assets.source admits mink_edited for photos with a replaced background",
+      "file": "sql/20261017_0218_image_cutouts.sql",
+      "transaction": true,
+      "requires": ["20261017_0217_mink_catalogue_photo_help"],
+      "verify": {
+        "tables": ["mink_image_cutouts"],
+        "constraints": [
+          "mink_image_cutouts_pkey",
+          "mink_image_cutouts_store_digest_key",
+          "mink_image_cutouts_credits_check",
+          "mink_image_cutouts_source_check",
+          "media_assets_source_check"
+        ],
+        "functions": [
+          "consume_mink_cutout_credits(uuid,uuid,text,text,text,text,text,integer,integer,text[],text,integer,integer)"
+        ],
+        "rlsTables": ["mink_image_cutouts"],
+        "queries": [
+          {
+            "name": "the source vocabulary admits edited photos",
+            "sql": "select count(*)::text from pg_constraint where conname = 'media_assets_source_check' and pg_get_constraintdef(oid) like '%mink_edited%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261017_0219_change_background_help",
+      "description": "The product-images and categories guides edited in place for Change background: the real product cut out and put on white, a colour or transparency, 1 Mink credit per photo and free to try other backgrounds",
+      "file": "sql/20261017_0219_change_background_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0218_image_cutouts"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the product-images guide has the Change background step",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%<strong>Change background</strong> under an uploaded photo%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-images guide states the one-credit price",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%Removing a photo''s background uses 1 Mink credit%'",
+            "equals": "1"
+          },
+          {
+            "name": "the categories guide offers Change background for its image",
+            "sql": "select count(*)::text from help_articles where slug='organize-products-with-categories-and-card-colours' and status='published' and body like '%the same way as for product photos%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261017_0220_image_scenes",
+      "description": "Scenes for Change background: mink_image_scenes (one row per scene drawn, reused for every product placed in it) and consume_mink_scene_credits, an atomic, idempotent 5-credit charge from the plan cycle first and then top-ups",
+      "file": "sql/20261017_0220_image_scenes.sql",
+      "transaction": true,
+      "requires": ["20261017_0219_change_background_help"],
+      "verify": {
+        "tables": ["mink_image_scenes"],
+        "constraints": [
+          "mink_image_scenes_pkey",
+          "mink_image_scenes_preset_check",
+          "mink_image_scenes_size_check",
+          "mink_image_scenes_credits_check",
+          "mink_image_scenes_source_check"
+        ],
+        "indexes": ["mink_image_scenes_lookup_idx"],
+        "functions": [
+          "consume_mink_scene_credits(uuid,uuid,text,text,integer,integer,text,text,text,text,integer,integer)"
+        ],
+        "rlsTables": ["mink_image_scenes"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261017_0221_change_background_scenes_help",
+      "description": "The product-images guide's Change background step edited in place for the soft shadow and scenes: Mink AI draws only the empty scene, 5 credits per new scene, saved and reused free",
+      "file": "sql/20261017_0221_change_background_scenes_help.sql",
+      "transaction": true,
+      "requires": ["20261017_0220_image_scenes"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the step names scenes among the backgrounds",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%a transparent background or a scene such as a marble counter%'",
+            "equals": "1"
+          },
+          {
+            "name": "the step explains the shadow and the scene price",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%A new scene uses 5 Mink credits and is saved%' and body like '%Soft shadow under the product%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0222_photo_edits",
+      "description": "AI product photos for the photo editor's Scene option: mink_photo_edits (one row per photo Mink AI re-shoots from the merchant's real photo, with the request) and consume_mink_photo_edit_credits, an atomic, idempotent 5-credit charge from the plan cycle first and then top-ups",
+      "file": "sql/20261018_0222_photo_edits.sql",
+      "transaction": true,
+      "requires": ["20261017_0221_change_background_scenes_help"],
+      "verify": {
+        "tables": ["mink_photo_edits"],
+        "constraints": [
+          "mink_photo_edits_pkey",
+          "mink_photo_edits_instruction_check",
+          "mink_photo_edits_size_check",
+          "mink_photo_edits_credits_check",
+          "mink_photo_edits_source_check"
+        ],
+        "indexes": ["mink_photo_edits_store_idx"],
+        "functions": [
+          "consume_mink_photo_edit_credits(uuid,uuid,text,text,integer,integer,text,text,text,text,text,text,integer,integer)"
+        ],
+        "rlsTables": ["mink_photo_edits"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261018_0223_ai_product_photos_help",
+      "description": "The Mink and product-images guides edited in place for AI product photos: the photo editor's Put in a scene re-shoots the real photo in a chosen or described setting, and Mink chat puts a product in any scene or on a model with Use as product photo and Try again, 5 Mink credits per photo",
+      "file": "sql/20261018_0223_ai_product_photos_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0222_photo_edits"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the Mink guide offers scenes, follow-ups and the two card actions",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%select <strong>Use as product photo</strong>%' and body like '%Each product photo uses 5 Mink credits%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Mink guide's photo replacement sentence mentions scenes",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%new photo of a product that already has one, in a studio or in a scene you describe%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-images guide prices a chat product photo at 5 credits",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%5 Mink credits for the picture and 1 for the photo change%'",
+            "equals": "1"
+          },
+          {
+            "name": "Change background no longer offers a scene",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%a colour or a transparent background. Your product%'",
+            "equals": "1"
+          },
+          {
+            "name": "the step explains Put in a scene and drops the saved scenes",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%select <strong>Put in a scene</strong>%' and body not like '%Draw a new one%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0224_scenes_in_chat_help",
+      "description": "The product-images guide's Put in a scene sentence replaced in place: a product in a scene is asked for in Mink AI chat (with the Photo in a scene suggestion on a product's page), and the product editor keeps only white, colour and transparent backgrounds",
+      "file": "sql/20261018_0224_scenes_in_chat_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0223_ai_product_photos_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide sends scenes to Mink chat and no longer offers Put in a scene",
+            "sql": "select count(*)::text from help_articles where slug='add-product-images-and-variants' and status='published' and body like '%ask Mink AI in the chat in your own words%' and body not like '%select <strong>Put in a scene</strong>%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0225_dictation_done_button_help",
+      "description": "The Mink guide's two dictation sentences replaced in place: dictation is finished with the Done button (a live sound wave and timer show while it listens) instead of ending on a pause",
+      "file": "sql/20261018_0225_dictation_done_button_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0224_scenes_in_chat_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide tells merchants to select Done and no longer to pause",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%then select <strong>Done</strong> (the tick)%' and body like '%pausing to think does not stop the recording%' and body not like '%pause briefly%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0226_mink_speech_provider",
+      "description": "Text-to-speech for Mink AI voice chat: mink_voice_settings gains speech_enabled (off = the browser's own voice) and speech_provider (Gemini 3.8 Flash-Lite TTS or Sarvam Bulbul V4 Flash), additive with defaults",
+      "file": "sql/20261018_0226_mink_speech_provider.sql",
+      "transaction": true,
+      "requires": ["20261018_0225_dictation_done_button_help"],
+      "verify": {
+        "columns": [
+          "mink_voice_settings.speech_enabled",
+          "mink_voice_settings.speech_provider"
+        ],
+        "constraints": ["mink_voice_settings_speech_provider_check"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "read-aloud models start switched off, so every store keeps its browser voice",
+            "sql": "select count(*)::text from mink_voice_settings where speech_enabled",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0227_mink_reply_language_help",
+      "description": "The Mink guide's sentence about the chat menu setting the reply language replaced in place: Mink replies in the language the merchant writes or speaks in",
+      "file": "sql/20261018_0227_mink_reply_language_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0226_mink_speech_provider"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says Mink follows the merchant's language and no longer offers a reply-language setting",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Mink replies in the language you write or speak in%' and body not like '%sets the language Mink replies in%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261018_0228_mink_voice_chat_help",
+      "description": "The Mink guide's dictation paragraph no longer ends by ruling out a voice conversation: it points at Talk with Mink, where Mink answers out loud as it works and can be interrupted by speaking",
+      "file": "sql/20261018_0228_mink_voice_chat_help.sql",
+      "transaction": true,
+      "requires": ["20261018_0227_mink_reply_language_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide offers Talk with Mink for a spoken conversation and no longer says dictation is not one",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%choose Talk with Mink (the sound-wave button beside the microphone)%' and body not like '%This is dictation, not a live voice conversation.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261019_0229_rate_limit_cost",
+      "description": "check_rate_limit_cost: a weighted twin of check_rate_limit that adds a cost instead of 1, so Mink read-aloud's free allowance can be a character budget rather than a request count; service-only",
+      "file": "sql/20261019_0229_rate_limit_cost.sql",
+      "transaction": true,
+      "requires": ["20261018_0228_mink_voice_chat_help"],
+      "verify": {
+        "functions": ["check_rate_limit_cost(text,integer,integer,integer)"],
+        "queries": [
+          {
+            "name": "only the service role may call the weighted limiter",
+            "sql": "select (has_function_privilege('app_service', 'public.check_rate_limit_cost(text,integer,integer,integer)', 'EXECUTE') and not has_function_privilege('app_user', 'public.check_rate_limit_cost(text,integer,integer,integer)', 'EXECUTE'))::text",
+            "equals": "true"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the weighted limiter runs as its owner with an empty search path, like check_rate_limit",
+            "sql": "select count(*)::text from pg_proc where oid = 'public.check_rate_limit_cost(text,integer,integer,integer)'::regprocedure and prosecdef and proconfig @> array['search_path=\"\"']",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261019_0230_mink_chat_continuity_help",
+      "description": "The Mink guide describes how a chat continues (this tab's chat until two hours quiet; a new tab, Home question or Ask Mink starts a new one; deleting the open chat leaves an empty one; New chat in the header), page links that open only when selected, and Send moving attachments into the chat at once and back to the box if a file cannot be read",
+      "file": "sql/20261019_0230_mink_chat_continuity_help.sql",
+      "transaction": true,
+      "requires": ["20261019_0229_rate_limit_cost"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide names the New chat button beside New conversation",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>New chat</strong> at the top of Mink AI%' and body not like '%<strong>New conversation</strong> starts a separate topic.%'",
+            "equals": "1"
+          },
+          {
+            "name": "deleting the open chat leaves an empty one rather than opening the next",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Deleting the conversation you are in leaves a new, empty one%' and body not like '%opens the next recent thread when the active thread is deleted%'",
+            "equals": "1"
+          },
+          {
+            "name": "a refresh continues this tab's chat, and a new tab or two quiet hours starts a new one",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%coming back after two hours without a message%' and body not like '%The newest remaining conversation is restored after a dashboard refresh.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a page link opens only when the merchant selects it",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%nothing opens until you select it%' and body not like '%so the page opens with that control pointed out%'",
+            "equals": "1"
+          },
+          {
+            "name": "Send shows the message and its attachments in the chat straight away",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%your message and its attachments appear in the chat straight away%' and body not like '%Mink processes the visible attachments with your request and shows them with the sent message.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Send moves attachments into the chat at once, and a photo can go without words",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%a photo or file can be sent without any words%' and body not like '%once to process the visible attachments with your request.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a file that cannot be read sends the message back to the box",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%If a file cannot be read, your message and its attachments go back to the message box%' and body not like '%After a failure, wait and press Send again%'",
+            "equals": "1"
+          },
+          {
+            "name": "closing Mink no longer abandons a message whose files are being read",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%closing Mink AI does not, and the answer is waiting when you reopen it%' and body not like '%Closing, discarding or changing conversations cancels pending local work%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261020_0231_mink_draft_language_help",
+      "description": "The Mink guide says what Mink writes for the store (products, blog posts, page text, offers, emails, social posts) is in English so customers across India can read it, whatever language the merchant chats in, and that asking for another language gets one reminder and then that language",
+      "file": "sql/20261020_0231_mink_draft_language_help.sql",
+      "transaction": true,
+      "requires": ["20261019_0230_mink_chat_continuity_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says drafts are in English unless the merchant asks for another language",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%is in English so customers across India can read it%' and body like '%ask for another language and Mink reminds you of that%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261020_0232_mink_storefront_personalization",
+      "description": "Mink AI storefront personalisation: apply_storefront_personalization in the three tool allowlists and the zero-version list, storefront in both resource-type allowlists, NULL-safe approval/audit/draft target checks, the storefront_personalization draft kind, a per-kind 200-credit ceiling on both credit ledgers and consume_mink_draft_credits, the tool provisioned for every store, and the website guide's design sentence extended in place",
+      "file": "sql/20261020_0232_mink_storefront_personalization.sql",
+      "transaction": true,
+      "requires": ["20261020_0231_mink_draft_language_help"],
+      "verify": {
+        "constraints": [
+          "mink_action_approvals_storefront_personalization_target_check",
+          "mink_action_audit_storefront_personalization_target_check",
+          "mink_drafts_storefront_personalization_target_check"
+        ],
+        "queries": [
+          {
+            "name": "the three tool allowlists admit the personalisation action",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_action_tool_access_name_check','mink_action_approvals_tool_check','mink_action_audit_tool_check') and pg_get_constraintdef(oid) like '%apply_storefront_personalization%'",
+            "equals": "3"
+          },
+          {
+            "name": "an immutable personalisation may be approved at version 0",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_action_approvals_draft_version_check' and pg_get_constraintdef(oid) like '%apply_storefront_personalization%'",
+            "equals": "1"
+          },
+          {
+            "name": "both resource-type checks admit storefront",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_action_approvals_resource_type_check','mink_action_audit_resource_type_check') and pg_get_constraintdef(oid) like '%''storefront''::text%'",
+            "equals": "2"
+          },
+          {
+            "name": "the draft kind check admits storefront_personalization",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_drafts_kind_check' and pg_get_constraintdef(oid) like '%storefront_personalization%'",
+            "equals": "1"
+          },
+          {
+            "name": "both credit ledgers bound a personalisation at 200 and everything else at 20",
+            "sql": "select count(*)::text from pg_constraint where conname in ('mink_drafts_credit_check','mink_draft_credit_usage_counts_check') and pg_get_constraintdef(oid) like '%storefront_personalization%' and pg_get_constraintdef(oid) like '%200%' and pg_get_constraintdef(oid) like '%20%'",
+            "equals": "2"
+          },
+          {
+            "name": "the credit function knows the per-kind ceiling",
+            "sql": "select count(*)::text from pg_proc where proname = 'consume_mink_draft_credits' and pg_get_functiondef(oid) like '%storefront_personalization%'",
+            "equals": "1"
+          },
+          {
+            "name": "provisioning grants the personalisation action",
+            "sql": "select count(*)::text from pg_proc where proname = 'enable_store_mink_access' and pg_get_functiondef(oid) like '%''apply_storefront_personalization''%'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every store has the personalisation action",
+            "sql": "select count(*)::text from stores s left join mink_action_tool_access a on a.store_id=s.id and a.tool_name='apply_storefront_personalization' where a.store_id is null or not a.enabled",
+            "equals": "0"
+          },
+          {
+            "name": "the website guide explains personalising a storefront",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%ask Mink to <strong>personalise my storefront</strong>%' and body like '%ask Mink to make the rest of the photos.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261020_0233_mink_personalization_edited_pages_help",
+      "description": "The Mink website guide says a storefront personalisation leaves a page the merchant changed (the homepage included) as it is unless they ask Mink to include it, and that text they wrote themselves always stays as they wrote it",
+      "file": "sql/20261020_0233_mink_personalization_edited_pages_help.sql",
+      "transaction": true,
+      "requires": ["20261020_0232_mink_storefront_personalization"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says an edited page is left alone unless the merchant asks",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%unless you ask Mink to include it%' and body like '%text you wrote yourself always stays as you wrote it%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261021_0234_mink_storefront_revamp",
+      "description": "Mink AI storefront revamp: the background job (mink_revamps, one active per store, free first revamp decided at insert, the requester's email for authority rebuilds and a paid revamp's budget) and its stored photographs (mink_revamp_images), and a free storefront_personalization draft (expected_credits 0, credit_source free) in mink_drafts_credit_check",
+      "file": "sql/20261021_0234_mink_storefront_revamp.sql",
+      "transaction": true,
+      "requires": ["20261020_0233_mink_personalization_edited_pages_help"],
+      "verify": {
+        "tables": ["mink_revamps", "mink_revamp_images"],
+        "constraints": [
+          "mink_revamps_pkey",
+          "mink_revamps_kind_check",
+          "mink_revamps_status_check",
+          "mink_revamps_free_check",
+          "mink_revamps_budget_check",
+          "mink_revamps_ready_check",
+          "mink_revamps_failed_check",
+          "mink_revamp_images_slot_key",
+          "mink_drafts_credit_check"
+        ],
+        "rlsTables": ["mink_revamps", "mink_revamp_images"],
+        "queries": [
+          {
+            "name": "one active revamp per store",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and indexname = 'mink_revamps_one_active_idx' and indexdef like '%UNIQUE%'",
+            "equals": "1"
+          },
+          {
+            "name": "a personalisation draft may be free",
+            "sql": "select count(*)::text from pg_constraint where conname = 'mink_drafts_credit_check' and pg_get_constraintdef(oid) like '%free%'",
+            "equals": "1"
+          },
+          {
+            "name": "app_user cannot read revamps",
+            "sql": "select count(*)::text from information_schema.role_table_grants where grantee = 'app_user' and table_name in ('mink_revamps','mink_revamp_images')",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261021_0235_mink_storefront_revamp_help",
+      "description": "The Mink website guide describes the storefront redesign (customise my store for my business): the short interview, what a redesign changes, the studio photo check, products the store already has, the preview, Apply to Website Builder draft, Publish to your store, Undo, newer versions, what changes on the live store at once, a stopped reply, the chat that holds the card, and Mink credits (the first full redesign uses none); replaces the personalisation paragraph in place. The Media guide says when a redesign's photos are listed and which images cannot be deleted; replaces those two sentences in place, and the general Mink guide's Media Library sentence the same way",
+      "file": "sql/20261021_0235_mink_storefront_revamp_help.sql",
+      "transaction": true,
+      "requires": ["20261021_0234_mink_storefront_revamp"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide describes the storefront redesign and its three buttons",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%customise my store for my business%' and body like '%<strong>Publish to your store</strong>%' and body like '%<strong>Undo</strong> puts back what you had before%'",
+            "equals": "1"
+          },
+          {
+            "name": "the personalisation paragraph is gone",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%personalise my storefront%'",
+            "equals": "0"
+          },
+          {
+            "name": "the Media guide lists a redesign's photos once it is applied",
+            "sql": "select count(*)::text from help_articles where slug='upload-and-manage-store-media' and status='published' and body like '%The photos a storefront redesign uses are listed once you apply it.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Media guide names what keeps an image from being deleted",
+            "sql": "select count(*)::text from help_articles where slug='upload-and-manage-store-media' and status='published' and body like '%a page, a category or your header and footer still uses%'",
+            "equals": "1"
+          },
+          {
+            "name": "the product-only delete sentence is gone",
+            "sql": "select count(*)::text from help_articles where slug='upload-and-manage-store-media' and status='published' and body like '%An image that a product still uses cannot be deleted%'",
+            "equals": "0"
+          },
+          {
+            "name": "the general Mink guide lists a redesign's photos once it is applied",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%the photos a storefront redesign uses are listed once you apply it%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261023_0236_theme_studio_provider_pacing",
+      "description": "Start-time pacing for image model keys on theme_studio_provider_capacity: next_start_at (the earliest next start, the latest admission plus the gap) and gap_ms (the adaptive gap, starting at 40 s; the app keeps it between 10 and 45 s, the CHECK is a 1 s to 5 min sanity bound); expand-only, both columns defaulted and named by none of the replaced revision's statements",
+      "file": "sql/20261023_0236_theme_studio_provider_pacing.sql",
+      "transaction": true,
+      "requires": ["20261021_0235_mink_storefront_revamp_help"],
+      "verify": {
+        "columns": [
+          "theme_studio_provider_capacity.gap_ms",
+          "theme_studio_provider_capacity.next_start_at"
+        ],
+        "constraints": ["theme_studio_provider_capacity_gap_ms_check"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a new key starts with a 40 second gap",
+            "sql": "select column_default from information_schema.columns where table_schema = 'public' and table_name = 'theme_studio_provider_capacity' and column_name = 'gap_ms'",
+            "equals": "40000"
+          },
+          {
+            "name": "every existing key has a gap and a next start",
+            "sql": "select count(*)::text from public.theme_studio_provider_capacity where gap_ms is null or next_start_at is null",
+            "equals": "0"
+          },
+          {
+            "name": "the capacity row stays service-only",
+            "sql": "select (has_table_privilege('app_service', 'public.theme_studio_provider_capacity', 'SELECT,INSERT,UPDATE,DELETE') and not has_table_privilege('app_user', 'public.theme_studio_provider_capacity', 'SELECT'))::text",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261023_0237_ai_credit_refund",
+      "description": "Generate with AI gives back the Mink credit it took when the model fails: ai_quota_refunds (service-only, one row per take id, so a second refund of the same take gives back nothing) and refund_ai_quota(uuid,uuid,text,text), which lowers the plan cycle's ai_usage.used by one (never below 0) or puts one purchased credit back on ai_credit_balances with an ai_credit_ledger grant row (ref refund:<take id>); expand-only, nothing in the replaced revision names either",
+      "file": "sql/20261023_0237_ai_credit_refund.sql",
+      "transaction": true,
+      "requires": ["20261023_0236_theme_studio_provider_pacing"],
+      "verify": {
+        "tables": ["ai_quota_refunds"],
+        "constraints": [
+          "ai_quota_refunds_pkey",
+          "ai_quota_refunds_source_check",
+          "ai_quota_refunds_store_id_fkey"
+        ],
+        "rlsTables": ["ai_quota_refunds"],
+        "functions": ["refund_ai_quota(uuid,uuid,text,text)"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the refund ledger stays service-only",
+            "sql": "select (has_table_privilege('app_service', 'public.ai_quota_refunds', 'SELECT,INSERT') and not has_table_privilege('app_user', 'public.ai_quota_refunds', 'SELECT'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "only the service role may refund",
+            "sql": "select (has_function_privilege('app_service', 'public.refund_ai_quota(uuid,uuid,text,text)', 'EXECUTE') and not has_function_privilege('app_user', 'public.refund_ai_quota(uuid,uuid,text,text)', 'EXECUTE'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "the refund runs as its owner",
+            "sql": "select prosecdef::text from pg_proc where oid = 'public.refund_ai_quota(uuid,uuid,text,text)'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "a store's refunds go with the store",
+            "sql": "select confdeltype::text from pg_constraint where conname = 'ai_quota_refunds_store_id_fkey'",
+            "equals": "c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261024_0238_ai_credit_refund_help",
+      "description": "The AI usage and credits guide says what a merchant sees when Generate with AI gives a credit back (0237): the activity lists a top-up credit given back as a Grant with the note \"Refund: an AI request failed\", and a busy or unavailable AI writing tool gives back the credit it used and says nothing was charged; replaces the activity sentence and the provider-error line in place",
+      "file": "sql/20261024_0238_ai_credit_refund_help.sql",
+      "transaction": true,
+      "requires": ["20261023_0237_ai_credit_refund"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the activity names a credit given back",
+            "sql": "select count(*)::text from public.help_articles where slug='understand-ai-usage-and-credits' and body like '%Refund: an AI request failed%'",
+            "equals": "1"
+          },
+          {
+            "name": "a busy AI writing tool gives its credit back",
+            "sql": "select count(*)::text from public.help_articles where slug='understand-ai-usage-and-credits' and body like '%gives back the credit it used%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old activity sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug='understand-ai-usage-and-credits' and body like '%operator grants, and tasks%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261024_0239_mink_storefront_revamp_robustness_help",
+      "description": "The Mink website guide's storefront redesign paragraphs after the robustness fixes: a redesign whose chat reply is stopped or interrupted after it started goes ahead and keeps its card in the chat, Stop on the card stops it (nothing charged before the card is ready), and a reply stopped before it started means asking Mink again; the new photographs show the merchant's own products as in their product photos, or a setting with no products; and the ready notification opens the chat with the card; three sentences of 0235's text replaced in place. The general Mink guide's draft troubleshooting sentence (a failed or stopped reply discards its unseen proposals and gives their credits back) gains the storefront redesign exception, replaced in place",
+      "file": "sql/20261024_0239_mink_storefront_revamp_robustness_help.sql",
+      "transaction": true,
+      "requires": ["20261024_0238_ai_credit_refund_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a stopped reply keeps the redesign and its card",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%the redesign still goes ahead and its card stays in the chat%'",
+            "equals": "1"
+          },
+          {
+            "name": "the sentence saying a stopped reply cancels the redesign is gone",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%the redesign does not go ahead and uses no Mink credits%'",
+            "equals": "0"
+          },
+          {
+            "name": "the new photographs show the merchant's own products or none",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%showing your own products as they look in your product photos, or a setting with no products in it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the ready notification opens the chat with the card",
+            "sql": "select count(*)::text from public.help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%opening that notification takes you to the chat with the card%'",
+            "equals": "1"
+          },
+          {
+            "name": "the general guide keeps a redesign a stopped reply started",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%A storefront redesign the reply started is the exception: it carries on, its card stays in the chat, and Stop on the card ends it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the general guide's discard-everything sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%If the enclosing Mink run fails or is cancelled after creating a proposal%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261024_0240_release_indexes_and_grants",
+      "description": "Indexes for statements that otherwise read a whole table: storefront_events (order_id) where order_id is not null, so a store purge's cascade finds a store's events by order; mink_runs (started_at, id) where status = 'running', for the per-minute dead-run sweep; notification_sms_queue (event_id), notification_whatsapp_queue (event_id), whatsapp_mink_answers (conversation_id), (message_id) and (sent_message_id) where sent_message_id is not null, for the retention cascades. And the two grants the failed-run record's discard beside a kept redesign card needs as app_service, which only default privileges gave: DELETE on mink_runs and UPDATE of run_id on mink_draft_credit_usage",
+      "file": "sql/20261024_0240_release_indexes_and_grants.sql",
+      "transaction": true,
+      "requires": ["20261024_0239_mink_storefront_revamp_robustness_help"],
+      "verify": {
+        "queries": [
+          {
+            "name": "a store purge finds a store's storefront events by order",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'storefront_events' and indexname = 'storefront_events_order_idx' and indexdef like '%(order_id) WHERE (order_id IS NOT NULL)'",
+            "equals": "1"
+          },
+          {
+            "name": "the dead-run sweep reads only running runs, in its own order",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'mink_runs' and indexname = 'mink_runs_running_idx' and indexdef like '%(started_at, id) WHERE (status = ''running''::text)'",
+            "equals": "1"
+          },
+          {
+            "name": "the retention cascades find their rows by key",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and ((tablename = 'notification_sms_queue' and indexname = 'notification_sms_queue_event_idx' and indexdef like '%(event_id)') or (tablename = 'notification_whatsapp_queue' and indexname = 'notification_whatsapp_queue_event_idx' and indexdef like '%(event_id)') or (tablename = 'whatsapp_mink_answers' and indexname = 'whatsapp_mink_answers_conversation_id_idx' and indexdef like '%(conversation_id)') or (tablename = 'whatsapp_mink_answers' and indexname = 'whatsapp_mink_answers_message_idx' and indexdef like '%(message_id)') or (tablename = 'whatsapp_mink_answers' and indexname = 'whatsapp_mink_answers_sent_message_idx' and indexdef like '%(sent_message_id) WHERE (sent_message_id IS NOT NULL)'))",
+            "equals": "5"
+          },
+          {
+            "name": "app_service may delete a holder run",
+            "sql": "select has_table_privilege('app_service', 'public.mink_runs', 'DELETE')::text",
+            "equals": "true"
+          },
+          {
+            "name": "app_service may move a proposal's credit row to a holder run",
+            "sql": "select has_column_privilege('app_service', 'public.mink_draft_credit_usage', 'run_id', 'UPDATE')::text",
+            "equals": "true"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the browser role gained neither grant",
+            "sql": "select (not has_table_privilege('app_user', 'public.mink_runs', 'DELETE') and not has_column_privilege('app_user', 'public.mink_draft_credit_usage', 'run_id', 'UPDATE'))::text",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261024_0241_publish_privacy_policy_v3",
+      "description": "Publishes Privacy Policy v3 (lib/legal/content.ts, approved by a lawyer exactly as written, 24 Oct 2026) as the current privacy version, the way publishLegalVersion does: retires the current privacy row and inserts v3 with its sha256 checksum and created_by script. Guarded: does nothing where a privacy version 3 or later is current, stops on a v3 row that is not current, and never touches the Terms of Service or the Acceptable Use Policy",
+      "file": "sql/20261024_0241_publish_privacy_policy_v3.sql",
+      "transaction": true,
+      "requires": ["20261024_0240_release_indexes_and_grants"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "exactly one Privacy Policy is current",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'privacy' and is_current",
+            "equals": "1"
+          },
+          {
+            "name": "the current Privacy Policy is v3 or later, and v3 is the approved text, stored intact",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'privacy' and is_current and version >= 3 and (version <> 3 or (checksum = 'e81f10e36adcd086b95de13f48f624af7fd74c33d76675100d295d5663922987' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "equals": "1"
+          },
+          {
+            "name": "this migration wrote no Terms or Acceptable Use row",
+            "sql": "select count(*)::text from public.legal_documents where kind in ('terms', 'acceptable-use') and xmin::text = (txid_current() % 4294967296)::text",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261025_0242_mink_attachment_reader_help",
+      "description": "The general Mink guide's attachment paragraphs after the attachment reader's retry and backup (robustness audit B12, lib/mink/input-provider.ts): a busy or briefly unavailable AI service is tried again and the file may be read by a backup AI model within the same 45 seconds, and only a busy or unavailable service uses the backup, while a file refused for safety reasons or too complex to read is reported as it is; the two sentences saying the reader never retries and never falls back are replaced in place",
+      "file": "sql/20261025_0242_mink_attachment_reader_help.sql",
+      "transaction": true,
+      "requires": ["20261024_0241_publish_privacy_policy_v3"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a busy reader is tried again and may use a backup model",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Mink tries again and may read the file with a backup AI model, all within those 45 seconds%'",
+            "equals": "1"
+          },
+          {
+            "name": "the sentence saying the reader never retries is gone",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%It does not automatically retry.%'",
+            "equals": "0"
+          },
+          {
+            "name": "the backup model is used only when the service is busy or unavailable",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Mink uses a backup AI model only when the AI service is busy or unavailable%'",
+            "equals": "1"
+          },
+          {
+            "name": "the sentence saying failures never fall back to another model is gone",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%never silently fall back to another model%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261025_0243_keep_invoices_after_store_deletion",
+      "description": "Deleting a store keeps StoreMink's own invoices to that merchant (owner's decision, 25 Oct 2026; GST record keeping and the gapless invoice series): billing_invoices.store_id and billing_payment_attempts.store_id become nullable with ON DELETE SET NULL, the only two direct store foreign keys that do not cascade; billing_invoices_guard_immutable keeps refusing every money, number and kind change and refuses moving an issued invoice to another store, and allows its store to become NULL only while that store is being deleted; billing_invoices.parties is a write-once snapshot of the supplier and the customer (name, GSTIN, address, state code, email) built by billing_invoice_parties(uuid,text,text,text) and stamped by the billing_invoices_parties_snapshot trigger whenever an invoice is issued, and every invoice already issued is backfilled from today's settings; supersedes 0014's check that every direct store foreign key cascades",
+      "file": "sql/20261025_0243_keep_invoices_after_store_deletion.sql",
+      "transaction": true,
+      "requires": ["20261025_0242_mink_attachment_reader_help"],
+      "supersedesVerifyQueries": [
+        {
+          "migrationId": "20260823_0014_store_deletion_cascade",
+          "queryName": "every direct store foreign key cascades on deletion"
+        }
+      ],
+      "verify": {
+        "columns": ["billing_invoices.parties"],
+        "constraints": [
+          "billing_invoices_store_id_fkey",
+          "billing_payment_attempts_store_id_fkey"
+        ],
+        "queries": [
+          {
+            "name": "an issued invoice and its payment attempts may outlive their store",
+            "sql": "select count(*)::text from information_schema.columns where table_schema = 'public' and column_name = 'store_id' and table_name in ('billing_invoices', 'billing_payment_attempts') and is_nullable = 'YES'",
+            "equals": "2"
+          },
+          {
+            "name": "deleting a store keeps its invoices and payment attempts and blanks their store",
+            "sql": "select count(*)::text from pg_constraint where contype = 'f' and confrelid = 'public.stores'::regclass and confdeltype = 'n' and ((conrelid = 'public.billing_invoices'::regclass and conname = 'billing_invoices_store_id_fkey') or (conrelid = 'public.billing_payment_attempts'::regclass and conname = 'billing_payment_attempts_store_id_fkey'))",
+            "equals": "2"
+          },
+          {
+            "name": "every other direct store foreign key cascades on deletion",
+            "sql": "select count(*)::text from pg_constraint where contype = 'f' and confrelid = 'public.stores'::regclass and confdeltype <> 'c' and not ((conrelid = 'public.billing_invoices'::regclass and conname = 'billing_invoices_store_id_fkey') or (conrelid = 'public.billing_payment_attempts'::regclass and conname = 'billing_payment_attempts_store_id_fkey'))",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every issued invoice records who it was from and to",
+            "sql": "select count(*)::text from public.billing_invoices where finalized_at is not null and parties is null",
+            "equals": "0"
+          },
+          {
+            "name": "the guard lets an issued invoice lose only a store being deleted, keeps its parties once recorded, and still freezes its money, number and kind",
+            "sql": "select (position('new.store_id is not null' in p.prosrc) > 0 and position('exists (select 1 from public.stores where id = old.store_id)' in p.prosrc) > 0 and position('old.parties is not null and new.parties is distinct from old.parties' in p.prosrc) > 0 and position('new.total_paise' in p.prosrc) > 0 and position('new.subtotal_paise' in p.prosrc) > 0 and position('new.invoice_no' in p.prosrc) > 0 and position('new.invoice_ref' in p.prosrc) > 0 and position('new.kind' in p.prosrc) > 0 and position('issue an adjustment instead of editing it' in p.prosrc) > 0)::text from pg_proc p where p.oid = 'public.billing_invoices_guard_immutable()'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "a trigger records both parties whenever an invoice is issued",
+            "sql": "select count(*)::text from pg_trigger t where t.tgrelid = 'public.billing_invoices'::regclass and t.tgname = 'billing_invoices_parties_snapshot' and t.tgfoid = 'public.billing_invoices_snapshot_parties()'::regprocedure and not t.tgisinternal and t.tgenabled = 'O' and t.tgtype = 23 and t.tgattr::text = (select a.attnum::text from pg_attribute a where a.attrelid = 'public.billing_invoices'::regclass and a.attname = 'finalized_at')",
+            "equals": "1"
+          },
+          {
+            "name": "the snapshot trigger runs as its owner",
+            "sql": "select prosecdef::text from pg_proc where oid = 'public.billing_invoices_snapshot_parties()'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "only the service role may read an invoice's parties from the settings",
+            "sql": "select (has_function_privilege('app_service', 'public.billing_invoice_parties(uuid,text,text,text)', 'EXECUTE') and not has_function_privilege('app_user', 'public.billing_invoice_parties(uuid,text,text,text)', 'EXECUTE') and not has_function_privilege('app_user', 'public.billing_invoices_snapshot_parties()', 'EXECUTE'))::text",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261025_0244_mink_run_stop",
+      "description": "A stop asked for in the browser reaches the Mink run on whichever instance runs it (POST /api/mink/runs/[runId]/stop, lib/mink/run-stop.ts): mink_runs.stop_requested_at, set only while the run has not acted, and mink_runs.acted_at, set by a run's first side-effecting tool only while no stop was asked for, both nullable; mink_runs_stop_or_act_check keeps them from both being set, and mink_runs_stopped_never_succeeds_check keeps a stopped run from ever succeeding. Expand only: every existing row has both NULL",
+      "file": "sql/20261025_0244_mink_run_stop.sql",
+      "transaction": true,
+      "requires": ["20261025_0243_keep_invoices_after_store_deletion"],
+      "verify": {
+        "columns": ["mink_runs.stop_requested_at", "mink_runs.acted_at"],
+        "constraints": [
+          "mink_runs_stop_or_act_check",
+          "mink_runs_stopped_never_succeeds_check"
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the stop and the run's first side effect can never both be recorded",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_runs'::regclass and conname = 'mink_runs_stop_or_act_check' and contype = 'c' and pg_get_constraintdef(oid) like '%stop_requested_at IS NULL%' and pg_get_constraintdef(oid) like '%acted_at IS NULL%'",
+            "equals": "1"
+          },
+          {
+            "name": "a stopped run can never succeed",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_runs'::regclass and conname = 'mink_runs_stopped_never_succeeds_check' and contype = 'c' and pg_get_constraintdef(oid) like '%stop_requested_at IS NULL%' and pg_get_constraintdef(oid) like '%succeeded%'",
+            "equals": "1"
+          },
+          {
+            "name": "both columns are nullable timestamps",
+            "sql": "select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'mink_runs' and column_name in ('stop_requested_at', 'acted_at') and data_type = 'timestamp with time zone' and is_nullable = 'YES'",
+            "equals": "2"
+          },
+          {
+            "name": "app_service may record a stop and a claim",
+            "sql": "select (has_column_privilege('app_service', 'public.mink_runs', 'stop_requested_at', 'UPDATE') and has_column_privilege('app_service', 'public.mink_runs', 'acted_at', 'UPDATE') and has_column_privilege('app_service', 'public.mink_runs', 'stop_requested_at', 'SELECT') and has_column_privilege('app_service', 'public.mink_runs', 'acted_at', 'SELECT'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "no existing run carries either column",
+            "sql": "select count(*)::text from public.mink_runs where stop_requested_at is not null or acted_at is not null",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0245_issued_invoice_guards",
+      "description": "Closes three gaps in the guards behind 0243 (review, 26 Oct 2026): an issued invoice can no longer be deleted (billing_invoices_keep_issued, BEFORE DELETE, refuses a row whose finalized_at is set; a draft stays deletable); billing_invoices_snapshot_parties records the parties on the transition to issued and replaces any value carried in on a draft or in the issuing statement; billing_invoices_guard_immutable also freezes finalized_at, fy_label, supplier_gstin, customer_gstin and place_of_supply once an invoice is issued",
+      "file": "sql/20261026_0245_issued_invoice_guards.sql",
+      "transaction": true,
+      "requires": ["20261025_0243_keep_invoices_after_store_deletion"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "an issued invoice can never be deleted, and a draft still can",
+            "sql": "select count(*)::text from pg_trigger t join pg_proc p on p.oid = t.tgfoid where t.tgrelid = 'public.billing_invoices'::regclass and t.tgname = 'billing_invoices_keep_issued' and t.tgfoid = 'public.billing_invoices_guard_delete()'::regprocedure and not t.tgisinternal and t.tgenabled = 'O' and t.tgtype = 11 and position('if old.finalized_at is not null then' in p.prosrc) > 0 and position('an issued invoice is kept, never deleted' in p.prosrc) > 0 and position('return old' in p.prosrc) > 0",
+            "equals": "1"
+          },
+          {
+            "name": "the parties are recorded on the transition to issued, replacing anything carried in",
+            "sql": "select (position('tg_op = ''INSERT'' or old.finalized_at is null' in p.prosrc) > 0 and position('new.parties is null' in p.prosrc) = 0 and position('new.parties := public.billing_invoice_parties(' in p.prosrc) > 0 and p.prosecdef and not has_function_privilege('app_user', p.oid, 'EXECUTE'))::text from pg_proc p where p.oid = 'public.billing_invoices_snapshot_parties()'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "the guard also freezes the issue date, the financial year, both GSTINs and the place of supply, and keeps every earlier rule",
+            "sql": "select (p.prosrc ~ 'new\\.finalized_at\\s+is distinct from old\\.finalized_at' and p.prosrc ~ 'new\\.fy_label\\s+is distinct from old\\.fy_label' and p.prosrc ~ 'new\\.supplier_gstin\\s+is distinct from old\\.supplier_gstin' and p.prosrc ~ 'new\\.customer_gstin\\s+is distinct from old\\.customer_gstin' and p.prosrc ~ 'new\\.place_of_supply\\s+is distinct from old\\.place_of_supply' and p.prosrc ~ 'new\\.subtotal_paise\\s+is distinct from old\\.subtotal_paise' and p.prosrc ~ 'new\\.total_paise\\s+is distinct from old\\.total_paise' and p.prosrc ~ 'new\\.invoice_no\\s+is distinct from old\\.invoice_no' and p.prosrc ~ 'new\\.invoice_ref\\s+is distinct from old\\.invoice_ref' and p.prosrc ~ 'new\\.kind\\s+is distinct from old\\.kind' and position('new.store_id is not null' in p.prosrc) > 0 and position('exists (select 1 from public.stores where id = old.store_id)' in p.prosrc) > 0 and position('old.parties is not null and new.parties is distinct from old.parties' in p.prosrc) > 0 and position('issue an adjustment instead of editing it' in p.prosrc) > 0)::text from pg_proc p where p.oid = 'public.billing_invoices_guard_immutable()'::regprocedure",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0246_mink_stop_help",
+      "description": "The general Mink guide's two Stop sentences after the stop handshake (20261025_0244_mink_run_stop): Stop stops Mink's reply, and when Mink has not started anything yet the reply stops and nothing is created, while a reply that has already started something, such as a draft or a storefront redesign, finishes instead with its card in the chat; only a reply that fails, no longer one that is stopped, discards an unseen proposal; both sentences are replaced in place",
+      "file": "sql/20261026_0246_mink_stop_help.sql",
+      "transaction": true,
+      "requires": ["20261025_0244_mink_run_stop"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "Stop says what happens to a reply that has not started anything",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%reply. If Mink has not started anything yet, the reply stops and nothing is created.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a reply that already started something finishes with its card",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%such as a draft or a storefront redesign, the reply finishes instead and its card appears in the chat.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the sentence saying Stop cancels the request in this browser is gone",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%to cancel the request in this browser%'",
+            "equals": "0"
+          },
+          {
+            "name": "only a reply that fails discards an unseen proposal",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%reply fails after it created a proposal, StoreMink discards the unseen proposal%'",
+            "equals": "1"
+          },
+          {
+            "name": "a reply stopped after it created a proposal is no longer said to discard it",
+            "sql": "select count(*)::text from public.help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%fails or is stopped after it created a proposal%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0247_mink_refine_stop",
+      "description": "Refine with Mink AI: a stop the browser sends (POST /api/mink/image-refine/stop, lib/mink/refine-stop.ts) reaches the refine on whichever instance runs it, and exactly one of the stop and the charge wins: mink_refine_requests, service-only (RLS on, no policies, app_user has no grants), one row per refine keyed by store, admin and the browser's stop token, with stop_requested_at and charge_claimed_at each set only while the other is NULL (mink_refine_requests_stop_or_charge_check), refinement_id (the server's refine id, unique, NULL only on a row a stop created first) and a store foreign key that cascades. Expand only: a new table nothing in the replaced revision names",
+      "file": "sql/20261026_0247_mink_refine_stop.sql",
+      "transaction": true,
+      "requires": ["20261026_0246_mink_stop_help"],
+      "verify": {
+        "tables": ["mink_refine_requests"],
+        "constraints": [
+          "mink_refine_requests_pkey",
+          "mink_refine_requests_refinement_key",
+          "mink_refine_requests_stop_or_charge_check",
+          "mink_refine_requests_charge_has_refinement_check",
+          "mink_refine_requests_started_or_stopped_check",
+          "mink_refine_requests_store_id_fkey"
+        ],
+        "indexes": ["mink_refine_requests_created_idx"],
+        "rlsTables": ["mink_refine_requests"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_service may read, start, stop, claim and prune refine requests",
+            "sql": "select (has_table_privilege('app_service', 'public.mink_refine_requests', 'SELECT') and has_table_privilege('app_service', 'public.mink_refine_requests', 'INSERT') and has_table_privilege('app_service', 'public.mink_refine_requests', 'UPDATE') and has_table_privilege('app_service', 'public.mink_refine_requests', 'DELETE'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "app_user holds no privilege on refine requests",
+            "sql": "select (not has_table_privilege('app_user', 'public.mink_refine_requests', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "a store's refine requests go with the store",
+            "sql": "select confdeltype::text from pg_constraint where conrelid = 'public.mink_refine_requests'::regclass and conname = 'mink_refine_requests_store_id_fkey'",
+            "equals": "c"
+          },
+          {
+            "name": "the stop and the charge can never both be recorded",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_refine_requests'::regclass and conname = 'mink_refine_requests_stop_or_charge_check' and contype = 'c' and pg_get_constraintdef(oid) like '%stop_requested_at IS NULL%' and pg_get_constraintdef(oid) like '%charge_claimed_at IS NULL%'",
+            "equals": "1"
+          },
+          {
+            "name": "a claimed charge names its refine, and a row without a refine is a stop",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_refine_requests'::regclass and contype = 'c' and ((conname = 'mink_refine_requests_charge_has_refinement_check' and pg_get_constraintdef(oid) like '%charge_claimed_at IS NULL%' and pg_get_constraintdef(oid) like '%refinement_id IS NOT NULL%') or (conname = 'mink_refine_requests_started_or_stopped_check' and pg_get_constraintdef(oid) like '%refinement_id IS NOT NULL%' and pg_get_constraintdef(oid) like '%stop_requested_at IS NOT NULL%'))",
+            "equals": "2"
+          },
+          {
+            "name": "row level security is on, with no policy",
+            "sql": "select (c.relrowsecurity and not exists (select 1 from pg_policy p where p.polrelid = c.oid))::text from pg_class c where c.oid = 'public.mink_refine_requests'::regclass",
+            "equals": "true"
+          },
+          {
+            "name": "the retention sweep finds old refine requests through their own index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'mink_refine_requests' and indexname = 'mink_refine_requests_created_idx' and indexdef like '%USING btree (created_at)'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0248_mink_chat_history_retention",
+      "description": "Mink AI chats are kept 90 days after their last use and then deleted, with no ten-chat cap (owner's decision, 25 Oct 2026): expires_at becomes the sliding deletion time, backfilled to last message + 90 days; mink_conversations.retention_failed_at marks a chat the retention sweep could not retire; a partial index on listed chats by expiry for the sweep; DELETE on mink_messages, mink_feedback and mink_action_approvals for app_service, which reduces a chat that holds approved or published records and removes its unconfirmed previews. One table only: the message search index is 0249",
+      "file": "sql/20261026_0248_mink_chat_history_retention.sql",
+      "transaction": true,
+      "requires": ["20261026_0247_mink_refine_stop"],
+      "verify": {
+        "columns": ["mink_conversations.retention_failed_at"],
+        "queries": [
+          {
+            "name": "the retention sweep reads only listed chats, in expiry order",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'mink_conversations' and indexname = 'mink_conversations_retention_idx' and indexdef like '%(expires_at, id) WHERE (status = ''active''::text)'",
+            "equals": "1"
+          },
+          {
+            "name": "app_service may delete a chat's messages, feedback and unconfirmed previews",
+            "sql": "select (has_table_privilege('app_service', 'public.mink_messages', 'DELETE') and has_table_privilege('app_service', 'public.mink_feedback', 'DELETE') and has_table_privilege('app_service', 'public.mink_action_approvals', 'DELETE'))::text",
+            "equals": "true"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every listed chat is kept at least 90 days after its last message",
+            "sql": "select count(*)::text from public.mink_conversations where status = 'active' and expires_at < last_message_at + interval '90 days'",
+            "equals": "0"
+          },
+          {
+            "name": "the browser role gained none of these grants",
+            "sql": "select (not has_table_privilege('app_user', 'public.mink_messages', 'DELETE') and not has_table_privilege('app_user', 'public.mink_feedback', 'DELETE') and not has_table_privilege('app_user', 'public.mink_action_approvals', 'DELETE'))::text",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0249_mink_chat_history_search_index",
+      "description": "History search for Mink AI chats: a text-search GIN index over each message as the chat shows it (public.mink_message_search_text: a merchant's message without the attachment suffix the thread shows as a file card, an answer whole, the first 4,000 characters) with the message's store as a lexeme of its own (public.mink_message_search_vector, queried with public.mink_message_search_store), so a search reads one store's matches and never parses every message of the store; and mink_messages_kept_answer_idx for the redesign cards a stopped or failed reply kept. Expression indexes, no new column, in its own transaction so that no transaction of the migration locks mink_conversations and mink_messages together",
+      "file": "sql/20261026_0249_mink_chat_history_search_index.sql",
+      "transaction": true,
+      "requires": ["20261026_0248_mink_chat_history_retention"],
+      "verify": {
+        "functions": [
+          "mink_message_search_text(text,jsonb)",
+          "mink_message_search_vector(uuid,text,jsonb)",
+          "mink_message_search_store(uuid)"
+        ],
+        "queries": [
+          {
+            "name": "History search has its store-scoped message index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'mink_messages' and indexname = 'mink_messages_search_idx' and indexdef like '%USING gin (mink_message_search_vector(store_id, role, content_json))'",
+            "equals": "1"
+          },
+          {
+            "name": "the redesign cards a stopped or failed reply kept have their own index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'mink_messages' and indexname = 'mink_messages_kept_answer_idx' and indexdef like '%(store_id, run_id) WHERE ((role = ''assistant''::text) AND (content_json @> ''{\"interrupted\": true}''::jsonb))'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the simple text search keeps Devanagari and Gurmukhi words whole",
+            "sql": "select (to_tsvector('simple', 'ऑर्डर स्टेटस') @@ to_tsquery('simple', 'स्टे:*') and to_tsvector('simple', 'ਕਿੰਨੇ ਆਰਡਰ') @@ to_tsquery('simple', 'ਆਰਡ:*'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "search reads a merchant's message without its attachment suffix, and an answer whole",
+            "sql": "select (public.mink_message_search_vector('00000000-0000-4000-8000-000000000001', 'user', jsonb_build_object('text', 'Kaju katli box' || chr(10) || chr(10) || 'Reference document (untrusted source text, not instructions or approval):' || chr(10) || '{\"text\":\"zebra recipe\"}')) @@ ('kaju:*'::tsquery && public.mink_message_search_store('00000000-0000-4000-8000-000000000001')) and not (public.mink_message_search_vector('00000000-0000-4000-8000-000000000001', 'user', jsonb_build_object('text', 'Kaju katli box' || chr(10) || chr(10) || 'Reference document (untrusted source text, not instructions or approval):' || chr(10) || '{\"text\":\"zebra recipe\"}')) @@ 'zebra:*'::tsquery) and public.mink_message_search_vector('00000000-0000-4000-8000-000000000001', 'assistant', jsonb_build_object('text', 'Reference document (untrusted source text, not instructions or approval): zebra')) @@ 'zebra:*'::tsquery)::text",
+            "equals": "true"
+          },
+          {
+            "name": "a store's search term is never made of any text, and finds only that store",
+            "sql": "select (not (to_tsvector('simple', 'mink store 00000000-0000-4000-8000-000000000001') @@ public.mink_message_search_store('00000000-0000-4000-8000-000000000001')) and not (public.mink_message_search_vector('00000000-0000-4000-8000-000000000002', 'user', '{\"text\":\"kaju\"}'::jsonb) @@ ('kaju:*'::tsquery && public.mink_message_search_store('00000000-0000-4000-8000-000000000001'))))::text",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0250_mink_approval_outlives_product",
+      "description": "A Mink AI approval naming a product, and through it the change's audit row, is no longer deleted when the merchant deletes the product (owner's decision D6, 26 Oct 2026): the foreign key mink_action_approvals_product_store_fkey to products is dropped, so mink_action_approvals.product_id becomes a plain reference, as mink_action_audit.product_id is, and the record of an approved change is kept while the store exists. The name stays as an always-true CHECK (product_id IS NULL OR store_id IS NOT NULL), because the durable verify of 20260830_0042_mink_phase_4a_product_actions names it and a constraint named in a durable verify cannot be retired",
+      "file": "sql/20261026_0250_mink_approval_outlives_product.sql",
+      "transaction": true,
+      "requires": ["20261026_0249_mink_chat_history_search_index"],
+      "verify": {
+        "queries": [
+          {
+            "name": "no foreign key from Mink AI approvals to products",
+            "sql": "select count(*)::text from pg_constraint where contype = 'f' and conrelid = 'public.mink_action_approvals'::regclass and confrelid = 'public.products'::regclass",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the name 0042 checks is kept as an always-true check, not a foreign key",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_action_approvals'::regclass and conname = 'mink_action_approvals_product_store_fkey' and contype = 'c' and convalidated and pg_get_constraintdef(oid) like '%product_id IS NULL%' and pg_get_constraintdef(oid) like '%store_id IS NOT NULL%'",
+            "equals": "1"
+          },
+          {
+            "name": "a store purge still deletes the store's approvals",
+            "sql": "select confdeltype::text from pg_constraint where conrelid = 'public.mink_action_approvals'::regclass and conname = 'mink_action_approvals_store_id_fkey' and contype = 'f' and confrelid = 'public.stores'::regclass",
+            "equals": "c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0251_mink_chat_history_help",
+      "description": "The Mink guides describe chat history as 0248 to 0250 build it: a chat is kept 90 days after it was last used (a message or opening it) and then deleted, only its owner sees it, older chats load as the sidebar scrolls, Search chats finds one by title or message, a long chat shows earlier messages on request, deleting a chat deletes its messages and unapproved proposals without undoing approved or published changes, whose record StoreMink keeps while the store exists with the run details of the reply that made it (and, for an applied storefront redesign, the merchant's answers for it), and pictures attached to or made in a chat are not deleted with it; the ten-chat sentences are gone; a stopped question stays in its conversation and is answered only if asked again; the website guide says a redesign's chat can be deleted except while the redesign or a new version of it is being made, and that deleting it or 90 days without use removes the card; the credit sentence beside the privacy line no longer promises a rate shown before confirming",
+      "file": "sql/20261026_0251_mink_chat_history_help.sql",
+      "transaction": true,
+      "requires": ["20261026_0250_mink_approval_outlives_product"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a chat is kept 90 days after last use and only its owner sees it",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Only you can see your conversations%' and body not like '%10 most recent conversations for each admin%'",
+            "equals": "1"
+          },
+          {
+            "name": "older chats scroll in, Search chats finds one, and a long chat shows earlier messages",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%<strong>Search chats</strong> at the top of the sidebar%' and body like '%<strong>Show earlier messages</strong> at the top%'",
+            "equals": "1"
+          },
+          {
+            "name": "deleting a chat never undoes approved or published work",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%It does not undo anything you approved or published from that conversation%' and body not like '%run records, tool records and token record%'",
+            "equals": "1"
+          },
+          {
+            "name": "pictures attached to or made in a chat are not deleted with it",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Pictures you attached to the conversation, and pictures Mink AI made in it, are not deleted with it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the newest-ten overflow sentences are gone",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%keeps the newest ten visible%'",
+            "equals": "0"
+          },
+          {
+            "name": "the privacy line says 90 days after last use",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%with its messages, run status, tool names and token counts, for 90 days after you last use it%' and body not like '%keeps up to 10 recent conversations per admin and store%'",
+            "equals": "1"
+          },
+          {
+            "name": "the record of an approved change keeps the details of the reply that made it",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%The record of a change you approved or published also keeps the run status, tool names and token counts of the reply that made it%'",
+            "equals": "1"
+          },
+          {
+            "name": "drafting is said to spend credits, with no rate promised before confirming",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Asking Mink to draft or propose something does.%' and body not like '%at the rate shown before you confirm it%'",
+            "equals": "1"
+          },
+          {
+            "name": "a stopped question stays in its conversation",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%your question stays in the conversation, and Mink answers it only if you ask again%'",
+            "equals": "1"
+          },
+          {
+            "name": "the context section no longer mentions ten chats",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%The dashboard keeps the 10 most recent conversations.%'",
+            "equals": "0"
+          },
+          {
+            "name": "a redesign's chat can be deleted except while the redesign is being made",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-website-with-mink-ai' and status='published' and body like '%except while the redesign or a new version of it is being made%' and body not like '%cannot be deleted while the redesign is being made or once its card is ready%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0252_mink_credit_help",
+      "description": "The Mink guide no longer says that asking questions spends no credits: the sentence beside Stop says every request uses Mink credits and a reply that does not finish uses none, as the guide's credits paragraph and troubleshooting have said since 0122; and the private-draft paragraph no longer says the proposal card shows an expected credit weight or reports the amount charged, which the card has never shown (the dashboard shows no credit price). Help only, each sentence edited where it stands",
+      "file": "sql/20261026_0252_mink_credit_help.sql",
+      "transaction": true,
+      "requires": ["20261026_0251_mink_chat_history_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide no longer says asking questions spends no credits",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Asking questions does not spend AI credits%'",
+            "equals": "0"
+          },
+          {
+            "name": "the guide says every request uses credits",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Every request you send to Mink uses%'",
+            "equals": "1"
+          },
+          {
+            "name": "the proposal card is not said to show a credit weight or the amount charged",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and (body like '%expected credit weight%' or body like '%the proposal card reports the amount it charged%')",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0253_pos_wording",
+      "description": "POS wording (owner's rule, 26 Oct 2026): the Help Centre guides, the POS category (title and description) and the two POS role descriptions call the in-person selling feature POS, never register or till; each sentence is edited where it stands, slugs stay, and updated_at moves on every published guide in the category so Help search and Mink re-embed",
+      "file": "sql/20261026_0253_pos_wording.sql",
+      "transaction": true,
+      "requires": ["20261026_0252_mink_credit_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the POS role descriptions no longer say they work the register",
+            "sql": "select count(*)::text from public.platform_roles where slug in ('manager', 'cashier') and description like 'Works the register at their shops:%'",
+            "equals": "0"
+          },
+          {
+            "name": "category point-of-sale says POS, not register or till",
+            "sql": "select count(*)::text from public.help_categories where slug = 'point-of-sale' and description like '%Set up POS, sell in store, manage POS devices, stock, pickups, shifts, returns, and receipts.%' and title = 'POS' and title like '%POS%' and description not like '%Set up registers, sell in store, manage tills, stock, pickups, shifts, returns, and receipts.%' and title not like '%Point of Sale%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide add-product-images-and-variants says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'add-product-images-and-variants' and status = 'published' and body like '%on your website and in POS.%' and body not like '%on your website and at the register.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide analytics-sales-and-orders says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'analytics-sales-and-orders' and status = 'published' and body like '%or a completed/refunded POS order.%' and body like '%Splits sales between channels such as online and POS.%' and body like '%Splits recognized commerce by fulfilment or POS location.%' and body like '%<p>Splits sales by the recorded payment method. POS payments can be itemized%' and body not like '%or a completed/refunded Point of Sale order.%' and body not like '%Splits sales between channels such as online and Point of Sale.%' and body not like '%Splits recognized commerce by fulfilment or Point of Sale location.%' and body not like '%<p>Splits sales by the recorded payment method. Point of Sale payments can be itemized%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide analytics-terms-and-data-sources says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'analytics-terms-and-data-sources' and status = 'published' and body like '%and completed or refunded POS orders.%' and body not like '%and completed or refunded Point of Sale orders.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide analytics-troubleshooting says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'analytics-troubleshooting' and status = 'published' and body like '%<li>Confirm the order is paid, Cash on Delivery, or a completed/refunded POS order.</li>%' and body not like '%<li>Confirm the order is paid, Cash on Delivery, or completed/refunded Point of Sale.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide authorize-and-manage-pos-devices says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'authorize-and-manage-pos-devices' and status = 'published' and excerpt like '%Authorise a desktop, tablet, or phone as a POS device, use a pairing code, revoke access, and respond to a copied device session.%' and seo_description like '%Learn how to authorise a StoreMink POS device, use a pairing code, revoke one, and respond to copied browser sessions.%' and body like '%<p>StoreMink treats each authorised browser as a POS device.%' and body like '%but should still manage shared POS devices carefully.%' and body like '%<li>Give the device a clear name, such as%' and body like '%<strong>POS → Devices</strong>%' and body like '%<li>On the new device, enter the code at the device prompt.</li>%' and body like '%Re-authorise the genuine device only after checking who had access to the browser.%' and body like '%<li>Use a separate browser profile for each physical POS device.</li>%' and body like '%<li>Do not copy browser data between POS devices.</li>%' and excerpt not like '%Authorise a desktop, tablet, or phone as a till, use a pairing code, revoke access, and respond to a copied device session.%' and seo_description not like '%Learn how to authorise a StoreMink till, use a pairing code, revoke a POS device, and respond to copied browser sessions.%' and body not like '%<p>StoreMink treats each authorised browser as a till.%' and body not like '%but should still manage shared counter devices carefully.%' and body not like '%<li>Give the till a clear name, such as%' and body not like '%<strong>Point of Sale → Devices</strong>%' and body not like '%<li>On the till, enter the code at the device prompt.</li>%' and body not like '%Re-authorise the genuine till only after checking who had access to the browser.%' and body not like '%<li>Use a separate browser profile for each physical till.</li>%' and body not like '%<li>Do not copy browser data between tills.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide choose-online-cod-and-pay-at-store-options says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'choose-online-cod-and-pay-at-store-options' and status = 'published' and excerpt like '%Understand the payment choices StoreMink can offer at website checkout, pickup checkout, and in POS.%' and body like '%<p>In POS, <strong>Card</strong>%' and excerpt not like '%Understand the payment choices StoreMink can offer at website checkout, pickup checkout, and the Point of Sale counter.%' and body not like '%<p>At Point of Sale, <strong>Card</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide configure-pos-register-settings says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'configure-pos-register-settings' and status = 'published' and title like '%Configure POS settings%' and excerpt like '%cash-variance rules for every POS device.%' and seo_title like '%Configure StoreMink POS settings%' and body like '%<p>POS Settings control how POS behaves for staff.%' and body like '%<strong>POS → POS settings</strong>%' and body like '%<h2>Auto-lock POS</h2>%' and body like '%<strong>Auto-lock POS after</strong> is the number of inactive minutes before POS asks for the operator''s PIN again.%' and body like '%Turn <strong>Allow price overrides in POS</strong> off%' and title not like '%Configure POS register settings%' and excerpt not like '%cash-variance rules for every register.%' and seo_title not like '%Configure StoreMink POS register settings%' and body not like '%<p>POS Settings control how the register behaves for staff.%' and body not like '%<strong>Point of Sale → Settings</strong>%' and body not like '%<h2>Auto-lock the register</h2>%' and body not like '%<strong>Auto-lock the register after</strong> is the number of inactive minutes before the register asks for the operator''s PIN again.%' and body not like '%Turn <strong>Allow price overrides at the register</strong> off%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide create-and-manage-offers says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-manage-offers' and status = 'published' and body like '%where it runs - your online store, POS, or both.%' and body like '%A POS sale has nothing to deliver, so an offer using it must be set to your website - you will be told if you try to save one for POS.%' and body like '%<p>In POS, the cart shows a <strong>\"Hand over\"</strong> line%' and body like '%and a POS sale is neither a delivery nor a collection. You will be told if you try to save one for POS.%' and body like '%online and in POS, with no other change.%' and body like '%Your choice applies both on your online store and in POS,%' and body like '%edit an offer if you want it available in POS too.%' and body not like '%where it runs - your online store, your point of sale, or both.%' and body not like '%A register sale has nothing to deliver, so an offer using it must be set to your website - you will be told if you try to save one for the register.%' and body not like '%<p>At the register, the till shows a <strong>\"Hand over\"</strong> line%' and body not like '%and a register sale is neither a delivery nor a collection. You will be told if you try to save one for the register.%' and body not like '%online and at your till, with no other change.%' and body not like '%Your choice applies both on your online store and at the register,%' and body not like '%edit an offer if you want it available at your point of sale too.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide create-and-share-customer-invoices says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-share-customer-invoices' and status = 'published' and body like '%StoreMink creates customer-facing order and POS documents%' and body not like '%StoreMink creates customer-facing order and Point of Sale documents%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide customize-register-and-scan-products says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'customize-register-and-scan-products' and status = 'published' and title like '%Customise the POS layout and scan products%' and seo_title like '%Customise the StoreMink POS layout and scan products%' and body like '%If a location has no saved layout, POS shows the whole catalogue.%' and body like '%<h2>Use POS on a phone or portrait tablet</h2>%' and body like '%On a wider screen, the product grid and cart remain side by side.%' and body like '%On a touch-first phone or tablet, POS opens the software keyboard%' and body like '%reaching the end does not move the rest of the page.%' and body like '%<h2>The cache does not make POS work offline</h2>%' and title not like '%Customise the register and scan products%' and seo_title not like '%Customise the StoreMink POS register and scan products%' and body not like '%If a location has no saved layout, the register shows the whole catalogue.%' and body not like '%<h2>Use the register on a phone or portrait tablet</h2>%' and body not like '%On a wider till, the product grid and cart remain side by side.%' and body not like '%On a touch-first phone or tablet, the register opens the software keyboard%' and body not like '%reaching the end does not move the page behind the register.%' and body not like '%<h2>The cache is not an offline till</h2>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide discounts-price-overrides-and-manager-approval says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'discounts-price-overrides-and-manager-approval' and status = 'published' and body like '%<strong>POS → POS settings</strong>%' and body like '%valid only for that store, location, POS device, operator, cart, and discount%' and body like '%<strong>Allow price overrides in POS</strong> decides%' and body like '%<strong>POS → Money log</strong>%' and body not like '%<strong>Point of Sale → Settings</strong>%' and body not like '%valid only for that store, location, till, operator, cart, and discount%' and body not like '%<strong>Allow price overrides at the register</strong> decides%' and body not like '%<strong>Point of Sale → Money</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide enable-pos-and-set-up-locations says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'enable-pos-and-set-up-locations' and status = 'published' and excerpt like '%Turn on POS, prepare your first shop,%' and seo_description like '%Enable StoreMink POS, configure selling locations%' and body like '%<p>POS is enabled once for the store,%' and body like '%<h2>Enable POS</h2>%' and body like '%select <strong>POS</strong>.</li>%' and body like '%The POS workspace now shows its tools.%' and body like '%Turning POS off later stops new POS work%' and excerpt not like '%Turn on Point of Sale, prepare your first shop,%' and seo_description not like '%Enable StoreMink Point of Sale, configure selling locations%' and body not like '%<p>Point of Sale is enabled once for the store,%' and body not like '%<h2>Enable Point of Sale</h2>%' and body not like '%select <strong>Point of Sale</strong>.</li>%' and body not like '%The Point of Sale workspace now shows its POS tools.%' and body not like '%Turning POS off later stops new register work%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide how-to-add-custom-domain says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'how-to-add-custom-domain' and status = 'published' and body like '%<h2>Sign in and re-authorise POS devices on the new address</h2>%' and body like '%Every paired POS device must also be re-authorised once%' and body not like '%<h2>Sign in and re-authorise tills on the new address</h2>%' and body not like '%Every paired POS till must also be re-authorised once%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide invite-and-manage-dashboard-staff says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and status = 'published' and excerpt like '%Invite a dashboard admin or POS staff member,%' and body like '%including the cashiers and managers who use POS, is invited%' and body like '%<strong>Cashier</strong> for POS. They can be chosen once POS is switched on.%' and body like '%For a POS role, the email carries a registration link%' and body like '%chooses an 8-digit PIN, then signs in to POS.%' and body like '%Managers and cashiers sign in to POS only and never see the dashboard.%' and body like '%or POS work, to those shops.%' and body like '%(or <strong>Deactivate</strong> for POS staff)%' and body like '%A POS invitation that has not been used yet%' and body like '%Manager and Cashier roles need POS switched on.%' and excerpt not like '%Invite a dashboard admin or register staff member,%' and body not like '%including the cashiers and managers who work the register, is invited%' and body not like '%<strong>Cashier</strong> for the register. The register roles can be chosen once Point of Sale is switched on.%' and body not like '%For a register role, the email carries a registration link%' and body not like '%chooses an 8-digit PIN, then signs in at the register.%' and body not like '%Managers and cashiers sign in at the register only and never see the dashboard.%' and body not like '%or register work, to those shops.%' and body not like '%(or <strong>Deactivate</strong> for register staff)%' and body not like '%A register invitation that has not been used yet%' and body not like '%Register roles need Point of Sale switched on.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide manage-pos-inventory-and-stock-transfers says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-pos-inventory-and-stock-transfers' and status = 'published' and body like '%If another POS device sells while you count,%' and body not like '%If another till sells while you count,%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide manage-website-and-pos-orders says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-website-and-pos-orders' and status = 'published' and body like '%website orders and completed POS sales.%' and body not like '%website orders and completed Point of Sale sales.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide manage-your-storemink-plan-and-subscription says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%gross margin and POS</td>%' and body like '%<td>Included POS locations and authorised POS devices</td>%' and body like '%<td>2 locations, 5 POS devices per location</td>%' and body not like '%gross margin and Point of Sale</td>%' and body not like '%<td>Included POS locations and authorised tills</td>%' and body not like '%<td>2 locations, 5 tills per location</td>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide open-close-and-reconcile-cash-shifts says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'open-close-and-reconcile-cash-shifts' and status = 'published' and body like '%<strong>POS → Shifts</strong>%' and body like '%is enabled, POS refuses sales,%' and body not like '%<strong>Point of Sale → Shifts</strong>%' and body not like '%is enabled, the register refuses sales,%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide pos-overview-and-requirements says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'pos-overview-and-requirements' and status = 'published' and title like '%POS overview and requirements%' and seo_description like '%Learn what StoreMink POS includes, which devices work, plan and location requirements, internet needs, and where to open POS.%' and body like '%<p>StoreMink POS (point of sale) is how you sell in person at your StoreMink shop.%' and body like '%<strong>StoreMink Pro:</strong> POS is included in Pro.%' and body like '%<h2>Where to open POS</h2>%' and body like '%it is not your store''s POS.%' and title not like '%Point of Sale overview and requirements%' and seo_description not like '%Learn what StoreMink Point of Sale includes, which devices work, plan and location requirements, internet needs, and where to open the register.%' and body not like '%<p>StoreMink Point of Sale is the in-store register for your StoreMink shop.%' and body not like '%<strong>StoreMink Pro:</strong> Point of Sale is included in Pro.%' and body not like '%<h2>Where to open the register</h2>%' and body not like '%it is not a merchant register.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide prepare-and-hand-over-pickup-orders says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'prepare-and-hand-over-pickup-orders' and status = 'published' and body like '%there is no override in POS.%' and body not like '%there is no till override.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide print-email-and-understand-pos-receipts says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'print-email-and-understand-pos-receipts' and status = 'published' and body like '%The print view hides the dark POS interface%' and body like '%<li>The buyer''s GSTIN when entered in POS.</li>%' and body not like '%The print view hides the dark register interface%' and body not like '%<li>The buyer''s GSTIN when entered at the till.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide process-an-in-store-sale says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'process-an-in-store-sale' and status = 'published' and body like '%its stock at this location, and its SKU,%' and body like '%counted at this location.%' and body like '%whether that customer was recorded in POS or created their own account online.%' and body like '%A name is required: POS does not record a number on its own.%' and body like '%A customer recorded in POS keeps their in-store history%' and body like '%It is shared with other POS devices at the same location, but only one device can claim a particular held sale at a time.%' and body like '%<h2>If the Sell screen reloads</h2>%' and body like '%so reloading the Sell screen - or coming back to it%' and body like '%it is cleared when POS locks or anyone signs out,%' and body like '%or between two POS tabs.%' and body like '%To keep a sale across a lock, a different device or a longer break,%' and body like '%If your browser blocks site data, POS still works normally%' and body not like '%its stock at this register''s location, and its SKU,%' and body not like '%counted at this register''s location.%' and body not like '%whether that customer was recorded at the till or created their own account online.%' and body not like '%A name is required: the register no longer records a number on its own.%' and body not like '%A customer recorded at the till keeps their in-store history%' and body not like '%It is shared with other tills at the same location, but one till can claim a particular held sale at a time.%' and body not like '%<h2>If the register page reloads</h2>%' and body not like '%so reloading the register - or coming back to it%' and body not like '%it is cleared when the till locks or anyone signs out,%' and body not like '%or between two register tabs.%' and body not like '%To keep a sale across a lock, a different till or a longer break,%' and body not like '%If your browser blocks site data, the register still works normally%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide refunds-store-credit-exchanges-and-credit-notes says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'refunds-store-credit-exchanges-and-credit-notes' and status = 'published' and body like '%Every new POS sale has a customer attached%' and body like '%POS records the return and original-method refund,%' and body not like '%Every new register sale has a customer attached%' and body not like '%The till records the return and original-method refund,%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide set-product-pricing-tax-and-shipping-details says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-product-pricing-tax-and-shipping-details' and status = 'published' and body like '%both on your website and in POS.%' and body not like '%both on your website and at the register.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide set-up-gst-and-tax-classes says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-gst-and-tax-classes' and status = 'published' and body like '%on website orders, POS receipts, and customer invoices.%' and body like '%<p>POS uses the selling location''s state%' and body not like '%on website orders, Point of Sale receipts, and customer invoices.%' and body not like '%<p>Point of Sale uses the selling location''s state%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide set-up-locations-and-capabilities says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-locations-and-capabilities' and status = 'published' and body like '%shared by inventory, orders, POS, pickup, returns, and fulfilment.%' and body like '%allows selling with POS at the location.%' and body not like '%shared by inventory, orders, Point of Sale, pickup, returns, and fulfilment.%' and body not like '%allows Point of Sale work at the location.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide set-up-pos-staff-and-pins says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'set-up-pos-staff-and-pins' and status = 'published' and body like '%These two roles use POS%' and body like '%and edit the POS layout.%' and body like '%for a quick POS login,%' and body like '%POS auto-locks after the configured period%' and body not like '%These two roles work the register%' and body not like '%and edit the register layout.%' and body not like '%for a quick counter login,%' and body not like '%The register auto-locks after the configured period%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide take-payments-and-split-tenders says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'take-payments-and-split-tenders' and status = 'published' and body like '%If another POS device sold the final unit during payment,%' and body not like '%If another till sold the final unit during payment,%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide take-returns-at-the-counter says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'take-returns-at-the-counter' and status = 'published' and body like '%POS never offers cash for it.%' and body like '%With no customer attached, POS takes the items back%' and body like '%so two POS devices cannot both refund the same remaining unit.%' and body like '%the return cannot be completed in POS.%' and body like '%governs counter returns of orders this shop did not sell in POS,%' and body like '%A POS sale rung up at this same shop stays returnable here%' and body not like '%the till never offers cash for it.%' and body not like '%With no customer attached, the till takes the items back%' and body not like '%so two tills cannot both refund the same remaining unit.%' and body not like '%the return cannot be completed at the till.%' and body not like '%governs counter returns of orders this till did not sell,%' and body not like '%A sale rung at this same register stays returnable here%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide troubleshoot-pos-and-internet-issues says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'troubleshoot-pos-and-internet-issues' and status = 'published' and body like '%to use POS, open your merchant store domain%' and body like '%<h2>POS opens the product page instead of my store</h2>%' and body like '%Open Dashboard → POS and make sure POS is enabled.%' and body like '%Generate a new code from POS → Devices.%' and body like '%<h2>POS asks for an open shift</h2>%' and body like '%If stock was sold on another POS device during payment,%' and body not like '%to use the register, open your merchant store domain%' and body not like '%<h2>POS opens the product page instead of my register</h2>%' and body not like '%Open Dashboard → Point of Sale and make sure POS is enabled.%' and body not like '%Generate a new code from Point of Sale → Devices.%' and body not like '%<h2>The register asks for an open shift</h2>%' and body not like '%If stock was sold on another till during payment,%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide understand-pending-and-failed-online-payments says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-pending-and-failed-online-payments' and status = 'published' and body like '%<h2>A POS exception to understand</h2>%' and body like '%Another POS device can sell the last unit during the charge.%' and body not like '%<h2>Point of Sale exception to understand</h2>%' and body not like '%Another till can sell the last unit during the charge.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide understand-storemink-skus-and-barcodes says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-storemink-skus-and-barcodes' and status = 'published' and body like '%search or a POS scan return the wrong item.%' and body not like '%search or a register scan return the wrong item.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide understand-your-storemink-dashboard says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-your-storemink-dashboard' and status = 'published' and body like '%contains locations and POS tools when%' and body not like '%contains locations and Point of Sale tools when%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide use-and-understand-store-credit says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-and-understand-store-credit' and status = 'published' and body like '%<li><strong>POS:</strong> attach the customer,%' and body like '%Two POS devices or checkouts cannot both spend the same value successfully.%' and body like '%later claiming a profile created in POS does not create a second balance.%' and body not like '%<li><strong>Point of Sale:</strong> attach the customer,%' and body not like '%Two tills or checkouts cannot both spend the same value successfully.%' and body not like '%later claiming a till-created profile does not create a second balance.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide use-mink-ai-in-your-dashboard says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%POS sales are completed in store%' and body not like '%POS sales use the register lifecycle%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide use-storemink-help-assistant says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%I am on POS → Devices.%' and body not like '%I am on Point of Sale → Devices.%'",
+            "equals": "1"
+          },
+          {
+            "name": "guide view-pos-sales-shifts-money-and-analytics says POS, not register or till",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-pos-sales-shifts-money-and-analytics' and status = 'published' and seo_description like '%review POS orders and Z-reports,%' and body like '%<li>Search POS receipts and completed in-store pickup orders%' and body like '%A standard POS sale shows Sold at location,%' and body like '%because the goods were handed over at the counter.%' and body like '%<strong>POS → Shifts</strong>%' and body like '%<strong>POS → Money log</strong>%' and body like '%A customer attached in POS sees the sale under%' and seo_description not like '%review register orders and Z-reports,%' and body not like '%<li>Search register receipts and completed in-store pickup orders%' and body not like '%A standard register sale shows Sold at location,%' and body not like '%because the goods were handed over at the register.%' and body not like '%<strong>Point of Sale → Shifts</strong>%' and body not like '%<strong>Point of Sale → Money</strong>%' and body not like '%A customer attached at the till sees the sale under%'",
+            "equals": "1"
+          },
+          {
+            "name": "every published guide in the POS category moved, so Help search and Mink re-embed it with the new category title",
+            "sql": "select count(*)::text from public.help_articles a join public.help_categories c on c.id = a.category_id where c.slug = 'point-of-sale' and a.status = 'published' and a.updated_at < now() - interval '1 hour'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0254_help_pos_and_dash_followups",
+      "description": "Help follow-ups from the POS rename review: the staff guide says Manager and Cashier (not every role) can be chosen once POS is switched on, and the POS troubleshooting heading says pos.storemink.com shows the product page, not my POS. The GA4 guide's two en dashes (0008), which the long-dash rule could not see, become 'to'; from here on the Help lint also fails a migration that publishes an en dash or a dash written as an HTML entity. Help only, each sentence edited where it stands",
+      "file": "sql/20261026_0254_help_pos_and_dash_followups.sql",
+      "transaction": true,
+      "requires": ["20261026_0253_pos_wording"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the staff guide says Manager and Cashier need POS switched on, not all five roles",
+            "sql": "select count(*)::text from public.help_articles where slug = 'invite-and-manage-dashboard-staff' and status = 'published' and body like '%Manager and Cashier can be chosen once POS is switched on.%' and body not like '%They can be chosen once POS is switched on.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the POS troubleshooting heading names pos.storemink.com, not my store",
+            "sql": "select count(*)::text from public.help_articles where slug = 'troubleshoot-pos-and-internet-issues' and status = 'published' and body like '%<h2>pos.storemink.com shows the product page, not my POS</h2>%' and body not like '%<h2>POS opens the product page instead of my store</h2>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the GA4 guide writes its time ranges with to, not en dashes",
+            "sql": "select count(*)::text from public.help_articles where slug = 'connect-google-analytics-4' and status = 'published' and body like '%Initial Realtime data can take roughly 10 to 30 minutes. Standard reports commonly need 24 to 48 hours.%' and strpos(body, 'roughly 10' || chr(8211) || '30 minutes') = 0 and strpos(body, 'need 24' || chr(8211) || '48 hours') = 0",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261026_0255_publish_legal_terms_v2_privacy_v4_aup_v2",
+      "description": "Publishes Terms of Service v2, Privacy Policy v4 and Acceptable Use Policy v2 (lib/legal/content.ts, reviewed by a lawyer and approved for publication exactly as written, 26 Oct 2026) together, the way publishLegalVersion does for each: retires the current row and inserts the new version with its sha256 checksum and created_by script. All three or none: checks every body against its checksum, refuses (changing nothing) where one of the three versions is already stored with a different text or is stored but not current, and leaves alone a document whose new version or a later one is already current",
+      "file": "sql/20261026_0255_publish_legal_terms_v2_privacy_v4_aup_v2.sql",
+      "transaction": true,
+      "requires": ["20261026_0254_help_pos_and_dash_followups"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "exactly one Terms of Service is current",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'terms' and is_current",
+            "equals": "1"
+          },
+          {
+            "name": "exactly one Privacy Policy is current",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'privacy' and is_current",
+            "equals": "1"
+          },
+          {
+            "name": "exactly one Acceptable Use Policy is current",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'acceptable-use' and is_current",
+            "equals": "1"
+          },
+          {
+            "name": "the current Terms of Service is v2 or later, and v2 is the approved text, stored intact",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'terms' and is_current and version >= 2 and (version <> 2 or (checksum = 'c4d3a3fbce63ac3b823dbda7a685eeb3d0d102ccc49182c25f07f9c8e098d26b' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "equals": "1"
+          },
+          {
+            "name": "the current Privacy Policy is v4 or later, and v4 is the approved text, stored intact",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'privacy' and is_current and version >= 4 and (version <> 4 or (checksum = 'b8d05838184cb491cfaabba308a92bcee76e849e068a8e4a7e6007a72d134a6d' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "equals": "1"
+          },
+          {
+            "name": "the current Acceptable Use Policy is v2 or later, and v2 is the approved text, stored intact",
+            "sql": "select count(*)::text from public.legal_documents where kind = 'acceptable-use' and is_current and version >= 2 and (version <> 2 or (checksum = 'f437890cfec18d5788241c01f6476cd766d6f65a7cd4fcf72443f1a034488795' and encode(sha256(convert_to(body, 'UTF8')), 'hex') = checksum))",
+            "equals": "1"
+          },
+          {
+            "name": "this migration wrote no row of any other kind",
+            "sql": "select count(*)::text from public.legal_documents where xmin::text = (txid_current() % 4294967296)::text and kind not in ('terms', 'privacy', 'acceptable-use')",
+            "equals": "0"
+          },
+          {
+            "name": "every row this migration made current is one of the three approved versions",
+            "sql": "select count(*)::text from public.legal_documents where xmin::text = (txid_current() % 4294967296)::text and is_current and not ((kind = 'terms' and version = 2 and checksum = 'c4d3a3fbce63ac3b823dbda7a685eeb3d0d102ccc49182c25f07f9c8e098d26b') or (kind = 'privacy' and version = 4 and checksum = 'b8d05838184cb491cfaabba308a92bcee76e849e068a8e4a7e6007a72d134a6d') or (kind = 'acceptable-use' and version = 2 and checksum = 'f437890cfec18d5788241c01f6476cd766d6f65a7cd4fcf72443f1a034488795'))",
+            "equals": "0"
+          },
+          {
+            "name": "every row this migration retired is older than the version it published",
+            "sql": "select count(*)::text from public.legal_documents where xmin::text = (txid_current() % 4294967296)::text and not is_current and not ((kind = 'terms' and version < 2) or (kind = 'privacy' and version < 4) or (kind = 'acceptable-use' and version < 2))",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261027_0258_mink_redesign_preview_help",
+      "description": "Edits the storefront redesign guide for early design preview, checked photographs shared between pages, supplied product photos and required final checks. Numbers 0256 and 0257 remain reserved for the paused release.",
+      "file": "sql/20261027_0258_mink_redesign_preview_help.sql",
+      "transaction": true,
+      "requires": ["20261026_0255_publish_legal_terms_v2_privacy_v4_aup_v2"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the redesign guide describes the early preview and shared photographs",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-website-with-mink-ai' and status = 'published' and body like '%Choose Preview design%' and body like '%Suitable photographs can be shared between different pages%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261027_0259_mink_redesign_deadline_guard",
+      "description": "Preserves active bounded redesign deadlines and fences their claims against incompatible workers while app revisions overlap. Legacy redesigns are unaffected.",
+      "file": "sql/20261027_0259_mink_redesign_deadline_guard.sql",
+      "transaction": true,
+      "requires": ["20261027_0258_mink_redesign_preview_help"],
+      "verify": {
+        "queries": [
+          {
+            "name": "bounded redesign deadline trigger is present",
+            "sql": "select count(*)::text from pg_trigger where tgrelid = 'public.mink_revamps'::regclass and tgname = 'mink_revamps_deadline_guard' and not tgisinternal and tgenabled = 'O'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261027_0261_mink_voice_controls_help",
+      "description": "Updates the existing voice paragraph for Talk, microphone mute and expandable captions. 0260 remains available for the separate redesign recovery work.",
+      "file": "sql/20261027_0261_mink_voice_controls_help.sql",
+      "transaction": true,
+      "requires": ["20261027_0259_mink_redesign_deadline_guard"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "voice guide describes microphone mute and captions",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Choose Mute microphone%' and body like '%Open Captions%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261028_0260_mink_redesign_recovery_fence",
+      "description": "Adds the recovery protocol fence trigger: only a transaction declaring app.mink_revamp_recovery = 2 may claim, save, park, expire or fail an unfinished recoverable redesign; an older revision may still record Stop. Legacy redesigns and the 0259 guard are unaffected.",
+      "file": "sql/20261028_0260_mink_redesign_recovery_fence.sql",
+      "transaction": true,
+      "requires": ["20261027_0261_mink_voice_controls_help"],
+      "verify": {
+        "queries": [
+          {
+            "name": "recoverable redesign fence trigger is present",
+            "sql": "select count(*)::text from pg_trigger where tgrelid = 'public.mink_revamps'::regclass and tgname = 'mink_revamps_recovery_fence' and not tgisinternal and tgenabled = 'O'",
             "equals": "1"
           }
         ]

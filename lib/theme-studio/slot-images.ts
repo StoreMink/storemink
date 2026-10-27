@@ -26,6 +26,7 @@ import {
   type SharpWithOptions,
 } from "./references";
 import {
+  SLOT_ALT_MAX,
   SLOT_IMAGE_MIN_WIDTH,
   applySlotReplacements,
   describeSlots,
@@ -34,6 +35,7 @@ import {
   validateSlotReplacements,
   type SlotDescriptor,
   type SlotImageRow,
+  type SlotReplacement,
 } from "./slot-images-core";
 import {
   digestThemeStudioJson,
@@ -43,6 +45,9 @@ import {
 } from "./repository";
 import { generatableSlots, redrawableSlotIds } from "./image-generation-core";
 import { captureBlockers } from "./capture-core";
+import { queueAutomaticCapture } from "./automatic-work";
+import { MAX_AUTOMATIC_QA_REPAIRS } from "./automatic-qa-policy";
+import { getThemeStudioConfig } from "./config";
 import {
   hasReusableAnchor,
   slotDrawHistory,
@@ -322,10 +327,86 @@ export async function storeThemeStudioSlotImage(
   });
 }
 
+/** Stands in for a blank alt text while the input's shape is checked, before
+ * the database is opened. It is replaced by the slot's own description, or
+ * the save is refused because the version has no such slot, so it is never
+ * stored. */
+const SLOT_DESCRIPTION_STAND_IN = "the slot's own description";
+
+/**
+ * The slots an operator saved with no alt text, and the input with a stand-in
+ * alt for each, so every other rule is still checked before the database.
+ * Only a missing or blank alt counts: one that is merely too short is the
+ * operator's own words, and is refused as before.
+ */
+function blankAltSlots(input: unknown): { input: unknown; slots: Set<string> } {
+  const slots = new Set<string>();
+  if (!Array.isArray(input)) return { input, slots };
+  const blank = (value: unknown) =>
+    typeof value !== "string" || value.replace(/\s+/g, " ").trim() === "";
+  return {
+    input: input.map((raw: unknown) => {
+      if (!raw || typeof raw !== "object") return raw;
+      const entry = raw as { slotId?: unknown; alt?: unknown };
+      if (!blank(entry.alt) || typeof entry.slotId !== "string") return raw;
+      slots.add(entry.slotId.replace(/\s+/g, " ").trim());
+      return { ...entry, alt: SLOT_DESCRIPTION_STAND_IN };
+    }),
+    slots,
+  };
+}
+
+/**
+ * ★ A picture saved with no alt text takes its slot's description: the alt
+ * the compiler wrote for that slot (the product's name or the picture's
+ * brief), or the one an earlier save gave it. Never a licence note: that is
+ * the operator's statement of rights and is always theirs to write. The
+ * filled list is checked again, so the same length rules hold.
+ */
+function describeFromSlots(
+  replacements: readonly SlotReplacement[],
+  blank: ReadonlySet<string>,
+  pkg: ThemePackageV2,
+): SlotReplacement[] {
+  if (blank.size === 0) return [...replacements];
+  const descriptions = new Map(
+    describeSlots(pkg).map((slot) => [
+      slot.id,
+      slot.alt.replace(/\s+/g, " ").trim().slice(0, SLOT_ALT_MAX).trim(),
+    ]),
+  );
+  const filled = validateSlotReplacements(
+    replacements.map((replacement) => {
+      const description = descriptions.get(replacement.slotId);
+      // A slot the version does not have is refused by name when the
+      // replacements are applied.
+      return blank.has(replacement.slotId) && description !== undefined
+        ? { ...replacement, alt: description }
+        : replacement;
+    }),
+  );
+  if (!filled.ok) throw new ThemeStudioError("invalid_input", filled.error);
+  return filled.value;
+}
+
 /**
  * Save staged replacements as ONE new version whose parent is the version
- * edited. The new version becomes current; a candidate returns to `ready`
- * because its acceptance evidence covered different images.
+ * edited.
+ *
+ * ★ EVERY CHANGE IS CHECKED (TS-1D). With automatic checks on, a version
+ * whose pictures are complete is saved HIDDEN (`internal`/`pending`, at the
+ * repair ceiling, so a check of a hand change can never buy a paid restyle)
+ * and goes straight to the automatic final check: one final capture (new
+ * catalogue pictures of the edited storefront, every page measured), then
+ * the design review. No layout check: only pictures changed, never the
+ * layout. The project is `generating` meanwhile and keeps its current
+ * version; the check ends Ready to publish, or shows the edited version with
+ * its reason. Nothing is written to the chat.
+ *
+ * Otherwise (the checks off, or a placeholder or another capture blocker
+ * left, so there is nothing to check yet) the new version becomes current at
+ * once and the project is `ready`: a candidate returns to `ready` because its
+ * acceptance evidence covered different images.
  */
 export async function replaceThemeStudioSlotImages(
   actor: ThemeStudioActor,
@@ -336,13 +417,13 @@ export async function replaceThemeStudioSlotImages(
     expectedPackageDigest: string;
     replacements: unknown;
   },
-): Promise<{ versionId: string; versionNumber: number }> {
+): Promise<{ versionId: string; versionNumber: number; checking: boolean }> {
   if (!isUuid(input.projectId) || !isUuid(input.versionId)) {
     throw new ThemeStudioError("not_found", "That version no longer exists.");
   }
-  const parsed = validateSlotReplacements(input.replacements);
+  const blankAlt = blankAltSlots(input.replacements);
+  const parsed = validateSlotReplacements(blankAlt.input);
   if (!parsed.ok) throw new ThemeStudioError("invalid_input", parsed.error);
-  const replacements = parsed.value;
 
   return withService(async (db) => {
     const [project] = await db
@@ -394,6 +475,11 @@ export async function replaceThemeStudioSlotImages(
         "That version no longer passes its contract, so it can't be edited.",
       );
     }
+    const replacements = describeFromSlots(
+      parsed.value,
+      blankAlt.slots,
+      basePkg.value,
+    );
     const rows = await db
       .select({
         id: themeStudioAssets.id,
@@ -425,6 +511,12 @@ export async function replaceThemeStudioSlotImages(
     );
     if (!applied.ok) throw new ThemeStudioError("invalid_input", applied.error);
 
+    const config = getThemeStudioConfig();
+    // Checked only when it can be: a final capture refuses a version with a
+    // placeholder left, and would fail it at once.
+    const checking =
+      config.autoQaEnabled && captureBlockers(applied.value).length === 0;
+    const packageDigest = digestThemeStudioJson(applied.value);
     const [version] = await db
       .insert(themeStudioVersions)
       .values({
@@ -441,16 +533,32 @@ export async function replaceThemeStudioSlotImages(
         intentJson: base.intentJson,
         intentDigest: base.intentDigest,
         packageJson: applied.value,
-        packageDigest: digestThemeStudioJson(applied.value),
+        packageDigest,
+        ...(checking
+          ? {
+              visibility: "internal",
+              qaStatus: "pending",
+              qaIteration: MAX_AUTOMATIC_QA_REPAIRS,
+            }
+          : {}),
       })
       .returning({ id: themeStudioVersions.id });
     await db
       .update(themeStudioProjects)
-      .set({
-        status: "ready",
-        currentVersionId: version.id,
-        revision: sql`${themeStudioProjects.revision} + 1`,
-      })
+      .set(
+        checking
+          ? {
+              // ready or candidate -> generating (0151); the version the
+              // operator saw stays current until the check settles.
+              status: "generating",
+              revision: sql`${themeStudioProjects.revision} + 1`,
+            }
+          : {
+              status: "ready",
+              currentVersionId: version.id,
+              revision: sql`${themeStudioProjects.revision} + 1`,
+            },
+      )
       .where(eq(themeStudioProjects.id, project.id));
     await recordThemeStudioEvent(db, {
       projectId: project.id,
@@ -462,9 +570,40 @@ export async function replaceThemeStudioSlotImages(
         fromVersionId: base.id,
         slots: replacements.map((r) => r.slotId),
         previousStatus: project.status,
+        automaticQa: checking,
+        // A count, not the ids: the slot list above already uses most of the
+        // event detail's 4 KiB at the 40-picture limit.
+        ...(blankAlt.slots.size ? { altFromSlot: blankAlt.slots.size } : {}),
       },
     });
-    return { versionId: version.id, versionNumber };
+    if (checking) {
+      await recordThemeStudioEvent(db, {
+        projectId: project.id,
+        actor,
+        eventType: "auto_qa_started",
+        detail: {
+          versionId: version.id,
+          qaIteration: MAX_AUTOMATIC_QA_REPAIRS,
+        },
+      });
+      // The capture's key is `auto_final_<this version>`: server-only, so it
+      // can never pass for a re-check, and it measures a new hidden version
+      // with fresh catalogue pictures (remeasuresInPlace is false for it).
+      await queueAutomaticCapture(
+        db,
+        {
+          id: version.id,
+          projectId: project.id,
+          provider: config.provider ?? "fake",
+          modelKey: project.modelKey,
+          qaIteration: MAX_AUTOMATIC_QA_REPAIRS,
+          createdBy: actor.id,
+        },
+        version,
+        packageDigest,
+      );
+    }
+    return { versionId: version.id, versionNumber, checking };
   });
 }
 

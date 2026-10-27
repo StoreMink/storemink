@@ -717,7 +717,7 @@ export async function getTopProducts(
 }
 
 function channelName(key: string): string {
-  if (key === "pos") return "Point of sale";
+  if (key === "pos") return "POS";
   if (key === "online") return "Online store";
   return key
     .split("_")

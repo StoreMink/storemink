@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Phase 6: getServerUser verifies the Firebase session cookie (Identity
-// Platform). Mock the cookie jar and the verifier — no Supabase involved.
+// Platform). Mock the cookie jar and the verifier.
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
 vi.mock("./session-cookie", async (importOriginal) => {
   const actual = (await importOriginal()) as any;

@@ -9,7 +9,7 @@
 // this wrong would downgrade paying merchants routinely, not rarely.
 //
 // ⚠ The exactly-once guarantees are database constraints and
-// billing_claim_downgrade, proved by supabase/billing_verify.sql. These tests
+// billing_claim_downgrade, proved by scripts/billing-verify.sql. These tests
 // prove the orchestration around them: who is selected, what is skipped, and
 // which outcome maps to which consequence.
 

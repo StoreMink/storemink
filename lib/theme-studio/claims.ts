@@ -101,13 +101,54 @@ function numbersIn(text: string): Set<string> {
 }
 
 /** Theme copy that reads to a customer: pages, brand line, sample catalogue.
- * Menus and SEO fields are included; nothing a customer can't see is. */
+ * Menus and SEO fields are included; nothing a customer can't see is. The
+ * page templates (trust labels, accordion rows, rich text, promo tiles) and
+ * the announcement bar are copy on every product page or every page (v32+),
+ * and a revision carries them forward (v33+). */
 export function customerCopy(pkg: ThemePackageV2): string[] {
   const preset = pkg.definition.preset;
   return [
     ...collectStrings(preset.brand),
     ...collectStrings(preset.pages),
     ...collectStrings(preset.sampleData),
+    ...collectStrings(preset.templates),
+    ...collectStrings(preset.announcement),
+  ];
+}
+
+/** The rules one piece of copy breaks: claims `evidence` does not support. */
+function unsupportedRules(
+  text: string,
+  evidence: string,
+  numbers: Set<string>,
+): ClaimRule[] {
+  const broken: ClaimRule[] = [];
+  for (const rule of CLAIM_RULES) {
+    const match = rule.re.exec(text);
+    if (!match) continue;
+    const supported = rule.numeric
+      ? [...numbersIn(match[0])].every((n) => numbers.has(n))
+      : rule.evidence.test(evidence);
+    if (!supported) broken.push(rule);
+  }
+  return broken;
+}
+
+/**
+ * The marketing claims ONE piece of copy makes that `evidence` does not
+ * support, by label ("an award", "a rating"). The Mink storefront revamp
+ * checks its copy field by field with this (lib/mink/revamp/copy-checks.ts).
+ */
+export function unsupportedClaimLabels(
+  text: string,
+  evidence: string,
+): string[] {
+  return [
+    ...new Set(
+      unsupportedRules(text, evidence, numbersIn(evidence)).map(
+        (rule) => rule.label,
+      ),
+    ),
   ];
 }
 
@@ -123,13 +164,7 @@ export function unsupportedClaimIssues(
   const numbers = numbersIn(evidence);
   const issues = new Set<string>();
   for (const text of customerCopy(pkg)) {
-    for (const rule of CLAIM_RULES) {
-      const match = rule.re.exec(text);
-      if (!match) continue;
-      const supported = rule.numeric
-        ? [...numbersIn(match[0])].every((n) => numbers.has(n))
-        : rule.evidence.test(evidence);
-      if (supported) continue;
+    for (const rule of unsupportedRules(text, evidence, numbers)) {
       const excerpt = text.length > 80 ? `${text.slice(0, 77)}…` : text;
       issues.add(
         `Copy claims ${rule.label} ("${excerpt}") that the brief does not support. Remove the claim or rephrase without it; never invent awards, press, ratings, counts, certifications or dates.`,

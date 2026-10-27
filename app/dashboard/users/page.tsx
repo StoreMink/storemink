@@ -42,10 +42,7 @@ export default async function UsersPage({
           <span>⚠️</span> Failed to load users
         </div>
         <p className="leading-relaxed text-destructive/80">
-          Make sure the <code>users</code> table and the{" "}
-          <code>customer_admin</code> view exist (apply{" "}
-          <code>supabase/users_table.sql</code> and{" "}
-          <code>supabase/customer_admin_view.sql</code>).
+          Refresh the page to try again.
         </p>
       </div>
     );

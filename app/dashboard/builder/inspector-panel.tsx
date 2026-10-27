@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ImageRefineScope } from "@/components/ui/image-refine-context";
 import {
   SECTION_TYPE_META,
   type AnySectionConfig,
@@ -46,6 +47,10 @@ import {
   type CategoryOption,
   type ProductOption,
 } from "./section-form";
+import {
+  BUILDER_CHROME_REFINE_SCOPE,
+  builderSectionRefineScope,
+} from "./image-refine-sweep";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 
 type Options = {
@@ -137,19 +142,24 @@ export function InspectorPanel({
         </div>
         <div className="sm-builder-inspector-body">
           <p className="sm-b-scope">Appears on every page of your store.</p>
-          {chromeTarget === "header" ? (
-            <HeaderForm chrome={chrome} onChange={onChromeChange} />
-          ) : chromeTarget === "brand" ? (
-            <BrandForm
-              brand={brand}
-              onChange={onBrandChange}
-              chrome={chrome}
-              onChromeChange={onChromeChange}
-              themeDefaults={themeDefaults}
-            />
-          ) : (
-            <FooterForm chrome={chrome} onChange={onChromeChange} />
-          )}
+          {/* ★ A refine belongs to the builder's chrome, not to this form:
+              the builder's sweep (image-refine-sweep.ts) releases it when its
+              photo leaves the header, footer or brand. */}
+          <ImageRefineScope id={BUILDER_CHROME_REFINE_SCOPE}>
+            {chromeTarget === "header" ? (
+              <HeaderForm chrome={chrome} onChange={onChromeChange} />
+            ) : chromeTarget === "brand" ? (
+              <BrandForm
+                brand={brand}
+                onChange={onBrandChange}
+                chrome={chrome}
+                onChromeChange={onChromeChange}
+                themeDefaults={themeDefaults}
+              />
+            ) : (
+              <FooterForm chrome={chrome} onChange={onChromeChange} />
+            )}
+          </ImageRefineScope>
         </div>
       </aside>
     );
@@ -233,14 +243,24 @@ export function InspectorPanel({
             />
           ) : (
             <div className="space-y-5">
-              <SectionForm
-                type={section.type}
-                config={section.config}
-                setConfig={onConfigChange}
-                products={options.products}
-                categories={options.categories}
-                blogs={options.blogs}
-              />
+              {/* ★ Keyed by section, so another section of the same type
+                  never inherits this one's boxes (or a pending upload), and
+                  scoped by page and section: a refine survives this form
+                  unmounting (another tab, another section, Escape) and
+                  shows only in a box with the same photo and size here. */}
+              <ImageRefineScope
+                id={builderSectionRefineScope(draft.id, section.id)}
+              >
+                <SectionForm
+                  key={section.id}
+                  type={section.type}
+                  config={section.config}
+                  setConfig={onConfigChange}
+                  products={options.products}
+                  categories={options.categories}
+                  blogs={options.blogs}
+                />
+              </ImageRefineScope>
             </div>
           ))}
 

@@ -49,7 +49,7 @@ const validForm = {
   name: "Skincare",
   slug: "",
   description: "Glow",
-  image_url: "https://x.example.com/object/public/media/skincare.png",
+  image_url: "https://x.example.com/media/skincare.png",
   sort_order: 1,
   status: "active" as const,
 };
@@ -162,8 +162,8 @@ describe("category-actions", () => {
     // This is the only way storage doesn't accumulate orphan files.
     // (select #1 = slug lookup, select #2 = previous-image prefetch.)
     it("purges the previous image from storage when changed", async () => {
-      const oldUrl = "https://x.example.com/object/public/media/old.png";
-      const newUrl = "https://x.example.com/object/public/media/new.png";
+      const oldUrl = "https://x.example.com/media/old.png";
+      const newUrl = "https://x.example.com/media/new.png";
       dbHolder.current = makeDbMock({
         selectQueue: [[], [{ imageUrl: oldUrl }]],
       });
@@ -180,7 +180,7 @@ describe("category-actions", () => {
     // When the image is unchanged, deleteStorageUrls is NOT called — we
     // don't want to wipe out the same file we're still using.
     it("does not purge storage when the image is unchanged", async () => {
-      const url = "https://x.example.com/object/public/media/same.png";
+      const url = "https://x.example.com/media/same.png";
       dbHolder.current = makeDbMock({
         selectQueue: [[], [{ imageUrl: url }]],
       });
@@ -202,7 +202,7 @@ describe("category-actions", () => {
     // (Products that referenced the category get category_id set to NULL by
     // the FK — they're not lost.)
     it("removes the row and purges its image from storage", async () => {
-      const url = "https://x.example.com/object/public/media/cat.png";
+      const url = "https://x.example.com/media/cat.png";
       dbHolder.current = makeDbMock({ selectQueue: [[{ imageUrl: url }]] });
       const result = await deleteCategory("c1");
       expect(result.success).toBe(true);

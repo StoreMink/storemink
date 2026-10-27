@@ -4,6 +4,8 @@ import {
   SPEAKABLE_MAX_CHARS,
   speakableMinkText,
   speechLangFor,
+  normalizeSpeechLanguage,
+  splitSpeechChunks,
 } from "./speech-text";
 
 describe("speakableMinkText", () => {
@@ -89,6 +91,59 @@ describe("speakableMinkText", () => {
 });
 
 describe("speechLangFor", () => {
+  it("keeps detected languages that share a script and recognises omitted scripts", () => {
+    expect(speechLangFor("तुमची ऑर्डर तयार आहे", "en-US", "mr-IN")).toBe(
+      "mr-IN",
+    );
+    expect(speechLangFor("Aapka order taiyar hai", "en-US", "hi-IN")).toBe(
+      "hi-IN",
+    );
+    expect(speechLangFor("உங்கள் ஆர்டர் தயார்", "en-IN", "hi-IN")).toBe(
+      "ta-IN",
+    );
+    expect(speechLangFor("ଆପଣଙ୍କ ଅର୍ଡର ପ୍ରସ୍ତୁତ", "en-IN")).toBe("or-IN");
+    expect(speechLangFor("آپ کا آرڈر تیار ہے", "en-IN")).toBe("ur-IN");
+  });
+
+  it("★ a hint for a language the model has no voice for leaves the script's own voice to read it", () => {
+    // Bulbul reads Devanagari as Hindi and Bengali script as Bengali; a
+    // Maithili, Nepali or Assamese tag would be refused and handed to the
+    // browser, which has no such voice either (speech-text.ts).
+    expect(speechLangFor("अहाँक ऑर्डर तैयार अछि", "en-IN", "mai-IN")).toBe(
+      "hi-IN",
+    );
+    expect(speechLangFor("तपाईंको अर्डर तयार छ", "en-IN", "ne-IN")).toBe(
+      "hi-IN",
+    );
+    expect(speechLangFor("আপোনাৰ অৰ্ডাৰ সাজু", "en-IN", "as-IN")).toBe("bn-IN");
+    // Latin text keeps the browser's language unless the hint has a voice.
+    expect(speechLangFor("Your order is ready.", "en-GB", "mai-IN")).toBe(
+      "en-GB",
+    );
+    // Malayalam and Odia have a voice (Bulbul V3), so their hints count.
+    expect(speechLangFor("Your order is ready.", "en-GB", "ml-IN")).toBe(
+      "ml-IN",
+    );
+    expect(speechLangFor("Ungal order thayar.", "en-IN", "ta-IN")).toBe(
+      "ta-IN",
+    );
+  });
+
+  it("normalises known language tags without accepting provider prose", () => {
+    expect(normalizeSpeechLanguage(" MR-in ")).toBe("mr-IN");
+    expect(normalizeSpeechLanguage("od-IN")).toBe("or-IN");
+    expect(normalizeSpeechLanguage("ta")).toBe("ta-IN");
+    for (const bad of [
+      null,
+      "unknown",
+      "auto",
+      "<script>",
+      "en-IN instructions",
+      "xx-IN",
+    ])
+      expect(normalizeSpeechLanguage(bad)).toBeNull();
+  });
+
   it("picks Indic languages by script", () => {
     expect(speechLangFor("आपके पास 12 ऑर्डर हैं।", "en-IN")).toBe("hi-IN");
     expect(speechLangFor("உங்களிடம் 12 ஆர்டர்கள் உள்ளன", "en-IN")).toBe(
@@ -116,5 +171,63 @@ describe("speechLangFor", () => {
       ),
     ).toBe("en-IN");
     expect(speechLangFor("Order आपका ऑर्डर तैयार है।", "en-IN")).toBe("hi-IN");
+  });
+});
+
+describe("splitSpeechChunks", () => {
+  it("keeps a short answer whole", () => {
+    expect(splitSpeechChunks("You have 12 orders today.")).toEqual([
+      "You have 12 orders today.",
+    ]);
+    expect(splitSpeechChunks("   ")).toEqual([]);
+  });
+
+  it("starts with a short piece, then packs sentences, losing nothing", () => {
+    const sentences = Array.from(
+      { length: 12 },
+      (_, i) => `Sentence number ${i + 1} tells you something useful today.`,
+    );
+    const text = sentences.join(" ");
+    const pieces = splitSpeechChunks(text, 120, 300);
+    expect(pieces[0].length).toBeLessThanOrEqual(120);
+    for (const piece of pieces.slice(1))
+      expect(piece.length).toBeLessThanOrEqual(300);
+    expect(pieces.join(" ")).toBe(text);
+    expect(pieces.length).toBeGreaterThan(2);
+  });
+
+  it("★ keeps decimals, abbreviations and version numbers in one piece", () => {
+    expect(
+      splitSpeechChunks(
+        "Sales were ₹4.5 lakh this week. Returns fell.",
+        40,
+        40,
+      ),
+    ).toEqual(["Sales were ₹4.5 lakh this week.", "Returns fell."]);
+    expect(
+      splitSpeechChunks("Rs. 500 is the price. Pay with v2.1 now.", 25, 25),
+    ).toEqual(["Rs. 500 is the price.", "Pay with v2.1 now."]);
+    // A terminator followed by a lowercase word continues the sentence, and
+    // a leading ellipsis is not dropped on the floor.
+    expect(splitSpeechChunks("...wait. e.g. this one. Done.", 24, 24)).toEqual([
+      "...wait. e.g. this one.",
+      "Done.",
+    ]);
+    expect(splitSpeechChunks('She said "Yes." Then left.', 16, 16)).toEqual([
+      'She said "Yes."',
+      "Then left.",
+    ]);
+  });
+
+  it("splits at the danda and cuts an overlong sentence at a space", () => {
+    expect(splitSpeechChunks("आज पाँच ऑर्डर आए। कल तीन आए।", 20, 40)).toEqual([
+      "आज पाँच ऑर्डर आए।",
+      "कल तीन आए।",
+    ]);
+    const long = "word ".repeat(80).trim();
+    const pieces = splitSpeechChunks(long, 50, 100);
+    expect(pieces.every((piece) => piece.length <= 100)).toBe(true);
+    expect(pieces.every((piece) => !piece.startsWith(" "))).toBe(true);
+    expect(pieces.join(" ")).toBe(long);
   });
 });

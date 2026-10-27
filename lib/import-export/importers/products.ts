@@ -360,7 +360,7 @@ async function applyVariants(
       }
 
       // Stock reaches a NEW variant through the insert, where the seed trigger
-      // (pos_01_inventory_levels.sql) carries it onto the default location's
+      // (variants_seed_inventory_level) carries it onto the default location's
       // shelf. On an existing one it must go through the stock ledger instead —
       // see the note in applyProduct.
       let name = draft.name;

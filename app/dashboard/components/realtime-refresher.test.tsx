@@ -16,7 +16,7 @@ function setVisibility(state: "visible" | "hidden") {
 }
 
 // RealtimeRefresher polls (+ refreshes on tab focus) to keep a dashboard list
-// fresh — the Cloud SQL replacement for Supabase Realtime (Phase 5).
+// fresh without push updates.
 describe("RealtimeRefresher", () => {
   beforeEach(() => {
     vi.useFakeTimers();

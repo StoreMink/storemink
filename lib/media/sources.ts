@@ -20,6 +20,8 @@ export const MEDIA_SOURCES = [
   "mink_refined",
   /** A copy Mink AI resized for a product card or blog cover. */
   "mink_prepared",
+  /** A product photo with its background removed or replaced. */
+  "mink_edited",
 ] as const;
 
 export type MediaSource = (typeof MEDIA_SOURCES)[number];
@@ -31,10 +33,14 @@ export type MediaSource = (typeof MEDIA_SOURCES)[number];
  *   they chose to keep, so listing it filled the Library with every photo ever
  *   pasted into a conversation. A prepared copy is the same photo again at
  *   another shape; when a product uses it, it shows under Product images.
+ * ★ An edited photo is one of possibly many backgrounds a merchant tried for
+ *   one product photo; listing every one would fill the Library with near
+ *   copies. The one a product uses shows under Product images.
  */
 export const LIBRARY_HIDDEN_SOURCES: readonly MediaSource[] = [
   "mink_attachment",
   "mink_prepared",
+  "mink_edited",
 ];
 
 export function isMediaSource(value: unknown): value is MediaSource {
@@ -53,6 +59,8 @@ export function mediaSourceLabel(
       return "Made by Mink AI";
     case "mink_refined":
       return "Refined with Mink AI";
+    case "mink_edited":
+      return "Background changed";
     default:
       return null;
   }

@@ -248,7 +248,7 @@ export function validateSlotReplacements(
     if (alt.length < SLOT_ALT_MIN || alt.length > SLOT_ALT_MAX) {
       return {
         ok: false,
-        error: `Describe the ${slotId} image in ${SLOT_ALT_MIN}–${SLOT_ALT_MAX} characters (alt text).`,
+        error: `Describe the ${slotId} image in ${SLOT_ALT_MIN} to ${SLOT_ALT_MAX} characters (alt text).`,
       };
     }
     if (!SLOT_IMAGE_SOURCES.includes(source)) {
@@ -260,7 +260,7 @@ export function validateSlotReplacements(
     ) {
       return {
         ok: false,
-        error: `Add a licence note for the ${slotId} image (${SLOT_LICENSE_MIN}–${SLOT_LICENSE_MAX} characters).`,
+        error: `Add a licence note for the ${slotId} image (${SLOT_LICENSE_MIN} to ${SLOT_LICENSE_MAX} characters).`,
       };
     }
     if (licenseNote === PLACEHOLDER_LICENSE_NOTE) {

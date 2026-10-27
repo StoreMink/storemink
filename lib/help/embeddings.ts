@@ -1,5 +1,7 @@
 import "server-only";
 
+import { vertexHost } from "@/lib/ai/gemini";
+
 // Server-only transport for Help Centre retrieval embeddings. This module does
 // not decide whether vector search should run and never throws provider errors:
 // callers can keep lexical retrieval available whenever embeddings are
@@ -177,10 +179,12 @@ async function resolveProvider(): Promise<InternalResult<Provider>> {
     );
   }
   const location = process.env.GCP_LOCATION?.trim() || "global";
-  const host =
-    location === "global"
-      ? "aiplatform.googleapis.com"
-      : `${location}-aiplatform.googleapis.com`;
+  // ★ The host follows the kind of location (lib/ai/gemini.ts): `global`
+  //   has none, the multi-regions `us` and `eu` have their own
+  //   `aiplatform.<mr>.rep.googleapis.com`, a region prefixes the host. The
+  //   old `${location}-aiplatform` rule named a host that does not exist for
+  //   a multi-region.
+  const host = vertexHost(location);
   return {
     ok: true,
     value: {

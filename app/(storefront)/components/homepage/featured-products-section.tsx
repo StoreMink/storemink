@@ -7,7 +7,7 @@ import { SectionShell } from "../sections/section-shell";
 import { HorizontalCarousel } from "./horizontal-carousel";
 
 // Presentational: receives already-resolved product rows (resolution + the
-// Supabase query happen once in the homepage server component). Renders
+// database query happen once in the homepage server component). Renders
 // nothing when there are no products so we never show an empty heading.
 export function FeaturedProductsSection({
   sectionId,

@@ -531,6 +531,15 @@
   border-top-color: color-mix(in srgb, var(--sm-on-ink) 18%, transparent);
   background: var(--sm-ink);
 }
+/* The credit line sits on the same ink background, so it takes the light
+   text the rest of this footer uses. Without these it kept .credit's ink
+   colours and the badge (or a store's own line) was ink on ink. */
+:global(.sm-footer-editorial) .credit {
+  color: color-mix(in srgb, var(--sm-on-ink) 70%, transparent);
+}
+:global(.sm-footer-editorial) .credit strong {
+  color: var(--sm-on-ink);
+}
 @media (max-width: 1024px) {
   :global(.sm-footer-minimal) .mainGrid,
   :global(.sm-footer-editorial) .mainGrid {
@@ -662,4 +671,19 @@
     flex-direction: column;
     gap: 20px;
   }
+}
+
+/* An empty credit line: a Basic or Pro store that shows nothing there
+   (lib/store/footer-credit.ts). The element stays in the page, because the
+   room storefront-theme.css ("Floating controls") pads onto it is what keeps
+   the footer's last links clear of what floats over the bottom edge, so it
+   only gives up its own spacing: no gap under the legal row, no padding of
+   its own. It draws no border, background or shadow in any footer variant,
+   so nothing shows where the line would be.
+   ★ Keep it LAST of the .credit rules: it ties on specificity with the
+   compact variant's .credit rule above and wins by coming after it. Every
+   floating-controls rule outranks it, so their room still applies. */
+.credit.creditNone {
+  margin-top: 0;
+  padding-bottom: 0;
 }

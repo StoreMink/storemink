@@ -27,7 +27,7 @@ interface SkuTarget {
  * Three separate reasons, any one of which is sufficient:
  *
  *  1. `products.stock` is a trigger-maintained AGGREGATE of `inventory_levels`
- *     (pos_01_inventory_levels.sql). Writing it directly is reverted by the
+ *     (trigger inventory_levels_sync_aggregate). Writing it directly is reverted by the
  *     next sale and breaks the aggregate invariant until then.
  *  2. The RPC is atomic and row-locked. A stocktake uploaded while the shop is
  *     selling would otherwise lose whatever was rung during the upload.

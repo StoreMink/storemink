@@ -14,7 +14,7 @@ import { logError, logWarn } from "@/lib/observability/logger";
  * THIS IS WHAT MAKES "INSTANT" INSTANT. Phase 5E requires Cloud Scheduler's
  * production heartbeat once per minute so scheduled campaigns become due with
  * minute resolution, but a successful kick still avoids waiting for that next
- * tick. `vercel.json` is only documentation on Cloud Run.
+ * tick. The schedule lives in Cloud Scheduler (docs/cron-jobs.md).
  *
  * ORIGIN: THE CURRENT REQUEST'S HOST, not a configured one.
  *
@@ -23,8 +23,7 @@ import { logError, logWarn } from "@/lib/observability/logger";
  * https://staging.storemink.com — a different environment, told to drain a
  * queue that isn't ours, using our CRON_SECRET. (An earlier version read
  * NEXT_PUBLIC_APP_URL directly and bailed when unset: safe, but it silently
- * lost instant email on any host that hadn't set that one variable, since
- * Cloud Run sets no VERCEL_URL either.)
+ * lost instant email on any host that hadn't set that one variable.)
  *
  * getRequestOrigin() is the same helper the invite and POS emails use to build
  * links that work in every environment. PLATFORM_URL remains the fallback for

@@ -6,6 +6,32 @@ import { readFile } from "node:fs/promises";
 import { loadEnvConfig } from "@next/env";
 import { guardLegacyImageRetries } from "../../scripts/db-migration-guards.mjs";
 
+/** Takes the lock the 0147 guard takes first (theme_studio_runs in share row
+ * exclusive mode, which waits for every open write to that table) without
+ * joining Postgres's lock queue. While such a request waits there, every new
+ * write to the table queues behind it, and the suites outside the advisory
+ * lock (worker-recovery keeps its writes open for about 7 s) run with a 5 s
+ * lock timeout, so a long wait here would time one of them out instead.
+ * Hence nowait, tried again every 100 ms for up to 45 s. */
+async function lockRunsTable(pg: Client) {
+  const deadline = Date.now() + 45_000;
+  for (;;) {
+    await pg.query("savepoint runs_lock");
+    try {
+      await pg.query(
+        "lock table public.theme_studio_runs in share row exclusive mode nowait",
+      );
+      await pg.query("release savepoint runs_lock");
+      return;
+    } catch (error) {
+      await pg.query("rollback to savepoint runs_lock");
+      if ((error as { code?: string }).code !== "55P03") throw error;
+      if (Date.now() > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+}
+
 it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
   "fences legacy claims, protects active retry ancestry, prunes settled originals and detects missing privileges",
   async () => {
@@ -21,6 +47,14 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
     await pg.connect();
     try {
       await pg.query("begin");
+      // Never beside a queue suite (they share this advisory lock, see
+      // change-checks-postgres.test.ts): their tests keep writes to
+      // theme_studio_runs open for seconds, one test after another, and the
+      // guard below locks that table against every write. Taken before the
+      // lock timeout, released by the rollback.
+      await pg.query(
+        "select pg_advisory_xact_lock(hashtext('theme_studio_queue_db_tests'))",
+      );
       await pg.query("set local lock_timeout='5s'");
       const project = randomUUID();
       const message = randomUUID();
@@ -96,6 +130,7 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
         [queued, randomUUID()],
       );
       expect(legacyClaim.rowCount).toBe(0);
+      await lockRunsTable(pg); // so the guard's own lock is already held
       await expect(
         guardLegacyImageRetries(
           pg,
@@ -225,5 +260,6 @@ it.skipIf(process.env.THEME_STUDIO_RECOVERY_DB_TEST !== "1")(
       await pg.end();
     }
   },
-  20000,
+  // It may wait its turn behind the queue suites' tests, then for the table.
+  120_000,
 );
