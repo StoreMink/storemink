@@ -6127,7 +6127,13 @@ refused by Bulbul, then handed to a browser with no such voice either. Bulbul us
 voices elsewhere, explicit preprocessing and conversational pace 1.0.
 The spoken prompt writes Indic words in native scripts for pronunciation,
 while written answers keep the merchant's preferred script. Saaras receives
-static `keyterms` for StoreMink and Mink, without catalogue reads. Streaming
+static `keyterms` (`SAARAS_KEYTERMS`: StoreMink, Mink, Website Builder, Theme
+Studio, Media Library, POS, Shiprocket, Razorpay, GSTIN, UPI; the API allows
+50 of 64 characters, REST only) without catalogue reads, and its
+`language_probability` is read: a guess under `SAARAS_LANGUAGE_FLOOR` (0.5)
+keeps the transcript and drops the hint, so a short or code-mixed clip cannot
+retag the answer's voice; the route logs the tag and the number, never the
+words. Streaming
 recognition and automatic v3 fallback for Malayalam/Odia are not implemented. These are response-quality fixes and internal efficiency
 changes, with no new merchant action or setting and no Help Centre update.
 
@@ -6141,8 +6147,17 @@ voice, as before), the second, live only while a model is chosen, picks
 **Gemini 3.8 Flash-Lite TTS** (`gemini-3.8-flash-lite-tts`, Vertex `global`,
 Preview, voice `Kore`) or **Sarvam Bulbul V4 Flash** (`bulbul:v4-flash`, one
 conversational or customer-service voice per language in
-`BULBUL_V4_FLASH_SPEAKERS`; Malayalam and Odia have no V4 Flash voice and fall
-back to the browser) in `speech_provider` (migration `0226`).
+`BULBUL_V4_FLASH_SPEAKERS`, every id checked against the published catalogue
+on 2026-10-28; Malayalam and Odia, which V4 Flash accepts but has no voice
+for, are read on `bulbul:v3` per Sarvam's own migration guidance,
+`BULBUL_V3_SPEAKERS`, Odia sent as Bulbul's `od-IN`; a refusal there falls
+back to the browser voice as every unvoiced language always did; not yet
+heard live from here) in `speech_provider` (migration `0226`). The `_enhi_`
+persona is used for Hindi and for English that is genuinely code-mixed (two
+Devanagari words, or more than a quarter of the letters), never for a loan
+word, as
+Sarvam's guide asks; pure Hindi stays on it so a Hinglish answer keeps one
+Simran voice across its sentences (no `simran_hi_customer` exists).
 ★★ THE ANSWER STREAMS, AND THAT IS THE WHOLE OPTIMISATION. Measured
 2026-10-18 on storemink-staging: waiting for a complete clip took 3.0 s for a
 sentence, 4.2 s for 154 characters and 8.4 s for 567, while Gemini's
@@ -6228,7 +6243,10 @@ the service-only singleton `mink_voice_settings`; there is no per-store override
 superadmins, and `POST /api/mink/voice` resolves the singleton for every request,
 so a change applies to dictation from all stores immediately. Chirp uses Cloud
 Speech-to-Text V2 with ADC and automatic language detection. Saaras uses its
-server-side API key and automatic language detection. ★ Measured 2026-10-18: Chirp 3 with automatic
+server-side API key and automatic language detection (`saaras:v4`, mode
+`transcribe`, `language_code=unknown`, keyterms and the confidence floor
+above; the REST endpoint is Sarvam's own "under 30 seconds" path and our
+clips are capped at 30 s). ★ Measured 2026-10-18: Chirp 3 with automatic
 language detection answers only in the `us` and `eu` multi-regions (the Asia
 regions refuse `auto`), and `us` returned a transcript in about 3 s, so
 `MINK_CHIRP_LOCATION` stays `us`. ★ `googleAccessToken` keeps ONE GoogleAuth

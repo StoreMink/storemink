@@ -117,8 +117,15 @@ export async function POST(request: Request) {
       provider,
       providerMs,
       audioBytes: checked.bytes.length,
+      // Which language the recogniser heard and how sure it was: a closed
+      // tag and a number, never the words (voice-transcription.ts drops a
+      // guess under `SAARAS_LANGUAGE_FLOOR` before it gets here).
+      languageCode: result.languageCode,
+      ...(typeof result.languageProbability === "number"
+        ? { languageProbability: result.languageProbability }
+        : {}),
     });
-    return json(result);
+    return json({ text: result.text, languageCode: result.languageCode });
   } catch (error) {
     // ★★ THE MERCHANT MESSAGE IS DELIBERATELY VAGUE; THE LOG MUST NOT BE.
     // This recorded only `{requestId, provider}`, so a disabled API, a missing

@@ -8,6 +8,7 @@ vi.mock("./voice-transcription", () => ({
 
 import { MINK_MODEL_VOICE_LANGUAGES } from "./speech-text";
 import {
+  BULBUL_V3_SPEAKERS,
   BULBUL_V4_FLASH_SPEAKERS,
   bulbulLanguageFor,
   bulbulSpeakerFor,
@@ -168,16 +169,22 @@ describe("parseWav", () => {
     expect(bulbulLanguageFor("en-US")).toBe("en-IN");
     expect(bulbulLanguageFor("en")).toBe("en-IN");
     expect(bulbulLanguageFor("hi-IN")).toBe("hi-IN");
-    expect(bulbulLanguageFor("ml-IN")).toBeNull();
+    // Malayalam and Odia read on V3; Odia is `od-IN` to Bulbul, `or-IN` to a browser.
+    expect(bulbulLanguageFor("ml-IN")).toBe("ml-IN");
+    expect(bulbulLanguageFor("or-IN")).toBe("od-IN");
+    expect(bulbulLanguageFor("od-IN")).toBe("od-IN");
+    expect(bulbulLanguageFor("mai-IN")).toBeNull();
     expect(bulbulLanguageFor("fr-FR")).toBeNull();
   });
 
   it("★ the browser's list of voiced languages is Bulbul's, so a hint never asks for a voice that is not there", () => {
-    expect(
-      Object.keys(BULBUL_V4_FLASH_SPEAKERS)
-        .map((tag) => tag.split("-")[0])
-        .sort(),
-    ).toEqual([...MINK_MODEL_VOICE_LANGUAGES].sort());
+    const voiced = [
+      ...Object.keys(BULBUL_V4_FLASH_SPEAKERS),
+      ...Object.keys(BULBUL_V3_SPEAKERS),
+    ].map((tag) => (tag === "od-IN" ? "or" : tag.split("-")[0]));
+    expect([...new Set(voiced)].sort()).toEqual(
+      [...MINK_MODEL_VOICE_LANGUAGES].sort(),
+    );
   });
 });
 
@@ -345,9 +352,46 @@ describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
 
   it("hands a language it has no voice for to the browser without calling out", async () => {
     await expect(
-      streamMinkSpeech("bulbul_v4_flash", "ഇന്ന്", "ml-IN", signal),
+      streamMinkSpeech(
+        "bulbul_v4_flash",
+        "अहाँक ऑर्डर तैयार अछि",
+        "mai-IN",
+        signal,
+      ),
     ).rejects.toBeInstanceOf(MinkSpeechUnsupportedError);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("★ reads Malayalam and Odia on Bulbul V3, which has their voices", async () => {
+    fetchMock.mockResolvedValueOnce(bulbul([3, 1]));
+    const speech = await streamMinkSpeech(
+      "bulbul_v4_flash",
+      "നിങ്ങളുടെ ഓർഡർ തയ്യാറാണ്.",
+      "ml-IN",
+      signal,
+    );
+    expect(await drain(speech.pcm)).toEqual([[3, 1]]);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      language_code: "ml-IN",
+      model: "bulbul:v3",
+      speaker: BULBUL_V3_SPEAKERS["ml-IN"],
+      enable_preprocessing: true,
+    });
+    fetchMock.mockResolvedValueOnce(bulbul([2]));
+    await drain(
+      (
+        await streamMinkSpeech(
+          "bulbul_v4_flash",
+          "ଆପଣଙ୍କ ଅର୍ଡର ପ୍ରସ୍ତୁତ।",
+          "or-IN",
+          signal,
+        )
+      ).pcm,
+    );
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      language_code: "od-IN",
+      model: "bulbul:v3",
+    });
   });
 
   it("refuses an answer with no audio, or audio the player cannot decode", async () => {
@@ -450,6 +494,14 @@ describe("Sarvam HTTP streaming", () => {
       "simran_enhi_customer",
     );
     expect(bulbulSpeakerFor("hi-IN", "Order taiyar hai")).toBe(
+      "simran_enhi_customer",
+    );
+    // ★ A loan word is not code-mixing (Sarvam's rule for `_enhi_`): English
+    //   with one Hindi word keeps the English persona, the same Simran.
+    expect(
+      bulbulSpeakerFor("en-IN", "नमस्ते, your order was shipped today."),
+    ).toBe("simran_en_customer");
+    expect(bulbulSpeakerFor("en-IN", "Chaliye, आपका order देखते हैं")).toBe(
       "simran_enhi_customer",
     );
     expect(bulbulSpeakerFor("mr-IN", "तुमची order तयार आहे")).toBe(

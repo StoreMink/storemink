@@ -52,7 +52,8 @@ const SARVAM_SAMPLE_RATE = 24_000;
  * Sarvam's Bulbul V4 Flash voices each belong to one language, so the voice
  * follows the answer's language. Conversational or customer-service voices
  * where the catalogue has them; Tamil has only narration voices so far.
- * Malayalam and Odia have no V4 Flash voice yet and are read by the browser.
+ * (Checked against the published catalogue on 2026-10-28: every id below
+ * exists for `bulbul:v4-flash`.)
  */
 export const BULBUL_V4_FLASH_SPEAKERS: Record<string, string> = {
   "en-IN": "simran_en_customer",
@@ -67,15 +68,48 @@ export const BULBUL_V4_FLASH_SPEAKERS: Record<string, string> = {
 };
 
 /**
+ * ★ MALAYALAM AND ODIA READ ON BULBUL V3. V4 Flash accepts `ml-IN` and
+ *   `od-IN` but its catalogue has no voice for either, and Sarvam's own
+ *   migration guidance is to keep that traffic on `bulbul:v3`, whose
+ *   speakers read all eleven languages (its published samples use `ishita`
+ *   for both). Those merchants heard the browser's voice, or none; now the
+ *   same Sarvam call, one model version back. ⚠ Not yet heard live from
+ *   here: a refusal falls back to the browser voice exactly as before.
+ */
+export const BULBUL_V3_SPEAKERS: Record<string, string> = {
+  "ml-IN": "ishita",
+  "od-IN": "ishita",
+};
+
+/** Bulbul's own code for a language: Odia is `od-IN` there, `or-IN` to a browser. */
+const BULBUL_LANGUAGE_CODES: Record<string, string> = { "or-IN": "od-IN" };
+
+/**
  * The language code Bulbul is asked for. Latin-script text arrives tagged with
  * the browser's own language (en-US, en-GB…), which Bulbul does not accept, so
  * every English variant reads as Indian English; anything else it has no
  * voice for is refused.
  */
 export function bulbulLanguageFor(lang: string): string | null {
-  const tag = normalizeSpeechLanguage(lang) ?? lang.trim();
-  if (/^en(-|$)/i.test(tag)) return "en-IN";
-  return tag in BULBUL_V4_FLASH_SPEAKERS ? tag : null;
+  const normalized = normalizeSpeechLanguage(lang) ?? lang.trim();
+  if (/^en(-|$)/i.test(normalized)) return "en-IN";
+  const tag = BULBUL_LANGUAGE_CODES[normalized] ?? normalized;
+  return tag in BULBUL_V4_FLASH_SPEAKERS || tag in BULBUL_V3_SPEAKERS
+    ? tag
+    : null;
+}
+
+/** The model and voice that read `languageCode`: V4 Flash, or V3 where only it has a voice. */
+export function bulbulVoiceFor(
+  languageCode: string,
+  text: string,
+): { model: "bulbul:v4-flash" | "bulbul:v3"; speaker: string } {
+  return languageCode in BULBUL_V4_FLASH_SPEAKERS
+    ? {
+        model: "bulbul:v4-flash",
+        speaker: bulbulSpeakerFor(languageCode, text),
+      }
+    : { model: "bulbul:v3", speaker: BULBUL_V3_SPEAKERS[languageCode] };
 }
 
 /**
@@ -248,20 +282,47 @@ async function* geminiPcm(
   }
 }
 
-/** Hindi and English-Hindi copy share a documented customer-service persona. */
+/**
+ * Hindi and English-Hindi copy share one customer-service persona
+ * (`simran_enhi_customer`), the same Simran who reads English
+ * (`simran_en_customer`), so an answer whose sentences move between the two
+ * keeps one voice. \u2605 Sarvam's guidance reserves the `_enhi_` personas for
+ *   genuinely mixed speech, not for English with a loan word: so an English
+ *   piece switches to it only when at least two Hindi words, or more than a
+ *   quarter of its letters, are Devanagari. Pure Hindi stays on it rather than on a
+ *   `_hi_` persona because no `simran_hi_customer` exists, and a Hinglish
+ *   answer would otherwise change voice from one sentence to the next.
+ */
 export function bulbulSpeakerFor(languageCode: string, text: string): string {
-  const mixedHindi = /[\u0900-\u097f]/u.test(text) && /[A-Za-z]/.test(text);
-  if (languageCode === "hi-IN" || (languageCode === "en-IN" && mixedHindi))
+  if (languageCode === "hi-IN") return "simran_enhi_customer";
+  if (languageCode === "en-IN" && genuinelyMixedHindi(text))
     return "simran_enhi_customer";
   return BULBUL_V4_FLASH_SPEAKERS[languageCode];
 }
 
+function genuinelyMixedHindi(text: string): boolean {
+  const devanagariWords = text.match(/[\u0900-\u097f]+/gu) ?? [];
+  if (devanagariWords.length === 0 || !/[A-Za-z]/.test(text)) return false;
+  if (devanagariWords.length >= 2) return true;
+  const devanagari = devanagariWords.join("").length;
+  const latin = (text.match(/[A-Za-z]/g) ?? []).length;
+  return devanagari > (devanagari + latin) / 4;
+}
+
+/**
+ * One piece of an answer, as Bulbul is asked for it. `enable_preprocessing`
+ * has the provider read numbers, dates and rupee amounts the Indian way and
+ * handle the mixed-script copy the spoken prompt writes; 24 kHz is the
+ * ceiling of the streaming endpoint; pace 1.0 is Sarvam's own starting point
+ * for a conversational agent. (`pitch`, `loudness` and `temperature` are
+ * left at their defaults: the API reference and the best-practice guide
+ * disagree about which models honour the first two.)
+ */
 function bulbulRequest(text: string, languageCode: string) {
   return {
     text,
     language_code: languageCode,
-    model: "bulbul:v4-flash",
-    speaker: bulbulSpeakerFor(languageCode, text),
+    ...bulbulVoiceFor(languageCode, text),
     speech_sample_rate: SARVAM_SAMPLE_RATE,
     output_audio_codec: "wav",
     enable_preprocessing: true,
@@ -312,9 +373,7 @@ async function* bulbulPcm(
   if (!apiKey) throw new Error("SARVAM_API_KEY is not configured.");
   const languageCode = bulbulLanguageFor(lang);
   if (!languageCode)
-    throw new MinkSpeechUnsupportedError(
-      `Bulbul V4 Flash has no voice for ${lang}.`,
-    );
+    throw new MinkSpeechUnsupportedError(`Bulbul has no voice for ${lang}.`);
   if (process.env.MINK_SARVAM_TTS_TRANSPORT === "rest") {
     yield await bulbulPiece(text, languageCode, apiKey, signal);
     return;

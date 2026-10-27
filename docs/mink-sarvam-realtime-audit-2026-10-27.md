@@ -16,6 +16,18 @@ Streaming STT is still unimplemented. No deployment, paid model call, support
 message or provider configuration change was performed. Live validation of the
 new transport and listening quality remains required.
 
+28 October follow-up, checked against Sarvam's published API reference and
+guides on that date: Malayalam and Odia now read on `bulbul:v3` (V4 Flash has
+no voice for either; Sarvam's migration guidance keeps them on v3); the
+keyterm list carries the product's feature and integration names within the
+documented limit of 50 terms of 64 characters; Saaras's
+`language_probability` gates the playback hint (a guess under 0.5 keeps the
+transcript and drops the hint); the `_enhi_` persona follows Sarvam's rule of
+genuine code-mixing rather than a single loan word; and every V4 Flash speaker
+id in use was confirmed present in the catalogue. The realtime WebSocket's
+parameters are recorded below for the gateway design. Still no live call from
+this environment.
+
 ## Existing production latency
 
 Read-only Cloud Logging queries covered the previous seven days and selected
@@ -63,21 +75,22 @@ Evidence files, temporary local location:
 
 ## Sarvam capability coverage
 
-| Capability                                         | State after this change     | Assessment                                                                                                                                                           |
-| -------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Saaras v4 automatic language detection             | Used                        | Recognition supports English and 22 Indian languages; synthesis coverage differs.                                                                                    |
-| Detected language returned to playback             | Fixed                       | Previously discarded. Now bound to the answer that corresponds to the recording.                                                                                     |
-| Shared scripts                                     | Fixed                       | A Marathi hint preserves Marathi rather than treating all Devanagari as Hindi. A hint for a language Bulbul has no voice for (Maithili, Nepali, Assamese) is set aside so the script's own voice reads the answer. |
-| Romanised and mixed-language text                  | Improved                    | Valid detected language overrides browser locale for Latin text. Spoken Indic words use native scripts; written preference stays separate.                           |
-| Static terminology hints                           | Added                       | Saaras keyterms includes StoreMink and Mink. No additional model/database query or catalogue exposure.                                                               |
-| English-Hindi voice persona                        | Added                       | simran_enhi_customer for Hindi and mixed Hindi-English pieces; language-specific voices elsewhere.                                                                   |
-| Native voices for all recognised languages         | Incomplete                  | The selected v4 catalogue has nine monolingual language mappings plus English-Hindi; not 23. Malayalam/Odia and other unsupported languages retain browser fallback. |
-| Bulbul HTTP audio streaming                        | Added                       | /text-to-speech/stream, WAV to PCM incrementally. Not yet live-validated.                                                                                            |
-| Bulbul preprocessing                               | Explicitly enabled          | Numbers and mixed-script copy use provider normalization. Conversational pace remains 1.0.                                                                           |
-| Persistent TTS WebSocket                           | Not used                    | HTTP streaming can deliver early audio without a new socket lifecycle; measure before adding another transport.                                                      |
-| Realtime STT partials and adaptive VAD             | Not used                    | Largest remaining structural latency opportunity. Current REST upload begins after the recording ends.                                                               |
-| Pronunciation dictionaries                         | Not used                    | Add after listening identifies repeatable brand/SKU pronunciation errors; do not create dictionaries speculatively.                                                  |
-| Batch STT, translation, diarization, voice cloning | Not needed for current flow | These solve other tasks and would not establish low conversational latency.                                                                                          |
+| Capability                                         | State after this change     | Assessment                                                                                                                                                                                                                                                                                                                                                                                                               |
+| -------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Saaras v4 automatic language detection             | Used                        | Recognition supports English and 22 Indian languages; synthesis coverage differs.                                                                                                                                                                                                                                                                                                                                        |
+| Detected language returned to playback             | Fixed                       | Previously discarded. Now bound to the answer that corresponds to the recording.                                                                                                                                                                                                                                                                                                                                         |
+| Shared scripts                                     | Fixed                       | A Marathi hint preserves Marathi rather than treating all Devanagari as Hindi. A hint for a language Bulbul has no voice for (Maithili, Nepali, Assamese) is set aside so the script's own voice reads the answer.                                                                                                                                                                                                       |
+| Romanised and mixed-language text                  | Improved                    | Valid detected language overrides browser locale for Latin text. Spoken Indic words use native scripts; written preference stays separate.                                                                                                                                                                                                                                                                               |
+| Static terminology hints                           | Added                       | Saaras keyterms carries the product's own names (`SAARAS_KEYTERMS`: StoreMink, Mink, Website Builder, Theme Studio, Media Library, POS, Shiprocket, Razorpay, GSTIN, UPI). Static, REST only, within the 50 x 64 limit; no catalogue exposure.                                                                                                                                                                           |
+| Detection confidence                               | Added                       | `language_probability` is read with `language_code=unknown`; under 0.5 the transcript is kept and the voice hint dropped, so a short or code-mixed clip cannot retag the answer's voice. Logged as a number, never the words.                                                                                                                                                                                            |
+| English-Hindi voice persona                        | Added                       | simran_enhi_customer for Hindi and mixed Hindi-English pieces; language-specific voices elsewhere.                                                                                                                                                                                                                                                                                                                       |
+| Native voices for all recognised languages         | Eleven of 23                | Nine languages plus English-Hindi on V4 Flash (every speaker id confirmed in the catalogue); Malayalam and Odia on `bulbul:v3` (`ishita`, the voice Sarvam's own samples use for both; Odia sent as `od-IN`). Not yet heard live; a refusal falls back to the browser voice as before. The twelve others (Assamese, Maithili, Nepali, Konkani, Urdu…) have no Bulbul voice on any version and keep the browser fallback. |
+| Bulbul HTTP audio streaming                        | Added                       | /text-to-speech/stream, WAV to PCM incrementally. Not yet live-validated.                                                                                                                                                                                                                                                                                                                                                |
+| Bulbul preprocessing                               | Explicitly enabled          | Numbers and mixed-script copy use provider normalization. Conversational pace remains 1.0.                                                                                                                                                                                                                                                                                                                               |
+| Persistent TTS WebSocket                           | Not used                    | HTTP streaming can deliver early audio without a new socket lifecycle; measure before adding another transport.                                                                                                                                                                                                                                                                                                          |
+| Realtime STT partials and adaptive VAD             | Not used                    | Largest remaining structural latency opportunity. Current REST upload begins after the recording ends.                                                                                                                                                                                                                                                                                                                   |
+| Pronunciation dictionaries                         | Not used                    | Add after listening identifies repeatable brand/SKU pronunciation errors; do not create dictionaries speculatively.                                                                                                                                                                                                                                                                                                      |
+| Batch STT, translation, diarization, voice cloning | Not needed for current flow | These solve other tasks and would not establish low conversational latency.                                                                                                                                                                                                                                                                                                                                              |
 
 Recognition-language metadata describes the input's predominant language; it
 is not a perfect answer-language classifier. An explicit request to reply in a
@@ -86,9 +99,17 @@ coverage. Native-script output takes precedence where it clearly differs from
 the input hint. No claim is made that every dialect or code-switch is solved.
 
 Sarvam's current documentation is inconsistent about v4 pitch/loudness support
-between the API reference and best-practices guide. This change sets neither.
-The same guidance says Malayalam/Odia codes exist but v4 personas are absent;
-automatically changing the selected model to v3 was not silently introduced.
+between the API reference and best-practices guide. This change sets neither
+(nor `temperature`). The REST transcribe reference says `mode` applies to
+`saaras:v3` only while the models page lists the modes for v4 too; sending
+`transcribe` is harmless either way. Keyterms are REST and Batch only; the
+realtime endpoint takes a free-text `prompt` instead. The guidance that
+Malayalam/Odia codes exist on V4 Flash without personas, and that such traffic
+should stay on v3, is now followed explicitly (`BULBUL_V3_SPEAKERS`), not
+silently: the request names `bulbul:v3`, and the choice is documented in
+CODEBASE.md. `enable_cached_responses` (beta) and pronunciation dictionaries
+(`dict_id`) remain unused until a listening pass finds repeated pieces or
+mispronounced names worth them.
 
 ## Implementation details
 
@@ -127,6 +148,18 @@ No merchant action or setting changed, no Help Centre update.
    Browser WebSockets cannot send Sarvam's API-key header, and a generic Next
    route is not an implemented WebSocket-upgrade server here. This needs an
    explicit gateway and deployment design rather than exposing credentials.
+   The documented contract, for that design: query parameters `model=saaras:v4`,
+   `language_code=auto`, `mode=transcribe`, `stream_type=fast|balanced`,
+   `endpointing=vad`, `encoding=linear16`, `sample_rate=16000` (8000 or 16000
+   only; our recorder already produces 16 kHz mono PCM), `threshold` (VAD
+   sensitivity, default 0.3), `silence_duration_ms` (default 500),
+   `min_speech_duration_ms` (default 250), optional `prompt` for terminology;
+   client sends `{"event":"audio_input","audio":"<base64 PCM>"}` in roughly
+   100 ms (3,200-byte) chunks and `{"event":"end"}`; server sends
+   `vad.speech_start`/`vad.speech_end`, `transcript.partial`,
+   `transcript.final` (with `language` and `language_confidence` under
+   `auto`), `session.end` with the billed `audio_duration_s`, and close codes
+   1003 (quota/key), 1008 (inactivity: send `ping`), 4000 (bad parameter).
 2. Preserve per-store permission checks, voice budgets, cancellation, session
    expiry, bounded audio, final-transcript-only execution, and the existing
    server stop handshake. Partial transcripts should improve captions and

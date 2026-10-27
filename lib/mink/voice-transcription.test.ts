@@ -7,7 +7,11 @@ vi.mock("google-auth-library", () => ({
   },
 }));
 
-import { transcribeMinkVoice } from "./voice-transcription";
+import {
+  SAARAS_KEYTERMS,
+  SAARAS_LANGUAGE_FLOOR,
+  transcribeMinkVoice,
+} from "./voice-transcription";
 
 const fetchMock = vi.fn();
 
@@ -109,9 +113,50 @@ describe("Mink voice providers", () => {
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get("model")).toBe("saaras:v4");
     expect(JSON.parse(String((init.body as FormData).get("keyterms")))).toEqual(
-      ["StoreMink", "Mink"],
+      SAARAS_KEYTERMS,
     );
     expect((init.body as FormData).get("language_code")).toBe("unknown");
+  });
+
+  it("★ tells Saaras the product's own names, within its keyterm limits", () => {
+    // At most 50 terms of 64 characters, one phrase each (no commas).
+    expect(SAARAS_KEYTERMS.length).toBeLessThanOrEqual(50);
+    for (const term of SAARAS_KEYTERMS) {
+      expect(term.length).toBeLessThanOrEqual(64);
+      expect(term).not.toContain(",");
+    }
+    expect(SAARAS_KEYTERMS).toContain("StoreMink");
+    expect(SAARAS_KEYTERMS).toContain("Website Builder");
+    expect(new Set(SAARAS_KEYTERMS).size).toBe(SAARAS_KEYTERMS.length);
+  });
+
+  it("★ keeps a confident language guess and drops a doubtful one, never the words", async () => {
+    const answer = (probability: number) =>
+      new Response(
+        JSON.stringify({
+          transcript: "order ready hai",
+          language_code: "hi-IN",
+          language_probability: probability,
+        }),
+        { status: 200 },
+      );
+    const signal = new AbortController().signal;
+    fetchMock.mockResolvedValueOnce(answer(0.93));
+    await expect(
+      transcribeMinkVoice("saaras_v4", Buffer.from("wav"), signal),
+    ).resolves.toEqual({
+      text: "order ready hai",
+      languageCode: "hi-IN",
+      languageProbability: 0.93,
+    });
+    fetchMock.mockResolvedValueOnce(answer(SAARAS_LANGUAGE_FLOOR - 0.01));
+    await expect(
+      transcribeMinkVoice("saaras_v4", Buffer.from("wav"), signal),
+    ).resolves.toEqual({
+      text: "order ready hai",
+      languageCode: null,
+      languageProbability: SAARAS_LANGUAGE_FLOOR - 0.01,
+    });
   });
 
   it("★ returns no words as an empty transcript rather than throwing", async () => {

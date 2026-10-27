@@ -189,14 +189,15 @@ const LATIN_LETTERS = /[A-Za-zÀ-ɏ]/g;
 export const DEFAULT_SPEECH_LANG = "en-IN";
 
 /**
- * ★★ THE LANGUAGES THE READ-ALOUD MODEL HAS A VOICE FOR (Sarvam Bulbul V4
- *   Flash, `BULBUL_V4_FLASH_SPEAKERS` in speech-synthesis.ts, which a test
- *   holds equal to this). The recogniser hears 22 Indian languages, and its
- *   hint for a language with no voice (Maithili, Nepali, Konkani, Assamese…)
- *   must not retag an answer the model could read in the script's own
- *   voice: a Devanagari answer tagged mai-IN was refused by Bulbul and
- *   handed to the browser, which has no Maithili voice either, where hi-IN
- *   read it as before. So a hint only speaks for a language in this set.
+ * ★★ THE LANGUAGES THE READ-ALOUD MODEL HAS A VOICE FOR (Sarvam Bulbul:
+ *   nine on V4 Flash plus Malayalam and Odia on V3, `BULBUL_V4_FLASH_SPEAKERS`
+ *   and `BULBUL_V3_SPEAKERS` in speech-synthesis.ts, which a test holds equal
+ *   to this). The recogniser hears 22 Indian languages, and its hint for a
+ *   language with no voice (Maithili, Nepali, Konkani, Assamese…) must not
+ *   retag an answer the model could read in the script's own voice: a
+ *   Devanagari answer tagged mai-IN was refused by Bulbul and handed to the
+ *   browser, which has no Maithili voice either, where hi-IN read it as
+ *   before. So a hint only speaks for a language in this set.
  */
 export const MINK_MODEL_VOICE_LANGUAGES: ReadonlySet<string> = new Set([
   "en",
@@ -208,6 +209,8 @@ export const MINK_MODEL_VOICE_LANGUAGES: ReadonlySet<string> = new Set([
   "pa",
   "ta",
   "te",
+  "ml",
+  "or",
 ]);
 
 /** Provider metadata is a hint, never arbitrary text passed to browser APIs. */

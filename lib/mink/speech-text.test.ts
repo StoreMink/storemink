@@ -117,8 +117,12 @@ describe("speechLangFor", () => {
     );
     expect(speechLangFor("আপোনাৰ অৰ্ডাৰ সাজু", "en-IN", "as-IN")).toBe("bn-IN");
     // Latin text keeps the browser's language unless the hint has a voice.
-    expect(speechLangFor("Your order is ready.", "en-GB", "ml-IN")).toBe(
+    expect(speechLangFor("Your order is ready.", "en-GB", "mai-IN")).toBe(
       "en-GB",
+    );
+    // Malayalam and Odia have a voice (Bulbul V3), so their hints count.
+    expect(speechLangFor("Your order is ready.", "en-GB", "ml-IN")).toBe(
+      "ml-IN",
     );
     expect(speechLangFor("Ungal order thayar.", "en-IN", "ta-IN")).toBe(
       "ta-IN",
