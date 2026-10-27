@@ -9674,6 +9674,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261027_0261_mink_voice_controls_help",
+      "description": "Updates the existing voice paragraph for Talk, microphone mute and expandable captions. 0260 remains available for the separate redesign recovery work.",
+      "file": "sql/20261027_0261_mink_voice_controls_help.sql",
+      "transaction": true,
+      "requires": ["20261027_0259_mink_redesign_deadline_guard"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "voice guide describes microphone mute and captions",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Choose Mute microphone%' and body like '%Open Captions%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

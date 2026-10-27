@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   AudioLines,
   Check,
@@ -119,6 +119,7 @@ export function MinkMultimodalInput({
 }) {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const dictationHintId = useId();
   const dragDepth = useRef(0);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
@@ -807,7 +808,7 @@ export function MinkMultimodalInput({
   }
 
   const iconButton =
-    "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#666] transition hover:bg-[#f2f2f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] disabled:cursor-not-allowed disabled:opacity-40";
+    "inline-flex h-9 w-9 pointer-coarse:h-11 pointer-coarse:w-11 shrink-0 items-center justify-center rounded-full text-[#666] transition hover:bg-[#f2f2f2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6d4dff] disabled:cursor-not-allowed disabled:opacity-40";
   const attach = (
     <button
       type="button"
@@ -840,12 +841,16 @@ export function MinkMultimodalInput({
         type="button"
         aria-label={micLabel}
         title={micLabel}
+        aria-describedby={dictationHintId}
         disabled={disabled || submitting || Boolean(dictationState) || voiceOn}
         className={iconButton}
         onClick={() => void startDictation()}
       >
         <Mic className="h-5 w-5" aria-hidden="true" />
       </button>
+      <span id={dictationHintId} className="sr-only">
+        Dictation puts speech in the message box for you to edit and send.
+      </span>
       <button
         type="button"
         aria-label="Talk with Mink"
@@ -857,10 +862,11 @@ export function MinkMultimodalInput({
           !voiceChat.support.ok ||
           (!voiceOn && (disabled || submitting || Boolean(dictationState)))
         }
-        className={voiceOn ? voiceToggleOn : iconButton}
+        className={`${voiceOn ? voiceToggleOn : iconButton} mink-talk-button`}
         onClick={() => voiceChat.toggle()}
       >
         <AudioLines className="h-5 w-5" aria-hidden="true" />
+        <span className="mink-talk-label">Talk</span>
       </button>
     </>
   );

@@ -7553,3 +7553,58 @@ a.customer-detail-field:hover {
     min-height: 24px;
   }
 }
+
+/* Mink: readable, touch-friendly controls in both panel and full view. */
+.dashboard-shell .mink-chat-surface {
+  --mink-muted-text: #656970;
+}
+.dashboard-shell .mink-chat-surface :is(button, summary):focus-visible {
+  outline: 2px solid #6d4dff;
+  outline-offset: 3px;
+}
+.dashboard-shell .mink-chat-surface :is(.text-\[10px\], .text-\[11px\]) {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.dashboard-shell .mink-chat-surface .text-\[\#8c9196\] {
+  color: var(--mink-muted-text);
+}
+.dashboard-shell .mink-composer-footer {
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+.dashboard-shell .mink-talk-button {
+  width: auto;
+  gap: 6px;
+  padding-inline: 10px;
+  background: #f4f0ff;
+  color: #5b3fd0;
+}
+.dashboard-shell .mink-talk-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.dashboard-shell .mink-answer-row .mink-feedback-visible {
+  opacity: 1;
+}
+@media (pointer: coarse), (max-width: 639px) {
+  .dashboard-shell .mink-chat-surface button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .dashboard-shell .mink-chat-surface header {
+    gap: 4px;
+    padding-inline: 8px;
+  }
+  .dashboard-shell .mink-chat-surface header > div {
+    gap: 2px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-shell .mink-chat-surface *,
+  .dashboard-shell .mink-chat-surface *::before,
+  .dashboard-shell .mink-chat-surface *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

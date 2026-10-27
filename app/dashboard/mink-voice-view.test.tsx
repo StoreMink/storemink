@@ -11,6 +11,8 @@ import type { MinkVoiceMode } from "./mink-voice-mode";
 function voice(overrides: Partial<MinkVoiceMode> = {}): MinkVoiceMode {
   return {
     enabled: true,
+    muted: false,
+    toggleMute: vi.fn(),
     state: "listening",
     mic: "open",
     support: { ok: true },
@@ -35,7 +37,7 @@ describe("minkVoiceStatus", () => {
       "Listening…",
     );
     expect(minkVoiceStatus({ state: "listening", mic: "transcribing" })).toBe(
-      "Thinking…",
+      "Transcribing…",
     );
     expect(minkVoiceStatus({ state: "sending", mic: "closed" })).toBe(
       "Sending…",
@@ -142,4 +144,23 @@ describe("MinkVoiceBar", () => {
       "The rest of that answer could not be read aloud.",
     );
   });
+});
+
+it("offers independent mute and expandable full captions", () => {
+  const v = voice({
+    muted: true,
+    state: "speaking",
+    said: "Your orders are ready to review.",
+  });
+  render(<MinkVoiceBar voice={v} isReplying={false} onStopReply={vi.fn()} />);
+  const mute = screen.getByRole("button", { name: "Unmute microphone" });
+  expect(mute).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(mute);
+  expect(v.toggleMute).toHaveBeenCalledOnce();
+  expect(v.toggle).not.toHaveBeenCalled();
+  const details = screen.getByText("Captions").closest("details")!;
+  expect(details.open).toBe(false);
+  fireEvent.click(details.querySelector("summary")!);
+  expect(details.open).toBe(true);
+  expect(details.querySelector("p")).toHaveTextContent(v.said!);
 });

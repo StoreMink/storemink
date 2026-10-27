@@ -446,7 +446,6 @@ describe("Mink full view", () => {
     expect(screen.getByLabelText("Message Mink AI")).toHaveClass(
       "min-w-0",
       "text-base",
-      "sm:text-sm",
     );
   });
 
@@ -951,9 +950,12 @@ describe("★★ streamed answers in the panel", () => {
     expect(pending).toHaveTextContent("Reading sales…");
     expect(pending).toHaveTextContent("Sales are up");
     expect(pending).toHaveTextContent("Writing…");
-    expect(
-      screen.getByRole("list", { name: "What Mink AI is doing" }).children,
-    ).toHaveLength(2);
+    const details = screen.getByText("1 earlier step").closest("details")!;
+    expect(details.open).toBe(false);
+    expect(screen.getByText("Reading sales…")).toBeVisible();
+    expect(screen.getByText("Read store details")).not.toBeVisible();
+    fireEvent.click(details.querySelector("summary")!);
+    expect(screen.getByText("Read store details")).toBeVisible();
   });
 
   it("labels a finished answer with what was checked, in merchant words", () => {

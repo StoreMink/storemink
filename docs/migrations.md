@@ -58,7 +58,7 @@ Consequences worth knowing:
 
 One new file in `drizzle/migrations/sql/`, named `YYYYMMDD_NNNN_short_name.sql`.
 
-> **The next free sequence number is `0260`** (0256 and 0257 remain reserved for the paused release; owner approved 0258 for the redesign preview Help edit and 0259 for its deadline guard). Previously: **0256** (26 Oct 2026: `0237` is the
+> **The next free sequence number is `0262`** (0261 adds the Mink voice controls Help edit; 0260 is held for the separate redesign recovery work) (0256 and 0257 remain reserved for the paused release; owner approved 0258 for the redesign preview Help edit and 0259 for its deadline guard). Previously: **0256** (26 Oct 2026: `0237` is the
 > Generate with AI credit refund, `0238` its Help edit, `0239` the storefront
 > redesign's Help edit after the robustness fixes, `0240` the release's
 > indexes and `app_service` grants, `0241` the Privacy Policy v3 publish,

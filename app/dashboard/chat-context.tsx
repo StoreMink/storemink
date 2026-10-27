@@ -212,6 +212,8 @@ export type MinkVoiceChat = MinkVoiceMode & {
  */
 const NO_VOICE: MinkVoiceChat = {
   enabled: false,
+  muted: false,
+  toggleMute: () => {},
   state: "idle",
   mic: "closed",
   support: { ok: false, reason: "Voice chat is unavailable here." },

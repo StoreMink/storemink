@@ -2557,6 +2557,33 @@ they owe nothing, and `discardFailedMinkRunDrafts` already compensates any
 proposal credits they reserved, except a storefront redesign's card, which
 a failed run keeps (B4, storefront revamp section).
 
+### Mink chat readability and voice controls (2026-10-27)
+
+The panel and expanded chat share readable 15/16px answer text, a 16px composer,
+stronger secondary text, consistent focus rings and 44px button targets on touch
+screens and narrow viewports. The footer accounts for the device's bottom safe
+area. Completed tool steps collapse behind a native Details control; the latest
+running activity stays visible and an earlier failure is identified in the
+summary. Only the short reply status is a live region, avoiding repeated
+announcements of the whole streamed answer. Clipboard failure is visible and a
+successful copy is announced without adding a model request.
+
+The sound-wave composer control says **Talk**, distinct from microphone
+**Dictate message**. `MinkVoiceBar` wraps controls in narrow panels, distinguishes
+Transcribing from Thinking, and expands **Captions** to show the full spoken
+sentence in a bounded scroll area. **Mute microphone** aborts and invalidates
+unfinished capture and releases the input device, without cancelling a reply or
+ending voice chat. **Unmute microphone** opens a fresh device. Pending authoritative
+Stop results still settle; muting cannot bypass the server's action decision.
+The typed composer, thread and approval behaviour are otherwise unchanged.
+Native Details preserves keyboard access; reduced-motion styles disable decorative
+animation. These controls do not add provider requests. Optional read-aloud for
+old answers is not added in this change.
+
+Help migration `20261027_0261_mink_voice_controls_help` replaces the existing voice
+paragraph in place and uses apply-only wording verification. No database schema
+change. Sequence 0260 remains held for the separate redesign recovery work.
+
 ### Voice chat lives inside the chat, and starts on 3.5 Flash in Mumbai (2026-10-20)
 
 The owner tested storefront personalisation by voice on production: Mink said
@@ -2568,7 +2595,7 @@ asked with measurements:
 thread stays on screen while the merchant talks: their transcripts as
 messages, every written answer, every card. `MinkVoiceBar`
 (`app/dashboard/mink-voice-view.tsx`) takes the composer's place: the status
-(`minkVoiceStatus`), one caption line (`minkVoiceCaption`: what Mink is saying
+(`minkVoiceStatus`), expandable captions (`minkVoiceCaption`: what Mink is saying
 now, since the spoken block is not in the written answer, or the words heard
 while they wait to be sent), a waveform, Stop while a reply runs, End (focus
 lands on it; Escape inside the bar ends voice chat), and the loop's notice.
@@ -2660,7 +2687,7 @@ checks prevent a final card. A parked job shows that progress is saved and autom
 retry is scheduled, with Preview design and Stop still available. Help migration
 `20261027_0258_mink_redesign_preview_help` replaces the affected guide
 paragraphs in place. Sequence numbers 0256 and 0257 remain reserved; next free
-number after this change: 0260. Migration
+number after this change: 0262 (0261 is the voice controls Help edit; 0260 is held for the separate redesign recovery work). Migration
 `20261027_0259_mink_redesign_deadline_guard` installs the
 `mink_revamps_deadline_guard` trigger and
 `mink_revamp_preserve_deadline()` function. An active bounded job
