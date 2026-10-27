@@ -1247,7 +1247,7 @@ editors (`offers/offer-form.tsx`, `categories/categories-management-view`
   lines, code blocks and dashboard paths dropped, cut at a sentence boundary
   under 1,500 characters) and `speechLangFor` picks the utterance language
   from the script most of the letters are in (eight Indic scripts; Latin
-  takes the browser's language). Support is read through
+  takes the detected question language when available, otherwise the browser's language). Support is read through
   `useSyncExternalStore` with an "unsupported" server snapshot so hydration
   matches; it needs a secure context, so it is off on plain-http local hosts.
   ★ RICHER CHARTS. `query_analytics` takes an optional `second_metric`
@@ -2614,6 +2614,70 @@ browser end to end (the bar was checked rendered at 360, 420 and 900px).
 
 ### Mink storefront revamp: the whole storefront redesigned as a background job (2026-10-21)
 
+New full redesigns use recovery policy 2 in `pacing-policy.ts`: eight new
+storefront shots, at most eleven image-engine attempts including the hidden
+anchor and redraws, and `result.targetReadyAt` as an observational twelve-minute
+target only. It never gates claims, paid work, preview, completion or failure.
+`result.recoveryVersion = 2` enables durable recovery without the old job-level
+wall-clock ceilings. Invocation deadlines still drain and hand over saved work
+before the HTTP runtime limit. Stop is checked every ten seconds. Known
+provider waits, transient database connection/transaction faults and temporary
+storage-check errors park without exhausting a job's real failure counter.
+Deterministic faults and quality/spend budgets remain bounded; this policy does
+not promise Google capacity or a measured completion time. Older jobs and
+refinements without recovery policy 2 retain their previous recovery contract.
+
+Prompt `mink-revamp-site-v6` prints a computed photo budget including refills
+and confirmed category photos. The compiler fits it silently; compatible
+shots may be reused on different pages, never substituted for an unrelated
+category. Optional copy claims and colour-band counts are fixed mechanically
+without asking the model to rewrite the whole plan. Three homepage photos
+remain the visual minimum. New full redesigns use the supplied product photos;
+studio enhancement remains available through photo tools and refinements.
+Image attempt reservations and correction text live in `result.photoReviews`
+with check evidence. Temporary reviewer outages leave photographs parked for a later
+review; elapsed waiting time never permits an unchecked image. Prepared candidates are stored under private
+`<shot>~candidate-<attempt>` rows before review, including private anchor candidates, and are recovered for checking
+without another draw after a crash; `photo-hold.ts` counts each toward its
+original slot claim. Verdicts are saved before the next redraw. Known free admission failures give their draw reservation back. Resumed draws retain their
+correction and attempt ceiling. `image-generation.ts` accepts durable resume state without
+changing Theme Studio callers that omit it. The redesign chat rule forbids
+invented completion times and says the merchant
+can leave and return. Prompt versions are `read-beta-v40` and
+`draft-action-beta-v63` (`persistence.ts`). The runner logs step durations
+and a final `mink.revamp: timeline`; photo check failures name the attempt and
+closed problem codes.
+
+`preview.ts` assembles a presentation-only design, with
+`public/mink/photo-on-its-way.svg` for missing photos and only passed slot
+images visible. `GET /api/mink/revamps/[revampId]?preview=design` uses the
+same requester, tenant, Builder permission, origin and rate-limit checks as
+the status read. Status polling carries compact `design` availability only;
+sections are fetched when Preview design opens, then refreshed every fifteen
+seconds while visible. The preview is never saved or charged. Apply remains
+unavailable until the checked final card exists, and unresolved required
+checks prevent a final card. A parked job shows that progress is saved and automatic
+retry is scheduled, with Preview design and Stop still available. Help migration
+`20261027_0258_mink_redesign_preview_help` replaces the affected guide
+paragraphs in place. Sequence numbers 0256 and 0257 remain reserved; next free
+number after this change: 0260. Migration
+`20261027_0259_mink_redesign_deadline_guard` installs the
+`mink_revamps_deadline_guard` trigger and
+`mink_revamp_preserve_deadline()` function. An active bounded job
+keeps its original deadline even when an older checkpoint omits it. A claim
+must stamp its fresh lease token in `result.deadlineLeaseToken`; an older
+worker cannot claim a bounded job during a rolling deployment. Legacy jobs
+remain claimable. The claim marker contains no merchant content. The proposed recovery-policy migration (sequence confirmation pending) replaces that guard
+with an INSERT/UPDATE protocol fence. Its locked preflight refuses live legacy
+invocations; finish those invocations before applying the upgrade so an older
+worker cannot race a charge across the policy change. `jobs.ts` declares
+`app.mink_revamp_recovery = 2` transaction-locally, including sweeps and status
+settlement. Older revisions can record Stop but cannot claim, overwrite or
+expire policy-2 work. Unfinished full jobs are upgraded without removing
+plans, photos, usage, leases or Stop requests. The performance target survives
+checkpoint writes; no already-finished job is changed. Production acceptance and
+remaining capacity measurements: `docs/mink-revamp-production-readiness.md`.
+
 "Customise my store for my business" (or the `personalise-store` chip)
 redesigns what shoppers see in a background job and ends in ONE review card
 in the chat. Build contract: `docs/mink-storefront-revamp.md` (when it and the
@@ -3303,13 +3367,26 @@ each model's 429s and timeouts, summed across hand-overs, and why each
 photo was drawn again is kept on the photo outcomes (`redraws`) and in
 `result.products.redraws`; `npm run revamp:live-check -- --report` prints
 them. `npm run revamp:priority-test` (`scripts/revamp-priority-test.ts`)
-is the Priority PayGo test on storemink-staging the owner approved (152
-calls a pass, a spacing ladder of photos first, Nano Banana 2.1 since 25 Oct
-2026), a dry run unless
-`--live --yes`, not yet run live. Expected, an estimate until a live run:
-about 16 to 18 minutes for a crumb-like shop, 30 to 34 for a neem-like one;
-the robustness audit's calibrated simulation puts it at about 34 and 50
-(also an estimate; it calls the first one about twice too optimistic). No
+is a staging-only capacity probe, dry-run by default with no credential or
+environment-file reads. The default 54 calls are isolated twelve-photo
+Standard and Priority ladders, twenty paired redesign photos (2K MEDIUM,
+one fixed JPEG anchor, the production prompt builder), and ten US Standard
+checks. `--lanes`/`--ladders` select work; historical lanes remain opt-in.
+`--live --yes` requires separately approved spend. Headers come from the pure
+`lib/theme-studio/priority-paygo.ts`; importing it does not enable a tier.
+Version-3 results retain request/anchor hashes, traffic types, usage and
+errors. The in-flight budget reserves conservative token envelopes and keeps
+unknown-cost reservations; it is not a Cloud Billing cap. HTTP 499 retains a
+reservation; only known admission failures release it. Ladder starts retain
+their rung gap after budget waits; every stage leaves sixty seconds from prior
+starts in its pools. The approved 27 Oct staging pass stopped after 36 of 54
+calls: all nine successful Priority calls were downgraded, eleven requests
+returned 429, and 504/499 usage was unknown. Corrected usage plus conservative
+reserves is $6.73, within $8. The run exposed cancellation accounting and
+ladder catch-up bugs; both have regression fixes. The Priority ladder and
+partial paired comparison are confounded; no production GO follows. Evidence
+and an unsent Google escalation draft: `docs/mink-capacity-test-2026-10-27.md`.
+Google capacity remains unresolved. No
 merchant step changes, so no Help Centre update: the card's own words say
 when a photo could not be checked in time.
 ★★ ROBUSTNESS AUDIT, WAVE 2 (2026-10-24; the audit is
@@ -3324,9 +3401,9 @@ products or none; the ready notification opens the chat) and the general
 Mink guide's draft troubleshooting sentence (a failed or stopped reply
 discards its unseen proposals and gives their credits back, except a
 storefront redesign it started), applied to `storemink_local` only. ⚠ Open: the Priority test's copied photo-check
-request (`scripts/revamp-priority-test.ts`) carries no GOODS block, which a
-redesign check now sends (its drift test compares against a no-goods
-render). ★ THE RELEASE FOLLOW-UPS (2026-10-24, working tree) closed the rest
+control request (`scripts/revamp-priority-test.ts`) uses a small synthetic
+image and no GOODS block. It measures control admission, not full redesign
+review quality or realistic image-processing latency. ★ THE RELEASE FOLLOW-UPS (2026-10-24, working tree) closed the rest
 of what was open here, each above. Migration `20261024_0240` grants
 `app_service` the holder run's DELETE on `mink_runs` and UPDATE of `run_id`
 alone on `mink_draft_credit_usage`; until then only
@@ -5958,6 +6035,33 @@ handoff; it adds no Help Centre section.
 
 ### Global Mink voice provider (2026-09-14)
 
+Voice audit (2026-10-27): `docs/mink-voice-audit-2026-10-27.md` records the
+implemented paths, request-efficiency changes and remaining live validation.
+Prompt versions `read-beta-v42` / `draft-action-beta-v65` require a neutral AI
+identity and gender-neutral self-reference in Hindi/Hinglish too. They direct
+Mink to answer the underlying store request without echoing insults in written
+or spoken answers; transcription still preserves the merchant's words. A
+pre-audio model refusal switches the remaining answer to browser speech and
+cancels queued model requests, rather than switching back each sentence. Only
+an explicit `off` disables model speech for the whole conversation; a later
+answer can try the model again. Browser voices and Sarvam's language-specific
+voices may still differ acoustically. No live provider call or deployment was
+made for this audit. Read-only production timing metadata is recorded in
+`docs/mink-sarvam-realtime-audit-2026-10-27.md`; no chat or audio was read.
+`voice-turn.ts` preserves validated recognition language through an optional
+callback. `mink-voice-mode.ts` binds that hint to each answer, so a subsequent
+recording cannot change the current answer's voice. `speechLangFor` uses it
+for Latin/code-mixed text and shared scripts (Marathi versus Hindi, Assamese
+versus Bengali), with additional Odia, Urdu, Santali and Manipuri script
+recognition; speech routes retain unsupported-language fallback. Bulbul uses
+`simran_enhi_customer` for Hindi and mixed Hindi-English text, language-specific
+voices elsewhere, explicit preprocessing and conversational pace 1.0.
+The spoken prompt writes Indic words in native scripts for pronunciation,
+while written answers keep the merchant's preferred script. Saaras receives
+static `keyterms` for StoreMink and Mink, without catalogue reads. Streaming
+recognition and automatic v3 fallback for Malayalam/Odia are not implemented. These are response-quality fixes and internal efficiency
+changes, with no new merchant action or setting and no Help Centre update.
+
 ★★ AND A READ-ALOUD MODEL (2026-10-18, owner's request). Below the
 speech-to-text switch, a "Text-to-speech model" card
 (`speech-provider-switch.tsx`, `setMinkSpeechSettings`, superadmin only)
@@ -5982,12 +6086,18 @@ an answer, a sentence or two, fetched one piece ahead), yielding raw 16-bit mono
 event lands (`audio/l16; rate=24000`; a WAV part is read with `parseWav`, which
 walks the chunks rather than assuming a 44-byte header and accepts an
 extensible header whose sub-format is PCM). Bulbul keeps Sarvam's documented
-REST call, asked for WAV a few sentences at a time (`splitSpeechChunks`: a
-≤160-character first piece, then ≤600, cut only where whitespace follows a
-terminator and the next word is not lowercase or a digit, so "₹4.5", "Rs. 500"
-and "e.g." are never split; over-joining only lengthens a piece) with the next
-piece requested while the current one streams out; Sarvam's own streaming
-endpoint is not used until it can be verified. `streamMinkSpeech` resolves only
+HTTP streaming endpoint `/text-to-speech/stream`, one WAV stream per already-
+segmented piece of at most 600 characters. `lib/mink/speech-wav-stream.ts`
+parses bounded RIFF headers and forwards PCM before the clip completes,
+including fragmented headers, padding, PCM extensible format and unknown
+streaming data lengths; malformed/truncated audio fails through the existing
+browser/truncation handling. Returning early cancels the upstream reader.
+`MINK_SARVAM_TTS_TRANSPORT=rest` is an operator rollback to the complete-clip
+endpoint, never an automatic paid retry. The browser owns short-first
+segmentation and one-piece-ahead prefetch; splitting again inside Bulbul
+previously multiplied requests. The provider entry point rejects blank,
+oversized and already-aborted requests before calling out. This transport is
+offline-tested against the documented contract, not yet live-validated. `streamMinkSpeech` resolves only
 once the first audio exists, so a refusal or an unsupported language is known
 before the route commits to a 200; a sample-rate change mid-answer throws, and
 an early stop closes the provider call. No SDK: REST with ADC (one cached
@@ -6056,6 +6166,10 @@ regions refuse `auto`), and `us` returned a transcript in about 3 s, so
 client per process (it caches and refreshes its own token) instead of building
 a new one, and re-fetching a token, for every dictation and every answer read
 aloud; a failed token read drops only the client that failed, so a concurrent caller's fresh client survives it.
+`mink.voice.completed` and `mink.voice.empty` log provider duration and
+validated audio byte count, never the transcript or audio; cancelled requests
+are checked again immediately before transcription. Provider reason codes are
+restricted to bounded uppercase enum tokens before entering logs.
 ★ `/api/mink/voice` takes up to 8 transcriptions per instance at once
 (`MAX_TRANSCRIPTIONS`, was 2): each holds one 30-second WAV (about 1 MB) and
 waits on the network, and voice chat makes dictation turn-by-turn, so the old
@@ -8755,10 +8869,13 @@ wholesip/
 │   │                          # image-request-pool.ts (three image calls shared by concurrent
 │   │                          # worker lanes per provider project/location/model, shared 429
 │   │                          # pause and one permit back per success, process-local),
+│   │                          # priority-paygo.ts (explicit Priority request headers,
+│   │                          # never enables a tier by import),
 │   │                          # provider-capacity.ts / provider-capacity-store.ts (shared
 │   │                          # service-only PostgreSQL admission, fenced expiring permits
 │   │                          # and cross-instance cooldown/recovery; migration 0149;
-│   │                          # image models start-paced 10 to 45 s apart,
+│   │                          # image starts 10 to 45 s apart, 40 s recovery floor
+│   │                          # for ten minutes after a refusal cooldown,
 │   │                          # IMAGE_START_PACING, migration 0236, each gap move logged
 │   │                          # as theme_studio.provider_pace; an optional scope gives
 │   │                          # a caller its own row),
@@ -9515,7 +9632,7 @@ wholesip/
 │                              # with another text; nothing where the version or a
 │                              # later one is current); pinned by
 │                              # lib/legal/terms-v2-privacy-v4-aup-v2-migration.test.ts.
-│                              # Next free: 0256.
+│                              # Next free: 0260.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -9733,31 +9850,21 @@ wholesip/
 │   ├── revamp-live-fixtures.ts # The four made-up shops (kesar-ghani on Vitrine,
 │   │                          # crumb-and-co, tara-jewels, neem-ritual): each one's
 │   │                          # interview answers as start_storefront_revamp sends them.
-│   ├── revamp-priority-test.ts # `npm run revamp:priority-test`: the Priority PayGo
-│   │                          # A/B on storemink-staging (owner, 2026-10-23). 152 calls
-│   │                          # a pass in two stages. First, alone, a spacing ladder of
-│   │                          # 12 Standard gemini-nano-banana-2.1 photos (HIGH), three
-│   │                          # each 60, 40, 30 and 15 s apart, widest first. Then 140
-│   │                          # pass calls in seven lanes: Theme Studio's photo (HIGH)
-│   │                          # 10 Standard + 10 Priority, Mink's photo (MINIMAL) 10 + 10
-│   │                          # at global and 10 Standard each at us and eu, the 3.8
-│   │                          # Flash photo check 20 + 20 at global and 20 Standard each
-│   │                          # at us and eu. Each call sent once, never retried, at
-│   │                          # most 6 in flight, Standard and Priority alternating.
-│   │                          # About $6.43 a pass at list prices ($11.57 on the 23 Oct
-│   │                          # models). Dry run by default; `--live --yes` spends,
-│   │                          # capped by `--max-usd` (default 15, at most 25; the
-│   │                          # owner approved about $24 for both passes). Refuses any
-│   │                          # project but storemink-staging and an overridden Vertex
-│   │                          # endpoint. Writes a results JSON (version 2) and a
-│   │                          # markdown summary with a "Spacing ladder" section to
-│   │                          # `--out`; every refusal keeps errorBody, errorDetails
-│   │                          # and quotaNamed, every call gapSincePrevStartMs (since
-│   │                          # the last start on the same model and endpoint); keeps
-│   │                          # the final image part and counts the thought drafts. Its
-│   │                          # drift test (revamp-priority-test.test.ts) fails when the
-│   │                          # copied production requests change. Runbook:
-│   │                          # docs/mink-revamp-speed.md.
+│   ├── revamp-priority-test.ts # Staging-only capacity probe; default 54 calls:
+│   │                          # isolated Standard/Priority twelve-photo ladders,
+│   │                          # twenty paired 2K MEDIUM redesign draws with a fixed
+│   │                          # JPEG ANCHOR, ten US Standard review controls.
+│   │                          # Production image prompt builder; --lanes/--ladders
+│   │                          # filters; historical lanes opt-in. Dry run reads no
+│   │                          # credentials/.env and calls nothing. --live --yes
+│   │                          # requires approved spend. No retries, 180 s clock,
+│   │                          # <=6 in flight, --max-usd reservations including
+│   │                          # unknown usage. Version-3 JSON, request/anchor hashes,
+│   │                          # per-arm ladder Markdown, photos under --out.
+│   │                          # No database, bucket or production access. Drift
+│   │                          # tests beside it. docs/mink-revamp-speed.md.
+│   ├── fixtures/revamp-capacity-anchor.jpg # Offline JPEG from the bundled
+│   │                          # basket theme hero, no merchant data or model call.
 │   ├── revamp-uniqueness-test.ts # Step 10 of the robustness audit's uniqueness plan,
 │   │                          # run with npx tsx --tsconfig tsconfig.scripts.json
 │   │                          # scripts/revamp-uniqueness-test.ts (no npm alias yet).
@@ -13968,21 +14075,19 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (`isImageProviderModel`) are also START-PACED (migration
     `20261023_0236_theme_studio_provider_pacing`, `IMAGE_START_PACING`,
     2026-10-23): a request starts no earlier than `next_start_at`, the latest
-    admission plus `gap_ms`; the gap starts at 40 s, shrinks 10% per
-    current-epoch success to 10 s and grows 1.5x per 429 to 45 s, with overlap
-    allowed up to the 3 permits. ★★ THE BOUNDS SET THE PACE, NOT THE FACTORS
-    (corrected the same day from the first build's 25 to 90 s; robustness
-    audit B28, owner: "Change to 10 to 45 s"): x0.9 and x1.5 cancel at about
-    21% of starts refused, so a line refused more often sits at the ceiling
-    and one refused less at the floor, and the 90 s ceiling would have halved
-    the line whenever refusals were not about our spacing. 45 s is close to
-    the busy-hour accepted rate fitted to the 23 Oct trace (one start per
-    about 39 s, an estimate); 10 s lets a quiet hour run near the three
-    permits. Spacing by start, not by the end of the last draw, keeps about
-    1.5 starts a minute at the 40 s gap whatever a draw takes; measured on
-    staging (21 requests, one shop, one night), `gemini-3-pro-image` refused 5
-    of 7 requests sent straight after a photo and accepted 11 of 12 sent 12 s
-    or more later. Text keys never read the new columns. ★ Each move of an
+    admission plus `gap_ms`; the gap starts at 40 s and stays within 10 to
+    45 s. Success shrinks it 10%; a 429 grows it 1.5x, at least to 40 s.
+    After a refusal, successes cannot shrink below 40 s until ten minutes
+    after the shared cooldown ends. The existing `epoch` and `pause_until`
+    persist this hold across workers and restarts, so no new migration is
+    needed. Before any refusal or after that hold, gradual exploration can
+    reach 10 s again. Gap updates move `next_start_at` by the same delta,
+    preserving the latest-admission-plus-gap invariant; stale-epoch successes
+    cannot alter it. This policy reduces repeated aggressive probing and
+    does not reserve Google capacity or guarantee an accepted request.
+    Finish rolling out compatible workers before measuring: an older worker
+    still uses the previous success rule and can temporarily narrow the gap.
+    Text keys never read the new columns. ★ Each move of an
     image key's gap of a second or more (`PACE_LOG_MIN_CHANGE_MS`) logs
     `theme_studio.provider_pace`: model, location and scope (never the
     project), `outcome` (`success` or `rate_limited`), `gapBeforeMs`,
@@ -24928,16 +25033,18 @@ npm run theme-studio:model-check -- --dry-run # resolve the two task-scoped
 npm run theme-studio:eval # Phase 0 golden set through the generation pipeline, offline
                     #   (fake provider, grades nothing). A paid live run needs
                     #   `-- --live --model=gemini-3.8-flash --max-usd=5 --yes`
-npm run revamp:priority-test -- --out=<dir> # Priority PayGo A/B plan and cost for
-                    #   storemink-staging, a dry run: 152 calls (a 12-photo spacing
-                    #   ladder first, then 140 in seven lanes). `--live --yes` spends
-                    #   (about $11.57 a pass at list prices; `--max-usd` default 15, at
-                    #   most 25). The night pass takes `--lead=priority` and
-                    #   `--max-usd` = $24 less what the evening pass spent, at most 15.
-                    #   docs/mink-revamp-speed.md
+npm run revamp:priority-test -- --max-usd=8 --label=capacity # Offline dry run,
+                    #   default 54 calls planned, no credentials/services read.
+                    #   --lanes/--ladders select work. --live --yes spends and
+                    #   requires explicit approval; see docs/mink-revamp-speed.md.
 ```
 
 ## 7. Environments / external services
+
+Voice transport: `MINK_SARVAM_TTS_TRANSPORT=rest` rolls Bulbul back to the
+complete-clip endpoint. Unset (default) uses HTTP streaming. There is no paid
+retry between transports. Live staging validation is required before rollout;
+see `docs/mink-sarvam-realtime-audit-2026-10-27.md` for existing latency evidence.
 
 - **Google Cloud is the whole backend**: Postgres on Cloud SQL (`lib/db`), auth
   on Identity Platform (`lib/auth`), media on Cloud Storage (`lib/storage`,

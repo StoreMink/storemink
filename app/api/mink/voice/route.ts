@@ -85,7 +85,10 @@ export async function POST(request: Request) {
       );
     await getMinkActorContext(requestId);
     provider = await getMinkVoiceProvider();
+    signal.throwIfAborted();
+    const started = Date.now();
     const result = await transcribeMinkVoice(provider, checked.bytes, signal);
+    const providerMs = Date.now() - started;
     signal.throwIfAborted();
     await getMinkActorContext(requestId);
     // A clip with no words in it (a cough, a door) is an ordinary answer:
@@ -97,6 +100,8 @@ export async function POST(request: Request) {
         requestId,
         storeId: actor.storeId,
         provider,
+        providerMs,
+        audioBytes: checked.bytes.length,
       });
       return json({ text: "", languageCode: result.languageCode });
     }
@@ -110,6 +115,8 @@ export async function POST(request: Request) {
       requestId,
       storeId: actor.storeId,
       provider,
+      providerMs,
+      audioBytes: checked.bytes.length,
     });
     return json(result);
   } catch (error) {

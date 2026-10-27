@@ -1609,17 +1609,18 @@ describe("newsletters and colour bands", () => {
   it("never gives two neighbours the same scheme", () => {
     const raw = goodRaw();
     homeOf(raw)[5] = media(slot("mill-floor"), {}, { scheme: "tint" });
-    const plan = expectRule(raw, /both wear the "tint" colour scheme/);
+    const result = strict(raw);
+    expect(result.issues).toEqual([]);
+    const plan = result.plan!;
     expect(section(plan, "s4").style?.scheme).toBeUndefined();
   });
 
   it("keeps two or three schemes a page", () => {
     const raw = goodRaw();
     homeOf(raw)[5] = media(slot("mill-floor"), {}, { scheme: "accent" });
-    const plan = expectRule(
-      raw,
-      /puts 4 sections in a colour scheme; use two or three/,
-    );
+    const result = strict(raw);
+    expect(result.issues).toEqual([]);
+    const plan = result.plan!;
     expect(plan.pages[0].sections.filter((s) => s.style?.scheme)).toHaveLength(
       3,
     );
@@ -1627,9 +1628,11 @@ describe("newsletters and colour bands", () => {
     const few = goodRaw();
     delete homeOf(few)[2].style;
     delete homeOf(few)[4].style;
-    const fewer = expectRule(
-      few,
-      /give two or three sections \(not the opening\) a scheme/,
+    const fixed = strict(few);
+    expect(fixed.issues).toEqual([]);
+    const fewer = fixed.plan!;
+    expect(fewer.pages[0].sections.filter((s) => s.style?.scheme)).toHaveLength(
+      2,
     );
     expect(fewer.notes).toEqual([
       "The look follows your warm and earthy brief.",
@@ -3261,16 +3264,14 @@ describe("the scheme cap and the merchant's kept sections (output-7)", () => {
     ).toEqual(["m-a", "m-b", "m-c", "m-d"]);
   });
 
-  it("still asks, and trims, when a new section adds a scheme past what is left", () => {
+  it("silently trims a new scheme past the room left by merchant sections", () => {
     const over: Over = { snapshot: storeWith(KEPT4) };
     const raw = answer(Object.keys(KEPT4), {
       products: { scheme: "soft", padding: "md" },
     });
-    const plan = expectRule(
-      raw,
-      /4 of them sections you keep as they are; give none of your new sections a scheme/,
-      over,
-    );
+    const result = strict(raw, over);
+    expect(result.issues).toEqual([]);
+    const plan = result.plan!;
     expect(section(plan, "s2").style?.scheme).toBeUndefined();
   });
 
@@ -3282,11 +3283,9 @@ describe("the scheme cap and the merchant's kept sections (output-7)", () => {
       products: { scheme: "tint", padding: "md" },
       categories: { scheme: "inverse", padding: "md" },
     });
-    const plan = expectRule(
-      raw,
-      /2 of them sections you keep as they are; give at most 1 of your new sections a scheme/,
-      over,
-    );
+    const result = strict(raw, over);
+    expect(result.issues).toEqual([]);
+    const plan = result.plan!;
     const left = plan.pages[0].sections.filter((s) => s.style?.scheme);
     expect(left.map((s) => s.id)).toEqual(["s2", "m-a", "m-b"]);
   });
@@ -4391,5 +4390,46 @@ describe("the shoot's mood and palette direction (held for the owner's step 9 de
         seed: "s",
       }),
     ).toEqual({ moodKeywords: [], paletteDirection: "" });
+  });
+});
+
+describe("bounded v6 planning", () => {
+  it("fits refills and category photos to eight shots without requesting a paid repair", () => {
+    const raw = { ...goodRaw(), promptVersion: "mink-revamp-site-v6" };
+    const result = strict(raw);
+    expect(result.issues).toEqual([]);
+    expect(result.plan!.shots.length).toBeLessThanOrEqual(8);
+    expect(result.plan!.shots.map((shot) => shot.id)).toContain(REFILL_STORY);
+    expect(result.plan!.shots.map((shot) => shot.id)).toContain(REFILL_BANNER);
+    for (const binding of result.plan!.bindings.filter(
+      (binding) => binding.pageSlug === "@category",
+    )) {
+      expect(
+        result.plan!.shots.find((shot) => shot.id === binding.shotId)?.purpose,
+      ).toBe("category");
+    }
+  });
+  it("removes unsupported optional claims without replanning", () => {
+    const raw = goodRaw();
+    const opening = homeOf(raw)[0];
+    const config = JSON.parse(opening.configJson!);
+    config.slides[0].image_alt = "Traditional oil from our mill.";
+    config.slides[0].subheading = "Traditional oils.";
+    opening.configJson = JSON.stringify(config);
+    const result = strict(raw);
+    expect(result.issues).toEqual([]);
+    expect(JSON.stringify(result.plan)).not.toContain("Traditional");
+  });
+});
+
+describe("server-owned photograph budget", () => {
+  it("cannot be bypassed by an answer that omits its prompt version", () => {
+    const result = compileRevampSite(
+      goodRaw(),
+      { ...input(), photoBudget: 8 },
+      { newId: ids() },
+    );
+    expect(result.issues).toEqual([]);
+    expect(result.plan!.shots.length).toBeLessThanOrEqual(8);
   });
 });

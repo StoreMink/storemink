@@ -1,4 +1,5 @@
 import "server-only";
+import { REVAMP_WORK_BUDGET, revampPaidAdmissionEndsAt } from "./pacing-policy";
 
 import { createHash } from "node:crypto";
 import { ThinkingLevel } from "@google/genai";
@@ -35,6 +36,7 @@ import {
   nearestImageRatio,
   type GeneratableSlot,
 } from "@/lib/theme-studio/image-generation-core";
+import { ImageCheckpointError } from "@/lib/theme-studio/image-recovery";
 import { ImageRequestPool } from "@/lib/theme-studio/image-request-pool";
 import {
   THEME_STUDIO_IMAGE_MODEL_KEY,
@@ -535,6 +537,8 @@ export async function drawRevampPhotos(
   options: DrawRevampPhotosOptions = {},
 ): Promise<RevampPhotoRun> {
   ctx.signal.throwIfAborted();
+  const budgeted = Boolean(ctx.finishBy || ctx.recoverable);
+  let capacityPending = false;
   const storeId = ctx.actor.storeId;
   const revampId = ctx.revampId;
   if (input.snapshot.storeId !== storeId) {
@@ -601,8 +605,11 @@ export async function drawRevampPhotos(
   const noteRedraw = (key: string, attempt: number, problems: string[]) => {
     const redraws = checks.get(key)?.redraws ?? [];
     if (redraws.length >= MAX_RECORDED_REDRAWS) return;
-    noteCheck(key, { redraws: [...redraws, { attempt, problems }] });
-    void saveChecks();
+    noteCheck(key, {
+      redraws: [...redraws, { attempt, problems }],
+      correction: problems.join(", ").slice(0, 1600),
+    });
+    void saveChecks().catch(() => undefined);
   };
   let checksDirty = false;
   let checksWriting: Promise<void> | null = null;
@@ -623,6 +630,12 @@ export async function drawRevampPhotos(
           checksDirty = false;
           try {
             if (!(await port.record({ shots: Object.fromEntries(checks) }))) {
+              if (budgeted)
+                throw new RevampStepError(
+                  "internal",
+                  "The image attempt lost its lease before admission.",
+                  true,
+                );
               return;
             }
           } catch (error) {
@@ -630,6 +643,7 @@ export async function drawRevampPhotos(
               revampId,
               error: error instanceof Error ? error.message : String(error),
             });
+            if (budgeted) throw error;
             return;
           }
         }
@@ -721,7 +735,32 @@ export async function drawRevampPhotos(
       //   paid for, so it is not drawn again, and it is reviewed first.
       //   ★★ Its check carries on from the record (P0): the tries so far,
       //   the budget's start and any verdict, never from nothing.
-      const parked = own.get(slotKey("slot", pendingSlotId(p.shot.id)));
+      const candidate = budgeted
+        ? input.stored
+            .filter(
+              (image) =>
+                image.role === "slot" &&
+                image.slotId.startsWith(`${p.shot.id}~candidate-`),
+            )
+            .sort(
+              (a, b) =>
+                Number(b.slotId.split("~candidate-")[1]) -
+                Number(a.slotId.split("~candidate-")[1]),
+            )[0]
+        : undefined;
+      const verdict = checks.get(p.shot.id);
+      const blockedCandidate =
+        candidate &&
+        verdict?.sha256 === candidate.sha256 &&
+        verdict.verdict &&
+        verdict.verdict !== "expired" &&
+        isBlocking(
+          verdict.verdict.problems.filter(isThemeImageProblem),
+          p.slot!.purpose,
+        );
+      const parked =
+        own.get(slotKey("slot", pendingSlotId(p.shot.id))) ??
+        (blockedCandidate ? undefined : candidate);
       if (parked) {
         const known = checks.get(p.shot.id);
         const same =
@@ -749,6 +788,30 @@ export async function drawRevampPhotos(
     if (phone) ledger.phones.set(p.shot.id, phone);
   }
   let anchorImage = own.get(slotKey("anchor", ANCHOR_SLOT)) ?? null;
+  const lastAnchorCandidate =
+    ctx.recoverable && !anchorImage
+      ? input.stored
+          .filter(
+            (image) =>
+              image.role === "anchor" &&
+              /^anchor~candidate-[1-4]$/.test(image.slotId),
+          )
+          .sort((a, b) => b.slotId.localeCompare(a.slotId))[0]
+      : undefined;
+  const anchorVerdict = checks.get(ANCHOR_CHECK_KEY);
+  const anchorCandidate =
+    lastAnchorCandidate &&
+    !(
+      anchorVerdict?.sha256 === lastAnchorCandidate.sha256 &&
+      anchorVerdict.verdict &&
+      anchorVerdict.verdict !== "expired" &&
+      isBlocking(
+        anchorVerdict.verdict.problems.filter(isThemeImageProblem),
+        "anchor",
+      )
+    )
+      ? lastAnchorCandidate
+      : undefined;
 
   // 2. A refinement carries its parent's photographs over.
   // ★ A photo that cannot be carried over is drawn again rather than failing
@@ -803,10 +866,15 @@ export async function drawRevampPhotos(
 
   // 3. What still needs a photograph. ★ A parked photo was drawn: it waits
   //    for its verdict (step 6b), it is not drawn again.
-  const missing = usable.filter(
-    (p) => !ledger.photos.has(p.shot.id) && !pending.has(p.shot.id),
-  );
-  const toDraw = missing.slice(0, REVAMP_LIMITS.maxShots);
+  const missing = usable
+    .filter((p) => !ledger.photos.has(p.shot.id) && !pending.has(p.shot.id))
+    .sort((a, b) => {
+      if (!budgeted) return 0;
+      const rank = (p: RevampPlannedShot) =>
+        checks.get(p.shot.id)?.redraws?.length ? 0 : p.onHomepage ? 1 : 2;
+      return rank(a) - rank(b);
+    });
+  let toDraw = missing.slice(0, REVAMP_LIMITS.maxShots);
   for (const p of missing.slice(REVAMP_LIMITS.maxShots)) {
     ledger.causes.set(p.shot.id, "cap");
   }
@@ -842,7 +910,8 @@ export async function drawRevampPhotos(
   //   the shots still missing are the next run's, and claiming them only to
   //   give them all back is two writes for nothing.
   if (toDraw.length > 0 && drawsDrain?.aborted) {
-    throw new RevampDrainedError();
+    if (!budgeted || ctx.recoverable) throw new RevampDrainedError();
+    toDraw = [];
   }
 
   // 5. The photo limits, for every photo about to be drawn (and the anchor).
@@ -852,7 +921,7 @@ export async function drawRevampPhotos(
   //    ★★ Unless the platform's hour refused (jobs-2): other stores used it
   //    up, this store's own day may be untouched, and the hour turns. The
   //    step waits for a later claim instead, drawing and cropping nothing.
-  const anchorCost = toDraw.length > 0 && !seed ? 1 : 0;
+  const anchorCost = toDraw.length > 0 && !seed && !anchorCandidate ? 1 : 0;
   let drawSet = toDraw;
   let claimed = 0;
   if (toDraw.length > 0) {
@@ -1030,13 +1099,16 @@ export async function drawRevampPhotos(
       reviewerChosen =
         options.reviewer !== undefined
           ? options.reviewer
-          : defaultReviewer(provider, ctx.draining, () =>
-              // ★ A 429 the review client waited out and tried again (P0).
-              charge(
-                revampCallUsage(THEME_IMAGE_REVIEW_MODEL_KEY, {
-                  rateLimited: 1,
-                }),
-              ),
+          : defaultReviewer(
+              provider,
+              revampAdmissionDrain(ctx, IMAGE_REVIEW_TRY_TIMEOUT_MS),
+              () =>
+                // ★ A 429 the review client waited out and tried again (P0).
+                charge(
+                  revampCallUsage(THEME_IMAGE_REVIEW_MODEL_KEY, {
+                    rateLimited: 1,
+                  }),
+                ),
             );
     }
     return reviewerChosen;
@@ -1288,7 +1360,11 @@ export async function drawRevampPhotos(
   ): Promise<DelayedVerdict> => {
     const shotId = p.shot.id;
     const known = checks.get(shotId);
-    if (known?.verdict && known.sha256 === entry.image.sha256) {
+    if (
+      known?.verdict &&
+      known.sha256 === entry.image.sha256 &&
+      !(ctx.recoverable && known.verdict === "expired")
+    ) {
       return known.verdict === "expired"
         ? { kind: "expired" }
         : {
@@ -1304,13 +1380,18 @@ export async function drawRevampPhotos(
       settleStop.signal,
       ...(ctx.draining ? [ctx.draining] : []),
     ]);
-    let tries = entry.tries;
+    let tries = ctx.recoverable ? 0 : entry.tries;
     let lastAt = entry.lastTriedAt;
-    let firstAskedAt = entry.firstAskedAt;
+    let firstAskedAt = ctx.recoverable ? null : entry.firstAskedAt;
     const budgetEnd = () =>
-      firstAskedAt === null
-        ? Number.POSITIVE_INFINITY
-        : firstAskedAt + REVAMP_PHOTO_CHECK_BUDGET_MS;
+      Math.min(
+        ctx.finishBy
+          ? ctx.finishBy - REVAMP_WORK_BUDGET.finalChecksMs
+          : Infinity,
+        firstAskedAt === null
+          ? Infinity
+          : firstAskedAt + REVAMP_PHOTO_CHECK_BUDGET_MS,
+      );
     const left = (): DelayedVerdict => {
       if (ctx.draining?.aborted) drained = true;
       return { kind: "left" };
@@ -1344,7 +1425,7 @@ export async function drawRevampPhotos(
           // ★★ The budget starts with the first ask, and is kept (P0).
           firstAskedAt = now();
           noteCheck(shotId, { sha256: entry.image.sha256, firstAskedAt });
-          void saveChecks();
+          void saveChecks().catch(() => undefined);
         }
         return reviewOnce(
           reviewer,
@@ -1391,7 +1472,7 @@ export async function drawRevampPhotos(
           ? { verdict: { problems: [...review.problems] } }
           : {}),
       });
-      void saveChecks();
+      void saveChecks().catch(() => undefined);
       if (review.kind === "reviewed") {
         return { kind: "reviewed", problems: review.problems };
       }
@@ -1401,6 +1482,10 @@ export async function drawRevampPhotos(
         tries,
         code: review.code,
       });
+      if (ctx.recoverable) {
+        capacityPending = true;
+        return { kind: "left" };
+      }
       if (outOfTime) return { kind: "expired" };
     }
   };
@@ -1463,7 +1548,7 @@ export async function drawRevampPhotos(
     //   says so. Decided at step 7, once every checked photo is known; the
     //   record keeps the verdict, so no later run asks again.
     noteCheck(p.shot.id, { sha256: entry.image.sha256, verdict: "expired" });
-    void saveChecks();
+    void saveChecks().catch(() => undefined);
     unchecked.set(p.shot.id, entry);
     ledger.causes.set(p.shot.id, "unchecked");
     logInfo("mink.revamp: a photograph's check could not be had in time", {
@@ -1482,6 +1567,10 @@ export async function drawRevampPhotos(
       // ★ The review model is switched off: as for any photo drawn without
       //   one, a parked photo is let in unreviewed.
       pending.delete(p.shot.id);
+      if (budgeted) {
+        unchecked.set(p.shot.id, entry);
+        return;
+      }
       await promote(p, entry, "unreviewed");
       return;
     }
@@ -1561,7 +1650,7 @@ export async function drawRevampPhotos(
       lastTriedAt: asked ? entry.lastTriedAt : undefined,
       verdict: undefined,
     });
-    void saveChecks();
+    void saveChecks().catch(() => undefined);
     logInfo("mink.revamp: a photograph waits for its review", {
       revampId,
       shotId: p.shot.id,
@@ -1674,10 +1763,31 @@ export async function drawRevampPhotos(
       const provided =
         options.imageClient ?? defaultImageClient(provider, drawsDrain);
       /** Draws asked per brief in this invocation: which attempt a refusal was. */
-      const drawAttempts = new Map<string, number>();
+      const drawAttempts = new Map<string, number>(
+        [...checks].map(([key, state]) => [
+          key === checkKeyOf(ANCHOR_SLOT) ? ANCHOR_SLOT : key,
+          state.draws ?? state.redraws?.length ?? 0,
+        ]),
+      );
+      let anchorReplayed = false;
       const client: ThemeStudioImageClient = {
         provider: provided.provider,
         generateImage: tracked(async (request, signal) => {
+          if (
+            request.purpose === "anchor" &&
+            anchorCandidate &&
+            !anchorReplayed
+          ) {
+            const bytes = await readBytes(anchorCandidate);
+            if (!bytes) throw new ImageCheckpointError();
+            anchorReplayed = true;
+            return {
+              kind: "ok",
+              bytes,
+              mediaType: mediaTypeOfPath(anchorCandidate.path),
+              usage: ZERO_IMAGE_USAGE,
+            };
+          }
           const attempt = (drawAttempts.get(request.briefId) ?? 0) + 1;
           drawAttempts.set(request.briefId, attempt);
           if (drawsDrain?.aborted) {
@@ -1688,6 +1798,24 @@ export async function drawRevampPhotos(
               code: "cancelled",
               usage: ZERO_IMAGE_USAGE,
             };
+          }
+          if (budgeted) {
+            const used = [...checks.values()].reduce(
+              (sum, state) => sum + (state.draws ?? 0),
+              0,
+            );
+            if (
+              used >= REVAMP_WORK_BUDGET.imageCalls ||
+              attempt > (request.purpose === "anchor" ? 4 : 3)
+            )
+              return {
+                kind: "error",
+                code: "cancelled",
+                usage: ZERO_IMAGE_USAGE,
+              };
+            noteCheck(checkKeyOf(request.briefId), { draws: attempt });
+            await saveChecks();
+            ctx.signal.throwIfAborted();
           }
           const answer = await provided.generateImage(request, signal);
           // ★★ One the run's stop cut off on the wire keeps its photo spent
@@ -1706,6 +1834,21 @@ export async function drawRevampPhotos(
               ),
             ),
           );
+          if (
+            ctx.recoverable &&
+            answer.kind === "error" &&
+            (answer.code === "rate_limited" ||
+              answer.timing?.providerAttempts === 0)
+          ) {
+            noteCheck(checkKeyOf(request.briefId), { draws: attempt - 1 });
+            await saveChecks();
+          }
+          if (
+            ctx.recoverable &&
+            answer.kind === "error" &&
+            TRANSIENT_ANCHOR_CODES.has(answer.code)
+          )
+            capacityPending = true;
           if (answer.kind === "refused") {
             // ★ Why it is drawn again (P0): the image model declined it.
             noteRedraw(checkKeyOf(request.briefId), attempt, [REFUSED_PROBLEM]);
@@ -1724,6 +1867,11 @@ export async function drawRevampPhotos(
         }),
       };
       const reviewer = pickReviewer();
+      if (budgeted && !reviewer)
+        throw new RevampStepError(
+          "photos_failed",
+          "The photo reviewer is unavailable; a checked redesign cannot be completed.",
+        );
       result = await runSlotImageGeneration(
         client,
         {
@@ -1742,7 +1890,63 @@ export async function drawRevampPhotos(
         },
         ctx.signal,
         {
-          prepare: preparing,
+          onPrepared: budgeted
+            ? async (briefId, image, attempt) => {
+                const p = byId.get(briefId);
+                const anchor = ctx.recoverable && briefId === ANCHOR_SLOT;
+                if (!p && !anchor) return;
+                await storeRevampImage({
+                  revampId,
+                  storeId,
+                  role: anchor ? "anchor" : "slot",
+                  slotId: `${briefId}~candidate-${attempt}`,
+                  bytes: image.bytes,
+                  mediaType: image.mediaType,
+                  width: image.width,
+                  height: image.height,
+                  review: "unreviewed",
+                  problems: ["review-pending"],
+                  alt: p ? altFor(p.shot) : "Private art direction reference",
+                });
+                if (anchor) ledger.anchorDrawn = true;
+              }
+            : undefined,
+          resume: Object.fromEntries(
+            [...checks].map(([key, state]) => [
+              key === checkKeyOf(ANCHOR_SLOT) ? ANCHOR_SLOT : key,
+              {
+                attempts: Math.max(
+                  0,
+                  (state.draws ?? state.redraws?.length ?? 0) -
+                    (key === ANCHOR_CHECK_KEY && anchorCandidate ? 1 : 0),
+                ),
+                ...(state.correction
+                  ? {
+                      retake: {
+                        problems: [state.correction],
+                        note: "Correct the problems from the earlier attempt.",
+                      },
+                    }
+                  : {}),
+              },
+            ]),
+          ),
+          prepare: async (bytes, target, byteLimit) => {
+            if (anchorCandidate && digestOf(bytes) === anchorCandidate.sha256)
+              return {
+                ok: true,
+                value: {
+                  bytes: Buffer.from(bytes),
+                  mediaType: "image/webp",
+                  width: anchorCandidate.width,
+                  height: anchorCandidate.height,
+                  sha256: anchorCandidate.sha256,
+                  originalMediaType: mediaTypeOfPath(anchorCandidate.path),
+                  originalByteSize: bytes.byteLength,
+                },
+              };
+            return preparing(bytes, target, byteLimit);
+          },
           ...(options.concurrency ? { concurrency: options.concurrency } : {}),
           // ★ The engine's own review, unless the drain has begun: a photo
           //   drawn in flight then is parked "unreviewed" and the step hands
@@ -1759,6 +1963,8 @@ export async function drawRevampPhotos(
                 at: startedAt,
                 startedAt,
               });
+              if (ctx.recoverable && reviewInput.purpose === "anchor")
+                throw new ImageCheckpointError();
               return {
                 kind: "unavailable",
                 code: "cancelled",
@@ -1787,7 +1993,36 @@ export async function drawRevampPhotos(
               at: now(),
               startedAt,
             });
+            if (
+              ctx.recoverable &&
+              review.kind === "unavailable" &&
+              reviewInput.purpose === "anchor" &&
+              !heldBack
+            ) {
+              capacityPending = true;
+              throw new ImageCheckpointError();
+            }
             if (review.kind !== "reviewed") return review;
+            if (
+              budgeted &&
+              (ctx.recoverable || reviewInput.purpose !== "anchor")
+            ) {
+              const keyOf = checkKeyOf(briefId);
+              noteCheck(keyOf, {
+                sha256: key,
+                tries: (checks.get(keyOf)?.tries ?? 0) + 1,
+                verdict: { problems: [...review.problems] },
+                firstAskedAt: checks.get(keyOf)?.firstAskedAt ?? startedAt,
+                lastTriedAt: now(),
+              });
+              await saveChecks();
+            }
+            logInfo("mink.revamp: photo check done", {
+              revampId,
+              shotId: briefId,
+              ms: Math.max(0, now() - startedAt),
+              verdict: review.problems.length ? "problems" : "passed",
+            });
             const shot = reviewInput.purpose !== "anchor";
             if (shot) {
               const known = verdicts.get(briefId) ?? new Map();
@@ -1805,6 +2040,13 @@ export async function drawRevampPhotos(
               !isBlocking(review.problems, reviewInput.purpose);
             if (redrawSmall) smallRedrawn.add(briefId);
             if (review.problems.length > 0 || redrawSmall) {
+              logInfo("mink.revamp: photo check failed", {
+                revampId,
+                shotId: briefId,
+                attempt: reviewInput.attempt,
+                problems: review.problems,
+                blocking: isBlocking(review.problems, reviewInput.purpose),
+              });
               // ★ Why this attempt was turned down (P0).
               noteRedraw(
                 checkKeyOf(briefId),
@@ -1890,7 +2132,7 @@ export async function drawRevampPhotos(
                   },
                 );
               }
-              if (reviewer && outcome.review === "unreviewed") {
+              if ((reviewer || budgeted) && outcome.review === "unreviewed") {
                 await park(p, outcome, image);
               } else {
                 const drawn =
@@ -1953,6 +2195,17 @@ export async function drawRevampPhotos(
       await release();
       await flushChecks();
       ctx.signal.throwIfAborted();
+      if (ctx.recoverable && drained) throw new RevampDrainedError();
+      if (
+        ctx.recoverable &&
+        capacityPending &&
+        error instanceof ImageCheckpointError
+      )
+        throw new RevampRetryLaterError(
+          "photos_unavailable",
+          "The saved art direction reference is waiting for its check.",
+          REVAMP_WORK_BUDGET.capacityRetryMs,
+        );
       throw error;
     }
     if (ctx.signal.aborted) {
@@ -1969,9 +2222,16 @@ export async function drawRevampPhotos(
       await Promise.allSettled(settling.values());
       await release();
       await flushChecks();
-      throw new RevampDrainedError();
+      if (!budgeted || ctx.recoverable) throw new RevampDrainedError();
     }
-    if (result.anchorFailure) {
+    if (
+      ctx.recoverable &&
+      result.anchorFailure &&
+      result.anchorFailure.kind === "failed" &&
+      TRANSIENT_ANCHOR_CODES.has(result.anchorFailure.code)
+    )
+      capacityPending = true;
+    if (result.anchorFailure && !(budgeted && ledger.photos.size > 0)) {
       await abandonSettling();
       await release();
       await flushChecks();
@@ -1991,7 +2251,13 @@ export async function drawRevampPhotos(
     cause: FallbackCause,
     checked?: CheckedSources,
   ): Promise<Photo | null> => {
-    for (const source of fallbackSources(p, ledger, byId, checked)) {
+    for (const source of fallbackSources(
+      p,
+      ledger,
+      byId,
+      checked,
+      Boolean(budgeted),
+    )) {
       const bytes =
         source.bytes ?? (source.image ? await readBytes(source.image) : null);
       if (!bytes) continue;
@@ -2038,9 +2304,17 @@ export async function drawRevampPhotos(
   try {
     // 6b. The parked photos first: one that passes is a source for a crop.
     await settlePending();
+    if (ctx.recoverable && capacityPending) {
+      throw new RevampRetryLaterError(
+        "photos_unavailable",
+        "The photo service is temporarily unavailable; saved photographs will be resumed.",
+        REVAMP_WORK_BUDGET.capacityRetryMs,
+      );
+    }
     // ★ A photo left parked by the drain is the next run's to review: the
     //   step is not done, so nothing is cropped in its place.
-    if (drained) throw new RevampDrainedError();
+    if (drained && (!budgeted || ctx.recoverable))
+      throw new RevampDrainedError();
 
     let checked: CheckedSources | null = null;
     for (const p of usable) {
@@ -2058,6 +2332,7 @@ export async function drawRevampPhotos(
           ledger.fallbacks.set(p.shot.id, "unchecked");
           continue;
         }
+        if (budgeted) continue;
         logWarn("mink.revamp: a photograph is let in unchecked", {
           revampId,
           shotId: p.shot.id,
@@ -2069,21 +2344,54 @@ export async function drawRevampPhotos(
         }
       }
       const cause = ledger.causes.get(p.shot.id) ?? "failed";
-      const made = await recrop(p, cause);
+      const made = await recrop(
+        p,
+        cause,
+        budgeted
+          ? (checked ??= { recropped: await recroppedShots() })
+          : undefined,
+      );
       if (made) {
         ledger.photos.set(p.shot.id, made);
         ledger.fallbacks.set(p.shot.id, cause);
       }
     }
     const stillMissing = usable.filter((p) => !ledger.photos.has(p.shot.id));
-    if (stillMissing.length > 0) {
+    if (stillMissing.length > 0 && (!budgeted || ctx.recoverable)) {
       const limited = stillMissing.some(
         (p) => ledger.causes.get(p.shot.id) === "limit",
       );
       const detail = `${stillMissing.length} of ${total} photographs could not be drawn or cropped from the shoot.`;
+      const exhausted =
+        ctx.recoverable &&
+        [...checks.values()].reduce(
+          (sum, state) => sum + (state.draws ?? 0),
+          0,
+        ) >= REVAMP_WORK_BUDGET.imageCalls;
+      const shotExhausted =
+        ctx.recoverable &&
+        stillMissing.every((p) => (checks.get(p.shot.id)?.draws ?? 0) >= 3);
+      if (exhausted || shotExhausted)
+        throw new RevampStepError(
+          "photos_failed",
+          "The planned photographs exhausted their quality redraw budget.",
+        );
       throw limited
         ? limitReached(detail)
         : nothingToCropFrom(detail, stillMissing, ledger);
+    }
+
+    if (budgeted) {
+      const home = usable.filter((p) => p.onHomepage);
+      const ready = home.filter((p) => ledger.photos.has(p.shot.id));
+      if (
+        home.length &&
+        (ready.length < 3 || !ledger.photos.has(home[0].shot.id))
+      )
+        throw new RevampStepError(
+          "photos_failed",
+          "Too few checked homepage photographs remain to finish the redesign.",
+        );
     }
 
     // 8. The phone crops still missing: a kept, adopted, reviewed or cropped
@@ -2733,17 +3041,18 @@ function notSentAtDeadline(): Error {
  *   ★ Its timer is unref'd and cleared by the drain.
  */
 export function revampAdmissionDrain(
-  ctx: Pick<RevampStepContext, "deadline" | "draining">,
+  ctx: Pick<RevampStepContext, "deadline" | "draining" | "finishBy">,
   clockMs: number,
 ): AbortSignal | undefined {
   const draining = ctx.draining;
   if (!draining) return undefined;
   if (draining.aborted) return draining;
-  const closesAt =
-    ctx.deadline +
-    REVAMP_LIMITS.deadlineGraceMs -
-    clockMs -
-    REVAMP_LIMITS.hardStopMarginMs;
+  const closesAt = ctx.finishBy
+    ? revampPaidAdmissionEndsAt(ctx.finishBy, clockMs)
+    : ctx.deadline +
+      REVAMP_LIMITS.deadlineGraceMs -
+      clockMs -
+      REVAMP_LIMITS.hardStopMarginMs;
   if (closesAt >= ctx.deadline) return draining;
   const closed = new AbortController();
   const reason = new Error(
@@ -3043,12 +3352,25 @@ function fallbackSources(
   ledger: Ledger,
   byId: ReadonlyMap<string, RevampPlannedShot>,
   checked?: CheckedSources,
+  strict = false,
 ): Source[] {
+  if (strict && p.pages.has("@category")) return [];
   const loss = (source: Source) =>
     cropLoss(source.width / source.height, p.frame!.aspect);
   const kept: Source[] = [];
   for (const [shotId, photo] of ledger.photos) {
     if (photo.recrop || shotId === p.shot.id) continue;
+    if (strict) {
+      const other = byId.get(shotId);
+      if (
+        !other ||
+        other.pages.has("@category") ||
+        other.shot.goods !== p.shot.goods ||
+        JSON.stringify([...(other.shot.productKeys ?? [])].sort()) !==
+          JSON.stringify([...(p.shot.productKeys ?? [])].sort())
+      )
+        continue;
+    }
     if (checked && !wasChecked(shotId, photo, ledger, checked.recropped)) {
       continue;
     }
@@ -3066,7 +3388,7 @@ function fallbackSources(
   const elsewhere = kept.filter(
     (source) => ![...source.pages].some((page) => p.pages.has(page)),
   );
-  const pool = elsewhere.length ? elsewhere : kept;
+  const pool = strict ? elsewhere : elsewhere.length ? elsewhere : kept;
   return pool
     .map((source, index) => ({ source, index, loss: loss(source) }))
     .sort((a, b) => {
@@ -3412,6 +3734,10 @@ function pendingSlotId(shotId: string): string {
 
 /** The shot a parked photo's slot id belongs to, or null for any other. */
 function pendingShotOf(slotId: unknown): string | null {
+  if (typeof slotId === "string") {
+    const candidate = slotId.match(/^(.+)~candidate-[1-4]$/);
+    if (candidate) return candidate[1];
+  }
   if (typeof slotId !== "string") return null;
   if (!slotId.endsWith(REVAMP_REVIEW_PENDING_SUFFIX)) return null;
   const shotId = slotId.slice(0, -REVAMP_REVIEW_PENDING_SUFFIX.length);

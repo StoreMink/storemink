@@ -1,3 +1,4 @@
+import { REVAMP_WORK_BUDGET } from "./pacing-policy";
 // ---------------------------------------------------------------------------
 // The storefront revamp's site compiler: the model's raw site plan in, a
 // validated `RevampSitePlan` out (docs/mink-storefront-revamp.md, sections 5
@@ -2317,6 +2318,8 @@ interface Ctx {
    *   which compiles exactly as it always did.
    */
   v5: boolean;
+  boundedPhotos: boolean;
+  omittedPhotos: number;
   /** The redesign's seed (`revampDesignSeed`): the store and the redesign. */
   seed: string;
 }
@@ -2588,6 +2591,7 @@ function checkCopy(
   value: string,
   where: string,
   silent = false,
+  optional = false,
 ): string {
   let out = cleanRevampCopy(value);
   if (!out) return "";
@@ -2618,7 +2622,7 @@ function checkCopy(
   }
   const claims = unsupportedClaimsIn(out, ctx.evidence);
   if (claims.length) {
-    if (!silent) {
+    if (!silent && !optional) {
       issue(
         ctx,
         `${where} claims ${claims.map((c) => `"${c}"`).join(", ")} but the merchant never said so. Remove the claim or use only what the merchant stated.`,
@@ -2985,7 +2989,13 @@ function buildNewSection(
       setAt(
         config,
         leaf.path,
-        checkCopy(ctx, leaf.value, sectionWhere(page, index, type, field)),
+        checkCopy(
+          ctx,
+          leaf.value,
+          sectionWhere(page, index, type, field),
+          false,
+          /^(alt|image_alt|caption|eyebrow|subheading|subtitle)$/.test(key),
+        ),
       );
     }
   }
@@ -3273,18 +3283,9 @@ function enforceNewsletter(ctx: Ctx, page: WorkingPage): void {
 
 /**
  * Two or three bands in a scheme, never two neighbours in the same one.
- * `quiet` re-applies the rule after the photo pass dropped a section, which
- * is nobody's mistake.
+ * Re-applied after the photo pass, with deterministic fixes in both modes.
  */
-function enforceSchemes(
-  ctx: Ctx,
-  page: WorkingPage,
-  isHome: boolean,
-  quiet = false,
-): void {
-  const report = (sentence: string): void => {
-    if (!quiet) pageIssue(ctx, page, sentence, "scheme");
-  };
+function enforceSchemes(page: WorkingPage, isHome: boolean): void {
   const enabled = enabledSections(page);
   const opening = isHome ? enabled[0] : undefined;
   if (opening && !opening.kept && opening.item.style?.scheme) {
@@ -3304,9 +3305,6 @@ function enforceSchemes(
           ? previous
           : null;
       if (target) {
-        report(
-          `Page "${page.label}" sections ${previous.index} and ${s.index} both wear the "${scheme}" colour scheme; neighbouring sections never share one. Give one of them another scheme or none.`,
-        );
         delete target.item.style!.scheme;
         if (target === s) {
           previous = null;
@@ -3328,11 +3326,6 @@ function enforceSchemes(
   const fresh = schemed.filter((s) => !s.kept);
   const room = Math.max(0, 3 - keptSchemed);
   if (fresh.length > room) {
-    report(
-      keptSchemed
-        ? `Page "${page.label}" puts ${schemed.length} sections in a colour scheme, ${keptSchemed} of them sections you keep as they are; give ${room === 0 ? "none" : `at most ${room}`} of your new sections a scheme.`
-        : `Page "${page.label}" puts ${schemed.length} sections in a colour scheme; use two or three.`,
-    );
     let left = fresh.length;
     for (const s of [...fresh].reverse()) {
       if (left <= room) break;
@@ -3340,17 +3333,22 @@ function enforceSchemes(
       left -= 1;
     }
   }
-  if (
-    isHome &&
-    !quiet &&
-    !page.copied &&
-    enabled.length >= 4 &&
-    schemed.length < 2
-  ) {
-    strictOnly(
-      ctx,
-      `The homepage puts ${schemed.length} sections in a colour scheme; give two or three sections (not the opening) a scheme (soft, tint, accent or inverse), never two neighbours the same one, for the rhythm of coloured bands.`,
-    );
+  if (isHome && !page.copied && enabled.length >= 4) {
+    let count = enabled.filter((s) => s.item.style?.scheme).length;
+    for (let i = 1; i < enabled.length && count < 2; i += 1) {
+      const section = enabled[i];
+      if (section.kept || section.item.style?.scheme) continue;
+      const neighbours = [
+        enabled[i - 1]?.item.style?.scheme,
+        enabled[i + 1]?.item.style?.scheme,
+      ];
+      const scheme = (["soft", "tint", "accent", "inverse"] as const).find(
+        (candidate) => !neighbours.includes(candidate),
+      );
+      if (!scheme) continue;
+      section.item.style = { ...section.item.style, scheme };
+      count += 1;
+    }
   }
 }
 
@@ -3670,7 +3668,7 @@ function applyPageRules(ctx: Ctx, page: WorkingPage): void {
   const isHome = page.slug === "";
   if (isHome) enforceOpening(ctx, page);
   enforceNewsletter(ctx, page);
-  enforceSchemes(ctx, page, isHome);
+  enforceSchemes(page, isHome);
   if (isHome && !page.copied && enabledSections(page).length < 4) {
     strictOnly(
       ctx,
@@ -4832,11 +4830,12 @@ function buildShots(
         id = reuse.id;
       } else {
         id = named;
-        issue(
-          ctx,
-          `shots: the category "${need.name}" (${need.slug}) gets a new photograph; describe a shot with purpose "category" and category "${need.slug}".`,
-          "photo",
-        );
+        if (!ctx.boundedPhotos)
+          issue(
+            ctx,
+            `shots: the category "${need.name}" (${need.slug}) gets a new photograph; describe a shot with purpose "category" and category "${need.slug}".`,
+            "photo",
+          );
         ctx.autoShots.set(id, categoryAutoShot(ctx, id, need));
       }
     }
@@ -4916,6 +4915,20 @@ function buildShots(
     }
   };
 
+  if (ctx.boundedPhotos) {
+    const seenOnPage = new Set<string>();
+    for (const use of all) {
+      const id = use.binding.shotId;
+      const key = `${id}|${use.binding.pageSlug}`;
+      if (seenOnPage.has(key) && use.binding.pageSlug !== "@category") {
+        const fresh = uniqueId(suffixedShotId(id, "distinct"), isTaken);
+        taken.add(fresh);
+        definitions.set(fresh, { ...definitions.get(id)!, id: fresh });
+        rebind(use, fresh);
+      } else seenOnPage.add(key);
+    }
+  }
+
   // ★ One shot, one shape: a shot bound to two shapes is split. The first
   //   shape keeps the id; every other shape gets ONE new id that all of its
   //   uses share.
@@ -4924,10 +4937,20 @@ function buildShots(
     byShot.set(c.binding.shotId, [...(byShot.get(c.binding.shotId) ?? []), c]);
   }
   for (const [id, uses] of byShot) {
-    const shapes: Array<{ aspect: number; id: string }> = [];
+    const shapes: Array<{ aspect: number; id: string; aspects: number[] }> = [];
     for (const use of uses) {
       const aspect = use.binding.frame.aspect;
-      let shape = shapes.find((s) => sameShape(s.aspect, aspect));
+      const carriedShape = ctx.previous?.bindings.some(
+        (binding) =>
+          binding.shotId === id && sameShape(binding.frame.aspect, aspect),
+      );
+      let shape = shapes.find(
+        (s) =>
+          sameShape(s.aspect, aspect) ||
+          ((ctx.boundedPhotos || carriedShape) &&
+            Math.min(...s.aspects, aspect) / Math.max(...s.aspects, aspect) >=
+              0.7),
+      );
       if (!shape) {
         let shapeId = id;
         if (shapes.length > 0) {
@@ -4938,9 +4961,10 @@ function buildShots(
           taken.add(shapeId);
           definitions.set(shapeId, { ...definitions.get(id)!, id: shapeId });
         }
-        shape = { aspect, id: shapeId };
+        shape = { aspect, id: shapeId, aspects: [aspect] };
         shapes.push(shape);
       }
+      shape.aspects.push(aspect);
       if (shape.id !== id) rebind(use, shape.id);
     }
   }
@@ -4959,7 +4983,18 @@ function buildShots(
     if (!use) continue;
     const priorAspect = aspectValue(prior.aspectRatio);
     const nowAspect = aspectValue(revampRatioFor(use.binding.frame.aspect));
-    if (Number.isFinite(priorAspect) && !sameShape(priorAspect, nowAspect)) {
+    if (
+      Number.isFinite(priorAspect) &&
+      !sameShape(priorAspect, nowAspect) &&
+      !(
+        ctx.previous?.bindings.some(
+          (binding) =>
+            binding.shotId === id && sameShape(binding.frame.aspect, nowAspect),
+        ) &&
+        Math.min(priorAspect, nowAspect) / Math.max(priorAspect, nowAspect) >=
+          0.7
+      )
+    ) {
       const fresh = uniqueId(suffixedShotId(id, "new"), isTaken);
       taken.add(fresh);
       definitions.delete(id);
@@ -5099,39 +5134,83 @@ function limitShots(
   opening: string | null,
   categoryIds: ReadonlySet<string>,
 ): void {
-  const max = REVAMP_LIMITS.maxShots;
+  const max = ctx.boundedPhotos
+    ? REVAMP_WORK_BUDGET.photos
+    : REVAMP_LIMITS.maxShots;
   if (definitions.size <= max) return;
-  issue(
-    ctx,
-    `The plan describes ${definitions.size} photographs; a redesign draws at most ${max}. Reuse a shot where two slots can share one photograph, or use fewer image sections.`,
-    "shots",
+  if (!ctx.boundedPhotos)
+    issue(
+      ctx,
+      `The plan describes ${definitions.size} photographs; a redesign draws at most ${max}. Reuse a shot where two slots can share one photograph, or use fewer image sections.`,
+      "shots",
+    );
+  const firstHome = new Set(
+    [
+      ...new Set(
+        all
+          .filter((c) => c.binding.pageSlug === "")
+          .map((c) => c.binding.shotId),
+      ),
+    ].slice(0, 3),
   );
   const rank = (id: string): number => {
     if (id === opening) return 0;
+    if (ctx.boundedPhotos) {
+      if (firstHome.has(id)) return 1;
+      if (id.startsWith("refill-")) return 2;
+      if (categoryIds.has(id)) return 3;
+      if (all.some((c) => c.binding.shotId === id && c.binding.pageSlug === ""))
+        return 4;
+      return 5;
+    }
     const use = all.find((c) => c.binding.shotId === id);
-    if (use?.binding.pageSlug === "") return 1;
-    if (categoryIds.has(id)) return 2;
+    if (categoryIds.has(id)) return ctx.boundedPhotos ? 1 : 2;
+    if (use?.binding.pageSlug === "") return ctx.boundedPhotos ? 2 : 1;
     if (id.startsWith("refill-")) return 3;
     return 4;
   };
   const order = [...definitions.keys()].sort((a, b) => rank(a) - rank(b));
   const kept = new Set(order.slice(0, max));
   for (const id of order.slice(max)) {
+    const removed = definitions.get(id)!;
     definitions.delete(id);
+    let omitted = false;
     for (const c of all) {
       if (c.binding.shotId !== id) continue;
       // Another photograph of the same shape from the same shoot, else none.
       const twin = [...kept].find((k) => {
-        const use = all.find((u) => u.binding.shotId === k);
+        const uses = all.filter((u) => u.binding.shotId === k);
+        const use = uses[0];
+        const aspects = [
+          ...uses.map((u) => u.binding.frame.aspect),
+          c.binding.frame.aspect,
+        ];
         return (
-          use && sameShape(use.binding.frame.aspect, c.binding.frame.aspect)
+          use &&
+          (sameShape(use.binding.frame.aspect, c.binding.frame.aspect) ||
+            (ctx.boundedPhotos &&
+              Math.min(...aspects) / Math.max(...aspects) >= 0.7)) &&
+          (!ctx.boundedPhotos ||
+            (!categoryIds.has(id) &&
+              !categoryIds.has(k) &&
+              !all.some(
+                (u) =>
+                  u.binding.shotId === k &&
+                  u.binding.pageSlug === c.binding.pageSlug,
+              ) &&
+              definitions.get(k)?.goods === removed.goods &&
+              JSON.stringify(
+                [...(definitions.get(k)?.productKeys ?? [])].sort(),
+              ) === JSON.stringify([...(removed.productKeys ?? [])].sort())))
         );
       });
+      if (!twin) omitted = true;
       if (c.section) {
         setAt(c.section.item.config, c.binding.path, twin ? slotRef(twin) : "");
       }
       c.binding.shotId = twin ?? "";
     }
+    if (ctx.boundedPhotos && omitted) ctx.omittedPhotos += 1;
   }
 }
 
@@ -5161,6 +5240,8 @@ export interface RevampCompileInput {
    *   picks again. Absent, the store's id alone seeds it.
    */
   revampId?: string | null;
+  /** Server-owned work policy, independent of the model's version claim. */
+  photoBudget?: number;
 }
 
 function buildPlan(
@@ -5209,6 +5290,11 @@ function buildPlan(
         ? "all"
         : new Set((redrawScope ?? []).map((id) => sanitizeShotId(id) ?? id)),
     v5: (revampAnswerPromptVersion(raw) ?? 0) >= REVAMP_SEEDED_PROMPT_VERSION,
+    boundedPhotos:
+      request.kind === "full" &&
+      (input.photoBudget === REVAMP_WORK_BUDGET.photos ||
+        (revampAnswerPromptVersion(raw) ?? 0) >= 6),
+    omittedPhotos: 0,
     seed: revampDesignSeed(snapshot.storeId, input.revampId),
   };
 
@@ -5615,7 +5701,7 @@ function buildPlan(
   // quietly, since the model did nothing wrong.
   for (const page of writtenPages) {
     enforceNewsletterQuietly(page);
-    enforceSchemes(ctx, page, page.slug === "", true);
+    enforceSchemes(page, page.slug === "");
   }
   if (request.kind === "full") {
     photoLedIssue(ctx, writtenPages, shots.shots.length, scope.named);
@@ -5676,7 +5762,15 @@ function buildPlan(
     notes: allNotes,
     // ★ Always empty here: what a plan leaves out is the budget step's list
     //   (fitBudget). Pages a redesign never writes are the snapshot's.
-    skipped: [],
+    skipped: ctx.omittedPhotos
+      ? [
+          {
+            label: `${ctx.omittedPhotos} new photograph${ctx.omittedPhotos === 1 ? "" : "s"}`,
+            reason:
+              "The redesign uses a smaller set of coordinated photographs.",
+          },
+        ]
+      : [],
   };
   plan.basis = planBasis(input, plan, {
     previous,
@@ -5800,7 +5894,7 @@ function photoLedIssue(
       );
     }
   }
-  if (!named && shotCount < REVAMP_PHOTO_FLOOR.shots) {
+  if (!ctx.boundedPhotos && !named && shotCount < REVAMP_PHOTO_FLOOR.shots) {
     reasons.push(
       `the plan has ${shotCount} shot${shotCount === 1 ? "" : "s"} in all (it needs at least ${REVAMP_PHOTO_FLOOR.shots})`,
     );

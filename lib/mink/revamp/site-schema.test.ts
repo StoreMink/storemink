@@ -297,7 +297,7 @@ describe("revampSiteSystem", () => {
       "revamp-slot://<shot id>",
       "<link_targets>",
       '"fullbleed"',
-      "hero_carousel of two or three slides",
+      "hero_carousel of two slides",
       'style width "full"',
       "Never use testimonials, logo strips, countdowns, comparisons",
       "featured_products or product_spotlight only when",
@@ -824,16 +824,16 @@ describe("revampSiteSystem: photographs (live-1)", () => {
   it("asks for a storefront led by photographs, the compiler's numbers included", () => {
     for (const rule of [
       "led by photographs",
-      "opens with a hero_carousel of two or three slides, each its own shot of the same shoot",
+      "opens with a hero_carousel of two slides, each its own shot of the same shoot",
       'a single hero (variant "fullbleed", with an image) only when the business really has one picture to show',
-      "a gallery of four to six photos",
+      "a gallery of three or four photos",
       "a tile_grid whose tiles, or a multicolumn whose items, each have a photo",
       "a media_text with two stories, each with a photo",
       "every other page you write carries at least one photograph",
       "a category being created gets its category shot",
-      "about 10 to 20 shots",
+      "stays within <photo_budget>",
       "at least three photographs outside product sections",
-      "at least eight shots",
+      "including every refill and category shot",
     ]) {
       expect(system).toContain(rule.toLowerCase());
     }
@@ -870,7 +870,7 @@ describe("revampSiteSystem: the summary (live-4)", () => {
     // v3: list items shown field for field (output-1). v4: no notes (L2-G),
     // every section example printed complete (L2-A). v5: real goods or no
     // goods (B16), the brand voice as data (B17), the scored industry (B15).
-    expect(REVAMP_SITE_PROMPT_VERSION).toBe("mink-revamp-site-v5");
+    expect(REVAMP_SITE_PROMPT_VERSION).toBe("mink-revamp-site-v6");
   });
 });
 
@@ -1626,7 +1626,7 @@ describe("prompt v5: three homepage structures (step 2)", () => {
       "follow one of the structures <industry_playbook> offers, or blend two: they are alternatives, not templates to repeat",
     );
     expect(system).toContain(
-      "The homepage opens with a hero_carousel of two or three slides",
+      "The homepage opens with a hero_carousel of two slides",
     );
   });
 });

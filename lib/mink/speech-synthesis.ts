@@ -1,8 +1,9 @@
 import "server-only";
 
-import { MINK_SPEECH_PIECE_MAX, splitSpeechChunks } from "./speech-text";
+import { MINK_SPEECH_PIECE_MAX, normalizeSpeechLanguage } from "./speech-text";
 import { googleAccessToken, refusalReason } from "./voice-transcription";
 import type { MinkSpeechProvider } from "./voice-provider";
+import { streamWavPcm } from "./speech-wav-stream";
 
 /**
  * Reads a Mink answer aloud with the platform's chosen text-to-speech model,
@@ -12,13 +13,13 @@ import type { MinkSpeechProvider } from "./voice-provider";
  * (storemink-staging): waiting for the complete clip took 3.0 s for a sentence,
  * 4.2 s for 154 characters and 8.4 s for 567, while `streamGenerateContent`
  * delivered the first audio in 1.2 to 1.6 s whatever the length, and finished
- * sooner too (5.9 s for the 567). So Gemini is one streamed call per answer,
- * which also keeps one even voice across the whole answer.
+ * sooner too (5.9 s for the 567). Gemini makes one streamed call per piece;
+ * the browser supplies sentence-sized pieces as the answer arrives.
  *
- * ★ Sarvam Bulbul V4 Flash keeps its documented REST call, made a few
- * sentences at a time with the next piece requested while the current one
- * streams out, so its first audio waits only for the first short piece.
- * (Sarvam's own streaming endpoint is not used until it can be verified.)
+ * ★ Sarvam Bulbul V4 Flash streams WAV over HTTP for each bounded piece.
+ * The browser owns short-first segmentation and one-piece-ahead prefetch;
+ * splitting here again adds round trips and provider requests unnecessarily.
+ * MINK_SARVAM_TTS_TRANSPORT=rest retains the complete-clip path for rollback.
  *
  * ★ NOTHING IS STORED. Text goes to the provider, audio straight back to the
  * merchant's browser; neither is logged or saved.
@@ -72,7 +73,7 @@ export const BULBUL_V4_FLASH_SPEAKERS: Record<string, string> = {
  * voice for is refused.
  */
 export function bulbulLanguageFor(lang: string): string | null {
-  const tag = lang.trim();
+  const tag = normalizeSpeechLanguage(lang) ?? lang.trim();
   if (/^en(-|$)/i.test(tag)) return "en-IN";
   return tag in BULBUL_V4_FLASH_SPEAKERS ? tag : null;
 }
@@ -247,7 +248,28 @@ async function* geminiPcm(
   }
 }
 
-/** One Bulbul V4 Flash request: WAV at 24 kHz, the language's own voice. */
+/** Hindi and English-Hindi copy share a documented customer-service persona. */
+export function bulbulSpeakerFor(languageCode: string, text: string): string {
+  const mixedHindi = /[\u0900-\u097f]/u.test(text) && /[A-Za-z]/.test(text);
+  if (languageCode === "hi-IN" || (languageCode === "en-IN" && mixedHindi))
+    return "simran_enhi_customer";
+  return BULBUL_V4_FLASH_SPEAKERS[languageCode];
+}
+
+function bulbulRequest(text: string, languageCode: string) {
+  return {
+    text,
+    language_code: languageCode,
+    model: "bulbul:v4-flash",
+    speaker: bulbulSpeakerFor(languageCode, text),
+    speech_sample_rate: SARVAM_SAMPLE_RATE,
+    output_audio_codec: "wav",
+    enable_preprocessing: true,
+    pace: 1.0,
+  };
+}
+
+/** Rollback transport: one complete WAV at 24 kHz. */
 async function bulbulPiece(
   text: string,
   languageCode: string,
@@ -260,14 +282,7 @@ async function bulbulPiece(
       "api-subscription-key": apiKey,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      text,
-      language_code: languageCode,
-      model: "bulbul:v4-flash",
-      speaker: BULBUL_V4_FLASH_SPEAKERS[languageCode],
-      speech_sample_rate: SARVAM_SAMPLE_RATE,
-      output_audio_codec: "wav",
-    }),
+    body: JSON.stringify(bulbulRequest(text, languageCode)),
     cache: "no-store",
     signal,
   });
@@ -285,8 +300,8 @@ async function bulbulPiece(
 }
 
 /**
- * Sarvam Bulbul V4 Flash, a short first piece then longer ones, each requested
- * while the one before streams out.
+ * Sarvam Bulbul V4 Flash. The browser has already segmented this text to at
+ * most 600 characters, comfortably within Sarvam's 2,500-character REST cap.
  */
 async function* bulbulPcm(
   text: string,
@@ -300,19 +315,26 @@ async function* bulbulPcm(
     throw new MinkSpeechUnsupportedError(
       `Bulbul V4 Flash has no voice for ${lang}.`,
     );
-  const pieces = splitSpeechChunks(text);
-  const request = (index: number) => {
-    const pending = bulbulPiece(pieces[index], languageCode, apiKey, signal);
-    // A prefetch abandoned by an early stop must not surface as unhandled.
-    pending.catch(() => {});
-    return pending;
-  };
-  let next = request(0);
-  for (let index = 0; index < pieces.length; index += 1) {
-    const current = await next;
-    if (index + 1 < pieces.length) next = request(index + 1);
-    yield current;
+  if (process.env.MINK_SARVAM_TTS_TRANSPORT === "rest") {
+    yield await bulbulPiece(text, languageCode, apiKey, signal);
+    return;
   }
+  const response = await fetch("https://api.sarvam.ai/text-to-speech/stream", {
+    method: "POST",
+    headers: {
+      "api-subscription-key": apiKey,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(bulbulRequest(text, languageCode)),
+    cache: "no-store",
+    signal,
+  });
+  if (!response.ok || !response.body)
+    throw new Error(
+      `Bulbul V4 Flash stream returned ${response.status}${await refusalReason(response)}.`,
+    );
+  // No paid REST retry: a pre-audio failure uses the existing browser fallback.
+  yield* streamWavPcm(response.body);
 }
 
 /**
@@ -326,6 +348,9 @@ export async function streamMinkSpeech(
   lang: string,
   signal: AbortSignal,
 ): Promise<MinkSpeechStream> {
+  signal.throwIfAborted();
+  if (!text.trim() || text.length > MINK_SPEECH_MAX_CHARS)
+    throw new Error("Read-aloud requires one bounded piece of text.");
   const source =
     provider === "bulbul_v4_flash"
       ? bulbulPcm(text, lang, signal)
@@ -350,5 +375,17 @@ export async function streamMinkSpeech(
       await source.return(undefined);
     }
   }
-  return { sampleRate, pcm: pcm() };
+  const output = pcm();
+  const finish = output.return.bind(output);
+  // Returning an async generator before its first next() skips its finally.
+  // The provider has already produced the primed head, so it needs explicit
+  // closure even when the listener leaves before consuming that head.
+  output.return = async (value) => {
+    try {
+      return await finish(value);
+    } finally {
+      await source.return(undefined);
+    }
+  };
+  return { sampleRate, pcm: output };
 }

@@ -311,7 +311,21 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
   /** The result column without the claim's own clock and count (B8). */
   function stepsResult(result: Record<string, unknown> | null) {
     if (!result) return result;
-    const { firstClaimedAt, interruptions, ...rest } = result;
+    const {
+      firstClaimedAt,
+      interruptions,
+      finishBy,
+      deadlineLeaseToken,
+      recoveryVersion,
+      targetReadyAt,
+      recoveryLeaseToken,
+      ...rest
+    } = result;
+    void recoveryVersion;
+    void targetReadyAt;
+    void recoveryLeaseToken;
+    void finishBy;
+    void deadlineLeaseToken;
     void firstClaimedAt;
     void interruptions;
     return rest;
@@ -815,7 +829,13 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
     });
 
     it("★★ the wall-clock ceiling ends a job whatever its failures, and nothing kicks it on", async () => {
-      const job = await createOk("full");
+      const parent = await createOk("full");
+      await finish(parent.id);
+      const job = await createOk("refine", { parentId: parent.id });
+      await client.query(
+        "update mink_revamps set result = result - 'finishBy' where id = $1",
+        [job.id],
+      );
       const claimed = await claimRevampJob(job.id);
       await releaseRevampLease(job.id, claimed!.leaseToken);
       // Inside the ceiling: claimable.
@@ -848,7 +868,16 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
 
       // The sweep settles one nobody reads.
       const sweptStore = await makeStore("Swept");
-      const swept = await createOk("full", { fixture: sweptStore });
+      const sweptParent = await createOk("full", { fixture: sweptStore });
+      await finish(sweptParent.id, { fixture: sweptStore });
+      const swept = await createOk("refine", {
+        fixture: sweptStore,
+        parentId: sweptParent.id,
+      });
+      await client.query(
+        "update mink_revamps set result = result - 'finishBy' where id = $1",
+        [swept.id],
+      );
       const sweptClaim = await claimRevampJob(swept.id);
       await releaseRevampLease(swept.id, sweptClaim!.leaseToken);
       await claimedAgo(swept.id, REVAMP_RUN_CEILING_MS + 1_000);
@@ -861,6 +890,81 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
       expect(service.kick).not.toHaveBeenCalledWith(swept.id);
     });
 
+    it("refuses an older worker's recoverable claim and preserves the policy through checkpoints", async () => {
+      const job = await createOk("full");
+      const targetReadyAt = job.result?.targetReadyAt;
+      await client.query("SAVEPOINT incompatible_worker");
+      await client.query(
+        "select set_config('app.mink_revamp_recovery', '', true)",
+      );
+      await expect(
+        client.query(
+          "update mink_revamps set status = 'running', lease_token = $2, lease_until = now() + interval '5 minutes' where id = $1",
+          [job.id, crypto.randomUUID()],
+        ),
+      ).rejects.toMatchObject({ code: "55000" });
+      await client.query("ROLLBACK TO SAVEPOINT incompatible_worker");
+      await client.query("RELEASE SAVEPOINT incompatible_worker");
+      const claimed = await claimRevampJob(job.id);
+      expect(claimed).not.toBeNull();
+      await client.query(
+        "update mink_revamps set result = '{}'::jsonb where id = $1",
+        [job.id],
+      );
+      expect((await row(job.id)).result).toMatchObject({
+        recoveryVersion: 2,
+        targetReadyAt,
+      });
+    });
+
+    it("keeps recoverable work claimable past the legacy wall-clock ceiling", async () => {
+      const job = await createOk("full");
+      expect(job.result).toMatchObject({ recoveryVersion: 2 });
+      expect(job.result).not.toHaveProperty("finishBy");
+      const first = await claimRevampJob(job.id);
+      await releaseRevampLease(job.id, first!.leaseToken);
+      await claimedAgo(job.id, REVAMP_RUN_CEILING_MS + 60_000);
+      expect((await readRevampStatus(store.actor, job.id))?.status).toBe(
+        "running",
+      );
+      expect(await claimRevampJob(job.id)).not.toBeNull();
+    });
+
+    it("an older sweep cannot fail recoverable work, while an older dashboard can record Stop", async () => {
+      const job = await createOk("full");
+      await client.query(
+        "select set_config('app.mink_revamp_recovery', '', true)",
+      );
+      const oldSweep = await client.query(
+        "update mink_revamps set status = 'failed', error_code = 'out_of_attempts', error_detail = 'run_ceiling', finished_at = now() where id = $1",
+        [job.id],
+      );
+      expect(oldSweep.rowCount).toBe(0);
+      expect((await row(job.id)).status).toBe("queued");
+      await client.query(
+        "update mink_revamps set cancel_requested_at = now(), updated_at = now() where id = $1",
+        [job.id],
+      );
+      expect((await readRevampStatus(store.actor, job.id))?.status).toBe(
+        "cancelled",
+      );
+    });
+
+    it("shows a saved retry without failing or making a card", async () => {
+      const job = await createOk("full");
+      const claim = await claimRevampJob(job.id);
+      await releaseRevampLease(job.id, claim!.leaseToken, {
+        retryAfterMs: 60_000,
+        counted: false,
+      });
+      expect(await readRevampStatus(store.actor, job.id)).toMatchObject({
+        status: "running",
+        waiting: true,
+        draftId: null,
+      });
+      expect((await row(job.id)).attempts).toBe(0);
+    });
+
     it("★ the clock is the claim's: a step's save never moves it", async () => {
       const job = await createOk("full");
       const claimed = await claimRevampJob(job.id);
@@ -871,11 +975,14 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
           leaseToken: claimed!.leaseToken,
           step: "plan",
           progress: [],
-          patch: { result: { checked: true, firstClaimedAt: 1 } },
+          patch: { result: { checked: true, firstClaimedAt: 1, finishBy: 1 } },
         }),
       ).toBe(true);
       expect((await row(job.id)).result).toEqual({
         checked: true,
+        finishBy: 1,
+        recoveryVersion: 2,
+        targetReadyAt: job.result?.targetReadyAt,
         firstClaimedAt: clock,
         interruptions: 0,
       });
@@ -949,7 +1056,10 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
       const swept = await startedJob(sweptStore);
       const sweptClaim = await claimRevampJob(swept.id);
       await releaseRevampLease(swept.id, sweptClaim!.leaseToken);
-      await claimedAgo(swept.id, REVAMP_RUN_CEILING_MS + 1_000);
+      await client.query(
+        "update mink_revamps set attempts = max_attempts where id = $1",
+        [swept.id],
+      );
       expect(await startsCounted(sweptStore.actor.storeId)).toBe(1);
       await sweepStalledRevamps(25);
       expect((await row(swept.id)).status).toBe("failed");

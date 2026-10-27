@@ -108,6 +108,9 @@ describe("Mink voice providers", () => {
     expect(init.headers).toEqual({ "api-subscription-key": "sarvam-secret" });
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get("model")).toBe("saaras:v4");
+    expect(JSON.parse(String((init.body as FormData).get("keyterms")))).toEqual(
+      ["StoreMink", "Mink"],
+    );
     expect((init.body as FormData).get("language_code")).toBe("unknown");
   });
 
@@ -186,6 +189,30 @@ describe("a provider refusal", () => {
     // request back; only the closed vocabulary is safe to carry.
     expect((error as Error).message).not.toContain("has not been used");
     expect((error as Error).message).not.toContain("storemink-staging");
+  });
+
+  it("does not leak free text disguised as a provider reason into server logs", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            status: "request containing private transcript",
+            details: [
+              { reason: "SECRET=private" },
+              { reason: "RESOURCE_EXHAUSTED" },
+            ],
+          },
+        }),
+        { status: 429 },
+      ),
+    );
+    await expect(
+      transcribeMinkVoice(
+        "chirp_3",
+        Buffer.from("wav"),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("Chirp 3 returned 429 (RESOURCE_EXHAUSTED).");
   });
 
   it("★ still reports the status when the body explains nothing", async () => {

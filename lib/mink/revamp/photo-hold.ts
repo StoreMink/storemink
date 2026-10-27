@@ -53,6 +53,11 @@ export const REVAMP_REVIEW_PENDING_SUFFIX = "~review";
 export function storedPhotoUnit(
   image: Pick<RevampStoredImage, "role" | "slotId">,
 ): string {
+  const candidate =
+    image.role === "slot" || image.role === "anchor"
+      ? image.slotId.match(/^(.+)~candidate-[1-4]$/)
+      : null;
+  if (candidate) return revampPhotoUnit(image.role, candidate[1]);
   if (
     image.role === "slot" &&
     typeof image.slotId === "string" &&

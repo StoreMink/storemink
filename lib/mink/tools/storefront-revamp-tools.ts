@@ -82,7 +82,7 @@ import type { MinkTool, MinkToolContext } from "./registry";
 const available = (actor: MinkActorContext) => actor.draftingEnabled === true;
 
 const START_INSTRUCTION =
-  "Tell the merchant in one short sentence that the redesign has started and the card shows its progress. Do not describe the design.";
+  "Tell the merchant in one short sentence that the redesign has started and the card shows its progress. Do not describe the design or promise a completion time; the merchant can leave and return later.";
 const REFINE_INSTRUCTION =
   "Tell the merchant in one short sentence that the changes have started and the card shows their progress. Do not describe the design.";
 // ★ A refusal carries no card, so its instruction says so: the model used to

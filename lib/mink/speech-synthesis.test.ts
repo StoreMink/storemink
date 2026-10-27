@@ -9,6 +9,7 @@ vi.mock("./voice-transcription", () => ({
 import {
   BULBUL_V4_FLASH_SPEAKERS,
   bulbulLanguageFor,
+  bulbulSpeakerFor,
   MINK_SPEECH_MAX_CHARS,
   MinkSpeechUnsupportedError,
   parseWav,
@@ -102,9 +103,11 @@ beforeEach(() => {
   process.env.SARVAM_API_KEY = "sarvam-key";
   delete process.env.MINK_TTS_GEMINI_MODEL;
   delete process.env.MINK_TTS_GEMINI_VOICE;
+  vi.stubEnv("MINK_SARVAM_TTS_TRANSPORT", "rest");
 });
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("parseWav", () => {
@@ -260,6 +263,19 @@ describe("Gemini 3.8 Flash-Lite TTS (streamed)", () => {
     ).rejects.toThrow("Gemini TTS stream failed (RESOURCE_EXHAUSTED).");
   });
 
+  it("refuses a sample rate change within a Gemini stream", async () => {
+    fetchMock.mockResolvedValueOnce(
+      sse([pcmEvent([1, 0]), pcmEvent([2, 0], "audio/l16; rate=8000")]),
+    );
+    const speech = await streamMinkSpeech(
+      "gemini_3_8_flash_lite_tts",
+      "Hello",
+      "en-IN",
+      signal,
+    );
+    await expect(drain(speech.pcm)).rejects.toThrow("changed sample rate");
+  });
+
   it("closes the provider call when the listener stops after the first chunk", async () => {
     const cancelled = vi.fn();
     fetchMock.mockResolvedValue(
@@ -280,14 +296,7 @@ describe("Gemini 3.8 Flash-Lite TTS (streamed)", () => {
 describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
   const words = (n: number, word: string) =>
     `${Array.from({ length: n }, () => word).join(" ")}.`;
-  // A short first piece, then two longer ones (the splitter's 160 / 600).
-  // Each sentence starts with a capital, as an answer's do: a full stop
-  // followed by a lowercase word ("Rs. 500") is not a sentence end.
-  const answer = [
-    words(15, "Sales"),
-    words(50, "Orders"),
-    words(70, "Stock"),
-  ].join(" ");
+  const answer = [words(15, "Sales"), words(50, "Orders")].join(" ");
 
   const bulbul = (pcm: number[]) => ({
     ok: true,
@@ -297,42 +306,32 @@ describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
     }),
   });
 
-  it("asks for each piece in the language's own voice as WAV, one ahead", async () => {
-    fetchMock
-      .mockResolvedValueOnce(bulbul([1, 0]))
-      .mockResolvedValueOnce(bulbul([2, 0]))
-      .mockResolvedValueOnce(bulbul([3, 0]));
+  it("does not split an already-segmented voice-chat piece into extra requests", async () => {
+    fetchMock.mockResolvedValueOnce(bulbul([1, 0]));
+    expect(answer.length).toBeGreaterThan(160);
+    expect(answer.length).toBeLessThanOrEqual(MINK_SPEECH_MAX_CHARS);
     const speech = await streamMinkSpeech(
       "bulbul_v4_flash",
       answer,
       "hi-IN",
       signal,
     );
-    // The first piece answered and the second was already asked for.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(speech.sampleRate).toBe(24_000);
-    expect(await drain(speech.pcm)).toEqual([
-      [1, 0],
-      [2, 0],
-      [3, 0],
-    ]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(await drain(speech.pcm)).toEqual([[1, 0]]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://api.sarvam.ai/text-to-speech");
     expect(init.headers["api-subscription-key"]).toBe("sarvam-key");
-    const sent = fetchMock.mock.calls.map(
-      ([, request]) => JSON.parse(request.body) as Record<string, unknown>,
-    );
-    expect(sent[0]).toEqual({
-      text: words(15, "Sales"),
+    expect(JSON.parse(init.body)).toEqual({
+      text: answer,
       language_code: "hi-IN",
       model: "bulbul:v4-flash",
-      speaker: BULBUL_V4_FLASH_SPEAKERS["hi-IN"],
+      speaker: "simran_enhi_customer",
+      enable_preprocessing: true,
+      pace: 1,
       speech_sample_rate: 24000,
       output_audio_codec: "wav",
     });
-    expect((sent[0].text as string).length).toBeLessThanOrEqual(160);
-    expect(sent.map((piece) => piece.text).join(" ")).toBe(answer);
   });
 
   it("hands a language it has no voice for to the browser without calling out", async () => {
@@ -360,27 +359,116 @@ describe("Sarvam Bulbul V4 Flash (piece by piece)", () => {
       streamMinkSpeech("bulbul_v4_flash", "Hi", "en-IN", signal),
     ).rejects.toThrow("Bulbul V4 Flash returned unreadable audio.");
   });
+});
 
-  it("refuses a sample rate that changes mid-answer", async () => {
-    fetchMock.mockResolvedValueOnce(bulbul([1, 0])).mockResolvedValueOnce({
+describe("Sarvam HTTP streaming", () => {
+  it("starts playback before the provider closes the complete clip", async () => {
+    vi.stubEnv("MINK_SARVAM_TTS_TRANSPORT", "");
+    const wav = wavOf(Buffer.from([1, 0, 2, 0]), { list: true });
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        audios: [
-          wavOf(Buffer.from([2, 0]), { rate: 8_000 }).toString("base64"),
-        ],
+      body: new ReadableStream<Uint8Array>({
+        start(c) {
+          controller = c;
+          c.enqueue(wav.subarray(0, wav.length - 2));
+        },
+        cancel,
       }),
     });
     const speech = await streamMinkSpeech(
       "bulbul_v4_flash",
-      `${words(15, "sales")} ${words(50, "orders")}`,
-      "en-IN",
+      "आपका order तैयार है।",
+      "hi-IN",
       signal,
     );
-    await expect(drain(speech.pcm)).rejects.toThrow("changed sample rate");
+    expect((await speech.pcm.next()).value).toEqual(Buffer.from([1, 0]));
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://api.sarvam.ai/text-to-speech/stream",
+    );
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      model: "bulbul:v4-flash",
+      speaker: "simran_enhi_customer",
+      output_audio_codec: "wav",
+      enable_preprocessing: true,
+    });
+    controller.enqueue(wav.subarray(-2));
+    controller.close();
+    expect(await drain(speech.pcm)).toEqual([[2, 0]]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])(
+    "cancels the upstream stream, including before playback starts (%s)",
+    async (consumeHead) => {
+      vi.stubEnv("MINK_SARVAM_TTS_TRANSPORT", "");
+      const wav = wavOf(Buffer.from([1, 0, 2, 0]));
+      const cancel = vi.fn();
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        body: new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(wav.subarray(0, wav.length - 2));
+          },
+          cancel,
+        }),
+      });
+      const speech = await streamMinkSpeech(
+        "bulbul_v4_flash",
+        "Hello.",
+        "en-IN",
+        signal,
+      );
+      if (consumeHead) await speech.pcm.next();
+      await speech.pcm.return(undefined);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(fetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("does not spend a second paid request when streaming fails", async () => {
+    vi.stubEnv("MINK_SARVAM_TTS_TRANSPORT", "");
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 429 });
+    await expect(
+      streamMinkSpeech("bulbul_v4_flash", "Hello.", "en-IN", signal),
+    ).rejects.toThrow("429");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("uses the mixed Hindi-English persona without changing Marathi's voice", () => {
+    expect(bulbulSpeakerFor("en-IN", "आपका order तैयार है")).toBe(
+      "simran_enhi_customer",
+    );
+    expect(bulbulSpeakerFor("hi-IN", "Order taiyar hai")).toBe(
+      "simran_enhi_customer",
+    );
+    expect(bulbulSpeakerFor("mr-IN", "तुमची order तयार आहे")).toBe(
+      BULBUL_V4_FLASH_SPEAKERS["mr-IN"],
+    );
+    expect(bulbulLanguageFor("mr")).toBe("mr-IN");
+    expect(bulbulLanguageFor("TA-in")).toBe("ta-IN");
   });
 });
 
 describe("★ the read-aloud request cap", () => {
+  it.each(["bulbul_v4_flash", "gemini_3_8_flash_lite_tts"] as const)(
+    "%s refuses empty, oversized or already-cancelled work before a paid call",
+    async (provider) => {
+      for (const text of [" ", "a".repeat(MINK_SPEECH_MAX_CHARS + 1)]) {
+        await expect(
+          streamMinkSpeech(provider, text, "en-IN", signal),
+        ).rejects.toThrow("bounded piece");
+      }
+      const stopped = new AbortController();
+      stopped.abort();
+      await expect(
+        streamMinkSpeech(provider, "Hello", "en-IN", stopped.signal),
+      ).rejects.toThrow();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it("is one piece of an answer, the most the voice chat ever sends", () => {
     expect(MINK_SPEECH_MAX_CHARS).toBe(MINK_SPEECH_PIECE_MAX);
     expect(MINK_SPEECH_MAX_CHARS).toBeLessThanOrEqual(600);

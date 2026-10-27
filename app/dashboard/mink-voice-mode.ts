@@ -277,6 +277,8 @@ function continuesSpoken(final: string, streamed: string): boolean {
 }
 
 type Turn = {
+  /** Immutable hint from the question that opened this answer. */
+  language: string | null;
   session: MinkSpeechSession;
   /** Replaced when the turn reopens or its block turns out to be empty. */
   segmenter: MinkSpeechSegmenter;
@@ -296,6 +298,7 @@ type Turn = {
 };
 
 type Live = {
+  lastLanguage: string | null;
   enabled: boolean;
   state: MinkVoiceState;
   baselineIds: Set<string>;
@@ -409,6 +412,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   const latest = { current: deps.input };
   const levelRef = { current: 0 };
   const l: Live = {
+    lastLanguage: null,
     enabled: false,
     state: "idle",
     baselineIds: new Set(),
@@ -507,6 +511,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   const stop = (reason: MinkVoiceStopReason, text?: string) => {
     if (!l.enabled) return;
     l.enabled = false;
+    l.lastLanguage = null;
     l.captureId += 1;
     l.captureAbort?.abort();
     l.captureAbort = null;
@@ -655,7 +660,10 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (pieces.length && turn.awaiting) resumeTurn(turn);
     const fallback = latest.current.langFallback ?? DEFAULT_SPEECH_LANG;
     for (const piece of pieces)
-      turn.session.enqueue(piece, speechLangFor(piece, fallback));
+      turn.session.enqueue(
+        piece,
+        speechLangFor(piece, fallback, turn.language),
+      );
   };
 
   /** The answer after an acknowledgement has something to say: take pieces again. */
@@ -666,7 +674,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
   };
 
   /** Opens the speech session for the reply that was just sent. */
-  const beginTurn = () => {
+  const beginTurn = (language: string | null = null) => {
     dropTurn();
     l.empties = 0;
     l.replyPending = true;
@@ -681,6 +689,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       latest.current.createSession ?? createMinkSpeechSession;
     const useModel = l.audio !== null && l.serverSpeech !== "off";
     const turn: Turn = {
+      language,
       segmenter: createMinkSpeechSegmenter(),
       closed: false,
       finalised: false,
@@ -748,6 +757,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (latest.current.isReplying) return;
     const text = l.pendingSend;
     const replace = l.pendingReplaces;
+    const language = l.lastLanguage;
     l.pendingSend = null;
     l.pendingReplaces = false;
     clearWaitNotice();
@@ -761,7 +771,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         );
         return;
       }
-      beginTurn();
+      beginTurn(language);
       l.asked = asked;
       // A send through the composer resolves after its upload, by which time
       // the chat may already show the reply running.
@@ -825,7 +835,11 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (l.unstoppable && l.pendingSend !== null) scheduleWaitNotice();
   };
 
-  const onTranscript = (text: string | null, id: number) => {
+  const onTranscript = (
+    text: string | null,
+    id: number,
+    language: string | null = null,
+  ) => {
     if (id !== l.captureId) return;
     l.captureAbort = null;
     set.mic("closed");
@@ -839,6 +853,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
       heard !== "" &&
       l.speechFrom === "speaking" &&
       isEchoTranscript(heard, l.said);
+    if (heard && !echo) l.lastLanguage = language;
     if (echo && !l.echoProne) {
       l.echoProne = true;
       notice(MINK_ECHO_NOTICE);
@@ -918,6 +933,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     if (!l.enabled || l.captureAbort || !microphone) return;
     const controller = new AbortController();
     const id = ++l.captureId;
+    let detectedLanguage: string | null = null;
     l.captureAbort = controller;
     l.speechStarted = false;
     l.speechFrom = null;
@@ -926,6 +942,9 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
     microphone
       .capture({
         signal: controller.signal,
+        onLanguage: (language) => {
+          detectedLanguage = language;
+        },
         gate: l.gate,
         onLevel: (level) => {
           levelRef.current = Math.max(level, levelRef.current * 0.9);
@@ -936,7 +955,7 @@ function createVoiceLoop(deps: { input: MinkVoiceModeInput; set: Setters }) {
         },
       })
       .then(
-        (text) => onTranscript(text, id),
+        (text) => onTranscript(text, id, detectedLanguage),
         (error: unknown) => onCaptureError(error, id),
       );
   };

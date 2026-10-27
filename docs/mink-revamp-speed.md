@@ -1,5 +1,36 @@
 # Mink storefront redesign speed
 
+## Implementation update, 27 Oct 2026
+
+New full redesigns have eight planned storefront photographs. Twelve minutes
+is a performance target only: exceeding it never fails or discards the job.
+Each invocation drains before its runtime limit and unfinished work resumes
+from saved checkpoints. Known capacity refusals, transient database transport
+faults and storage-check outages park without consuming the real failure
+counter. Failed quality checks and spending still have explicit bounds.
+
+The compiler fits v6 plans to the photo budget, reuses suitable photos across
+pages and fixes optional copy and colour-band issues without a model repair.
+Supplied product photos remain in use. Preview design exposes the compiled
+layout early. Paid photo and hidden-anchor candidates survive reviewer outages;
+reviews resume without redrawing, and no unchecked picture reaches the final
+card. A time limit on one invocation never triggers omission of unfinished
+photographs. The waiting card states that progress is saved and retries are
+automatic; Apply waits for required final checks.
+
+These are implemented recovery rules, not measured provider performance.
+Priority is not enabled. The shared pacer keeps its 10-to-45-second bounds,
+with a 40-second recovery floor for ten minutes after a refusal cooldown.
+That hold survives worker restarts using existing database fields. Compatible
+workers must finish rolling out before measurement; older success handlers can
+still narrow the gap during overlap.
+The observation that 40-to-45-second spacing worked in a past sample is not a
+capacity guarantee. Paid tests of the exact 2K MEDIUM request at busy and quiet
+hours, followed by representative staging redesigns, still need explicit spend
+approval. Measure success rate, click-to-ready p50/p90, queue delay, refusals,
+quality and provider cost before advertising a duration. The historical
+measurements below describe the earlier pipeline.
+
 Why a Mink storefront redesign took 48 to 72 minutes, what the owner decided
 on 23 Oct 2026, what Phase 0 changed in the code, how to run the Priority
 test, and what is left for Phases 1 and 2. The build contract is
@@ -257,19 +288,14 @@ the existing 3 permits. Text model keys never read the new columns.
 | Permits per key                      | 3, unchanged (0149 CHECK)                                     |
 | Recovery                             | one permit back per current-epoch success (was one per three) |
 
-The bounds were corrected on 23 Oct from 25 to 90 s (robustness audit B28;
-owner: "Change to 10 to 45 s"). x0.9 per success and x1.5 per 429 cancel
-at about 21% of starts refused (ln(1/0.9) / ln(1.5/0.9)), so a line refused
-more often sits at the ceiling and one refused less at the floor: the
-bounds, not the factors, set the pace, and retuning the factors only moves
-the 21%. With the 90 s ceiling, a line refused more often than that would
-have started once every 90 s, half the line, even when the refusals were not
-about our spacing. 45 s is close to the busy-hour accepted rate fitted to
-the 23 Oct trace (one start per about 39 s, an estimate), so a pinned line
-keeps near what Google was taking; 10 s lets a quiet hour run near the
-three permits, where the 25 s floor gave away about a third of the line
-(simulation, an estimate). The 40 s start and the x0.9 descent are the
-gradual ramp-up Google's docs ask for.
+The bounds were corrected on 23 Oct from 25 to 90 s. On 27 Oct the
+recovery rule changed: every 429 grows the gap 1.5x, to at least 40 s and at
+most 45 s. Successes retain a 40 s floor until ten minutes after the last
+shared cooldown ends. Before any refusal or after that hold expires,
+successes may explore down to 10 s again. Existing `epoch`/`pause_until`
+fields retain the hold across new transactions and restarts. No migration
+is needed. This is a conservative response to the historical observations;
+40 s is not an established safe rate for every hour or workload.
 
 Migration 0236 adds `next_start_at timestamptz NOT NULL DEFAULT now()` and
 `gap_ms integer NOT NULL DEFAULT 40000` with
@@ -443,108 +469,90 @@ script's drift tests against the production requests it copies.
   gradually: a success shrinks a high one 10% at a time, a refusal grows a
   low one 1.5x at a time.
 
-## Running the Priority test
+## Running the capacity and Priority test
 
-The owner approved about $24 for the two passes on storemink-staging
-(decisions 1 and 6); one pass costs about $6.43 at list prices by the
-script's own estimate since its photo lanes moved to Nano Banana 2.1 on
-25 Oct ($11.57 on the 23 Oct models; the dry run always prints the current
-figure). Only the main session runs it, never a build agent.
+An owner-approved 27 Oct pass stopped after 36 of 54 calls after revealing
+unknown-cost HTTP 499 accounting and ladder catch-up defects. Both have
+regression fixes; no paid replacement pass was run. All nine successful
+Priority requests were served as Standard. Eleven requests returned 429;
+one 504 and one 499 have unknown usage. Corrected accounted exposure is
+$6.73 against the $8 approval, including conservative reserves, not actual
+charges. The Priority ladder and incomplete paired comparison are confounded.
+Capacity remains unresolved. Results and an unsent Google escalation draft:
+`mink-capacity-test-2026-10-27.md`.
 
-1. Refresh the Application Default Credentials, which a live pass checks
-   before its first call (it asks for a token and refuses without one):
-   `gcloud auth application-default login`. Your ADC quota project may be
-   storemink-prod: Vertex bills the project in the request path
-   (storemink-staging), where every earlier staging run was measured, so the
-   script prints a note, not a refusal.
-2. Dry run, which calls nothing and writes nothing:
-   `npm run revamp:priority-test -- --out=<dir>`. It prints the plan: 152
-   calls, at most 6 in flight, the spacing ladder's last start due 6.3 min
-   in and the pass's 9.8 min after the pass starts, the cost at list prices
-   (about $6.43 since 25 Oct; $11.57, Standard $6.90 and Priority $4.67, on
-   the 23 Oct models) against the `--max-usd` budget (default 15, at most
-   25), and each model's per-call ceiling.
-3. Evening pass, about 18:30 IST, on the default $15 budget:
-   `npm run revamp:priority-test -- --live --yes --label=evening --out=<dir>`.
-4. Night pass, about 03:30 IST, on what is left of the $24:
-   `npm run revamp:priority-test -- --live --yes --label=night --lead=priority --max-usd=<24 less the evening's spend, at most 15> --out=<dir>`.
-   The evening's spend is `spentUsd` in its results JSON (the "Spend at
-   list prices" line of its summary), a timed-out call counted at its
-   ceiling. `--lead=priority` so neither arm always opens a pair. An evening
-   that spent the estimate leaves about $17.57 (about $12.43 on the 23 Oct
-   models), enough for a full pass. A
-   budget below the dry run's estimate is refused before the first call,
-   since the pass would stop part way: ask the owner before raising it.
+Prepare a dry run without credentials, environment files or service access:
 
-Each pass takes about 17 to 22 minutes, in two stages. First the spacing
-ladder, alone: 12 Standard photos at global (`photo-ladder@global`:
-`gemini-nano-banana-2.1` at HIGH since 25 Oct, `gemini-3-pro-image` on
-23 Oct), three
-each 60, 40, 30 and 15 s apart, widest first (starts at 0, 60, 120, 160,
-200, 240, 270, 300, 330, 345, 360 and 375 s), so the photo model's
-busy-hour limit is measured against the spacing with nothing else running;
-any refusals come at the end and cannot colour the wider rungs. The pass
-starts once the ladder's last answer is in: 140 calls in seven lanes, the
-arms alternating call by call within a lane. Theme Studio's photo
-(`studio-photo@global`, HIGH) 10 Standard and 10 Priority photos (4:5);
-Mink's photo (`mink-photo@global`, `@us` and `@eu`, MINIMAL) 10 and 10 at
-global and 10 Standard each at the us and eu endpoints (3:4), all on
-`gemini-nano-banana-2.1` since 25 Oct (the 23 Oct passes drew with
-`gemini-3-pro-image` and `gemini-3.1-flash-image`); the photo
-check on `gemini-3.8-flash` 20 and 20 at global and 20 Standard each at us
-and eu. A two-arm lane starts a call every 15 s (`--gap`), a one-arm lane
-every 30 s, so every arm on every endpoint starts once per two gaps. Every
-photo asks for 2K. Every call is sent once, never retried. A call starts
-only while the spend so far, the ceiling of every call in flight and its
-own ceiling stay within `--max-usd`; a call that timed out counts at its
-ceiling, since it may have been billed. Ctrl-C once stops new calls; twice
-abandons the calls in flight. It refuses any project but storemink-staging,
-any project variable containing "prod" and an overridden Vertex endpoint
-(`GOOGLE_VERTEX_BASE_URL`). It never touches the database, a bucket or the
-shared provider capacity and its pacer.
+```sh
+npm run revamp:priority-test -- --max-usd=8 --label=capacity
+```
 
-Priority sends `X-Vertex-AI-LLM-Shared-Request-Type: priority` with
-`X-Vertex-AI-LLM-Request-Type: shared`; the answer's
-`usageMetadata.trafficType` says `ON_DEMAND_PRIORITY` when it was served as
-Priority and `ON_DEMAND` when Google downgraded it (billed at Standard).
-Under `--out` go the results JSON (`version` 2, rewritten after every call),
-the markdown summary beside it and the photos in an `-images` folder. Per
-model, arm and endpoint the summary gives the 429 share, p50 and p95
-latency of the 200s, how long a refused request was held, the share really
-served as Priority, the photo sizes (the final image part kept, the thought
-drafts counted), the cost and the most 200s started in any 60 s. Every
-refusal keeps Google's whole error body (`errorBody`), its details
-(`errorDetails`: ErrorInfo, QuotaFailure, Help) and the quota it names
-(`quotaNamed`, null for the shared pool's 429, which says only "Resource has
-been exhausted (e.g. check quota)."). Every call records
-`gapSincePrevStartMs`, the time since the last call to the same model at the
-same endpoint started, whatever its lane or arm: the spacing Google's
-limiter saw.
+The default 54 calls select:
 
-Reading the ladder: the summary's "Spacing ladder" section gives each
-rung's calls, 200s, 429s, measured spacing (p50) and the quotas named, then
-the most photos admitted within 60 s, in the ladder and across the pass.
-Three or more admitted inside 60 s means the 2-a-minute paper quota does not
-bind. A 429 that names a quota is a project quota, which a quota increase
-raises. 429s that name none and fade as the spacing widens are the shared
-pool's busy-hour gate: the narrowest rung with none is where the photo pacer
-can settle, so `IMAGE_START_PACING`'s bounds (10 to 45 s) are retuned from
-it, a constant change with no migration (0236's CHECK allows 1 s to 5 min).
-The us and eu photo rows against the global row say whether Mink's photos
-(product studio photos included) should move to another endpoint; 2.1 is
-confirmed at global only, so a 404 at us or eu is free and is itself the
-answer.
+- Twelve Standard redesign photos, alone, with three starts at each of 60,
+  40, 30 and 15 seconds. The last scheduled start is at 375 seconds.
+- Twelve Priority photos with the identical request and spacing, alone after
+  the Standard ladder has drained, leaving at least 60 seconds since its
+  last photo start before Priority opens.
+- Twenty paired redesign photos, ten per arm, alternating starts at 40
+  seconds, plus ten US Standard review controls at 80-second intervals.
 
-Reading the rest: its checks run on one 180 s clock per call, while
-production now gives each redesign try 75 s (Theme Studio 120 s) and sends
-checks to the US first, so apply those cuts when reading check latencies.
-Its photo calls carry no reference images, so absolute latencies run lower
-than a real shoot's; the Standard against Priority comparison is still like
-for like. If Priority cuts the refusals, the owner decides what to pay for
-(the plan suggests the checks and the planner first, the photos too if
-their refusals drop); Priority must then be priced at 1.8x in
-`lib/theme-studio/cost.ts`, `products.ts`'s fixed estimate and
-`lib/mink/cost.ts`, so the estimates and the daily spend cap stay right.
+Draws use the production image prompt builder, 2K MEDIUM, JPEG quality 95,
+no people and one JPEG `ANCHOR:` reference. The fixture is an offline
+conversion of `public/themes/basket/hero.webp`, 1024 by 768, without merchant
+data. Both arms send identical content per pair. Results retain request and
+anchor SHA-256 hashes. The US review is a small synthetic control, not a
+measurement of real-photo checking latency or quality.
+
+`--lanes=<comma-separated lane ids>|all|none` selects non-ladder lanes;
+`--ladders=standard,priority|standard|priority|none` selects ladders.
+Historical HIGH/MINIMAL and other endpoint lanes remain opt-in and have
+separate labels. `--gap` affects the paired/control stage, not the ladder.
+`--lead=priority` flips paired order for a repeat. Repeat at busy and quiet
+hours only after approval; do not schedule paid calls implicitly.
+
+Allow roughly 30 minutes per default pass, depending on model latency and
+budget-admission waits. Scheduled starts alone span about 25 minutes; each
+stage drains its last answers before continuing and leaves a full sixty
+seconds since the prior start in its pools. After a budget delay, ladder
+starts preserve their own rung gap rather than catching up in a burst. This probe bypasses our
+database pacer, measures Google admission and does not validate concurrent
+storefront jobs. That needs the separate staging acceptance runbook.
+
+Live execution adds `--live --yes` to the exact approved dry-run options.
+Provide staging project variables and valid ADC through the process
+environment. The script refuses production project names and endpoint
+overrides, pins the quota project to staging, and touches no database or
+bucket. No `.env` files are loaded. No retries, a 180-second clock per call,
+at most six in flight. A refreshed ADC login may be required before execution.
+
+The default tool budget is $15 with a $25 tool ceiling. Neither authorizes
+spend. Use the separately approved lower cap, such as $8, for an actual pass.
+Before every start, the guard reserves that request plus all in-flight
+requests against spend already incurred. Nano Banana reserves twice its
+documented 32,768-token output maximum at the image rate plus 16K input;
+checks reserve 64K candidate and 64K thinking tokens plus 32K input. These
+are deliberately conservative list-price envelopes, not a Cloud Billing
+limit. Unknown usage, transport failures, timeouts and HTTP 499 retain
+reservations. Only known admission/validation errors release them.
+A call that cannot fit waits for answers or stops the pass if none can free
+room. Budget waits can widen measured spacing; inspect actual start gaps.
+
+Version-3 results under `--out` contain usage, trafficType, error bodies,
+quota details, actual start gaps, per-arm ladders and returned photos.
+`ON_DEMAND_PRIORITY` confirms Priority service. `ON_DEMAND` on an explicit
+Priority request confirms downgrade; missing trafficType is inconclusive.
+Three samples per rung cannot establish a safe sustained rate. An unnamed
+429 alone does not establish a cause. Preserve project, model, endpoint,
+request ids, timestamps, headers and traffic types for Google escalation.
+
+Enable no paid tier in production based on headers alone. Compare both
+hours, refusal rates, served Priority share, latency and cost; then seek the
+owner's rollout decision. If the shared pool remains insufficient, obtain a
+Google capacity proposal sized to concurrent redesign demand before buying
+reserved throughput. Production readiness remains pending the database
+upgrade and the staging evidence in `mink-revamp-production-readiness.md`.
+No merchant-visible change, no Help Centre update for this capacity-only work.
 
 ## Left for Phase 1 and Phase 2
 

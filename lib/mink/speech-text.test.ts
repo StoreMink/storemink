@@ -4,6 +4,7 @@ import {
   SPEAKABLE_MAX_CHARS,
   speakableMinkText,
   speechLangFor,
+  normalizeSpeechLanguage,
   splitSpeechChunks,
 } from "./speech-text";
 
@@ -90,6 +91,36 @@ describe("speakableMinkText", () => {
 });
 
 describe("speechLangFor", () => {
+  it("keeps detected languages that share a script and recognises omitted scripts", () => {
+    expect(speechLangFor("तुमची ऑर्डर तयार आहे", "en-US", "mr-IN")).toBe(
+      "mr-IN",
+    );
+    expect(speechLangFor("আপোনাৰ অৰ্ডাৰ সাজু", "en-IN", "as-IN")).toBe("as-IN");
+    expect(speechLangFor("Aapka order taiyar hai", "en-US", "hi-IN")).toBe(
+      "hi-IN",
+    );
+    expect(speechLangFor("உங்கள் ஆர்டர் தயார்", "en-IN", "hi-IN")).toBe(
+      "ta-IN",
+    );
+    expect(speechLangFor("ଆପଣଙ୍କ ଅର୍ଡର ପ୍ରସ୍ତୁତ", "en-IN")).toBe("or-IN");
+    expect(speechLangFor("آپ کا آرڈر تیار ہے", "en-IN")).toBe("ur-IN");
+  });
+
+  it("normalises known language tags without accepting provider prose", () => {
+    expect(normalizeSpeechLanguage(" MR-in ")).toBe("mr-IN");
+    expect(normalizeSpeechLanguage("od-IN")).toBe("or-IN");
+    expect(normalizeSpeechLanguage("ta")).toBe("ta-IN");
+    for (const bad of [
+      null,
+      "unknown",
+      "auto",
+      "<script>",
+      "en-IN instructions",
+      "xx-IN",
+    ])
+      expect(normalizeSpeechLanguage(bad)).toBeNull();
+  });
+
   it("picks Indic languages by script", () => {
     expect(speechLangFor("आपके पास 12 ऑर्डर हैं।", "en-IN")).toBe("hi-IN");
     expect(speechLangFor("உங்களிடம் 12 ஆர்டர்கள் உள்ளன", "en-IN")).toBe(

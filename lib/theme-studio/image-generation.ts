@@ -205,6 +205,16 @@ export interface ImageRunOptions {
   /** Pause the run on reviewer outages; never let them trigger paid redraws. */
   deferUnavailableReviews?: boolean;
   corrections?: Readonly<Record<string, string>>;
+  /** Persist a paid candidate before its review begins. */
+  onPrepared?: (
+    briefId: string,
+    image: PreparedSlotImage,
+    attempt: number,
+  ) => Promise<void>;
+  /** Durable attempt/correction state supplied by resumable callers. */
+  resume?: Readonly<
+    Record<string, { attempts: number; retake?: ThemeImageRetake }>
+  >;
   /**
    * Called as each slot settles, before the run ends, with the stored image
    * when one was kept. ★ For a caller that stores every paid image the
@@ -429,8 +439,11 @@ export async function runSlotImageGeneration(
       }
       return failure;
     };
-    let retake: ThemeImageRetake | undefined;
-    for (let attempt = 1; ; attempt++) {
+    const resumed = options.resume?.[args.briefId];
+    let retake: ThemeImageRetake | undefined = resumed?.retake;
+    for (let attempt = (resumed?.attempts ?? 0) + 1; ; attempt++) {
+      if (attempt > redraws + 1)
+        return settle(attempt - 1, { status: "skipped" });
       if (signal.aborted || laneFailed)
         return settle(attempt - 1, { status: "skipped" });
       const request = args.request(retake);
@@ -519,6 +532,8 @@ export async function runSlotImageGeneration(
       });
       const reviewer = input.reviewer;
       const candidate = drawn.prepared;
+      if (candidate && options.onPrepared)
+        await options.onPrepared(args.briefId, candidate, attempt);
       if (!reviewer || !candidate) return kept("unreviewed");
 
       const reviewStarted = Date.now();

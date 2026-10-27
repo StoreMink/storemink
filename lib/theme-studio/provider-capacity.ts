@@ -25,33 +25,19 @@ export interface ProviderPacing {
   successFactor: number;
   /** Applied to the gap after each refusal. */
   rateLimitFactor: number;
+  /** Keep a conservative floor after a refusal's shared cooldown ends. */
+  recoveryFloorMs?: number;
+  recoveryHoldMs?: number;
 }
 
 /**
- * ★★ IMAGE MODELS ARE SPACED BY START TIME (owner's decision, 2026-10-23).
- * A request on an image model's key starts no earlier than the previous start
- * plus the gap; the gap starts at 40 s, shrinks 10% per success to 10 s and
- * grows 1.5x per 429 to 45 s. Measured on storemink-staging (one shop, one
- * night): gemini-3-pro-image accepted 11 of 12 requests sent 12 s or more
- * after the previous photo, refused 5 of 7 sent straight away, and accepted
- * starts 40 s or more apart. ★ START time, not end time, and overlap is
- * allowed: spacing from the end of the last photo ties the line's pace to
- * Google's draw latency (0.91 photos a minute at run 2's 51 s draws), while
- * a start every 40 s holds about 1.5 a minute whatever a draw takes.
- * ★★ THE BOUNDS SET THE PACE, NOT THE FACTORS (owner, 2026-10-23: "Change to
- *   10 to 45 s"; robustness audit B28). x0.9 per success and x1.5 per 429
- *   cancel at about 21% of starts refused (ln(1/0.9) / ln(1.5/0.9)): refused
- *   more often, the gap climbs to the ceiling and stays there; less often, it
- *   falls to the floor, so retuning the factors only moves the 21%. With the
- *   first build's 90 s ceiling, a line refused more often than that would
- *   start once every 90 s, half the line, even when the refusals are not
- *   about our spacing at all. 45 s sits close to one start per 39 s, the
- *   busy-hour accepted rate fitted to the 23 Oct trace (an estimate), so a
- *   pinned line keeps near what Google was taking; 10 s lets a quiet hour
- *   (Google took 9 Pro photos in 75 s that day) run near the three permits,
- *   where 25 s gave away about a third of the line (simulation estimates).
- *   ★ The 40 s start and the x0.9 descent are the gradual ramp-up Google's
- *   docs ask for.
+ * Start-time pacing stays between 10 and 45 seconds. A new key starts at
+ * 40 seconds and a success gradually probes faster capacity. A 429 widens
+ * to at least 40 seconds, then holds that floor for ten minutes after the
+ * shared cooldown ends. The database's epoch/pause_until keep this memory
+ * across processes and restarts. A success from before the refusal is stale.
+ * The floor is a conservative policy based on historical samples, not a
+ * provider guarantee. It must be measured with the real image request.
  */
 export const IMAGE_START_PACING: ProviderPacing = Object.freeze({
   initialGapMs: 40_000,
@@ -59,6 +45,8 @@ export const IMAGE_START_PACING: ProviderPacing = Object.freeze({
   maxGapMs: 45_000,
   successFactor: 0.9,
   rateLimitFactor: 1.5,
+  recoveryFloorMs: 40_000,
+  recoveryHoldMs: 10 * 60_000,
 });
 
 /**

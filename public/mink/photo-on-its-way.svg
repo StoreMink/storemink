@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" role="img" aria-label="Photo on its way">
+  <rect width="1600" height="1000" fill="#eeeaf5"/>
+  <rect x="696" y="355" width="208" height="150" rx="16" fill="none" stroke="#a79ab9" stroke-width="7"/>
+  <circle cx="752" cy="400" r="16" fill="#a79ab9"/>
+  <path d="m710 480 58-50 43 36 42-60 37 74" fill="none" stroke="#a79ab9" stroke-width="7" stroke-linejoin="round"/>
+  <text x="800" y="590" text-anchor="middle" font-family="system-ui,sans-serif" font-size="40" fill="#655775">Photo on its way</text>
+</svg>

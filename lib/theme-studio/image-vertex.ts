@@ -415,7 +415,13 @@ export function createVertexImageClient(
                   );
                   pool.recovered(epoch);
                   permit.succeeded();
-                  logThemeImageAnswer(request, config, sent, response, result);
+                  logThemeImageAnswer(
+                    request,
+                    config,
+                    sent,
+                    response,
+                    timed(result),
+                  );
                   return result;
                 } catch (error) {
                   // Register the shared pause BEFORE releasing this permit, so
@@ -594,6 +600,12 @@ function logThemeImageAnswer(
       requestedSize,
       thinkingLevel: sent.thinkingConfig?.thinkingLevel ?? null,
       outcome: result.kind,
+      durationMs: result.timing?.durationMs ?? null,
+      capacityWaitMs: result.timing?.capacityWaitMs ?? null,
+      providerAttempts: result.timing?.providerAttempts ?? null,
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+      trafficType: response.usageMetadata?.trafficType ?? null,
       finishReason: finish ? String(finish) : null,
       ...themeImageAnswerParts(response),
       width: size?.width ?? null,

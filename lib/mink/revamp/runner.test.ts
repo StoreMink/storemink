@@ -3946,3 +3946,247 @@ describe("redrawFor", () => {
     expect(redrawFor(undefined, shots)).toBeNull();
   });
 });
+
+describe("bounded full redesigns", () => {
+  it("keeps the original deadline through checkpoints and uses supplied product photos", async () => {
+    const finishBy = Date.now() + 12 * 60_000;
+    const jobs = makeJobs(makeJob({ result: { finishBy } }));
+    const deps = makeDeps([], {
+      checks: vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } })),
+    });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "ready",
+    );
+    expect(deps.photos).toHaveBeenCalledWith(
+      expect.objectContaining({ finishBy }),
+      expect.anything(),
+    );
+    expect(deps.products).not.toHaveBeenCalled();
+    const compiled = vi
+      .mocked(jobs.save)
+      .mock.calls.find(([input]) => input.patch.plan?.stage === "compiled")?.[0]
+      .patch.plan;
+    expect(compiled?.stage === "compiled" && compiled.productPhotoKeys).toEqual(
+      [],
+    );
+    expect(jobs.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: expect.objectContaining({ finishBy }),
+      }),
+    );
+  });
+
+  it("does not reserve paid budget for studio enhancements excluded from the run", async () => {
+    const jobs = makeJobs(
+      makeJob({
+        budgetCredits: 50,
+        result: { finishBy: Date.now() + 12 * 60_000 },
+      }),
+    );
+    const deps = makeDeps([], {
+      checks: vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } })),
+    });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "ready",
+    );
+    expect(deps.fitBudget).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        request: expect.objectContaining({
+          products: [expect.objectContaining({ photoUrl: null })],
+        }),
+      }),
+    );
+    expect(deps.photos).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ request: REQUEST }),
+    );
+    expect(deps.products).not.toHaveBeenCalled();
+  });
+
+  it("does not restart an expired job or charge for it", async () => {
+    const jobs = makeJobs(makeJob({ result: { finishBy: Date.now() - 1 } }));
+    const deps = makeDeps([]);
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "failed",
+    );
+    expect(jobs.fail).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "time_limit" }),
+    );
+    expect(deps.plan).not.toHaveBeenCalled();
+    expect(deps.card).not.toHaveBeenCalled();
+    expect(jobs.kick).not.toHaveBeenCalled();
+  });
+
+  it("does not make a paid card when a required final check fails", async () => {
+    const job = jobAt("checks");
+    job.result = { ...job.result, finishBy: Date.now() + 5 * 60_000 };
+    const jobs = makeJobs(job);
+    const deps = makeDeps([], {
+      checks: vi.fn(async () => ({
+        plan: {
+          ...CHECKED,
+          checks: [
+            { id: "copy", label: "Copy", passed: false, note: "Unresolved" },
+          ],
+        },
+      })),
+    });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "failed",
+    );
+    expect(deps.card).not.toHaveBeenCalled();
+    expect(jobs.fail).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "plan_invalid" }),
+    );
+  });
+
+  it("honours Stop within the ten-second polling interval", async () => {
+    vi.useFakeTimers();
+    const jobs = makeJobs(
+      makeJob({ result: { finishBy: Date.now() + 12 * 60_000 } }),
+      { renew: vi.fn(async () => ({ ok: true, cancelRequested: true })) },
+    );
+    const deps = makeDeps([], { snapshot: vi.fn(untilAborted) });
+    const work = runRevampJob({ revampId: ID, jobs, deps });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await work).outcome).toBe("cancelled");
+    expect(deps.card).not.toHaveBeenCalled();
+    expect(jobs.cancel).toHaveBeenCalled();
+  });
+
+  it("does not park a provider wait beyond the original deadline", async () => {
+    const jobs = makeJobs(
+      jobAt("photos", { result: { finishBy: Date.now() + 2 * 60_000 } }),
+    );
+    const deps = makeDeps([], {
+      photos: vi.fn(async () => {
+        throw new RevampRetryLaterError(
+          "photos_unavailable",
+          "busy",
+          20 * 60_000,
+        );
+      }),
+    });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "failed",
+    );
+    expect(jobs.release).not.toHaveBeenCalled();
+    expect(deps.card).not.toHaveBeenCalled();
+  });
+});
+
+describe("recoverable redesigns", () => {
+  const successfulChecks = () =>
+    vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } }));
+
+  it("finishes after its performance target, ignoring an old absolute cutoff", async () => {
+    const jobs = makeJobs(
+      makeJob({
+        result: {
+          recoveryVersion: 2,
+          targetReadyAt: Date.now() - 60_000,
+          finishBy: Date.now() - 1,
+        },
+      }),
+    );
+    const deps = makeDeps([], { checks: successfulChecks() });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "ready",
+    );
+    expect(deps.photos).toHaveBeenCalledWith(
+      expect.objectContaining({ recoverable: true }),
+      expect.anything(),
+    );
+    expect(vi.mocked(deps.photos).mock.calls[0][0]).not.toHaveProperty(
+      "finishBy",
+    );
+    expect(deps.products).not.toHaveBeenCalled();
+    expect(jobs.fail).not.toHaveBeenCalled();
+  });
+
+  it("parks a long capacity wait without failing or charging after the target", async () => {
+    const job = jobAt("photos");
+    job.result = {
+      ...job.result,
+      recoveryVersion: 2,
+      targetReadyAt: Date.now() - 1,
+    };
+    const jobs = makeJobs(job);
+    const deps = makeDeps([], {
+      photos: vi.fn(async () => {
+        throw new RevampRetryLaterError(
+          "photos_unavailable",
+          "busy",
+          20 * 60_000,
+        );
+      }),
+    });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "handover",
+    );
+    expect(jobs.release).toHaveBeenCalledWith(
+      ID,
+      LEASE,
+      expect.objectContaining({ retryAfterMs: 20 * 60_000, counted: false }),
+    );
+    expect(jobs.fail).not.toHaveBeenCalled();
+    expect(deps.card).not.toHaveBeenCalled();
+  });
+
+  it("hands unfinished photos to the next invocation without completing a partial card", async () => {
+    const job = jobAt("photos");
+    job.result = { ...job.result, recoveryVersion: 2 };
+    const jobs = makeJobs(job);
+    const deps = makeDeps([], {
+      photos: vi.fn(async () => {
+        throw new RevampDrainedError();
+      }),
+    });
+    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+      "handover",
+    );
+    expect(jobs.kick).toHaveBeenCalledWith(ID);
+    expect(jobs.fail).not.toHaveBeenCalled();
+    expect(deps.assemble).not.toHaveBeenCalled();
+    expect(deps.card).not.toHaveBeenCalled();
+  });
+
+  it.each(["ECONNRESET", "40001", "57P01"])(
+    "does not exhaust the job for transient infrastructure failure %s",
+    async (code) => {
+      const jobs = makeJobs(makeJob({ result: { recoveryVersion: 2 } }));
+      const deps = makeDeps([], {
+        snapshot: vi.fn(async () => {
+          throw Object.assign(new Error("temporary infrastructure failure"), {
+            code,
+          });
+        }),
+      });
+      expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
+        "handover",
+      );
+      expect(jobs.release).toHaveBeenCalledWith(
+        ID,
+        LEASE,
+        expect.objectContaining({ counted: false }),
+      );
+      expect(jobs.fail).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not treat a programming fault as an unlimited infrastructure wait", async () => {
+    const jobs = makeJobs(makeJob({ result: { recoveryVersion: 2 } }));
+    const deps = makeDeps([], {
+      snapshot: vi.fn(async () => {
+        throw new TypeError("broken implementation");
+      }),
+    });
+    await runRevampJob({ revampId: ID, jobs, deps });
+    expect(jobs.release).toHaveBeenCalledWith(
+      ID,
+      LEASE,
+      expect.not.objectContaining({ counted: false }),
+    );
+  });
+});

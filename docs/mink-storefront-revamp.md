@@ -1,5 +1,39 @@
 # Mink storefront revamp
 
+## Current recoverable full redesign policy, 27 Oct 2026
+
+New full redesigns target twelve minutes, measured from creation, including
+queue time. This is a performance target, never an expiry or reason to discard
+work. The stored recovery policy survives restarts. The HTTP invocation still
+has a time limit, so it drains paid calls, saves progress and hands unfinished
+work to the next invocation. Waiting on provider capacity does not exhaust the
+job's failure counter or its former four-hour wall-clock ceiling.
+
+Eight new storefront photographs cover the design through compatible reuse
+between different pages; refills and category photographs share that budget.
+The hidden anchor and quality redraws have a separate eleven-attempt budget.
+Known free admission refusals give their reservation back. Genuine content and
+quality failures, unknown provider spend, invalid input and programming faults
+still require explicit limits; a recovery policy cannot guarantee that a
+provider will always return a usable answer. Supplied product photographs stay
+in use without studio enhancement on the critical path. Optional copy and
+colour-band issues are fixed mechanically.
+
+Preview design shows the compiled layout, colours, words and menus while
+photographs are being made. Passed pictures fill the labelled placeholders;
+the hidden anchor never appears. A temporary capacity or reviewer outage keeps
+paid candidates parked, including the anchor, and retries their review without
+redrawing. An invocation drain never completes a partial redesign or omits
+unfinished photographs just to meet the performance target. Temporary storage
+verification failures pause finalization. Apply waits for all required checks.
+
+The card explains when progress is saved and a retry is scheduled. The merchant
+can leave and return, or Stop. No countdown or completion promise is shown.
+Older jobs and refinements without recovery policy 2 retain the legacy rules
+below. Rolling deployments fence incompatible workers and their sweep writes.
+Representative paid staging runs, provider capacity measurements and production
+rollout verification remain required before claiming production readiness.
+
 The build contract for "customise my store". Owner's decisions (21 Oct 2026)
 and the evidence behind them are in the memory note `mink-storefront-revamp`
 and in the investigation of the echoss session (20 Oct 2026). This document is

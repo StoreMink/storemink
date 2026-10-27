@@ -375,6 +375,26 @@ describe("useMinkVoiceMode", () => {
     expect(h.result.current.state).toBe("listening");
   });
 
+  it("binds detected Marathi to its answer, not a later interruption's language", async () => {
+    const h = makeHarness({ langFallback: "en-US" });
+    await act(async () => h.result.current.toggle());
+    act(() => h.mic.last().input.onLanguage?.("mr-IN"));
+    await say(h, "माझ्या ऑर्डर किती आहेत?");
+    const session = h.speech.last();
+    // The next recording's metadata must not change the answer already playing.
+    act(() => h.mic.last().input.onLanguage?.("hi-IN"));
+    h.rerender({
+      ...h.input,
+      isReplying: true,
+      spokenText: "तुमच्या बारा ऑर्डर आहेत। ",
+      spokenEnded: true,
+    });
+    expect(session.enqueue).toHaveBeenCalledWith(
+      "तुमच्या बारा ऑर्डर आहेत।",
+      "mr-IN",
+    );
+  });
+
   it("picks the utterance language from each piece's script", async () => {
     const h = makeHarness({ langFallback: "en-GB" });
     await act(async () => h.result.current.toggle());

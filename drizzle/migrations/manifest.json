@@ -9641,6 +9641,39 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261027_0258_mink_redesign_preview_help",
+      "description": "Edits the storefront redesign guide for early design preview, checked photographs shared between pages, supplied product photos and required final checks. Numbers 0256 and 0257 remain reserved for the paused release.",
+      "file": "sql/20261027_0258_mink_redesign_preview_help.sql",
+      "transaction": true,
+      "requires": ["20261026_0255_publish_legal_terms_v2_privacy_v4_aup_v2"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the redesign guide describes the early preview and shared photographs",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-website-with-mink-ai' and status = 'published' and body like '%Choose Preview design%' and body like '%Suitable photographs can be shared between different pages%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261027_0259_mink_redesign_deadline_guard",
+      "description": "Preserves active bounded redesign deadlines and fences their claims against incompatible workers while app revisions overlap. Legacy redesigns are unaffected.",
+      "file": "sql/20261027_0259_mink_redesign_deadline_guard.sql",
+      "transaction": true,
+      "requires": ["20261027_0258_mink_redesign_preview_help"],
+      "verify": {
+        "queries": [
+          {
+            "name": "bounded redesign deadline trigger is present",
+            "sql": "select count(*)::text from pg_trigger where tgrelid = 'public.mink_revamps'::regclass and tgname = 'mink_revamps_deadline_guard' and not tgisinternal and tgenabled = 'O'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

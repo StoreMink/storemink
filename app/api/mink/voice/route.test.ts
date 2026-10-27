@@ -85,6 +85,29 @@ describe("global Mink voice endpoint", () => {
     );
   });
 
+  it("records provider duration and audio size without logging the transcript", async () => {
+    await POST(req());
+    expect(h.log).toHaveBeenCalledWith(
+      "mink.voice.completed",
+      expect.objectContaining({
+        provider: "saaras_v4",
+        providerMs: expect.any(Number),
+        audioBytes: 1,
+      }),
+    );
+    expect(JSON.stringify(h.log.mock.calls)).not.toContain("नमस्ते");
+  });
+
+  it("does not start transcription after cancellation while settings load", async () => {
+    const stop = new AbortController();
+    h.provider.mockImplementation(async () => {
+      stop.abort();
+      return "saaras_v4";
+    });
+    await POST(new Request(req(), { signal: stop.signal }));
+    expect(h.transcribe).not.toHaveBeenCalled();
+  });
+
   it("★ spends the voice buckets, never the store's attachment quota", async () => {
     await POST(req());
     expect(h.reserve).toHaveBeenCalledOnce();

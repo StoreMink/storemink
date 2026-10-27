@@ -642,9 +642,8 @@ describe.skipIf(!enabled)(
       expect(Number(oilRow.selling_price)).toBe(180);
       expect(Number(oilRow.base_price)).toBe(200);
       expect(oilRow.track_inventory).toBe(false);
-      expect(oilRow.images).toHaveLength(2);
-      expect(oilRow.images[1]).toBe(photos[0]);
-      expect(oilRow.image_url).toContain("/mink-generated/revamp/");
+      expect(oilRow.images).toEqual([photos[0]]);
+      expect(oilRow.image_url).toBe(photos[0]);
       const variants = await rows<{
         name: string;
         selling_price: string;

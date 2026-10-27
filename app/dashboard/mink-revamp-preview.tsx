@@ -146,9 +146,12 @@ export function MinkRevampPreview({
   review,
   applied = false,
   published = false,
+  inProgress = false,
   onClose,
 }: {
   review: RevampReview;
+  /** Compiled design only; application remains unavailable. */
+  inProgress?: boolean;
   /** Apply has run: the draft already holds the redesign. */
   applied?: boolean;
   /** Something went live: the live pages are the redesign's. */
@@ -339,6 +342,7 @@ export function MinkRevampPreview({
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
+        data-design-in-progress={inProgress || undefined}
         aria-labelledby={titleId}
         onKeyDown={onKeyDown}
         className="mx-auto flex h-full w-full max-w-[1600px] flex-col overflow-hidden bg-white text-[#27242d] shadow-2xl sm:rounded-2xl"
@@ -361,6 +365,13 @@ export function MinkRevampPreview({
             <X aria-hidden className="h-4 w-4" />
           </button>
         </div>
+
+        {inProgress ? (
+          <p className="border-b border-[#ebe7f7] bg-[#fbfaff] px-4 py-2 text-xs text-[#5f5969]">
+            Design in progress. Photographs appear after their checks pass.
+            Apply becomes available when the redesign is ready.
+          </p>
+        ) : null}
 
         {page ? (
           <>

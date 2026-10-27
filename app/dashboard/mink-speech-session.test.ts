@@ -586,17 +586,18 @@ describe("createMinkSpeechSession", () => {
     ]);
   });
 
-  it("reads a piece the model refused with the browser voice after the audio drains, then resumes", async () => {
+  it("keeps browser fallback for the remaining answer and cancels prefetched model work", async () => {
     const audio = new FakeAudioContext();
     const one = scripted();
     const two = scripted({ kind: "browser" });
     const three = scripted();
     const on = events();
+    const fetchSpeech = scriptedFetches([one, two, three]);
     const session = createMinkSpeechSession({
       audio: audio as unknown as AudioContext,
       voice: "model",
       events: on,
-      fetchSpeech: scriptedFetches([one, two, three]),
+      fetchSpeech,
       synth: synth as unknown as SpeechSynthesis,
       utteranceClass:
         FakeUtterance as unknown as typeof SpeechSynthesisUtterance,
@@ -614,12 +615,16 @@ describe("createMinkSpeechSession", () => {
     expect(on.onPieceStart).toHaveBeenLastCalledWith("ഇന്ന് രണ്ട്.");
     utterance.onend?.();
     await tick();
-    three.fetched.push(samples(2_400));
-    three.fetched.push(done());
+    await vi.waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(2));
+    expect(synth.speak.mock.calls[1][0].text).toBe("Three.");
+    expect(three.fetched.aborted()).toBe(true);
+    expect(on.onVoiceOff).not.toHaveBeenCalled();
+    synth.speak.mock.calls[1][0].onend?.();
     session.end();
     await vi.waitFor(() => expect(on.onIdle).toHaveBeenCalledWith("done"));
     expect(on.onPieceStart).toHaveBeenLastCalledWith("Three.");
-    expect(audio.sources).toHaveLength(2);
+    expect(audio.sources).toHaveLength(1);
+    expect(fetchSpeech).toHaveBeenCalledTimes(3);
   });
 
   it("★ switches the whole answer to the browser voice when no model is on", async () => {

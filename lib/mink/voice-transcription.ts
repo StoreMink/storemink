@@ -45,7 +45,10 @@ export async function refusalReason(response: Response): Promise<string> {
     const codes = [
       parsed.error?.status,
       ...(parsed.error?.details ?? []).map((detail) => detail?.reason),
-    ].filter((code): code is string => typeof code === "string");
+    ].filter(
+      (code): code is string =>
+        typeof code === "string" && /^[A-Z][A-Z0-9_]{0,79}$/.test(code),
+    );
     const unique = [...new Set(codes)].slice(0, 3);
     return unique.length ? ` (${unique.join(", ")})` : "";
   } catch {
@@ -154,6 +157,8 @@ async function transcribeWithSaarasV4(
   form.set("model", "saaras:v4");
   form.set("mode", "transcribe");
   form.set("language_code", "unknown");
+  // Static product terminology only; no additional catalogue read or customer data.
+  form.set("keyterms", JSON.stringify(["StoreMink", "Mink"]));
   const response = await fetch("https://api.sarvam.ai/speech-to-text", {
     method: "POST",
     headers: { "api-subscription-key": apiKey },

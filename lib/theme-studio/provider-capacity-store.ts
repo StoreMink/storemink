@@ -33,10 +33,16 @@ export const PACE_LOG_MIN_CHANGE_MS = 1_000;
 /** gap_ms after one outcome, in SQL, from the row's gap BEFORE the update
  *  (every right-hand side of one UPDATE reads the old row). */
 function shrunkGap(pacing: ProviderPacing) {
-  return sql`greatest(${pacing.minGapMs}::int, round(gap_ms*${pacing.successFactor}::numeric)::int)`;
+  // The same cutoff is evaluated twice in the UPDATE. A stable statement
+  // clock keeps next_start_at and gap_ms consistent at hold expiry.
+  const floor =
+    pacing.recoveryFloorMs && pacing.recoveryHoldMs
+      ? sql`CASE WHEN epoch > 0 AND pause_until + ${pacing.recoveryHoldMs}::int * interval '1 millisecond' > statement_timestamp() THEN ${pacing.recoveryFloorMs}::int ELSE ${pacing.minGapMs}::int END`
+      : sql`${pacing.minGapMs}::int`;
+  return sql`least(${pacing.maxGapMs}::int, greatest(${floor}, round(gap_ms*${pacing.successFactor}::numeric)::int))`;
 }
 function grownGap(pacing: ProviderPacing) {
-  return sql`least(${pacing.maxGapMs}::int, round(gap_ms*${pacing.rateLimitFactor}::numeric)::int)`;
+  return sql`least(${pacing.maxGapMs}::int, greatest(${pacing.recoveryFloorMs ?? pacing.minGapMs}::int, round(gap_ms*${pacing.rateLimitFactor}::numeric)::int))`;
 }
 
 // ★ THE GAP BEFORE AND AFTER COME BACK FROM THE STATEMENT THAT MOVES IT, so

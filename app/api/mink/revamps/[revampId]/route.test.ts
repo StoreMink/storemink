@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const holder = vi.hoisted(() => ({
   actor: vi.fn(),
   read: vi.fn(),
+  design: vi.fn(),
   cancel: vi.fn(),
   publish: vi.fn(),
   undo: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/lib/mink/actor-context", () => ({
 }));
 vi.mock("@/lib/mink/revamp/jobs", () => ({
   readRevampStatus: holder.read,
+  readRevampDesignPreview: holder.design,
   cancelRevamp: holder.cancel,
   kickRevampIfStalled: holder.kick,
 }));
@@ -384,5 +386,55 @@ describe("POST /api/mink/revamps/[revampId]", () => {
     holder.enabled = false;
     expect((await POST(post({ action: "cancel" }), params())).status).toBe(404);
     expect(holder.actor).not.toHaveBeenCalled();
+  });
+});
+
+describe("early design preview", () => {
+  it("uses the trusted requester and keeps full sections out of status polling", async () => {
+    holder.design.mockResolvedValueOnce({
+      review: { pages: [] },
+      photosIn: 0,
+      photosTotal: 8,
+    });
+    const response = await GET(
+      new Request(`${URL_BASE}?preview=design`),
+      params(),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store, private");
+    expect(holder.design).toHaveBeenCalledWith(
+      expect.objectContaining({ storeId: "store-1", adminId: "admin-1" }),
+      REVAMP_ID,
+    );
+    expect(holder.read).not.toHaveBeenCalled();
+    expect(holder.after).not.toHaveBeenCalled();
+  });
+  it("returns no design when the requester cannot read it", async () => {
+    holder.design.mockResolvedValueOnce(null);
+    const response = await GET(
+      new Request(`${URL_BASE}?preview=design`),
+      params(),
+    );
+    expect(response.status).toBe(404);
+    expect(await response.json()).not.toHaveProperty("design");
+  });
+  it("applies the same origin and rate limits before reading a design", async () => {
+    holder.rateAllowed = false;
+    expect(
+      (await GET(new Request(`${URL_BASE}?preview=design`), params())).status,
+    ).toBe(429);
+    expect(holder.design).not.toHaveBeenCalled();
+    holder.rateAllowed = true;
+    expect(
+      (
+        await GET(
+          new Request(`${URL_BASE}?preview=design`, {
+            headers: { origin: "https://foreign.example" },
+          }),
+          params(),
+        )
+      ).status,
+    ).toBe(403);
+    expect(holder.design).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,10 @@
 import "server-only";
+import {
+  REVAMP_WORK_BUDGET,
+  revampFinishBy,
+  revampRecovers,
+  revampPaidAdmissionEndsAt,
+} from "./pacing-policy";
 
 // ---------------------------------------------------------------------------
 // The revamp runner: one invocation claims one job, carries it as far as it
@@ -168,6 +174,7 @@ export interface RevampThemeSelection {
  *   too, and the compiler reads the id.
  */
 type RevampPlannerInput = Parameters<RevampDeps["plan"]>[1] & {
+  photoBudget?: number;
   revampId: string;
   earlierDesigns?: string;
 };
@@ -366,6 +373,9 @@ async function runHeldRevamp(
   const { job, leaseToken } = claimed;
   const revampId = job.id;
   const request = job.request;
+  const recoverable = revampRecovers(job.result);
+  const finishBy = recoverable ? null : revampFinishBy(job.result?.finishBy);
+  const budgeted = recoverable || finishBy !== null;
 
   const controller = new AbortController();
   let stop: StopReason | null = null;
@@ -382,7 +392,12 @@ async function runHeldRevamp(
 
   const deadlineMs = Math.max(
     0,
-    input.deadlineMs ?? REVAMP_LIMITS.runnerDeadlineMs,
+    Math.min(
+      input.deadlineMs ?? REVAMP_LIMITS.runnerDeadlineMs,
+      finishBy === null
+        ? Infinity
+        : Math.max(0, finishBy - now() - REVAMP_WORK_BUDGET.finalChecksMs),
+    ),
   );
   const deadline = now() + deadlineMs;
   // ★★ THE DEADLINE DRAINS BEFORE IT STOPS (jobs-4). Aborting at once cut
@@ -394,7 +409,12 @@ async function runHeldRevamp(
   const deadlineTimer = setTimeout(() => {
     if (stop) return;
     drainController.abort(new RevampHalted("deadline"));
-    graceTimer = setTimeout(() => halt("deadline"), REVAMP_DEADLINE_GRACE_MS);
+    graceTimer = setTimeout(
+      () => halt("deadline"),
+      finishBy === null
+        ? REVAMP_DEADLINE_GRACE_MS
+        : Math.max(0, Math.min(REVAMP_DEADLINE_GRACE_MS, finishBy - now())),
+    );
   }, deadlineMs);
   // ★★ ONLY A LOST LEASE STOPS PAID WORK AT ONCE, NOT A FAILED RENEWAL (D1,
   //   Theme Studio's P2 rule, worker-lease.ts). A renewal answering false
@@ -462,9 +482,12 @@ async function runHeldRevamp(
     })();
     return renewal;
   };
-  const renewTimer = setInterval(() => {
-    void renewOnce();
-  }, REVAMP_LIMITS.leaseRenewMs);
+  const renewTimer = setInterval(
+    () => {
+      void renewOnce();
+    },
+    budgeted ? REVAMP_WORK_BUDGET.stopPollMs : REVAMP_LIMITS.leaseRenewMs,
+  );
 
   // Local state: the job row as this invocation has advanced it.
   const state: {
@@ -485,6 +508,11 @@ async function runHeldRevamp(
   // deadline between two steps caught nothing half done.
   let working: RevampStep | null = null;
   let lastReportAt = Number.NEGATIVE_INFINITY;
+  let photosReported = Number(
+    job.progress
+      .find((item) => item.step === "photos")
+      ?.detail?.match(/^(\d+) of \d+$/)?.[1] ?? 0,
+  );
   // The revamp's stored photos when the photos or products step started in
   // this invocation (jobs-5); null for every other step.
   let imagesAtStepStart: number | null = null;
@@ -519,6 +547,13 @@ async function runHeldRevamp(
   const report = async (detail: string | null): Promise<void> => {
     try {
       if (!current) return;
+      if (current === "photos" && detail) {
+        const count = detail.match(/^(\d+) of (\d+)$/);
+        if (count) {
+          photosReported = Math.max(photosReported, Number(count[1]));
+          detail = `${Math.min(photosReported, Number(count[2]))} of ${count[2]}`;
+        }
+      }
       setState(current, "running", boundedDetail(detail));
       if (stop) return;
       const at = now();
@@ -702,6 +737,11 @@ async function runHeldRevamp(
         return "cancelled";
       }
       case "deadline": {
+        if (
+          finishBy !== null &&
+          now() >= finishBy - REVAMP_WORK_BUDGET.finalChecksMs
+        )
+          return failWith("time_limit", "bounded_run_deadline");
         // ★★ A hand-over that stored photos gives the step its failure count
         //   back (jobs-5): the deadline is a turn, not a failure.
         const progressed = await storedSinceStepStart();
@@ -807,7 +847,8 @@ async function runHeldRevamp(
     //   before but not counted (B8); any other transient failure (a database
     //   error, a claim that could not be recorded, a bug) is one of the step's
     //   failures, so the same real error `maxAttempts` times still fails it.
-    const google = waitedOnGoogle(error);
+    const google =
+      waitedOnGoogle(error) || (recoverable && infrastructureWait(error));
     logWarn("mink.revamp: step will be retried", {
       revampId,
       step,
@@ -815,6 +856,11 @@ async function runHeldRevamp(
       counted: !google,
       error: errorText(error),
     });
+    if (
+      finishBy !== null &&
+      now() + wait >= finishBy - REVAMP_WORK_BUDGET.finalChecksMs
+    )
+      return failWith("time_limit", "retry_exceeds_run_deadline");
     await release(wait, google ? { counted: false } : {});
     return "handover";
   };
@@ -887,7 +933,22 @@ async function runHeldRevamp(
   };
 
   try {
-    return { outcome: await drive() };
+    const started = now();
+    const outcome = await drive();
+    logInfo("mink.revamp: timeline", {
+      revampId,
+      outcome,
+      invocationMs: Math.max(0, now() - started),
+      wallMs: Math.max(0, now() - Date.parse(job.createdAt)),
+      images: usage.images,
+      reviews: usage.reviews,
+      estimatedCostMicroUsd: usage.estimatedCostMicroUsd,
+      recoverable,
+      targetExceeded:
+        typeof job.result?.targetReadyAt === "number" &&
+        now() > job.result.targetReadyAt,
+    });
+    return { outcome };
   } finally {
     ended = true;
     clearTimeout(deadlineTimer);
@@ -934,6 +995,8 @@ async function runHeldRevamp(
       actor: actor.runId ? actor : { ...actor, runId: job.originRunId },
       signal: controller.signal,
       deadline,
+      ...(finishBy !== null ? { finishBy } : {}),
+      ...(recoverable ? { recoverable: true } : {}),
       report,
       draining: drainController.signal,
       photoHold: { held: () => state.result.photoHold ?? null, record: hold },
@@ -953,7 +1016,7 @@ async function runHeldRevamp(
 
     let index = Math.max(0, REVAMP_STEPS.indexOf(job.step));
     while (index < REVAMP_STEPS.length) {
-      if (!stopNow() && now() >= deadline) halt("deadline");
+      if (!stopNow() && now() >= (finishBy ?? deadline)) halt("deadline");
       if (stopNow()) return settleStop();
       const step = REVAMP_STEPS[index];
       const redo = producerIndexFor(step);
@@ -984,12 +1047,18 @@ async function runHeldRevamp(
         }
       }
 
+      const stepStarted = now();
       let output: StepOutput;
       try {
         output = await runStep(step, ctx);
       } catch (error) {
         return settleError(error, step);
       }
+      logInfo("mink.revamp: step done", {
+        revampId,
+        step,
+        ms: Math.max(0, now() - stepStarted),
+      });
       // ★ A step that returned is complete (steps throw when aborted), so its
       //   output is kept even at the deadline; a lost lease or a cancel keeps
       //   nothing.
@@ -1213,6 +1282,11 @@ async function runHeldRevamp(
           snapshot: required(state.snapshot, "snapshot"),
           request,
         });
+        if (budgeted && run.plan.checks.some((check) => !check.passed))
+          throw new RevampStepError(
+            "plan_invalid",
+            "The redesign has unresolved final checks.",
+          );
         return {
           patch: {
             result: { ...state.result, stored: run.plan, checked: true },
@@ -1242,6 +1316,7 @@ async function runHeldRevamp(
       //   summary of this store's earlier redesigns.
       const summary = await earlierDesigns();
       const inputs: RevampPlannerInput = {
+        ...(budgeted ? { photoBudget: REVAMP_WORK_BUDGET.photos } : {}),
         request,
         snapshot,
         previous: await previousPlan(),
@@ -1265,7 +1340,10 @@ async function runHeldRevamp(
     //   always names its product keys, so `null` keys mean "not fitted yet".
     if (job.budgetCredits !== null && keys === null) {
       const fitted = deps.fitBudget(plan, {
-        request,
+        request:
+          budgeted && request.kind === "full"
+            ? withProductPhotosOnly(request, [])
+            : request,
         budget: job.budgetCredits,
       });
       unfitted = plan;
@@ -1285,6 +1363,7 @@ async function runHeldRevamp(
       //   has, which is not created, so the photo showed nowhere.
       keys = deps.productPhotoKeys(plan, request);
     }
+    if (budgeted && request.kind === "full") keys = [];
     if (distinctness) logDistinctness(distinctness);
     return {
       column: {
@@ -1459,9 +1538,18 @@ async function runHeldRevamp(
     //   copy existed is fitted again as it is, with the product photos the
     //   first fit already left out withheld for the same reason.
     const fitted = column.unfitted
-      ? deps.fitBudget(column.unfitted, { request, budget })
+      ? deps.fitBudget(column.unfitted, {
+          request:
+            budgeted && request.kind === "full"
+              ? withProductPhotosOnly(request, [])
+              : request,
+          budget,
+        })
       : deps.fitBudget(column.plan, {
-          request: withProductPhotosOnly(request, keys),
+          request: withProductPhotosOnly(
+            request,
+            budgeted && request.kind === "full" ? [] : keys,
+          ),
           budget,
         });
     const total = deps.estimate(fitted.plan, {
@@ -1482,7 +1570,8 @@ async function runHeldRevamp(
     const next: Extract<RevampPlanColumn, { stage: "compiled" }> = {
       stage: "compiled",
       plan: checked.plan,
-      productPhotoKeys: fitted.productPhotoKeys,
+      productPhotoKeys:
+        budgeted && request.kind === "full" ? [] : fitted.productPhotoKeys,
       ...(column.unfitted ? { unfitted: column.unfitted } : {}),
     };
     logInfo("mink.revamp: plan fitted again to the store's balance", {
@@ -1605,9 +1694,16 @@ async function runHeldRevamp(
         return deps.finalize(raw, inputs);
       }
       ctx.signal.throwIfAborted();
+      if (recoverable && !plannerCallFits()) throw new RevampDrainedError();
       // ★ No repair is started once the deadline has passed (jobs-4): the
       //   answered ones are saved, and the next run carries on from them.
       if (ctx.draining?.aborted) throw new RevampDrainedError();
+      if (
+        finishBy !== null &&
+        now() >=
+          revampPaidAdmissionEndsAt(finishBy, REVAMP_PLAN_RETRY_MIN_LEFT_MS)
+      )
+        return deps.finalize(raw, inputs);
       // ★ The trace of why a plan was slow: the job row keeps only the
       //   compiled plan, so these issues are gone once the compile finishes.
       logInfo("mink.revamp: compile repair", {
@@ -1669,11 +1765,29 @@ async function runHeldRevamp(
    *   (a refusal, a configuration fault, a stop, the drain) is settled as it
    *   always was.
    */
+  function plannerCallFits(): boolean {
+    return (
+      now() + REVAMP_PLAN_RETRY_MIN_LEFT_MS + REVAMP_LIMITS.hardStopMarginMs <
+      deadline + REVAMP_DEADLINE_GRACE_MS
+    );
+  }
+
   async function planCall(
     ctx: RevampStepContext,
     input: RevampPlannerInput,
   ): Promise<RevampModelCall> {
     for (let calls = 1; ; calls += 1) {
+      if (recoverable && !plannerCallFits()) throw new RevampDrainedError();
+      if (
+        finishBy !== null &&
+        now() >=
+          revampPaidAdmissionEndsAt(finishBy, REVAMP_PLAN_RETRY_MIN_LEFT_MS)
+      )
+        throw new RevampStepError(
+          "model_unavailable",
+          "No complete planning call fits before the redesign deadline.",
+          false,
+        );
       try {
         return await deps.plan(ctx, input);
       } catch (error) {
@@ -1727,6 +1841,15 @@ async function runHeldRevamp(
     let draftId = job.draftId;
     let credits = job.credits;
     if (!draftId) {
+      if (
+        budgeted &&
+        (!Array.isArray(stored.checks) ||
+          stored.checks.some((check) => !check.passed))
+      )
+        throw new RevampStepError(
+          "plan_invalid",
+          "The redesign has unresolved final checks.",
+        );
       // ★★ The lease is asked right before the charge, not left to the
       //   once-a-minute timer: renewing reads the cancel flag, so a Stop the
       //   merchant pressed during the last minute is honoured here and
@@ -2195,6 +2318,29 @@ function waitedOnGoogle(error: unknown): boolean {
     error instanceof RevampStepError &&
     error.transient &&
     GOOGLE_WAIT_CODES.has(error.code)
+  );
+}
+
+/** Retry recognized transport/transaction failures; programming faults still count. */
+function infrastructureWait(error: unknown): boolean {
+  const code = pgErrorCode(error);
+  return (
+    (typeof code === "string" &&
+      (code.startsWith("08") ||
+        [
+          "40001",
+          "40P01",
+          "53300",
+          "57P01",
+          "57P02",
+          "57P03",
+          "ECONNRESET",
+          "ECONNREFUSED",
+          "ETIMEDOUT",
+          "EPIPE",
+          "EAI_AGAIN",
+        ].includes(code))) ||
+    (error instanceof Error && error.name === "DatabaseBusyError")
   );
 }
 

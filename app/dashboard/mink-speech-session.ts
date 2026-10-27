@@ -26,9 +26,9 @@ import {
  * the merchant is told once; the next sentence is intact and plays.
  * ★ THE BROWSER VOICE IS A SWITCH, NOT A FALLBACK PER PIECE. `off` (no model
  * switched on) moves the rest of the session to `speechSynthesis`, so the
- * voice cannot flip back and forth within one answer; a single piece the
- * model refused is read by the browser after the model's audio has drained,
- * and the model resumes with the next.
+ * voice cannot flip back and forth within one answer. A refusal before audio
+ * also moves the remaining answer to the browser after model audio drains,
+ * avoiding repeated provider failures. The next answer may try the model again.
  * ★ CANCEL BUMPS A GENERATION. Every awaited continuation re-checks it, so a
  * fetch that lands or an utterance that ends after a barge-in acts on
  * nothing; `onIdle` never fires for a cancelled session.
@@ -405,11 +405,11 @@ export function createMinkSpeechSession(options: {
       const result = await driveModel(piece, gen);
       if (result === "cancelled" || result === "played" || result === "dropped")
         return;
-      if (result === "off") {
-        voice = "browser";
-        abortQueuedFetches();
-        events.onVoiceOff();
-      }
+      voice = "browser";
+      abortQueuedFetches();
+      // Only an explicit operator switch disables model audio for the whole
+      // conversation. A transient refusal changes this answer alone.
+      if (result === "off") events.onVoiceOff();
     }
     await driveBrowser(piece, gen);
   };

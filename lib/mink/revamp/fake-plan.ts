@@ -887,12 +887,6 @@ export function fakeRevampSiteOutput(input: RevampSiteInput): unknown {
           scene("The place where the shop works, its light and its materials"),
           "21:9",
         ),
-        addShot(
-          "home-hero-3",
-          "hero",
-          scene("The raw materials behind the shop, laid out as a still life"),
-          "21:9",
-        ),
       ];
       const slideCopy = [
         {
@@ -975,7 +969,7 @@ export function fakeRevampSiteOutput(input: RevampSiteInput): unknown {
       const storyBand = storyEntry(storyShot, true);
       // A band led by photographs: four of the same shoot.
       // ★ The first two show the merchant's products when there are any.
-      const galleryShots = [1, 2, 3, 4].map((n) =>
+      const galleryShots = [1, 2, 3].map((n) =>
         goodsShot(
           `home-gallery-${n}`,
           "content",
@@ -1240,7 +1234,7 @@ export function fakeRevampSiteOutput(input: RevampSiteInput): unknown {
     products: hasProducts ? "your products" : "",
     categories: categoryBand ? "your categories" : "",
     story: "a short story",
-    gallery: "a gallery of four photographs",
+    gallery: "a gallery of three photographs",
   };
   const partOrder: Record<Structure, Array<keyof typeof part>> = {
     discovery: ["products", "categories", "story", "gallery"],
@@ -1257,7 +1251,7 @@ export function fakeRevampSiteOutput(input: RevampSiteInput): unknown {
   const otherPages = written.some((p) => p.slug !== "");
   const homeWritten = written.some((p) => p.slug === "");
   const summary = homeWritten
-    ? `Your homepage now opens on three photographs, then ${listed}.${otherPages ? " Every other page now carries a new photograph too." : ""}`
+    ? `Your homepage now opens on two photographs, then ${listed}.${otherPages ? " Every other page now carries a new photograph too." : ""}`
     : "Your pages now each carry a new photograph beside your own words.";
 
   return {

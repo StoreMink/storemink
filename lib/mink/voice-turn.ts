@@ -13,6 +13,7 @@ import {
   type MinkMicrophone,
   type MinkSpeechGate,
 } from "./voice-recorder";
+import { normalizeSpeechLanguage } from "./speech-text";
 
 export class MinkVoiceCaptureError extends Error {
   readonly kind: "mic" | "transcription";
@@ -43,6 +44,7 @@ const isAbort = (error: unknown) =>
 export async function transcribeMinkRecording(
   recording: File,
   signal?: AbortSignal,
+  onLanguage?: (languageCode: string | null) => void,
 ): Promise<string> {
   let response: Response;
   try {
@@ -63,12 +65,15 @@ export async function transcribeMinkRecording(
   const data = (await response.json().catch(() => ({}))) as {
     text?: unknown;
     error?: unknown;
+    languageCode?: unknown;
   };
   if (!response.ok || typeof data.text !== "string")
     throw new MinkVoiceCaptureError(
       "transcription",
       typeof data.error === "string" ? data.error : TRANSCRIPTION_FAILED,
     );
+  if (!signal?.aborted)
+    onLanguage?.(normalizeSpeechLanguage(data.languageCode));
   return data.text.trim();
 }
 
@@ -79,6 +84,8 @@ export type MinkVoiceCaptureInput = {
   onSpeechStart: () => boolean;
   /** `open` once the microphone is live, `transcribing` once it closed. */
   onPhase?: (phase: "open" | "transcribing") => void;
+  /** Recognition's language hint, scoped to this recording, never browser locale. */
+  onLanguage?: (languageCode: string | null) => void;
   /**
    * The open microphone to record on (voice chat keeps one for the whole
    * chat); when absent one is opened for this turn and closed after it.
@@ -145,6 +152,7 @@ export async function captureMinkVoiceTurn(
     text = await (input.transcribe ?? transcribeMinkRecording)(
       recording,
       input.signal,
+      input.onLanguage,
     );
   } catch (error) {
     if (error instanceof MinkVoiceCaptureError || isAbort(error)) throw error;
