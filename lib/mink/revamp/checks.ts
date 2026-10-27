@@ -1111,7 +1111,10 @@ export async function runRevampChecks(
   const english = isEnglish(input.request.brief.language);
   if (english) checkLanguage(w, language);
   fixPhones(w, phones);
-  if (ctx.finishBy || ctx.recoverable) {
+  // ★ Reported, never enforced (runner.ts): a homepage that lost its opening
+  //   photograph or fell under three after a missing object was taken out
+  //   is said so on the card, in the photos check's own words.
+  if (ctx.recoverable) {
     const home = plan.pages.find((page) => page.slug === "");
     if (home) {
       const sections = home.sections.filter(

@@ -95,7 +95,6 @@ describe("speechLangFor", () => {
     expect(speechLangFor("तुमची ऑर्डर तयार आहे", "en-US", "mr-IN")).toBe(
       "mr-IN",
     );
-    expect(speechLangFor("আপোনাৰ অৰ্ডাৰ সাজু", "en-IN", "as-IN")).toBe("as-IN");
     expect(speechLangFor("Aapka order taiyar hai", "en-US", "hi-IN")).toBe(
       "hi-IN",
     );
@@ -104,6 +103,26 @@ describe("speechLangFor", () => {
     );
     expect(speechLangFor("ଆପଣଙ୍କ ଅର୍ଡର ପ୍ରସ୍ତୁତ", "en-IN")).toBe("or-IN");
     expect(speechLangFor("آپ کا آرڈر تیار ہے", "en-IN")).toBe("ur-IN");
+  });
+
+  it("★ a hint for a language the model has no voice for leaves the script's own voice to read it", () => {
+    // Bulbul reads Devanagari as Hindi and Bengali script as Bengali; a
+    // Maithili, Nepali or Assamese tag would be refused and handed to the
+    // browser, which has no such voice either (speech-text.ts).
+    expect(speechLangFor("अहाँक ऑर्डर तैयार अछि", "en-IN", "mai-IN")).toBe(
+      "hi-IN",
+    );
+    expect(speechLangFor("तपाईंको अर्डर तयार छ", "en-IN", "ne-IN")).toBe(
+      "hi-IN",
+    );
+    expect(speechLangFor("আপোনাৰ অৰ্ডাৰ সাজু", "en-IN", "as-IN")).toBe("bn-IN");
+    // Latin text keeps the browser's language unless the hint has a voice.
+    expect(speechLangFor("Your order is ready.", "en-GB", "ml-IN")).toBe(
+      "en-GB",
+    );
+    expect(speechLangFor("Ungal order thayar.", "en-IN", "ta-IN")).toBe(
+      "ta-IN",
+    );
   });
 
   it("normalises known language tags without accepting provider prose", () => {

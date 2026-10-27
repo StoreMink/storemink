@@ -6,6 +6,7 @@ vi.mock("./voice-transcription", () => ({
   refusalReason: vi.fn(async () => " (PERMISSION_DENIED)"),
 }));
 
+import { MINK_MODEL_VOICE_LANGUAGES } from "./speech-text";
 import {
   BULBUL_V4_FLASH_SPEAKERS,
   bulbulLanguageFor,
@@ -169,6 +170,14 @@ describe("parseWav", () => {
     expect(bulbulLanguageFor("hi-IN")).toBe("hi-IN");
     expect(bulbulLanguageFor("ml-IN")).toBeNull();
     expect(bulbulLanguageFor("fr-FR")).toBeNull();
+  });
+
+  it("★ the browser's list of voiced languages is Bulbul's, so a hint never asks for a voice that is not there", () => {
+    expect(
+      Object.keys(BULBUL_V4_FLASH_SPEAKERS)
+        .map((tag) => tag.split("-")[0])
+        .sort(),
+    ).toEqual([...MINK_MODEL_VOICE_LANGUAGES].sort());
   });
 });
 

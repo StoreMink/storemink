@@ -1046,7 +1046,7 @@ describe("runRevampChecks: links to the storefront's own pages (output-6)", () =
   });
 });
 
-it("does not mark a bounded redesign ready after checking removes its essential homepage photographs", async () => {
+it("★ reports, on the photos check, a recoverable redesign whose homepage lost its essential photographs", async () => {
   const source = plan([
     page("", [
       sec("n-hero", "hero", {
@@ -1057,7 +1057,7 @@ it("does not mark a bounded redesign ready after checking removes its essential 
     ]),
   ]);
   const result = await runRevampChecks(
-    { ...ctx(), finishBy: Date.now() + 12 * 60_000 },
+    { ...ctx(), recoverable: true },
     { plan: source, snapshot: snapshot(), request: request() },
   );
   expect(check(result.plan, "photos").passed).toBe(false);

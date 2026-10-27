@@ -27,14 +27,21 @@ describe("Mink system prompt document", () => {
 
   it("keeps a neutral AI identity and does not echo abuse in either answer medium", () => {
     const template = getMinkSystemPromptTemplate();
-    expect(template).toContain("not a human man or woman");
-    expect(template).toContain("gender-neutral self-reference");
-    expect(template).toContain("Main aapki madad ke liye yahan hoon");
-    expect(template).toContain("spoken acknowledgements and spoken answers");
+    expect(template).toContain("You are an AI assistant with no gender");
+    expect(template).toContain("never infer the merchant's gender");
     expect(template).toContain(
-      "without quoting, mirroring or reading the abusive wording aloud",
+      "gender-neutral in every language, spoken or written",
     );
-    expect(template).toContain("call a tool just to respond to an insult");
+    expect(template).toContain("Main Mink AI hoon");
+    expect(template).toContain(
+      "without quoting, mirroring or reading the words aloud",
+    );
+    expect(template).toContain(
+      "Do not scold, argue or call a tool for an insult",
+    );
+    expect(template).toContain(
+      "Describe abusive customer content as abusive rather than repeating it",
+    );
   });
 
   it("loads the marked Markdown template used at runtime", () => {

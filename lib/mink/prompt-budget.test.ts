@@ -79,9 +79,15 @@ describe("★★ Mink prompt and tool budget (characters per model step)", () =>
     // characters of declarations) and one interview rule (1,532). Paid only
     // by a run routed to them or one that falls back to every tool, which is
     // why it is worth it: measured prompt 58,276, tools 75,722.
-    expect(full.prompt).toBeLessThanOrEqual(59_000);
+    // ★ Raised 59,000 → 59,500 on 2026-10-28 (read-beta-v43): the neutral
+    //   identity and abuse-handling rules are core safety behaviour for every
+    //   typed and spoken turn, so they cannot be tool-tagged; trimmed to 631
+    //   chars together, about 135 tokens a step. The prompt had 170 chars of
+    //   headroom left before them, and the total only 60, so the total moves
+    //   135,000 → 135,700.
+    expect(full.prompt).toBeLessThanOrEqual(59_500);
     expect(full.tools).toBeLessThanOrEqual(76_500);
-    expect(full.total).toBeLessThanOrEqual(135_000);
+    expect(full.total).toBeLessThanOrEqual(135_700);
   });
 
   it("the rules every run carries, with no tool at all", () => {
@@ -91,7 +97,7 @@ describe("★★ Mink prompt and tool budget (characters per model step)", () =>
         mode: "narrow",
         groups: ["core"],
       }).length,
-    ).toBeLessThanOrEqual(9_000);
+    ).toBeLessThanOrEqual(9_100);
   });
 
   it("no single tool declaration over 6,000 characters", () => {
@@ -105,7 +111,7 @@ describe("★★ Mink prompt and tool budget (characters per model step)", () =>
   // 2026-10-19 measured totals: help 19,074; sales 15,537; stock 15,355;
   // orders 11,585; smalltalk 10,642 (against 126,681 for every tool).
   it.each([
-    ["a help question", "How can I upload a photo?", 20_000],
+    ["a help question", "How can I upload a photo?", 20_300],
     ["a sales question", "How much did I sell today?", 16_500],
     ["a stock question", "Which products are running low?", 16_500],
     ["an orders question", "Show my pending orders", 12_500],

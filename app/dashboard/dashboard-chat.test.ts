@@ -946,6 +946,10 @@ describe("★★ streamed answers in the panel", () => {
     render(createElement(DashboardChat, { variant: "overlay" }));
 
     const pending = screen.getByTestId("mink-pending-answer");
+    // ★ One polite live region for the whole pending row: the answer is
+    //   announced as it streams, and the status is not announced twice.
+    expect(pending).toHaveAttribute("aria-live", "polite");
+    expect(pending.querySelector('[role="status"]')).toBeNull();
     expect(pending).toHaveTextContent("Read store details");
     expect(pending).toHaveTextContent("Reading sales…");
     expect(pending).toHaveTextContent("Sales are up");

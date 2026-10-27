@@ -188,6 +188,28 @@ const LATIN_LETTERS = /[A-Za-zÀ-ɏ]/g;
 
 export const DEFAULT_SPEECH_LANG = "en-IN";
 
+/**
+ * ★★ THE LANGUAGES THE READ-ALOUD MODEL HAS A VOICE FOR (Sarvam Bulbul V4
+ *   Flash, `BULBUL_V4_FLASH_SPEAKERS` in speech-synthesis.ts, which a test
+ *   holds equal to this). The recogniser hears 22 Indian languages, and its
+ *   hint for a language with no voice (Maithili, Nepali, Konkani, Assamese…)
+ *   must not retag an answer the model could read in the script's own
+ *   voice: a Devanagari answer tagged mai-IN was refused by Bulbul and
+ *   handed to the browser, which has no Maithili voice either, where hi-IN
+ *   read it as before. So a hint only speaks for a language in this set.
+ */
+export const MINK_MODEL_VOICE_LANGUAGES: ReadonlySet<string> = new Set([
+  "en",
+  "hi",
+  "bn",
+  "gu",
+  "kn",
+  "mr",
+  "pa",
+  "ta",
+  "te",
+]);
+
 /** Provider metadata is a hint, never arbitrary text passed to browser APIs. */
 export function normalizeSpeechLanguage(value: unknown): string | null {
   if (
@@ -233,6 +255,10 @@ export function normalizeSpeechLanguage(value: unknown): string | null {
  * most of its letters are written in. Latin text takes `fallback` (the
  * browser's own language in the dashboard), and a blank fallback is en-IN.
  * The danda (। ॥) is punctuation shared across scripts, so it never votes.
+ * ★ `detected`, the recogniser's language for the question, settles a script
+ *   several languages share (Devanagari: Hindi or Marathi; Bengali: Bengali
+ *   or Assamese) and retags Latin text (romanised Hindi), but only for a
+ *   language the model has a voice for (`MINK_MODEL_VOICE_LANGUAGES`).
  */
 export function speechLangFor(
   text: string,
@@ -240,7 +266,11 @@ export function speechLangFor(
   detected?: string | null,
 ): string {
   const safeFallback = fallback?.trim() || DEFAULT_SPEECH_LANG;
-  const hint = normalizeSpeechLanguage(detected);
+  const normalized = normalizeSpeechLanguage(detected);
+  const hint =
+    normalized && MINK_MODEL_VOICE_LANGUAGES.has(normalized.split("-")[0])
+      ? normalized
+      : null;
   const hintLanguage = hint?.split("-")[0];
   if (typeof text !== "string" || !text) return safeFallback;
   let best = {

@@ -9691,6 +9691,22 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261028_0260_mink_redesign_recovery_fence",
+      "description": "Adds the recovery protocol fence trigger: only a transaction declaring app.mink_revamp_recovery = 2 may claim, save, park, expire or fail an unfinished recoverable redesign; an older revision may still record Stop. Legacy redesigns and the 0259 guard are unaffected.",
+      "file": "sql/20261028_0260_mink_redesign_recovery_fence.sql",
+      "transaction": true,
+      "requires": ["20261027_0261_mink_voice_controls_help"],
+      "verify": {
+        "queries": [
+          {
+            "name": "recoverable redesign fence trigger is present",
+            "sql": "select count(*)::text from pg_trigger where tgrelid = 'public.mink_revamps'::regclass and tgname = 'mink_revamps_recovery_fence' and not tgisinternal and tgenabled = 'O'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

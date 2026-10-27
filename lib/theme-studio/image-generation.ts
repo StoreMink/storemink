@@ -175,6 +175,12 @@ export interface ThemeImageRunResult {
     reviewPromptVersion: string;
     reviewModelKey: string;
     durationMs?: number;
+    /** `onPrepared` calls that threw: the candidate was drawn and reviewed, not parked. */
+    preparedFailures?: Array<{
+      briefId: string;
+      attempt: number;
+      error: string;
+    }>;
   };
 }
 
@@ -348,6 +354,9 @@ export async function runSlotImageGeneration(
   let laneFailed = false;
   const calls: ImageCall[] = [];
   const reviews: ReviewCall[] = [];
+  const onPreparedFailures: NonNullable<
+    ThemeImageRunResult["telemetry"]["preparedFailures"]
+  > = [];
   const record = (
     request: ThemeImageRequest,
     usage: ImageUsage,
@@ -395,6 +404,9 @@ export async function runSlotImageGeneration(
         reviewPromptVersion: THEME_IMAGE_REVIEW_PROMPT_VERSION,
         reviewModelKey: THEME_IMAGE_REVIEW_MODEL_KEY,
         durationMs: Date.now() - started,
+        ...(onPreparedFailures.length
+          ? { preparedFailures: onPreparedFailures }
+          : {}),
       },
     };
   };
@@ -532,8 +544,22 @@ export async function runSlotImageGeneration(
       });
       const reviewer = input.reviewer;
       const candidate = drawn.prepared;
-      if (candidate && options.onPrepared)
-        await options.onPrepared(args.briefId, candidate, attempt);
+      if (candidate && options.onPrepared) {
+        // Parking the paid candidate is insurance against a crash, never a
+        // condition of the draw: a storage fault here must not fail this
+        // lane and, through the worker, discard every other lane's paid
+        // work. Only a checkpoint stops the run.
+        try {
+          await options.onPrepared(args.briefId, candidate, attempt);
+        } catch (error) {
+          if (error instanceof ImageCheckpointError) throw error;
+          onPreparedFailures.push({
+            briefId: args.briefId,
+            attempt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
       if (!reviewer || !candidate) return kept("unreviewed");
 
       const reviewStarted = Date.now();

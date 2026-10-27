@@ -9,6 +9,7 @@ temporary provider errors recover, and measurements under representative load.
 
 - Recovery policy 2 keeps unfinished full redesigns claimable past their time
   target and the legacy wall-clock ceiling. Invocation limits hand work over.
+  A six-hour recovery ceiling still ends a job whose fault never clears.
 - Known capacity refusals and transient database connection/transaction faults
   schedule retries without consuming the real failure counter.
 - Checked photographs, paid photo candidates, private anchor candidates,
@@ -17,7 +18,8 @@ temporary provider errors recover, and measurements under representative load.
 - Reviewer outages keep candidates parked for review. Storage-check outages
   delay finalization. Neither is permission to accept unchecked images.
 - Preview design and Stop remain available while the retry is scheduled.
-- Required checks precede a final card. Existing card ids keep retries from
+- The final checks run before the card; a check they leave open is noted on
+  the card and never fails the job. Existing card ids keep retries from
   charging twice; a stored card can be settled after its runner disappears.
 - Quality and spend still have limits. Invalid requests, permanent provider
   refusals, revoked access, configuration faults and programming errors need
@@ -25,19 +27,21 @@ temporary provider errors recover, and measurements under representative load.
 
 ## Database upgrade
 
-The forward migration draft is prepared; its sequence-number confirmation is
-pending. Previously applied migrations 0258 and 0259 must remain immutable.
-The draft preserves unfinished work and changes the published guide in place.
+Migration `20261028_0260_mink_redesign_recovery_fence` installs the fence.
+Previously applied migrations 0258 and 0259 remain immutable; the 0259 guard
+stays in place and fires for no row.
 
-The upgrade takes a table lock and refuses live legacy full-redesign
-invocations. Let those invocations finish before applying it. Afterwards an
-INSERT/UPDATE protocol fence prevents older workers and older sweep logic from
-claiming, overwriting or expiring recovery-policy jobs. Compatible repository
-transactions declare the protocol locally to that transaction. Older dashboard
-code may still record Stop.
+The fence is a BEFORE UPDATE trigger on unfinished recovery-policy jobs. A
+transaction that has not declared the protocol may record Stop and nothing
+else: its claim is refused and its other writes (an older sweep's expiry, a
+checkpoint) are skipped. Compatible repository transactions declare the
+protocol locally to that transaction. Legacy jobs and refinements are
+untouched, so the upgrade needs no table lock and no preflight, and no
+in-flight legacy job is converted.
 
-The protocol draft has been exercised in rollback-only local Postgres
-transactions. This is not an applied migration or permission to deploy it.
+The fence is applied to the local database and exercised by
+`jobs.local.test.ts`. Staging applies it on the next `dev` build, production
+on the next `main` build; complete each rollout before measuring.
 
 ## Required staging evidence
 

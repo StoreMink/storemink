@@ -16,7 +16,9 @@ layout early. Paid photo and hidden-anchor candidates survive reviewer outages;
 reviews resume without redrawing, and no unchecked picture reaches the final
 card. A time limit on one invocation never triggers omission of unfinished
 photographs. The waiting card states that progress is saved and retries are
-automatic; Apply waits for required final checks.
+automatic; a check left open is noted on the card and never fails the job.
+A recoverable job that cannot finish within six hours of its first claim is
+ended as `run_ceiling` so the store can start another.
 
 These are implemented recovery rules, not measured provider performance.
 Priority is not enabled. The shared pacer keeps its 10-to-45-second bounds,

@@ -983,6 +983,11 @@ export function DashboardChat({
                   {isReplying && (
                     <div
                       className="mink-answer-row flex min-w-0 py-1"
+                      // The whole pending row is one polite live region, so a
+                      // screen reader hears the answer as it streams and the
+                      // status beneath it; a second live region nested inside
+                      // would announce the status twice.
+                      aria-live="polite"
                       data-testid="mink-pending-answer"
                     >
                       <div className="min-w-0 flex-1">
@@ -992,10 +997,7 @@ export function DashboardChat({
                             <MinkAnswer text={streamingText} />
                           </div>
                         ) : null}
-                        <div
-                          role="status"
-                          className="flex items-center gap-2.5 py-2 text-sm text-[#5c5f62]"
-                        >
+                        <div className="flex items-center gap-2.5 py-2 text-sm text-[#5c5f62]">
                           <MinkMark size="sm" />
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
                           {statusText ?? "Thinking…"}

@@ -5041,7 +5041,7 @@ describe("bounded image work", () => {
     const { reviewer } = makeReviewer(() => []);
     const ctx = {
       ...makeCtx().ctx,
-      finishBy: Date.now() + 12 * 60_000,
+      recoverable: true,
       photoReviews: reviews.port,
     };
     const run = await drawRevampPhotos(ctx, boundedInput(stored), {
@@ -5069,7 +5069,7 @@ describe("bounded image work", () => {
     const model = makeClient();
     const ctx = {
       ...makeCtx().ctx,
-      finishBy: Date.now() + 12 * 60_000,
+      recoverable: true,
       photoReviews: reviews.port,
     };
     const run = await drawRevampPhotos(ctx, boundedInput(stored), {
@@ -5086,13 +5086,101 @@ describe("bounded image work", () => {
     ).toBe(true);
   });
 
+  it("★★ a kept photograph is adopted from its parked candidate, never uploaded a second time", async () => {
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviewsPort().port,
+    };
+    const run = await drawRevampPhotos(ctx, boundedInput(), {
+      imageClient: model.client,
+      reviewer: makeReviewer(() => []).reviewer,
+      prepare,
+    });
+    expect(run.images.filter((image) => image.role === "slot")).toHaveLength(3);
+    // Every upload was a candidate parked before its review (the anchor's
+    // among them); the anchor and the three kept photographs became rows of
+    // their own by adoption, pointing at the same objects.
+    expect(h.saves.map((save) => save.slotId).sort()).toEqual([
+      "anchor~candidate-1",
+      "one~candidate-1",
+      "three~candidate-1",
+      "two~candidate-1",
+    ]);
+    expect(h.adoptCalls.map((call) => call.slotId).sort()).toEqual([
+      "anchor",
+      "one",
+      "three",
+      "two",
+    ]);
+    for (const id of ["one", "two", "three"]) {
+      const kept = run.images.find((image) => image.slotId === id)!;
+      const parked = h.rows.get(`${REVAMP}|slot|${id}~candidate-1`)!;
+      expect(kept.path).toBe(parked.path);
+      expect(kept.review).toBe("passed");
+    }
+  });
+
+  it("★ stores the bytes itself when the candidate's row cannot be adopted", async () => {
+    h.adoptFails.add("one");
+    const model = makeClient();
+    const ctx = {
+      ...makeCtx().ctx,
+      recoverable: true,
+      photoReviews: reviewsPort().port,
+    };
+    const run = await drawRevampPhotos(ctx, boundedInput(), {
+      imageClient: model.client,
+      reviewer: makeReviewer(() => []).reviewer,
+      prepare,
+    });
+    expect(run.images.find((image) => image.slotId === "one")?.review).toBe(
+      "passed",
+    );
+    expect(h.saves.map((save) => save.slotId)).toContain("one");
+  });
+
+  it("★ a refinement draws a shot its record only shows redraws for, never skipping it as spent", async () => {
+    // A legacy or refine run journals no draws; reading its redraws as the
+    // engine's attempt count made the next run skip the shot and loop.
+    const reviews = reviewsPort({
+      shots: {
+        one: {
+          tries: 0,
+          redraws: [
+            { attempt: 1, problems: ["wrong_subject"] },
+            { attempt: 2, problems: ["wrong_subject"] },
+            { attempt: 3, problems: ["wrong_subject"] },
+          ],
+          correction: "wrong_subject",
+        },
+      },
+    });
+    const model = makeClient();
+    const ctx = { ...makeCtx().ctx, photoReviews: reviews.port };
+    const run = await drawRevampPhotos(
+      ctx,
+      boundedInput([seedRow(REVAMP, "anchor", "anchor", 1200, 1200)]),
+      {
+        imageClient: model.client,
+        reviewer: makeReviewer(() => []).reviewer,
+        prepare,
+      },
+    );
+    expect(model.briefs()).toContain("one");
+    expect(run.images.find((image) => image.slotId === "one")?.review).toBe(
+      "passed",
+    );
+  });
+
   it("cannot send more images after a previous invocation spent the whole image budget", async () => {
     const reviews = reviewsPort({ shots: { old: { tries: 0, draws: 11 } } });
     const model = makeClient();
     const stored = [seedRow(REVAMP, "anchor", "anchor", 1200, 1200)];
     const ctx = {
       ...makeCtx().ctx,
-      finishBy: Date.now() + 12 * 60_000,
+      recoverable: true,
       photoReviews: reviews.port,
     };
     await expect(
@@ -5109,7 +5197,7 @@ describe("bounded image work", () => {
     const model = makeClient();
     const ctx = {
       ...makeCtx().ctx,
-      finishBy: Date.now() + 12 * 60_000,
+      recoverable: true,
       photoReviews: reviewsPort().port,
     };
     await expect(
@@ -5119,28 +5207,6 @@ describe("bounded image work", () => {
         prepare,
       }),
     ).rejects.toMatchObject({ code: "photos_failed" });
-  });
-
-  it("finishes with compatible checked crops when no complete new image attempt fits", async () => {
-    const stored = ["one", "two", "three"].map((id) =>
-      seedRow(REVAMP, "slot", id, 1200, 1200),
-    );
-    const model = makeClient();
-    const ctx = {
-      ...makeCtx().ctx,
-      finishBy: Date.now() + 2 * 60_000,
-      draining: new AbortController().signal,
-    };
-    const run = await drawRevampPhotos(ctx, boundedInput(stored, true), {
-      imageClient: model.client,
-      reviewer: makeReviewer(() => []).reviewer,
-      prepare,
-    });
-    expect(model.calls).toHaveLength(0);
-    expect(run.images.find((image) => image.slotId === "about")).toBeDefined();
-    expect(run.images.some((image) => image.review === "unreviewed")).toBe(
-      false,
-    );
   });
 
   it("hands over at the invocation drain without omitting unfinished photographs", async () => {
@@ -5294,7 +5360,7 @@ describe("durable image admission", () => {
     const model = makeClient();
     const ctx = {
       ...makeCtx().ctx,
-      finishBy: Date.now() + 12 * 60_000,
+      recoverable: true,
       photoReviews: {
         held: () => null,
         record: async () => {

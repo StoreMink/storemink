@@ -69,6 +69,7 @@ import {
   type RevampRequest,
   type RevampStoredPlan,
 } from "./contract";
+import { REVAMP_RECOVERY_CEILING_MS } from "./pacing-policy";
 import {
   REVAMP_RUN_CEILING_MS,
   cancelRevamp,
@@ -2563,12 +2564,20 @@ describe("keeping a job moving", () => {
     // ★★ The ceiling ends a job in the sweep and keeps it from being kicked
     //   (B8), and says which limit it was.
     expect(exhausted).toContain(
-      "attempts >= max_attempts OR (CASE WHEN result -> 'recoveryVersion'",
+      "attempts >= max_attempts OR (CASE WHEN jsonb_typeof(result -> 'firstClaimedAt')",
     );
     expect(exhausted).toContain("'run_ceiling'");
-    expect(stalled).toContain("AND NOT (CASE WHEN result -> 'recoveryVersion'");
+    expect(stalled).toContain(
+      "AND NOT (CASE WHEN jsonb_typeof(result -> 'firstClaimedAt')",
+    );
+    // ★ The ceiling that applies is the row's: the longer one for a
+    //   recoverable job, the legacy one for the rest.
+    expect(exhausted).toContain("CASE WHEN result -> 'recoveryVersion'");
     expect(sqlParamValues(holder.db.calls.execute[0])).toContain(
       REVAMP_RUN_CEILING_MS,
+    );
+    expect(sqlParamValues(holder.db.calls.execute[0])).toContain(
+      REVAMP_RECOVERY_CEILING_MS,
     );
     // A made card is finished whichever limit ended its job.
     expect(sqlText(holder.db.calls.where[0])).toContain("'firstClaimedAt'");
@@ -2590,7 +2599,7 @@ describe("keeping a job moving", () => {
     expect(statement).toContain("FOR UPDATE SKIP LOCKED");
     expect(statement).toContain("attempts < max_attempts");
     expect(statement).toContain(
-      "AND NOT (CASE WHEN result -> 'recoveryVersion'",
+      "AND NOT (CASE WHEN jsonb_typeof(result -> 'firstClaimedAt')",
     );
     expect(statement).toContain("cancel_requested_at IS NULL");
     // ★ Not held to the poll's cooldown: the kick that was turned away a

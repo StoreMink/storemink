@@ -93,6 +93,7 @@ import {
   countRefinements,
   createRevampJob,
   failRevampJob,
+  findActiveRevampId,
   findReadyRevampByDraft,
   finishRevampReady,
   holdRevampPhotos,
@@ -107,10 +108,12 @@ import {
   renewRevampLease,
   reportRevampProgress,
   revampStartLimit,
+  revampStopRequested,
   saveRevampStep,
   settleFinishedPhotoHolds,
   sweepStalledRevamps,
 } from "./jobs";
+import { REVAMP_RECOVERY_CEILING_MS } from "./pacing-policy";
 import { ZERO_REVAMP_USAGE, type RevampPhotoReviews } from "./ports";
 import { claimSpendLimits } from "../spend-limits";
 
@@ -857,9 +860,10 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
       expect(service.kick).not.toHaveBeenCalledWith(job.id);
       expect((await row(job.id)).attempts).toBe(0);
       const view = await readRevampStatus(store.actor, job.id);
+      // ★ The sentence says its time ran out, not that it tried several times.
       expect(view).toMatchObject({
         status: "failed",
-        error: REVAMP_ERROR_MESSAGES.out_of_attempts,
+        error: REVAMP_ERROR_MESSAGES.time_limit,
       });
       expect(await row(job.id)).toMatchObject({
         error_code: "out_of_attempts",
@@ -930,6 +934,44 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
       expect(await claimRevampJob(job.id)).not.toBeNull();
     });
 
+    it("★★ still ends a recoverable job that waits past its own ceiling, and the sweep too", async () => {
+      const job = await createOk("full");
+      const first = await claimRevampJob(job.id);
+      // Parked on a capacity wait, uncounted, as a stuck job would be.
+      await releaseRevampLease(job.id, first!.leaseToken, {
+        retryAfterMs: 60_000,
+        counted: false,
+      });
+      await expireLease(job.id);
+      await claimedAgo(job.id, REVAMP_RECOVERY_CEILING_MS + 1_000);
+      expect(await claimRevampJob(job.id)).toBeNull();
+      expect(await kickRevampIfStalled(job.id)).toBe(false);
+      expect(await readRevampStatus(store.actor, job.id)).toMatchObject({
+        status: "failed",
+        error: REVAMP_ERROR_MESSAGES.time_limit,
+      });
+      expect(await row(job.id)).toMatchObject({
+        status: "failed",
+        error_code: "out_of_attempts",
+        error_detail: "run_ceiling",
+        attempts: 0,
+      });
+      // The store may start another at once.
+      expect(await findActiveRevampId(store.actor.storeId)).toBeNull();
+    });
+
+    it("reads Stop as one primary-key read, without touching the lease", async () => {
+      const job = await createOk("full");
+      const claimed = await claimRevampJob(job.id);
+      expect(await revampStopRequested(job.id)).toBe(false);
+      const leaseUntil = (await row(job.id)).lease_until;
+      await cancelRevamp(store.actor, job.id);
+      expect(await revampStopRequested(job.id)).toBe(true);
+      expect((await row(job.id)).lease_until).toEqual(leaseUntil);
+      expect((await row(job.id)).lease_token).toBe(claimed!.leaseToken);
+      expect(await revampStopRequested("not-a-uuid")).toBe(false);
+    });
+
     it("an older sweep cannot fail recoverable work, while an older dashboard can record Stop", async () => {
       const job = await createOk("full");
       await client.query(
@@ -975,12 +1017,11 @@ describe.skipIf(!enabled)("revamp jobs, on local Postgres", () => {
           leaseToken: claimed!.leaseToken,
           step: "plan",
           progress: [],
-          patch: { result: { checked: true, firstClaimedAt: 1, finishBy: 1 } },
+          patch: { result: { checked: true, firstClaimedAt: 1 } },
         }),
       ).toBe(true);
       expect((await row(job.id)).result).toEqual({
         checked: true,
-        finishBy: 1,
         recoveryVersion: 2,
         targetReadyAt: job.result?.targetReadyAt,
         firstClaimedAt: clock,

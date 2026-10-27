@@ -3947,18 +3947,27 @@ describe("redrawFor", () => {
   });
 });
 
-describe("bounded full redesigns", () => {
-  it("keeps the original deadline through checkpoints and uses supplied product photos", async () => {
-    const finishBy = Date.now() + 12 * 60_000;
-    const jobs = makeJobs(makeJob({ result: { finishBy } }));
-    const deps = makeDeps([], {
-      checks: vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } })),
+describe("recoverable redesigns", () => {
+  const successfulChecks = () =>
+    vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } }));
+  const recoverable = (over: Parameters<typeof makeJob>[0] = {}) =>
+    makeJob({
+      ...over,
+      result: {
+        recoveryVersion: 2,
+        targetReadyAt: Date.now() + 12 * 60_000,
+        ...over.result,
+      },
     });
+
+  it("keeps the policy through checkpoints and uses supplied product photos", async () => {
+    const jobs = makeJobs(recoverable());
+    const deps = makeDeps([], { checks: successfulChecks() });
     expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
       "ready",
     );
     expect(deps.photos).toHaveBeenCalledWith(
-      expect.objectContaining({ finishBy }),
+      expect.objectContaining({ recoverable: true }),
       expect.anything(),
     );
     expect(deps.products).not.toHaveBeenCalled();
@@ -3971,21 +3980,14 @@ describe("bounded full redesigns", () => {
     );
     expect(jobs.finish).toHaveBeenCalledWith(
       expect.objectContaining({
-        result: expect.objectContaining({ finishBy }),
+        result: expect.objectContaining({ recoveryVersion: 2 }),
       }),
     );
   });
 
   it("does not reserve paid budget for studio enhancements excluded from the run", async () => {
-    const jobs = makeJobs(
-      makeJob({
-        budgetCredits: 50,
-        result: { finishBy: Date.now() + 12 * 60_000 },
-      }),
-    );
-    const deps = makeDeps([], {
-      checks: vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } })),
-    });
+    const jobs = makeJobs(recoverable({ budgetCredits: 50 }));
+    const deps = makeDeps([], { checks: successfulChecks() });
     expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
       "ready",
     );
@@ -4004,60 +4006,67 @@ describe("bounded full redesigns", () => {
     expect(deps.products).not.toHaveBeenCalled();
   });
 
-  it("does not restart an expired job or charge for it", async () => {
-    const jobs = makeJobs(makeJob({ result: { finishBy: Date.now() - 1 } }));
-    const deps = makeDeps([]);
-    expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
-      "failed",
-    );
-    expect(jobs.fail).toHaveBeenCalledWith(
-      expect.objectContaining({ code: "time_limit" }),
-    );
-    expect(deps.plan).not.toHaveBeenCalled();
-    expect(deps.card).not.toHaveBeenCalled();
-    expect(jobs.kick).not.toHaveBeenCalled();
-  });
-
-  it("does not make a paid card when a required final check fails", async () => {
+  it("★★ makes the card with an open check noted on it, never a failure after the photos were paid for", async () => {
     const job = jobAt("checks");
-    job.result = { ...job.result, finishBy: Date.now() + 5 * 60_000 };
+    job.result = { ...job.result, recoveryVersion: 2 };
     const jobs = makeJobs(job);
+    const openCheck = {
+      id: "pages",
+      label: "Every page is ready to publish",
+      passed: false,
+      note: "Your own About section needs finishing before you publish.",
+    };
     const deps = makeDeps([], {
       checks: vi.fn(async () => ({
-        plan: {
-          ...CHECKED,
-          checks: [
-            { id: "copy", label: "Copy", passed: false, note: "Unresolved" },
-          ],
-        },
+        plan: { ...CHECKED, checks: [openCheck] },
       })),
     });
     expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
-      "failed",
+      "ready",
     );
-    expect(deps.card).not.toHaveBeenCalled();
-    expect(jobs.fail).toHaveBeenCalledWith(
-      expect.objectContaining({ code: "plan_invalid" }),
+    expect(jobs.fail).not.toHaveBeenCalled();
+    expect(deps.card).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        plan: expect.objectContaining({ checks: [openCheck] }),
+      }),
     );
   });
 
-  it("honours Stop within the ten-second polling interval", async () => {
+  it("★ honours Stop within ten seconds by reading the flag, not by renewing the lease", async () => {
     vi.useFakeTimers();
-    const jobs = makeJobs(
-      makeJob({ result: { finishBy: Date.now() + 12 * 60_000 } }),
-      { renew: vi.fn(async () => ({ ok: true, cancelRequested: true })) },
-    );
+    const stopRequested = vi.fn(async () => true);
+    const jobs = makeJobs(recoverable(), { stopRequested });
     const deps = makeDeps([], { snapshot: vi.fn(untilAborted) });
     const work = runRevampJob({ revampId: ID, jobs, deps });
     await vi.advanceTimersByTimeAsync(10_000);
     expect((await work).outcome).toBe("cancelled");
+    expect(stopRequested).toHaveBeenCalledWith(ID);
+    // The lease is renewed once a minute, as for every job.
+    expect(jobs.renew).not.toHaveBeenCalled();
     expect(deps.card).not.toHaveBeenCalled();
     expect(jobs.cancel).toHaveBeenCalled();
   });
 
-  it("does not park a provider wait beyond the original deadline", async () => {
+  it("asks the flag again after a read that failed, and never stops on it", async () => {
+    vi.useFakeTimers();
+    const stopRequested = vi
+      .fn<() => Promise<boolean>>()
+      .mockRejectedValueOnce(new Error("pool timeout"))
+      .mockResolvedValue(true);
+    const jobs = makeJobs(recoverable(), { stopRequested });
+    const deps = makeDeps([], { snapshot: vi.fn(untilAborted) });
+    const work = runRevampJob({ revampId: ID, jobs, deps });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect((await work).outcome).toBe("cancelled");
+    expect(stopRequested).toHaveBeenCalledTimes(2);
+  });
+
+  it("parks a provider wait past the performance target instead of failing", async () => {
     const jobs = makeJobs(
-      jobAt("photos", { result: { finishBy: Date.now() + 2 * 60_000 } }),
+      jobAt("photos", {
+        result: { recoveryVersion: 2, targetReadyAt: Date.now() - 1 },
+      }),
     );
     const deps = makeDeps([], {
       photos: vi.fn(async () => {
@@ -4069,24 +4078,47 @@ describe("bounded full redesigns", () => {
       }),
     });
     expect((await runRevampJob({ revampId: ID, jobs, deps })).outcome).toBe(
-      "failed",
+      "handover",
     );
-    expect(jobs.release).not.toHaveBeenCalled();
+    expect(jobs.release).toHaveBeenCalledWith(
+      ID,
+      LEASE,
+      expect.objectContaining({ retryAfterMs: 20 * 60_000, counted: false }),
+    );
+    expect(jobs.fail).not.toHaveBeenCalled();
     expect(deps.card).not.toHaveBeenCalled();
   });
-});
 
-describe("recoverable redesigns", () => {
-  const successfulChecks = () =>
-    vi.fn(async () => ({ plan: { ...CHECKED, checks: [] } }));
+  it("★ a redone shoot counts its photos from nothing on the card", async () => {
+    // The stored detail says six were drawn; the photos step is redone with
+    // a smaller plan, and its first report must not read "6 of 6".
+    const job = jobAt("photos");
+    job.result = { ...job.result, recoveryVersion: 2 };
+    job.progress = job.progress.map((item) =>
+      item.step === "photos"
+        ? { ...item, state: "running" as const, detail: "6 of 6" }
+        : item,
+    );
+    const jobs = makeJobs(job);
+    const deps = makeDeps([], {
+      checks: successfulChecks(),
+      photos: vi.fn(async (ctx: RevampStepContext) => {
+        await ctx.report("1 of 4");
+        return { images: [], outcomes: [OUTCOME], usage: ZERO_REVAMP_USAGE };
+      }),
+    });
+    const { outcome } = await runRevampJob({ revampId: ID, jobs, deps });
+    expect(outcome).toBe("ready");
+    const progress = vi.mocked(jobs.report).mock.calls[0][2];
+    expect(progress.find((p) => p.step === "photos")?.detail).toBe("1 of 4");
+  });
 
-  it("finishes after its performance target, ignoring an old absolute cutoff", async () => {
+  it("finishes after its performance target, ignoring the target as a cutoff", async () => {
     const jobs = makeJobs(
       makeJob({
         result: {
           recoveryVersion: 2,
           targetReadyAt: Date.now() - 60_000,
-          finishBy: Date.now() - 1,
         },
       }),
     );
@@ -4097,9 +4129,6 @@ describe("recoverable redesigns", () => {
     expect(deps.photos).toHaveBeenCalledWith(
       expect.objectContaining({ recoverable: true }),
       expect.anything(),
-    );
-    expect(vi.mocked(deps.photos).mock.calls[0][0]).not.toHaveProperty(
-      "finishBy",
     );
     expect(deps.products).not.toHaveBeenCalled();
     expect(jobs.fail).not.toHaveBeenCalled();

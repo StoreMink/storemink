@@ -5164,8 +5164,8 @@ function limitShots(
       return 5;
     }
     const use = all.find((c) => c.binding.shotId === id);
-    if (categoryIds.has(id)) return ctx.boundedPhotos ? 1 : 2;
-    if (use?.binding.pageSlug === "") return ctx.boundedPhotos ? 2 : 1;
+    if (use?.binding.pageSlug === "") return 1;
+    if (categoryIds.has(id)) return 2;
     if (id.startsWith("refill-")) return 3;
     return 4;
   };

@@ -1,5 +1,4 @@
 import "server-only";
-import { revampAdmissionDrain } from "./photos";
 
 // ---------------------------------------------------------------------------
 // The storefront revamp's planning call: ONE structured Gemini request that
@@ -114,9 +113,7 @@ export interface RevampPlannerOptions {
 function vertexClient(ctx: RevampStepContext): ThemeStudioModelClient | null {
   const vertex = getVertexConfig();
   if (!vertex) return null;
-  const draining = ctx.finishBy
-    ? revampAdmissionDrain(ctx, REVAMP_PLANNER_TIMEOUT_MS)
-    : ctx.draining;
+  const draining = ctx.draining;
   return createVertexModelClient(vertex, {
     capacity: (model) =>
       revampPlannerCapacity(

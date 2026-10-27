@@ -197,7 +197,7 @@ export const REVAMP_ERROR_MESSAGES: Record<RevampErrorCode, string> = {
   photos_unavailable:
     "The photo service was too busy to finish the new photographs. Nothing was changed. Ask Mink to try again in a few minutes.",
   time_limit:
-    "Mink AI could not finish a checked redesign within this run. Nothing was changed and you were not charged. Ask Mink to try again.",
+    "Mink AI could not finish this redesign in the time it allows. Nothing was changed and you were not charged. Ask Mink to try again.",
   photos_failed:
     "The new photographs did not pass Mink AI's own checks this time. Nothing was changed. Ask Mink to try again.",
   store_changed:

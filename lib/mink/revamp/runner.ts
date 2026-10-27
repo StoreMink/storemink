@@ -1,10 +1,5 @@
 import "server-only";
-import {
-  REVAMP_WORK_BUDGET,
-  revampFinishBy,
-  revampRecovers,
-  revampPaidAdmissionEndsAt,
-} from "./pacing-policy";
+import { REVAMP_WORK_BUDGET, revampRecovers } from "./pacing-policy";
 
 // ---------------------------------------------------------------------------
 // The revamp runner: one invocation claims one job, carries it as far as it
@@ -141,6 +136,14 @@ export interface RevampRunnerJobs {
   hold: JobsModule["holdRevampPhotos"];
   /** Record the photos step's photo checks on the job row (P0). */
   reviews: JobsModule["recordRevampPhotoReviews"];
+  /**
+   * Whether the merchant has pressed Stop: one primary-key read of the
+   * cancel flag, asked every `stopPollMs` on a recoverable job. ★ Optional
+   * so a caller that builds its own side effects keeps working: absent, Stop
+   * is read by the once-a-minute lease renewal and before the charge, as
+   * every job's always was.
+   */
+  stopRequested?: JobsModule["revampStopRequested"];
   notify: (input: EmitEventInput) => Promise<unknown>;
   /**
    * ★★ This store's own earlier redesigns' plans, newest first (the redo
@@ -373,9 +376,13 @@ async function runHeldRevamp(
   const { job, leaseToken } = claimed;
   const revampId = job.id;
   const request = job.request;
+  // ★★ A new full redesign recovers (pacing-policy.ts): waits park it without
+  //   counting, every paid candidate is stored before its review, and it
+  //   draws within the photo and image-call budgets. Legacy jobs and
+  //   refinements keep the earlier contract. ★ The twelve-minute target it
+  //   carries (`targetReadyAt`) is observed in the timeline only: it never
+  //   gates a claim, a paid call, the preview or the card.
   const recoverable = revampRecovers(job.result);
-  const finishBy = recoverable ? null : revampFinishBy(job.result?.finishBy);
-  const budgeted = recoverable || finishBy !== null;
 
   const controller = new AbortController();
   let stop: StopReason | null = null;
@@ -392,12 +399,7 @@ async function runHeldRevamp(
 
   const deadlineMs = Math.max(
     0,
-    Math.min(
-      input.deadlineMs ?? REVAMP_LIMITS.runnerDeadlineMs,
-      finishBy === null
-        ? Infinity
-        : Math.max(0, finishBy - now() - REVAMP_WORK_BUDGET.finalChecksMs),
-    ),
+    input.deadlineMs ?? REVAMP_LIMITS.runnerDeadlineMs,
   );
   const deadline = now() + deadlineMs;
   // ★★ THE DEADLINE DRAINS BEFORE IT STOPS (jobs-4). Aborting at once cut
@@ -409,12 +411,7 @@ async function runHeldRevamp(
   const deadlineTimer = setTimeout(() => {
     if (stop) return;
     drainController.abort(new RevampHalted("deadline"));
-    graceTimer = setTimeout(
-      () => halt("deadline"),
-      finishBy === null
-        ? REVAMP_DEADLINE_GRACE_MS
-        : Math.max(0, Math.min(REVAMP_DEADLINE_GRACE_MS, finishBy - now())),
-    );
+    graceTimer = setTimeout(() => halt("deadline"), REVAMP_DEADLINE_GRACE_MS);
   }, deadlineMs);
   // ★★ ONLY A LOST LEASE STOPS PAID WORK AT ONCE, NOT A FAILED RENEWAL (D1,
   //   Theme Studio's P2 rule, worker-lease.ts). A renewal answering false
@@ -482,12 +479,33 @@ async function runHeldRevamp(
     })();
     return renewal;
   };
-  const renewTimer = setInterval(
-    () => {
-      void renewOnce();
-    },
-    budgeted ? REVAMP_WORK_BUDGET.stopPollMs : REVAMP_LIMITS.leaseRenewMs,
-  );
+  const renewTimer = setInterval(() => {
+    void renewOnce();
+  }, REVAMP_LIMITS.leaseRenewMs);
+  // ★★ STOP IS READ EVERY TEN SECONDS ON A RECOVERABLE JOB, AS A READ. The
+  //   lease renewal reads the cancel flag too, but renewing six times a
+  //   minute is six fenced UPDATEs a minute per running job (each through
+  //   the recovery fence trigger) on a database that already alerts on
+  //   connections. A primary-key SELECT of the flag costs nothing to speak
+  //   of, so Stop is honoured within `stopPollMs` and the lease is still
+  //   renewed once a minute. ★ A read that throws is logged and asked again
+  //   at the next tick; it says nothing about the lease (D1).
+  const stopTimer =
+    recoverable && jobs.stopRequested
+      ? setInterval(() => {
+          if (stop) return;
+          void jobs.stopRequested!(revampId)
+            .then((requested) => {
+              if (requested && !stop && !ended) halt("cancelled");
+            })
+            .catch((error) => {
+              logWarn("mink.revamp: stop check failed", {
+                revampId,
+                code: failureCode(error),
+              });
+            });
+        }, REVAMP_WORK_BUDGET.stopPollMs)
+      : null;
 
   // Local state: the job row as this invocation has advanced it.
   const state: {
@@ -508,11 +526,16 @@ async function runHeldRevamp(
   // deadline between two steps caught nothing half done.
   let working: RevampStep | null = null;
   let lastReportAt = Number.NEGATIVE_INFINITY;
-  let photosReported = Number(
-    job.progress
-      .find((item) => item.step === "photos")
-      ?.detail?.match(/^(\d+) of \d+$/)?.[1] ?? 0,
-  );
+  // ★ The photos step's "7 of 24" never runs backwards on the card: a resumed
+  //   shoot counts its own draws from zero while the earlier ones are stored,
+  //   and lanes settle out of order. The high-water mark is the stored
+  //   detail's, and starts over when the step is redone or its total changes
+  //   (a re-planned shoot), so "6 of 6" is never shown before a draw.
+  const storedPhotoDetail = job.progress
+    .find((item) => item.step === "photos")
+    ?.detail?.match(/^(\d+) of (\d+)$/);
+  let photosReported = Number(storedPhotoDetail?.[1] ?? 0);
+  let photosTotal = Number(storedPhotoDetail?.[2] ?? 0);
   // The revamp's stored photos when the photos or products step started in
   // this invocation (jobs-5); null for every other step.
   let imagesAtStepStart: number | null = null;
@@ -550,8 +573,13 @@ async function runHeldRevamp(
       if (current === "photos" && detail) {
         const count = detail.match(/^(\d+) of (\d+)$/);
         if (count) {
+          const total = Number(count[2]);
+          if (total !== photosTotal) {
+            photosTotal = total;
+            photosReported = 0;
+          }
           photosReported = Math.max(photosReported, Number(count[1]));
-          detail = `${Math.min(photosReported, Number(count[2]))} of ${count[2]}`;
+          detail = `${Math.min(photosReported, total)} of ${total}`;
         }
       }
       setState(current, "running", boundedDetail(detail));
@@ -737,11 +765,6 @@ async function runHeldRevamp(
         return "cancelled";
       }
       case "deadline": {
-        if (
-          finishBy !== null &&
-          now() >= finishBy - REVAMP_WORK_BUDGET.finalChecksMs
-        )
-          return failWith("time_limit", "bounded_run_deadline");
         // ★★ A hand-over that stored photos gives the step its failure count
         //   back (jobs-5): the deadline is a turn, not a failure.
         const progressed = await storedSinceStepStart();
@@ -856,11 +879,6 @@ async function runHeldRevamp(
       counted: !google,
       error: errorText(error),
     });
-    if (
-      finishBy !== null &&
-      now() + wait >= finishBy - REVAMP_WORK_BUDGET.finalChecksMs
-    )
-      return failWith("time_limit", "retry_exceeds_run_deadline");
     await release(wait, google ? { counted: false } : {});
     return "handover";
   };
@@ -955,6 +973,7 @@ async function runHeldRevamp(
     if (graceTimer) clearTimeout(graceTimer);
     if (leaseWatch) clearTimeout(leaseWatch);
     clearInterval(renewTimer);
+    if (stopTimer) clearInterval(stopTimer);
   }
 
   async function drive(): Promise<RevampRunOutcome> {
@@ -995,7 +1014,6 @@ async function runHeldRevamp(
       actor: actor.runId ? actor : { ...actor, runId: job.originRunId },
       signal: controller.signal,
       deadline,
-      ...(finishBy !== null ? { finishBy } : {}),
       ...(recoverable ? { recoverable: true } : {}),
       report,
       draining: drainController.signal,
@@ -1016,7 +1034,7 @@ async function runHeldRevamp(
 
     let index = Math.max(0, REVAMP_STEPS.indexOf(job.step));
     while (index < REVAMP_STEPS.length) {
-      if (!stopNow() && now() >= (finishBy ?? deadline)) halt("deadline");
+      if (!stopNow() && now() >= deadline) halt("deadline");
       if (stopNow()) return settleStop();
       const step = REVAMP_STEPS[index];
       const redo = producerIndexFor(step);
@@ -1032,6 +1050,9 @@ async function runHeldRevamp(
         for (const later of REVAMP_STEPS.slice(redo)) {
           setState(later, "waiting", null);
         }
+        // A shoot done over counts its photos from nothing again.
+        photosReported = 0;
+        photosTotal = 0;
         index = redo;
         continue;
       }
@@ -1282,11 +1303,13 @@ async function runHeldRevamp(
           snapshot: required(state.snapshot, "snapshot"),
           request,
         });
-        if (budgeted && run.plan.checks.some((check) => !check.passed))
-          throw new RevampStepError(
-            "plan_invalid",
-            "The redesign has unresolved final checks.",
-          );
+        // ★★ A CHECK LEFT OPEN IS A NOTE ON THE CARD, NEVER A FAILURE
+        //   (checks.ts): everything with a mechanical fix was fixed, and
+        //   what remains (a merchant's own unfinished section, a wide
+        //   opening photo with no phone crop, a claim in a menu link) is
+        //   reported in plain words for the merchant to weigh. Failing the
+        //   job here threw away eight paid photographs for advice, and the
+        //   retry failed the same way.
         return {
           patch: {
             result: { ...state.result, stored: run.plan, checked: true },
@@ -1316,7 +1339,7 @@ async function runHeldRevamp(
       //   summary of this store's earlier redesigns.
       const summary = await earlierDesigns();
       const inputs: RevampPlannerInput = {
-        ...(budgeted ? { photoBudget: REVAMP_WORK_BUDGET.photos } : {}),
+        ...(recoverable ? { photoBudget: REVAMP_WORK_BUDGET.photos } : {}),
         request,
         snapshot,
         previous: await previousPlan(),
@@ -1341,7 +1364,7 @@ async function runHeldRevamp(
     if (job.budgetCredits !== null && keys === null) {
       const fitted = deps.fitBudget(plan, {
         request:
-          budgeted && request.kind === "full"
+          recoverable && request.kind === "full"
             ? withProductPhotosOnly(request, [])
             : request,
         budget: job.budgetCredits,
@@ -1363,7 +1386,7 @@ async function runHeldRevamp(
       //   has, which is not created, so the photo showed nowhere.
       keys = deps.productPhotoKeys(plan, request);
     }
-    if (budgeted && request.kind === "full") keys = [];
+    if (recoverable && request.kind === "full") keys = [];
     if (distinctness) logDistinctness(distinctness);
     return {
       column: {
@@ -1540,7 +1563,7 @@ async function runHeldRevamp(
     const fitted = column.unfitted
       ? deps.fitBudget(column.unfitted, {
           request:
-            budgeted && request.kind === "full"
+            recoverable && request.kind === "full"
               ? withProductPhotosOnly(request, [])
               : request,
           budget,
@@ -1548,7 +1571,7 @@ async function runHeldRevamp(
       : deps.fitBudget(column.plan, {
           request: withProductPhotosOnly(
             request,
-            budgeted && request.kind === "full" ? [] : keys,
+            recoverable && request.kind === "full" ? [] : keys,
           ),
           budget,
         });
@@ -1571,7 +1594,7 @@ async function runHeldRevamp(
       stage: "compiled",
       plan: checked.plan,
       productPhotoKeys:
-        budgeted && request.kind === "full" ? [] : fitted.productPhotoKeys,
+        recoverable && request.kind === "full" ? [] : fitted.productPhotoKeys,
       ...(column.unfitted ? { unfitted: column.unfitted } : {}),
     };
     logInfo("mink.revamp: plan fitted again to the store's balance", {
@@ -1698,12 +1721,6 @@ async function runHeldRevamp(
       // ★ No repair is started once the deadline has passed (jobs-4): the
       //   answered ones are saved, and the next run carries on from them.
       if (ctx.draining?.aborted) throw new RevampDrainedError();
-      if (
-        finishBy !== null &&
-        now() >=
-          revampPaidAdmissionEndsAt(finishBy, REVAMP_PLAN_RETRY_MIN_LEFT_MS)
-      )
-        return deps.finalize(raw, inputs);
       // ★ The trace of why a plan was slow: the job row keeps only the
       //   compiled plan, so these issues are gone once the compile finishes.
       logInfo("mink.revamp: compile repair", {
@@ -1778,16 +1795,6 @@ async function runHeldRevamp(
   ): Promise<RevampModelCall> {
     for (let calls = 1; ; calls += 1) {
       if (recoverable && !plannerCallFits()) throw new RevampDrainedError();
-      if (
-        finishBy !== null &&
-        now() >=
-          revampPaidAdmissionEndsAt(finishBy, REVAMP_PLAN_RETRY_MIN_LEFT_MS)
-      )
-        throw new RevampStepError(
-          "model_unavailable",
-          "No complete planning call fits before the redesign deadline.",
-          false,
-        );
       try {
         return await deps.plan(ctx, input);
       } catch (error) {
@@ -1841,15 +1848,6 @@ async function runHeldRevamp(
     let draftId = job.draftId;
     let credits = job.credits;
     if (!draftId) {
-      if (
-        budgeted &&
-        (!Array.isArray(stored.checks) ||
-          stored.checks.some((check) => !check.passed))
-      )
-        throw new RevampStepError(
-          "plan_invalid",
-          "The redesign has unresolved final checks.",
-        );
       // ★★ The lease is asked right before the charge, not left to the
       //   once-a-minute timer: renewing reads the cancel flag, so a Stop the
       //   merchant pressed during the last minute is honoured here and
@@ -2370,6 +2368,7 @@ async function defaultRevampRunnerJobs(): Promise<RevampRunnerJobs> {
     kickWaiting: (exceptRevampId) => jobs.kickWaitingRevamp(exceptRevampId),
     hold: jobs.holdRevampPhotos,
     reviews: jobs.recordRevampPhotoReviews,
+    stopRequested: jobs.revampStopRequested,
     notify: (event) => record.recordEvent(event),
     // ★ No `earlierPlans` or `theme`: the runner reads both the production
     //   way when they are absent (`memoryDefaults`), one path for this and

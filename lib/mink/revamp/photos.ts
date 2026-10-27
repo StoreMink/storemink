@@ -1,5 +1,5 @@
 import "server-only";
-import { REVAMP_WORK_BUDGET, revampPaidAdmissionEndsAt } from "./pacing-policy";
+import { REVAMP_WORK_BUDGET } from "./pacing-policy";
 
 import { createHash } from "node:crypto";
 import { ThinkingLevel } from "@google/genai";
@@ -537,7 +537,10 @@ export async function drawRevampPhotos(
   options: DrawRevampPhotosOptions = {},
 ): Promise<RevampPhotoRun> {
   ctx.signal.throwIfAborted();
-  const budgeted = Boolean(ctx.finishBy || ctx.recoverable);
+  // ★ A recoverable job (ports.ts): the photo and image-call budgets, every
+  //   paid candidate parked before its review, attempts journalled on the
+  //   job row. Refinements and legacy jobs keep the earlier contract.
+  const budgeted = ctx.recoverable === true;
   let capacityPending = false;
   const storeId = ctx.actor.storeId;
   const revampId = ctx.revampId;
@@ -653,9 +656,21 @@ export async function drawRevampPhotos(
     })();
     return checksWriting;
   };
-  /** Wait for the record's last write; a write that failed was logged. */
+  /**
+   * Wait for the record's last write; a write that failed was logged.
+   * ★ Never throws: it is awaited on the step's way out, before a drain or a
+   *   capacity wait is turned into a hand-over, and a record write that
+   *   failed in flight must not turn that free hand-over into a counted
+   *   failure. A lost lease stops the run in the runner regardless.
+   */
   const flushChecks = async (): Promise<void> => {
-    while (checksWriting) await checksWriting;
+    while (checksWriting) {
+      try {
+        await checksWriting;
+      } catch {
+        // Logged where it failed (`saveChecks`).
+      }
+    }
   };
   const planned = planRevampShots(input.plan, input.snapshot);
   const usable = planned.filter((p) => p.frame !== null);
@@ -704,6 +719,20 @@ export async function drawRevampPhotos(
   const candidates = new Map<string, Map<string, Candidate>>();
   const candidateFor = (shotId: string, bytes: Uint8Array | null) =>
     bytes ? (candidates.get(shotId)?.get(digestOf(bytes)) ?? null) : null;
+  /**
+   * ★★ The candidate rows this invocation parked before their review
+   *   (`onPrepared`, recoverable jobs), per brief, by the digest of the
+   *   prepared bytes. A picture that is then kept, parked for a later check
+   *   or made the anchor is ADOPTED from its candidate row (`adoptParked`):
+   *   the same object, no second upload and no second Media row, where it
+   *   used to be uploaded and filed twice.
+   */
+  const parkedCandidates = new Map<string, Map<string, RevampStoredImage>>();
+  const noteParked = (briefId: string, stored: RevampStoredImage) => {
+    const byDigest = parkedCandidates.get(briefId) ?? new Map();
+    byDigest.set(stored.sha256, stored);
+    parkedCandidates.set(briefId, byDigest);
+  };
   /**
    * What each shot about to be drawn or checked shows (B16): the merchant's
    * own products with their photographs, or none. Filled before the draw.
@@ -831,6 +860,26 @@ export async function drawRevampPhotos(
       return null;
     }
   };
+  /**
+   * The row a candidate this invocation parked (`parkedCandidates`) becomes
+   * the picture's own: the same object, no second upload. Null when nothing
+   * was parked for these bytes or the adopt failed, and the caller stores
+   * the bytes as it always did.
+   */
+  const adoptParked = async (
+    briefId: string,
+    sha256: string,
+    into: {
+      role: RevampStoredImage["role"];
+      slotId: string;
+      review: RevampStoredImage["review"];
+    },
+    problems: readonly string[] = [],
+  ): Promise<RevampStoredImage | null> => {
+    const parked = parkedCandidates.get(briefId)?.get(sha256);
+    if (!parked) return null;
+    return adopt({ ...parked, ...into }, problems);
+  };
   const redraw = input.redraw === null ? null : new Set(input.redraw);
   for (const p of usable) {
     if (
@@ -874,7 +923,7 @@ export async function drawRevampPhotos(
         checks.get(p.shot.id)?.redraws?.length ? 0 : p.onHomepage ? 1 : 2;
       return rank(a) - rank(b);
     });
-  let toDraw = missing.slice(0, REVAMP_LIMITS.maxShots);
+  const toDraw = missing.slice(0, REVAMP_LIMITS.maxShots);
   for (const p of missing.slice(REVAMP_LIMITS.maxShots)) {
     ledger.causes.set(p.shot.id, "cap");
   }
@@ -909,10 +958,7 @@ export async function drawRevampPhotos(
   // ★ Past it nothing new is drawn (jobs-4), so nothing is claimed either:
   //   the shots still missing are the next run's, and claiming them only to
   //   give them all back is two writes for nothing.
-  if (toDraw.length > 0 && drawsDrain?.aborted) {
-    if (!budgeted || ctx.recoverable) throw new RevampDrainedError();
-    toDraw = [];
-  }
+  if (toDraw.length > 0 && drawsDrain?.aborted) throw new RevampDrainedError();
 
   // 5. The photo limits, for every photo about to be drawn (and the anchor).
   //    ★ A refusal tries the homepage's photographs alone, the ones shoppers
@@ -993,6 +1039,14 @@ export async function drawRevampPhotos(
       ? { width: prepared.width, height: prepared.height }
       : await measureImage(anchor.bytes);
     if (!measured) return null;
+    if (prepared) {
+      const adopted = await adoptParked(ANCHOR_SLOT, prepared.sha256, {
+        role: "anchor",
+        slotId: ANCHOR_SLOT,
+        review: "unreviewed",
+      });
+      if (adopted) return adopted;
+    }
     try {
       return await storeRevampImage({
         revampId,
@@ -1291,20 +1345,32 @@ export async function drawRevampPhotos(
     // ★ An earlier attempt kept for its size check (B14) passed its check: it
     //   is flagged only when the check found minor problems.
     const small = candidate.prepared.width < p.frame!.width;
+    const review = best.problems.length > 0 ? "flagged" : "passed";
+    const problems = [
+      ...best.problems,
+      ...(small ? [REVAMP_SMALL_PROBLEM] : []),
+    ];
     try {
-      const stored = await storeRevampImage({
-        revampId,
-        storeId,
-        role: "slot",
-        slotId: p.shot.id,
-        bytes: candidate.prepared.bytes,
-        mediaType: candidate.prepared.mediaType,
-        width: candidate.prepared.width,
-        height: candidate.prepared.height,
-        review: best.problems.length > 0 ? "flagged" : "passed",
-        problems: [...best.problems, ...(small ? [REVAMP_SMALL_PROBLEM] : [])],
-        alt: altFor(p.shot),
-      });
+      const stored =
+        (await adoptParked(
+          p.shot.id,
+          candidate.prepared.sha256,
+          { role: "slot", slotId: p.shot.id, review },
+          problems,
+        )) ??
+        (await storeRevampImage({
+          revampId,
+          storeId,
+          role: "slot",
+          slotId: p.shot.id,
+          bytes: candidate.prepared.bytes,
+          mediaType: candidate.prepared.mediaType,
+          width: candidate.prepared.width,
+          height: candidate.prepared.height,
+          review,
+          problems,
+          alt: altFor(p.shot),
+        }));
       if (small) ledger.small.add(p.shot.id);
       ledger.photos.set(p.shot.id, {
         image: stored,
@@ -1384,14 +1450,9 @@ export async function drawRevampPhotos(
     let lastAt = entry.lastTriedAt;
     let firstAskedAt = ctx.recoverable ? null : entry.firstAskedAt;
     const budgetEnd = () =>
-      Math.min(
-        ctx.finishBy
-          ? ctx.finishBy - REVAMP_WORK_BUDGET.finalChecksMs
-          : Infinity,
-        firstAskedAt === null
-          ? Infinity
-          : firstAskedAt + REVAMP_PHOTO_CHECK_BUDGET_MS,
-      );
+      firstAskedAt === null
+        ? Infinity
+        : firstAskedAt + REVAMP_PHOTO_CHECK_BUDGET_MS;
     const left = (): DelayedVerdict => {
       if (ctx.draining?.aborted) drained = true;
       return { kind: "left" };
@@ -1614,19 +1675,30 @@ export async function drawRevampPhotos(
     outcome: Extract<SlotOutcome, { status: "generated" }>,
     image: PreparedSlotImage,
   ) => {
-    const stored = await storeRevampImage({
-      revampId,
-      storeId,
-      role: "slot",
-      slotId: pendingSlotId(p.shot.id),
-      bytes: image.bytes,
-      mediaType: image.mediaType,
-      width: image.width,
-      height: image.height,
-      review: "unreviewed",
-      problems: [REVIEW_PENDING_PROBLEM],
-      alt: altFor(p.shot),
-    });
+    const stored =
+      (await adoptParked(
+        p.shot.id,
+        image.sha256,
+        {
+          role: "slot",
+          slotId: pendingSlotId(p.shot.id),
+          review: "unreviewed",
+        },
+        [REVIEW_PENDING_PROBLEM],
+      )) ??
+      (await storeRevampImage({
+        revampId,
+        storeId,
+        role: "slot",
+        slotId: pendingSlotId(p.shot.id),
+        bytes: image.bytes,
+        mediaType: image.mediaType,
+        width: image.width,
+        height: image.height,
+        review: "unreviewed",
+        problems: [REVIEW_PENDING_PROBLEM],
+        alt: altFor(p.shot),
+      }));
     const ours = stored.sha256 === image.sha256;
     const last = lastReview.get(p.shot.id);
     // The engine's last review of this shot was of the picture it kept.
@@ -1893,9 +1965,9 @@ export async function drawRevampPhotos(
           onPrepared: budgeted
             ? async (briefId, image, attempt) => {
                 const p = byId.get(briefId);
-                const anchor = ctx.recoverable && briefId === ANCHOR_SLOT;
+                const anchor = briefId === ANCHOR_SLOT;
                 if (!p && !anchor) return;
-                await storeRevampImage({
+                const stored = await storeRevampImage({
                   revampId,
                   storeId,
                   role: anchor ? "anchor" : "slot",
@@ -1905,32 +1977,44 @@ export async function drawRevampPhotos(
                   width: image.width,
                   height: image.height,
                   review: "unreviewed",
-                  problems: ["review-pending"],
+                  problems: [REVIEW_PENDING_PROBLEM],
                   alt: p ? altFor(p.shot) : "Private art direction reference",
                 });
+                // ★ Only a row that IS this picture is adopted later: the
+                //   slot could already hold another attempt's candidate.
+                if (stored.sha256 === image.sha256) noteParked(briefId, stored);
                 if (anchor) ledger.anchorDrawn = true;
               }
             : undefined,
-          resume: Object.fromEntries(
-            [...checks].map(([key, state]) => [
-              key === checkKeyOf(ANCHOR_SLOT) ? ANCHOR_SLOT : key,
-              {
-                attempts: Math.max(
-                  0,
-                  (state.draws ?? state.redraws?.length ?? 0) -
-                    (key === ANCHOR_CHECK_KEY && anchorCandidate ? 1 : 0),
+          // ★★ The journal is the engine's attempt count only on a recoverable
+          //   job, whose draws are journalled before they are sent. A
+          //   refinement's record holds its redraws alone, and reading those
+          //   as spent attempts made the engine skip a shot the next run
+          //   should have drawn, then loop without drawing.
+          ...(budgeted
+            ? {
+                resume: Object.fromEntries(
+                  [...checks].map(([key, state]) => [
+                    key === checkKeyOf(ANCHOR_SLOT) ? ANCHOR_SLOT : key,
+                    {
+                      attempts: Math.max(
+                        0,
+                        (state.draws ?? 0) -
+                          (key === ANCHOR_CHECK_KEY && anchorCandidate ? 1 : 0),
+                      ),
+                      ...(state.correction
+                        ? {
+                            retake: {
+                              problems: [state.correction],
+                              note: "Correct the problems from the earlier attempt.",
+                            },
+                          }
+                        : {}),
+                    },
+                  ]),
                 ),
-                ...(state.correction
-                  ? {
-                      retake: {
-                        problems: [state.correction],
-                        note: "Correct the problems from the earlier attempt.",
-                      },
-                    }
-                  : {}),
-              },
-            ]),
-          ),
+              }
+            : {}),
           prepare: async (bytes, target, byteLimit) => {
             if (anchorCandidate && digestOf(bytes) === anchorCandidate.sha256)
               return {
@@ -1996,10 +2080,13 @@ export async function drawRevampPhotos(
             if (
               ctx.recoverable &&
               review.kind === "unavailable" &&
-              reviewInput.purpose === "anchor" &&
-              !heldBack
+              reviewInput.purpose === "anchor"
             ) {
-              capacityPending = true;
+              // ★★ The anchor is never kept unchecked: an outage parks it
+              //   for the next run's review (`capacityPending`), and a check
+              //   the drain held back is the next run's too (`drained`),
+              //   never a reference accepted because the time ran out.
+              if (!heldBack) capacityPending = true;
               throw new ImageCheckpointError();
             }
             if (review.kind !== "reviewed") return review;
@@ -2137,22 +2224,30 @@ export async function drawRevampPhotos(
               } else {
                 const drawn =
                   candidateFor(p.shot.id, image.bytes)?.drawn ?? null;
-                const stored = await storeRevampImage({
-                  revampId,
-                  storeId,
-                  role: "slot",
-                  slotId: p.shot.id,
-                  bytes: image.bytes,
-                  mediaType: image.mediaType,
-                  width: image.width,
-                  height: image.height,
-                  review,
-                  // ★★ Kept smaller than its frame: the row says so (B14).
-                  problems: small
-                    ? [...problems, REVAMP_SMALL_PROBLEM]
-                    : problems,
-                  alt: altFor(p.shot),
-                });
+                // ★★ Kept smaller than its frame: the row says so (B14).
+                const kept = small
+                  ? [...problems, REVAMP_SMALL_PROBLEM]
+                  : problems;
+                const stored =
+                  (await adoptParked(
+                    p.shot.id,
+                    image.sha256,
+                    { role: "slot", slotId: p.shot.id, review },
+                    kept,
+                  )) ??
+                  (await storeRevampImage({
+                    revampId,
+                    storeId,
+                    role: "slot",
+                    slotId: p.shot.id,
+                    bytes: image.bytes,
+                    mediaType: image.mediaType,
+                    width: image.width,
+                    height: image.height,
+                    review,
+                    problems: kept,
+                    alt: altFor(p.shot),
+                  }));
                 // ★ A racing run may have filled the slot first; its photo is
                 //   the slot's, so these bytes are kept only when they ARE it.
                 const ours = stored.sha256 === image.sha256;
@@ -2222,7 +2317,7 @@ export async function drawRevampPhotos(
       await Promise.allSettled(settling.values());
       await release();
       await flushChecks();
-      if (!budgeted || ctx.recoverable) throw new RevampDrainedError();
+      throw new RevampDrainedError();
     }
     if (
       ctx.recoverable &&
@@ -2313,8 +2408,7 @@ export async function drawRevampPhotos(
     }
     // ★ A photo left parked by the drain is the next run's to review: the
     //   step is not done, so nothing is cropped in its place.
-    if (drained && (!budgeted || ctx.recoverable))
-      throw new RevampDrainedError();
+    if (drained) throw new RevampDrainedError();
 
     let checked: CheckedSources | null = null;
     for (const p of usable) {
@@ -2357,7 +2451,7 @@ export async function drawRevampPhotos(
       }
     }
     const stillMissing = usable.filter((p) => !ledger.photos.has(p.shot.id));
-    if (stillMissing.length > 0 && (!budgeted || ctx.recoverable)) {
+    if (stillMissing.length > 0) {
       const limited = stillMissing.some(
         (p) => ledger.causes.get(p.shot.id) === "limit",
       );
@@ -2380,19 +2474,12 @@ export async function drawRevampPhotos(
         ? limitReached(detail)
         : nothingToCropFrom(detail, stillMissing, ledger);
     }
-
-    if (budgeted) {
-      const home = usable.filter((p) => p.onHomepage);
-      const ready = home.filter((p) => ledger.photos.has(p.shot.id));
-      if (
-        home.length &&
-        (ready.length < 3 || !ledger.photos.has(home[0].shot.id))
-      )
-        throw new RevampStepError(
-          "photos_failed",
-          "Too few checked homepage photographs remain to finish the redesign.",
-        );
-    }
+    // ★ Every shot of the plan has its photograph here, the homepage's among
+    //   them; the planner and compiler hold the homepage to three (which may
+    //   be the merchant's own photos), and the checks step reports a homepage
+    //   that lost one. No second count is kept here: counting only the NEW
+    //   homepage shots failed a paid shoot for a homepage that reused the
+    //   store's own pictures or needed two new ones.
 
     // 8. The phone crops still missing: a kept, adopted, reviewed or cropped
     //    photo's, and any a drawn photo could not store as it settled, cut
@@ -3041,18 +3128,17 @@ function notSentAtDeadline(): Error {
  *   ★ Its timer is unref'd and cleared by the drain.
  */
 export function revampAdmissionDrain(
-  ctx: Pick<RevampStepContext, "deadline" | "draining" | "finishBy">,
+  ctx: Pick<RevampStepContext, "deadline" | "draining">,
   clockMs: number,
 ): AbortSignal | undefined {
   const draining = ctx.draining;
   if (!draining) return undefined;
   if (draining.aborted) return draining;
-  const closesAt = ctx.finishBy
-    ? revampPaidAdmissionEndsAt(ctx.finishBy, clockMs)
-    : ctx.deadline +
-      REVAMP_LIMITS.deadlineGraceMs -
-      clockMs -
-      REVAMP_LIMITS.hardStopMarginMs;
+  const closesAt =
+    ctx.deadline +
+    REVAMP_LIMITS.deadlineGraceMs -
+    clockMs -
+    REVAMP_LIMITS.hardStopMarginMs;
   if (closesAt >= ctx.deadline) return draining;
   const closed = new AbortController();
   const reason = new Error(

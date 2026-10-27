@@ -2582,7 +2582,7 @@ old answers is not added in this change.
 
 Help migration `20261027_0261_mink_voice_controls_help` replaces the existing voice
 paragraph in place and uses apply-only wording verification. No database schema
-change. Sequence 0260 remains held for the separate redesign recovery work.
+change. Sequence 0260 is the redesign recovery fence (below).
 
 ### Voice chat lives inside the chat, and starts on 3.5 Flash in Mumbai (2026-10-20)
 
@@ -2645,14 +2645,42 @@ New full redesigns use recovery policy 2 in `pacing-policy.ts`: eight new
 storefront shots, at most eleven image-engine attempts including the hidden
 anchor and redraws, and `result.targetReadyAt` as an observational twelve-minute
 target only. It never gates claims, paid work, preview, completion or failure.
-`result.recoveryVersion = 2` enables durable recovery without the old job-level
-wall-clock ceilings. Invocation deadlines still drain and hand over saved work
-before the HTTP runtime limit. Stop is checked every ten seconds. Known
-provider waits, transient database connection/transaction faults and temporary
-storage-check errors park without exhausting a job's real failure counter.
-Deterministic faults and quality/spend budgets remain bounded; this policy does
-not promise Google capacity or a measured completion time. Older jobs and
-refinements without recovery policy 2 retain their previous recovery contract.
+`result.recoveryVersion = 2` (`RevampStepContext.recoverable`) enables durable
+recovery: invocation deadlines still drain and hand over saved work before the
+HTTP runtime limit, and known provider waits, transient database
+connection/transaction faults and temporary storage-check errors park the job
+without exhausting its real failure counter. ★ The one clock it keeps is
+`REVAMP_RECOVERY_CEILING_MS` (six hours from the first claim, against the
+legacy four): a fault that never clears (a storage permission, a reviewer
+switched off, a provider refusing all day) would otherwise leave the store's
+one active redesign "waiting to continue" for ever; past it the claim refuses
+the job and the sweep or status poll fails it with `run_ceiling`, whose
+sentence is `time_limit` (its time ran out, nothing charged), and the day's
+start goes back. Stop is read every ten seconds as one primary-key SELECT of
+the cancel flag (`revampStopRequested`, `RevampRunnerJobs.stopRequested`),
+not by renewing the lease that often; the lease renews once a minute as for
+every job and is asked again before the charge. ★ A check the checks step
+leaves open (a merchant's own unfinished section, a wide opening photo with
+no phone crop, a claim in a menu link, a homepage that lost a photo to a
+missing object) is a note on the card, never a failure: failing the job
+there discarded eight paid photographs for advice, and the retry failed the
+same way. The photos step keeps no homepage count of its own either (it
+failed a homepage that reused the store's own photos or needed two new
+ones); every planned shot has its photograph or the step throws. Candidates
+parked before review (`<shot>~candidate-<attempt>`, the anchor's too) are
+ADOPTED into their final, parked or anchor rows (`adoptRevampImage`: same
+object, no second upload, no second Media row), and a parking hook that
+throws is recorded in the image run's `telemetry.preparedFailures` without
+failing the lane. The engine's resume attempt counts come only from a
+recoverable job's journalled draws; a refinement's redraw record is never
+read as spent attempts. The anchor is never kept unreviewed: a reviewer
+outage or a check the drain held back parks it for the next run. The
+`finishBy` bounded-deadline protocol that preceded policy 2 is gone from the
+code (no job ever carried it); its 0259 trigger stays applied and fires for
+no row. Deterministic faults and quality/spend budgets remain bounded; this
+policy does not promise Google capacity or a measured completion time. Older
+jobs and refinements without recovery policy 2 retain their previous
+recovery contract.
 
 Prompt `mink-revamp-site-v6` prints a computed photo budget including refills
 and confirmed category photos. The compiler fits it silently; compatible
@@ -2687,23 +2715,28 @@ checks prevent a final card. A parked job shows that progress is saved and autom
 retry is scheduled, with Preview design and Stop still available. Help migration
 `20261027_0258_mink_redesign_preview_help` replaces the affected guide
 paragraphs in place. Sequence numbers 0256 and 0257 remain reserved; next free
-number after this change: 0262 (0261 is the voice controls Help edit; 0260 is held for the separate redesign recovery work). Migration
-`20261027_0259_mink_redesign_deadline_guard` installs the
-`mink_revamps_deadline_guard` trigger and
-`mink_revamp_preserve_deadline()` function. An active bounded job
-keeps its original deadline even when an older checkpoint omits it. A claim
-must stamp its fresh lease token in `result.deadlineLeaseToken`; an older
-worker cannot claim a bounded job during a rolling deployment. Legacy jobs
-remain claimable. The claim marker contains no merchant content. The proposed recovery-policy migration (sequence confirmation pending) replaces that guard
-with an INSERT/UPDATE protocol fence. Its locked preflight refuses live legacy
-invocations; finish those invocations before applying the upgrade so an older
-worker cannot race a charge across the policy change. `jobs.ts` declares
-`app.mink_revamp_recovery = 2` transaction-locally, including sweeps and status
-settlement. Older revisions can record Stop but cannot claim, overwrite or
-expire policy-2 work. Unfinished full jobs are upgraded without removing
-plans, photos, usage, leases or Stop requests. The performance target survives
-checkpoint writes; no already-finished job is changed. Production acceptance and
-remaining capacity measurements: `docs/mink-revamp-production-readiness.md`.
+number after this change: 0262 (0261 is the voice controls Help edit). Migration
+`20261027_0259_mink_redesign_deadline_guard` installed the
+`mink_revamps_deadline_guard` trigger for a `finishBy` bounded-deadline
+protocol no code writes any more; it stays applied (its durable verify names
+the trigger) and fires for no row. Migration
+`20261028_0260_mink_redesign_recovery_fence` installs the
+`mink_revamps_recovery_fence` BEFORE UPDATE trigger: for an unfinished job
+whose `result.recoveryVersion = 2`, a transaction that has not declared
+`set_config('app.mink_revamp_recovery', '2', true)` may change only
+`cancel_requested_at` and `updated_at` (an older dashboard's Stop); its claim
+(a new live lease token) raises `55000`, and any other write (an older
+sweep's expiry, a checkpoint) is skipped. A declared claim must stamp its
+lease token in `result.recoveryLeaseToken` (the parked token when parked),
+and `recoveryVersion` and `targetReadyAt` survive every checkpoint. `jobs.ts`
+declares the protocol in every `withService` transaction (`withDatabaseService`
+opens one, so the local setting lasts the call), sweeps and status settlement
+included. Legacy jobs and refinements, and every finished job, are untouched,
+so there is no preflight and no upgrade of in-flight legacy jobs. Exercised
+by `jobs.local.test.ts` (an undeclared claim refused, an undeclared sweep
+writing nothing, Stop recorded, the policy surviving a bare `result = '{}'`
+write, the six-hour ceiling). Production acceptance and remaining capacity
+measurements: `docs/mink-revamp-production-readiness.md`.
 
 "Customise my store for my business" (or the `personalise-store` chip)
 redesigns what shoppers see in a background job and ends in ONE review card
@@ -6064,7 +6097,11 @@ handoff; it adds no Help Centre section.
 
 Voice audit (2026-10-27): `docs/mink-voice-audit-2026-10-27.md` records the
 implemented paths, request-efficiency changes and remaining live validation.
-Prompt versions `read-beta-v42` / `draft-action-beta-v65` require a neutral AI
+Prompt versions `read-beta-v43` / `draft-action-beta-v66` (v42/v65 said the
+same in 996 chars; trimmed to 631 on 2026-10-28, with the prompt budgets in
+`prompt-budget.test.ts` raised by the remainder, full 59,000 → 59,500,
+rules-only 9,000 → 9,100, help route 20,000 → 20,300, because these two
+core rules cannot be tool-tagged) require a neutral AI
 identity and gender-neutral self-reference in Hindi/Hinglish too. They direct
 Mink to answer the underlying store request without echoing insults in written
 or spoken answers; transcription still preserves the merchant's words. A
@@ -6078,9 +6115,14 @@ made for this audit. Read-only production timing metadata is recorded in
 `voice-turn.ts` preserves validated recognition language through an optional
 callback. `mink-voice-mode.ts` binds that hint to each answer, so a subsequent
 recording cannot change the current answer's voice. `speechLangFor` uses it
-for Latin/code-mixed text and shared scripts (Marathi versus Hindi, Assamese
-versus Bengali), with additional Odia, Urdu, Santali and Manipuri script
-recognition; speech routes retain unsupported-language fallback. Bulbul uses
+for Latin/code-mixed text and shared scripts (Marathi versus Hindi), with
+additional Odia, Urdu, Santali and Manipuri script recognition; speech routes
+retain unsupported-language fallback. ★ A hint only speaks for a language the
+read-aloud model has a voice for (`MINK_MODEL_VOICE_LANGUAGES` in
+speech-text.ts, held equal to `BULBUL_V4_FLASH_SPEAKERS` by a test): a
+Maithili, Nepali or Assamese hint on a Devanagari or Bengali answer is set
+aside so hi-IN or bn-IN reads it, where it used to be tagged mai-IN and
+refused by Bulbul, then handed to a browser with no such voice either. Bulbul uses
 `simran_enhi_customer` for Hindi and mixed Hindi-English text, language-specific
 voices elsewhere, explicit preprocessing and conversational pace 1.0.
 The spoken prompt writes Indic words in native scripts for pronunciation,
@@ -9659,7 +9701,8 @@ wholesip/
 │                              # with another text; nothing where the version or a
 │                              # later one is current); pinned by
 │                              # lib/legal/terms-v2-privacy-v4-aup-v2-migration.test.ts.
-│                              # Next free: 0260.
+│                              # Next free: 0262 (0260 = redesign recovery fence,
+│                              # 0261 = voice controls Help edit).
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
