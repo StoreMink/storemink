@@ -3417,8 +3417,12 @@ start-paced across the platform (Theme Studio's shared capacity, migration
 15 s at most, the planner has its own capacity scope, a photo check has a
 clock per try and a four-minute budget that survives hand-overs, and the
 product draws are paced too. ★ Its corrections the same day (robustness
-audit P0-1 and P0-3): image starts are spaced between 10 and 45 s (owner:
-"Change to 10 to 45 s"; first built as 25 to 90 s) and each move of that
+audit P0-1 and P0-3): image starts are spaced between 31 and 45 s (owner
+chose 10 to 45 s on 23 Oct, first built as 25 to 90 s; raised to 31 s on
+28 Oct when the Quotas console showed image generation is a non-adjustable
+SYSTEM LIMIT of 2 requests a minute per project per base model, global and
+per region, which the 10 s floor was probing straight into: 28% of
+nano-banana draws refused) and each move of that
 gap is logged (`theme_studio.provider_pace`); every refused or failed photo
 and check logs Google's own answer and the quota it names; and every photo
 answer logs its image parts and size, warning when it is under the size
@@ -8961,7 +8965,8 @@ wholesip/
 │   │                          # provider-capacity.ts / provider-capacity-store.ts (shared
 │   │                          # service-only PostgreSQL admission, fenced expiring permits
 │   │                          # and cross-instance cooldown/recovery; migration 0149;
-│   │                          # image starts 10 to 45 s apart, 40 s recovery floor
+│   │                          # image starts 31 to 45 s apart (Google's 2/min
+│   │                          # system limit per project per base model), 40 s recovery floor
 │   │                          # for ten minutes after a refusal cooldown,
 │   │                          # IMAGE_START_PACING, migration 0236, each gap move logged
 │   │                          # as theme_studio.provider_pace; an optional scope gives

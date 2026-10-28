@@ -468,10 +468,10 @@ describe("shared provider capacity", () => {
     expect(operation).not.toHaveBeenCalled();
   });
 
-  it("★★ paces image models from 40 s, between 10 s and 45 s; text models are not paced", () => {
+  it("★★ paces image models from 40 s, between 31 s (Google's 2/min system limit) and 45 s; text models are not paced", () => {
     expect(IMAGE_START_PACING).toEqual({
       initialGapMs: 40_000,
-      minGapMs: 10_000,
+      minGapMs: 31_000,
       maxGapMs: 45_000,
       successFactor: 0.9,
       rateLimitFactor: 1.5,

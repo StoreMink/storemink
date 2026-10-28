@@ -315,17 +315,19 @@ it.skipIf(process.env.THEME_STUDIO_CAPACITY_DB_TEST !== "1")(
         (await postgresCapacityStore.release(pacedKey, afterHold, true, paced))
           ?.gapAfterMs,
       ).toBe(36_000);
-      // Even a refusal at the minimum immediately restores the recovery floor.
+      // Even a refusal at the minimum (31 s, the provider's two a minute)
+      // widens at once, past the recovery floor and onto the ceiling.
       await pool.query(
-        "update theme_studio_provider_capacity set gap_ms=10000 where scope_key=$1",
+        "update theme_studio_provider_capacity set gap_ms=31000 where scope_key=$1",
         [pacedKey],
       );
       expect(
         (await postgresCapacityStore.pause(pacedKey, 7_500, paced))?.gapAfterMs,
-      ).toBe(40_000);
-      // ...and successes at the 10 s floor after the recovery hold expires.
+      ).toBe(45_000);
+      // ...and successes settle on the 31 s floor after the recovery hold
+      // expires: never faster than the limit.
       await pool.query(
-        "update theme_studio_provider_capacity set gap_ms=10500, pause_until=clock_timestamp()-interval '11 minutes', next_start_at=clock_timestamp() where scope_key=$1",
+        "update theme_studio_provider_capacity set gap_ms=31500, pause_until=clock_timestamp()-interval '11 minutes', next_start_at=clock_timestamp() where scope_key=$1",
         [pacedKey],
       );
       const near = requireLease(
@@ -335,11 +337,11 @@ it.skipIf(process.env.THEME_STUDIO_CAPACITY_DB_TEST !== "1")(
         await postgresCapacityStore.release(pacedKey, near, true, paced),
       ).toEqual({
         outcome: "success",
-        gapBeforeMs: 10_500,
-        gapAfterMs: 10_000,
+        gapBeforeMs: 31_500,
+        gapAfterMs: 31_000,
         epoch: 4,
       });
-      expect(await pace()).toMatchObject({ gap_ms: 10_000, capacity: 2 });
+      expect(await pace()).toMatchObject({ gap_ms: 31_000, capacity: 2 });
       // ★★ Only an admission moves the next start. A claim refused for its
       //   start (two permits free, the start 5 s away) leaves it where it
       //   was and writes no lease; one that restamped it would push the
