@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import {
   products,
@@ -16,6 +16,11 @@ import {
   type StoreChrome,
 } from "@/lib/chrome/types";
 import { withService, type Db } from "@/lib/db/client";
+import {
+  blockedMedia,
+  isBlockedAddressIn,
+  type BlockedMediaSet,
+} from "@/lib/moderation/blocked-objects";
 import { productGallery } from "@/lib/products/gallery";
 import { validateSections } from "@/lib/sections/registry";
 import { resolveStoreSettings } from "@/lib/settings/registry";
@@ -87,6 +92,14 @@ import { RevampStepError, type RevampStepContext } from "./ports";
 //   on one connection; the broken-photo checks (bucket lookups, file stats)
 //   run once the transaction has committed, so a slow lookup never holds a
 //   pooled connection open.
+// ★★ NOTHING STOREMINK BLOCKED (takedown design 3.4 and 5.7, plan A18), told
+//    to the store or not. A blocked product or category is not read at all,
+//    so no plan can feature it; a blocked page stays in the list, unread and
+//    marked never-written (`skipped: "policy"`, which a default redesign
+//    passes over in silence and the context summary leaves out), so its
+//    address is never planned as a new page; a blocked picture is a broken
+//    one to the runner (replaced, never reused) and never a product photo
+//    the photos step reads. Nothing here names a block.
 // ---------------------------------------------------------------------------
 
 /** Pages read per store, the homepage first. */
@@ -130,6 +143,8 @@ interface StoreState {
   definition: ThemeDefinition;
   theme: RevampThemeInfo;
   pages: RevampSnapshotPage[];
+  /** Pages StoreMink blocked: in `pages` as never-written, never summarised. */
+  blockedPageIds: ReadonlySet<string>;
   chrome: RevampSnapshot["chrome"];
   brand: RevampSnapshot["brand"];
   /** Null: this requester may not see them. */
@@ -188,8 +203,11 @@ export async function readRevampSnapshot(
       "The store has no theme a revamp can work within.",
     );
   }
-  const { state } = read;
-  const photos = await readPhotos(state, request, signal);
+  // The blocked set is read once the transaction has committed: it may
+  // reload through a scope of its own.
+  const blocked = await blockedMedia();
+  const state = withoutBlockedProductPhotos(read.state, blocked);
+  const photos = await readPhotos(state, request, signal, blocked);
   return {
     storeId: state.store.id,
     storeName: state.store.name,
@@ -246,22 +264,51 @@ async function readPhotos(
   state: StoreState,
   request: RevampRequest,
   signal: AbortSignal,
+  blocked: BlockedMediaSet,
 ): Promise<RevampSnapshot["photos"]> {
   const storeId = state.store.id;
   const urls = candidateImageUrls(state, request);
   const unchecked = new Set<string>();
-  const kept = urls.filter(
+  const merchants = urls.filter(
     (url) => !isReplaceablePhotoUrl(url, { storeId, broken: unchecked }),
   );
-  const found = await findBrokenImages(kept, { signal });
-  const broken = kept.filter((url) => found.has(url));
+  // ★ A picture StoreMink blocked counts as broken without a check: shoppers
+  //   see the placeholder there, so a revamp replaces it and never reuses it.
+  const isBlocked = (url: string) => isBlockedAddressIn(blocked, url);
+  const found = await findBrokenImages(
+    merchants.filter((url) => !isBlocked(url)),
+    { signal },
+  );
+  const broken = merchants.filter((url) => isBlocked(url) || found.has(url));
   const brokenSet = new Set(broken);
   return {
     replaceable: urls.filter((url) =>
       isReplaceablePhotoUrl(url, { storeId, broken: brokenSet }),
     ),
     broken,
-    readable: readableProductPhotos(state, request),
+    readable: readableProductPhotos(state, request).filter(
+      (url) => !isBlocked(url),
+    ),
+  };
+}
+
+/**
+ * The state with every product photo StoreMink blocked taken off its product
+ * (`imageUrl: null`), so the planner is never told the product has a photo it
+ * could show or send to the image model.
+ */
+function withoutBlockedProductPhotos(
+  state: StoreState,
+  blocked: BlockedMediaSet,
+): StoreState {
+  if (!state.products) return state;
+  return {
+    ...state,
+    products: state.products.map((product) =>
+      product.imageUrl && isBlockedAddressIn(blocked, product.imageUrl)
+        ? { ...product, imageUrl: null }
+        : product,
+    ),
   };
 }
 
@@ -384,7 +431,12 @@ async function readStoreState(
   if (!definition) return { kind: "no_theme", store, launched };
 
   const minkDigests = await readMinkWrittenSectionDigests(db, storeId);
-  const pages = await readSnapshotPages(db, storeId, definition, minkDigests);
+  const { pages, blockedPageIds } = await readSnapshotPages(
+    db,
+    storeId,
+    definition,
+    minkDigests,
+  );
   const chromeRead = await readChrome(db, storeId);
   const categories = visibility.categories
     ? await readCategories(db, storeId, sampleCategorySlugs(definition))
@@ -411,6 +463,7 @@ async function readStoreState(
       definition,
       theme: themeInfo(definition, settings),
       pages,
+      blockedPageIds,
       chrome: {
         rowExists: chromeRead.rowExists,
         version: chromeRead.version,
@@ -441,13 +494,17 @@ async function readStoreState(
  *   sections that failed, which are the merchant's. The same draft-mode
  *   validation the Builder reader uses, so the digest is the one the apply
  *   path recomputes.
+ * ★ A PAGE STOREMINK BLOCKED IS NEVER WRITTEN AND NEVER READ (`skipped:
+ *   "policy"`, its sections left out, its SEO text too): kept in the list so
+ *   its address is never planned as a new page, which the apply would refuse
+ *   as taken.
  */
 async function readSnapshotPages(
   db: Db,
   storeId: string,
   definition: ThemeDefinition,
   minkDigests: ReadonlySet<string>,
-): Promise<RevampSnapshotPage[]> {
+): Promise<{ pages: RevampSnapshotPage[]; blockedPageIds: Set<string> }> {
   const rows = await db
     .select({
       id: storePages.id,
@@ -458,6 +515,7 @@ async function readSnapshotPages(
       seoTitle: storePages.seoTitle,
       seoDescription: storePages.seoDescription,
       updatedAt: storePages.updatedAt,
+      blockedAt: storePages.moderationBlockedAt,
     })
     .from(storePages)
     .where(eq(storePages.storeId, storeId))
@@ -467,8 +525,25 @@ async function readSnapshotPages(
       asc(storePages.id),
     )
     .limit(MAX_PAGES);
+  const blockedPageIds = new Set<string>();
   const pages = rows.map((row): RevampSnapshotPage => {
     const slug = row.slug;
+    if (row.blockedAt !== null && row.blockedAt !== undefined) {
+      blockedPageIds.add(row.id);
+      return {
+        id: row.id,
+        slug,
+        title: row.title.trim() || (slug === "" ? "Home" : slug),
+        status: row.status,
+        version: row.updatedAt,
+        sectionsDigest: revampSectionsDigest([]),
+        sections: [],
+        owners: {},
+        skipped: "policy",
+        seoTitle: null,
+        seoDescription: null,
+      };
+    }
     const validated = validateSections(row.sections, { mode: "draft" });
     const invalid = "error" in validated;
     const sections = invalid ? [] : validated.sections;
@@ -495,7 +570,10 @@ async function readSnapshotPages(
       seoDescription: textOrNull(row.seoDescription),
     };
   });
-  return pages.sort((a, b) => Number(b.slug === "") - Number(a.slug === ""));
+  return {
+    pages: pages.sort((a, b) => Number(b.slug === "") - Number(a.slug === "")),
+    blockedPageIds,
+  };
 }
 
 /**
@@ -534,13 +612,16 @@ async function readSnapshotProducts(
       ? sql`(${products.slug}, ${products.name}) not in (${seeded})`
       : undefined,
   ];
+  // ★ A product StoreMink blocked is never read (told or not), so no plan
+  //   can feature it, link it or take it off the shop.
+  const notBlocked = isNull(products.moderationBlockedAt);
   const rows = await db
     .select(PRODUCT_COLUMNS)
     .from(products)
     .where(
       mode === "all"
-        ? eq(products.storeId, storeId)
-        : and(eq(products.storeId, storeId), ...notSample),
+        ? and(eq(products.storeId, storeId), notBlocked)
+        : and(eq(products.storeId, storeId), notBlocked, ...notSample),
     )
     .orderBy(desc(isSample), desc(products.updatedAt), asc(products.id))
     .limit(MAX_PRODUCTS);
@@ -568,6 +649,7 @@ async function readSnapshotProducts(
       and(
         eq(products.storeId, storeId),
         sql`lower(btrim(regexp_replace(normalize(${products.name}, NFKC), '[[:space:]]+', ' ', 'g'))) = any(${sql.param(keys)}::text[])`,
+        notBlocked,
         ...notSample,
       ),
     )
@@ -960,7 +1042,10 @@ function buildSummary(
   const storeId = state.store.id;
   const noneBroken = new Set<string>();
   const writable = state.pages.filter((page) => page.skipped === null);
-  const skipped = state.pages.filter((page) => page.skipped !== null);
+  // A page StoreMink blocked is left out of the summary altogether.
+  const skipped = state.pages.filter(
+    (page) => page.skipped !== null && !state.blockedPageIds.has(page.id),
+  );
   const pages = writable.slice(0, level.pages).map((page) => {
     const owners = Object.values(page.owners);
     const photos = new Set(

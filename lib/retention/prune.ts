@@ -1,21 +1,21 @@
 // ---------------------------------------------------------------------------
-// Log retention — the sweep that deletes rows past their window.
+// Log retention: the sweep that deletes rows past their window.
 //
 // ── Why this file exists ──────────────────────────────────────────────────
 // Three tables grow forever and nothing ever pruned them. The `email_logs` schema
 // documented a 90-day intent and even carries an `email_logs_created_idx`
 // built "for retention sweeps"; `pruneNotifications` was written with correct
 // windows and a docstring claiming it was "called by the daily cron". Nothing
-// called it — grep returned the definition and nothing else. So the retention
+// called it: grep returned the definition and nothing else. So the retention
 // policy existed in three places as prose and in none as behaviour.
 //
 // ── ★ WHY THE CORE IS HERE AND NOT IN `app/actions/` ──────────────────────
 // It used to live in `app/actions/notification-actions.ts`, a `"use server"`
-// file — where EVERY export is a publicly reachable endpoint. `pruneNotifications`
+// file, where EVERY export is a publicly reachable endpoint. `pruneNotifications`
 // had no gate of any kind, ran under `withService` (which BYPASSES RLS), and took
 // its retention windows as PARAMETERS. An unauthenticated caller passing zeroes
 // would have deleted every notification, every email log, and the whole of
-// `activity_events` — the append-only audit trail — across every store on the
+// `activity_events` (the append-only audit trail) across every store on the
 // platform. Destroying the audit log is what an attacker does to cover their
 // tracks, and this was the one endpoint that did it in a single call.
 // This is the identical hazard CODEBASE.md §30 describes for
@@ -24,7 +24,7 @@
 //
 // ── ★ EACH BATCH IS ITS OWN TRANSACTION ───────────────────────────────────
 // `withService` wraps its callback in one BEGIN/COMMIT, so looping batches
-// INSIDE a single call would be one enormous transaction — exactly what
+// INSIDE a single call would be one enormous transaction, exactly what
 // batching exists to avoid. The loop therefore calls `withService` per batch:
 // locks are released between batches, WAL stays bounded, and a run that dies
 // half way leaves the committed batches deleted. The sweep is idempotent and
@@ -56,6 +56,22 @@ import {
 } from "@/lib/whatsapp/retention";
 import { MINK_CONVERSATION_RETENTION_DAYS } from "@/lib/mink/chat-session";
 import { pruneIdleMinkConversations } from "@/lib/mink/conversation-retention";
+import {
+  MINK_ATTACHMENT_UNSENT_DAYS,
+  purgeMinkAttachments,
+} from "@/lib/mink/attachments";
+import { moveLegacyMinkAttachments } from "@/lib/mink/attachments-legacy";
+import {
+  ARCHIVE_KEEP_DAYS,
+  ARCHIVE_PURGE_BATCH,
+  BLOCK_ERASE_BATCH_MAX,
+  MODERATION_RECORD_DAYS,
+  eraseLiftedBlocks,
+  eraseTakedownComplaints,
+  pruneModerationEvents,
+  purgeTakedownArchives,
+} from "@/lib/moderation/retention";
+import { ERASE_BATCH_MAX } from "@/lib/moderation/complaints";
 
 /** Rows deleted per statement. Bounds both the IN list and the lock window. */
 export const BATCH_SIZE = 1000;
@@ -75,7 +91,7 @@ export const MAX_ROWS_PER_TABLE = 50_000;
  */
 export const TIME_BUDGET_MS = 240_000;
 
-/** Why a sweep stopped — reported per table so a short run is explicable. */
+/** Why a sweep stopped: reported per table so a short run is explicable. */
 export type SweepStop = "drained" | "cap" | "budget" | "error";
 
 export interface RetentionPolicy {
@@ -87,8 +103,31 @@ export interface RetentionPolicy {
   batchSize?: number;
   /** Why this window. Kept beside the number so the two cannot drift. */
   reason: string;
-  /** Deletes up to `limit` rows older than `floorIso`; returns how many went. */
-  deleteBatch: (floorIso: string, limit: number) => Promise<number>;
+  /**
+   * Deletes up to `limit` rows older than `floorIso`; returns how many went.
+   * `batch` is the run's context for this table, the same object for every
+   * batch of one sweep; deleters that do not need it ignore it.
+   */
+  deleteBatch: (
+    floorIso: string,
+    limit: number,
+    batch: RetentionBatchContext,
+  ) => Promise<number>;
+}
+
+/**
+ * What one table's sweep shares with its deleter, batch after batch.
+ * `deadline` and `clock` are the run's own, so a slow deleter can stop before
+ * the run's budget instead of after it; `skip` holds ids the deleter set
+ * aside for the rest of the run; `outOfTime` is the deleter's word that it
+ * stopped for the clock, which the sweep reports as "budget" (a short batch
+ * would otherwise read as drained).
+ */
+export interface RetentionBatchContext {
+  deadline: number;
+  clock: () => number;
+  skip: Set<string>;
+  outOfTime: boolean;
 }
 
 export interface SweepResult {
@@ -108,7 +147,7 @@ export function retentionFloor(days: number, now: Date = new Date()): string {
 /**
  * Deletes in bounded batches, each its own transaction (see the header).
  *
- * `deleteBatch` is injected so the loop — the part with the stopping rules —
+ * `deleteBatch` is injected so the loop (the part with the stopping rules)
  * is testable without a database.
  */
 export async function sweepPolicy(
@@ -130,6 +169,12 @@ export async function sweepPolicy(
   } = opts;
 
   const floor = retentionFloor(policy.days, now);
+  const batch: RetentionBatchContext = {
+    deadline,
+    clock,
+    skip: new Set<string>(),
+    outOfTime: false,
+  };
   let deleted = 0;
 
   for (;;) {
@@ -150,9 +195,9 @@ export async function sweepPolicy(
 
     let removed: number;
     try {
-      removed = await policy.deleteBatch(floor, limit);
+      removed = await policy.deleteBatch(floor, limit, batch);
     } catch (error) {
-      // One table's failure must not abandon the others — the caller keeps
+      // One table's failure must not abandon the others: the caller keeps
       // going and the route reports this table as failed.
       logError(`retention: ${policy.table} batch failed`, error);
       return {
@@ -165,6 +210,17 @@ export async function sweepPolicy(
     }
 
     deleted += removed;
+
+    // The deleter stopped for the clock: its batch is short because the time
+    // ran out, not because nothing is left.
+    if (batch.outOfTime) {
+      return {
+        table: policy.table,
+        days: policy.days,
+        deleted,
+        stop: "budget",
+      };
+    }
 
     // A short batch means the table is drained: the floor only moves backwards
     // in time, so nothing new can fall behind it mid-run.
@@ -301,10 +357,10 @@ function searchMetricBatchDeleter(
  * (and at the shorter window), which leaves the event sweep far less to
  * cascade through. It also means the notification count below undercounts:
  * rows cascaded away by the event sweep are not attributed to it. That is
- * cosmetic — an event old enough to be pruned at 365 days carries only
+ * cosmetic: an event old enough to be pruned at 365 days carries only
  * notifications that were themselves already pruned at 90.
  *
- * ⚠ To add a table, add an entry — and mind the ORDER when one cascades into
+ * ⚠ To add a table, add an entry, and mind the ORDER when one cascades into
  * another. See docs/cron-jobs.md.
  */
 export const RETENTION_POLICIES: RetentionPolicy[] = [
@@ -443,6 +499,17 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "the record stays while the store exists.",
     deleteBatch: pruneIdleMinkConversations,
   },
+  {
+    // ★ After the chats: a chat retired tonight has marked its pictures.
+    table: "mink_attachments",
+    days: MINK_ATTACHMENT_UNSENT_DAYS,
+    batchSize: 50,
+    reason:
+      "A picture attached to Mink AI is deleted with its chat (the merchant's delete " +
+      "or 90 days after last use), and one never sent is deleted 2 days after it " +
+      "was attached.",
+    deleteBatch: purgeMinkAttachments,
+  },
   // ── CSV import/export history ──────────────────────────────────────────
   // ★ ISSUES BEFORE JOBS. `data_job_issues.job_id` is ON DELETE CASCADE from
   // `data_jobs`, the same shape as notifications → activity_events, so pruning
@@ -473,13 +540,13 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
   // ── Held (parked) sales ────────────────────────────────────────────────
   // ★★ THE CAP IS WHY THIS MATTERS, not the disk. `pos_parked_sales` allows 20
   // per LOCATION (MAX_PARKED_SALES), so abandoned carts do not merely
-  // accumulate — they fill the list and eventually stop a counter parking a
+  // accumulate: they fill the list and eventually stop a counter parking a
   // real one. A ceiling with nothing ageing out of it becomes a wall.
   //
   // ★ DISCARDING IS SAFE, which is what makes this a retention entry rather
   // than a feature. A park holds NO stock and stores NO prices (pos_14), so
   // expiring one costs a re-scan and nothing else. Contrast a pickup hold,
-  // where expiry has to release reserved units — that is a sweep of its own,
+  // where expiry has to release reserved units: that is a sweep of its own,
   // in expire-pending-payments, and deliberately not here.
   //
   // `created_at` is the only clock there is: parking inserts and resuming
@@ -550,12 +617,77 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "StoreMink does not silently show less history than the source product.",
     deleteBatch: searchMetricBatchDeleter,
   },
+  // ── Content takedown (design 8.2, owner's decision D3) ──────────────────
+  // ★ ORDER: archives first (a purged archive is what lets a lifted block's
+  // words go), then the record, then the complainants' details, then the
+  // lifted blocks. Each deleter skips anything a legal hold covers, so a held
+  // store keeps all four. The archive purge reads the sweep's own context
+  // (deadline, skip), so an archive it sets aside stays aside for the run.
+  {
+    table: "content_block_archives",
+    days: ARCHIVE_KEEP_DAYS,
+    batchSize: ARCHIVE_PURGE_BATCH,
+    reason:
+      "IT Rules 3(1)(g): what StoreMink removes, with its records, is kept 180 days, " +
+      "or longer when a court or an authority asks (a later date or a legal hold). " +
+      "The row stays, emptied, with its fingerprint.",
+    deleteBatch: purgeTakedownArchives,
+  },
+  {
+    table: "moderation_events",
+    days: MODERATION_RECORD_DAYS,
+    reason:
+      "The record of every takedown action is kept 3 years (owner's decision D3), " +
+      "never while its store is held or its archive is kept.",
+    deleteBatch: pruneModerationEvents,
+  },
+  {
+    table: "grievance_complaints",
+    days: MODERATION_RECORD_DAYS,
+    batchSize: ERASE_BATCH_MAX,
+    reason:
+      "A complainant's name, contact, reference, addresses and words, and the " +
+      "outcome note, are erased 3 years after the complaint was resolved (owner's " +
+      "decision D3); the dates, kind, outcome and blocks stay.",
+    deleteBatch: eraseTakedownComplaints,
+  },
+  {
+    table: "content_blocks",
+    days: MODERATION_RECORD_DAYS,
+    batchSize: BLOCK_ERASE_BATCH_MAX,
+    reason:
+      "A lifted block's item name, address, legal basis, message and lift note, and " +
+      "the words and senders of its conversation, are erased 3 years after the lift, " +
+      "unless its store or archive is held (owner's decision D3); what was blocked, " +
+      "when, why and by whom stays.",
+    // Not the sweep's context: its third argument is the eraser's own options.
+    deleteBatch: (floorIso, limit) => eraseLiftedBlocks(floorIso, limit),
+  },
+  {
+    // ★ TEMPORARY and LAST (remove once production reports nothing left for a
+    // week): pictures attached before they were private (lib/mink/attachments-legacy.ts
+    // moveLegacyMinkAttachments). Last because it is slow and the run shares one
+    // deadline, which it reads from the batch context: it starts no picture
+    // within its reserve of the deadline and says so (`outOfTime`, reported as
+    // "budget"). Its count is pictures HANDLED (kept, moved, deleted, missing or
+    // failed), so a picture that fails never makes the batch look drained; one
+    // whose record cannot be written is set aside in the context's `skip` for
+    // the rest of the run.
+    table: "mink_attachments_legacy",
+    days: MINK_ATTACHMENT_UNSENT_DAYS,
+    batchSize: 25,
+    reason:
+      "Pictures attached to Mink AI before they were stored privately: one the store " +
+      "still uses becomes an ordinary Media Library upload, one only a live chat uses " +
+      "moves to private storage with that chat, and one nothing uses is deleted.",
+    deleteBatch: moveLegacyMinkAttachments,
+  },
 ];
 
 export interface RetentionSweep {
   results: SweepResult[];
   deleted: number;
-  /** True when any table failed — the route turns this into a 503. */
+  /** True when any table failed: the route turns this into a 503. */
   failed: boolean;
   /** True when a table stopped on its cap or the clock, not because it drained. */
   incomplete: boolean;
@@ -587,7 +719,7 @@ export async function runRetentionSweep(
     // point it happened; this is the run-level line to alert on.
     logError("retention: sweep had failures", undefined, { results });
   } else if (incomplete) {
-    // Not an error — a backlog drains over consecutive nights — but it should
+    // Not an error (a backlog drains over consecutive nights), but it should
     // be visible, because "still incomplete" every night means it never drains.
     logWarn("retention: sweep incomplete", { results });
   } else if (deleted > 0) {

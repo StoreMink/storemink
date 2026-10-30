@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { getMinkActorContext } from "@/lib/mink/actor-context";
+import { purgeStoreMinkAttachments } from "@/lib/mink/attachments";
 import { getMinkConfig } from "@/lib/mink/config";
 import { MinkRequestError } from "@/lib/mink/errors";
 import {
@@ -127,6 +129,17 @@ export async function DELETE(
       );
     }
     await deleteMinkConversation(actor, conversationId);
+    // ★ The chat's attached pictures were marked for deletion in the retiring
+    //   transaction (conversation-retire.ts); their objects go once the
+    //   response is out, best effort (Cloud Run throttles the CPU after the
+    //   response), and the nightly purge is the guarantee. The store's purge
+    //   runs full batches until one is short (at most 5, none started after
+    //   10 seconds: review R10), so a chat with more pictures than one batch,
+    //   or a store with older marks waiting, still loses this chat's pictures
+    //   now; after the delete the rows carry no chat id, so the purge cannot
+    //   be aimed at them. A refused delete threw above, so nothing is
+    //   scheduled for it. purgeStoreMinkAttachments never throws (it logs).
+    after(() => purgeStoreMinkAttachments(actor.storeId));
     // ★ The first page, for a browser still running the previous bundle,
     //   which replaces its list with it. The current client removes the chat
     //   itself and ignores this; drop it in a later release.

@@ -3,6 +3,7 @@ import {
   MINK_MEDIA_PROMPT_MAX_CHARS,
   MINK_MEDIA_PURPOSES,
   MINK_MEDIA_PURPOSE_SPECS,
+  REFERENCE_FORM_ISSUE,
   aspectRatioFor,
   isMinkAiMadePhotoUrl,
   isMinkGeneratedCampaignArtUrl,
@@ -95,6 +96,67 @@ describe("Phase 9E generation request", () => {
         ),
       }).ok,
     ).toBe(false);
+  });
+
+  describe("a picture attached in this chat as a reference", () => {
+    const id = "0f3a9c42-7b1d-4e6a-9c2b-1d5e8f7a6b3c";
+    const bare = `/api/mink/attachments/${id}`;
+
+    it("★ accepts the bare attachment address as it is", () => {
+      const result = validateMinkMediaGenerationRequest({
+        ...valid,
+        referenceImageUrls: [bare],
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.referenceImageUrls).toEqual([bare]);
+    });
+
+    it("★★ accepts the address with any host the model put in front of it, normalised to the bare path", () => {
+      const result = validateMinkMediaGenerationRequest({
+        ...valid,
+        referenceImageUrls: [
+          `https://echoss.storemink.com${bare}`,
+          `http://echoss.localtest.me:3000/api/mink/attachments/${id.toUpperCase()}`,
+          "https://storage.googleapis.com/bucket/product.webp",
+        ],
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // One address in three spellings is one reference, the bare path.
+      expect(result.value.referenceImageUrls).toEqual([
+        bare,
+        "https://storage.googleapis.com/bucket/product.webp",
+      ]);
+    });
+
+    it("still refuses http:// and every other non-https path", () => {
+      for (const entry of [
+        "http://cdn.example.com/product.png",
+        "http://echoss.storemink.com/uploads/product.png",
+        "/uploads/product.png",
+        "/api/mink/attachments/not-an-id",
+        `${bare}/extra`,
+        "ftp://storage.googleapis.com/bucket/product.webp",
+      ]) {
+        const result = validateMinkMediaGenerationRequest({
+          ...valid,
+          referenceImageUrls: [entry],
+        });
+        expect(result.ok, entry).toBe(false);
+        if (result.ok) continue;
+        expect(result.issues).toContain(REFERENCE_FORM_ISSUE);
+      }
+    });
+
+    it("★ names both accepted forms in the refusal", () => {
+      // The model reads this back after a refused reference. Saying only
+      // "HTTPS URL" told it an attachment address was not allowed, which is
+      // false since attachments became references.
+      expect(REFERENCE_FORM_ISSUE).toBe(
+        "References need HTTPS or an attachment address.",
+      );
+    });
   });
 
   it("requires the caller to report the outcome of its reference reads", () => {

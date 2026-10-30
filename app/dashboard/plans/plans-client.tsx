@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { renewalTerm, renewalLabel } from "@/lib/plans/renewal";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -36,16 +36,44 @@ import {
   changeMyPlan,
   confirmMyPlanChange,
   confirmSubscribe,
+  quoteCheckout,
   resumeMySubscription,
   startSubscribe,
 } from "@/app/actions/subscribe-actions";
-import type { SubscriptionView } from "@/lib/billing/invoice-types";
+import type {
+  NextInvoiceView,
+  SubscriptionView,
+} from "@/lib/billing/invoice-types";
+import type {
+  BillingDetailsView,
+  CheckoutQuoteResult,
+  RenewalQuote,
+} from "@/lib/billing/quote-types";
+import type { TaxTerms } from "@/lib/billing/tax-terms";
+import {
+  CHECKOUT,
+  NEXT_RENEWAL_LABEL,
+  amountChanged,
+  amountFor,
+  checkoutCreditsRow,
+  checkoutPackPrice,
+  checkoutPlanCard,
+  checkoutSummary,
+  currentPlanPrice,
+  istShortDate,
+  nextRenewalGstLine,
+  nextRenewalValue,
+  packPrice,
+  packTotalPrice,
+  plansGridSuffix,
+  renewalByHandLine,
+  type SummaryRow,
+} from "@/lib/billing/tax-copy";
+import { shouldOpenPayment } from "./amount-guard";
+import { StatePrompt } from "./billing-details-card";
 import type { CreditPack } from "@/lib/ai/credits";
 import { openRazorpayModal } from "@/lib/payments/razorpay-client";
-import {
-  autopayRailFor,
-  type MandateMethod,
-} from "@/lib/billing/mandate-types";
+import type { MandateMethod } from "@/lib/billing/mandate-types";
 import {
   PLAN_IDS,
   PLAN_LIMITS,
@@ -57,6 +85,52 @@ import {
   type Plan,
 } from "@/lib/plans";
 import type { PlanPricing } from "@/lib/plans/pricing";
+
+/**
+ * ⚠ DISPLAY ONLY, for when the GST terms could not be read (`terms` null):
+ * list prices with no GST words, and no GST banner. It is never a basis for
+ * a charge. The checkout summary comes from `quoteCheckout`, which reads its
+ * own terms, and the amount guard refuses any payment window that would ask
+ * for more than the screen showed.
+ */
+const NO_TERMS: TaxTerms = {
+  active: false,
+  inclusive: false,
+  rateBps: 0,
+  upcoming: null,
+};
+
+type OkQuote = Extract<CheckoutQuoteResult, { ok: true }>;
+
+/** The checkout dialog's quote, as the summary aside shows it. */
+type QuoteState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "failed" }
+  | { status: "ok"; result: OkQuote };
+
+/** The summary rows of a quote, or null when it has none to show. */
+function summaryOf(
+  result: OkQuote,
+): { rows: SummaryRow[]; note: string } | null {
+  const q = result.plan;
+  if (!q.renewal) return null;
+  const kind =
+    q.kind === "subscribe"
+      ? ("subscribe" as const)
+      : q.timing === "scheduled"
+        ? ("scheduled_change" as const)
+        : ("dearer_change" as const);
+  return checkoutSummary({
+    terms: q.terms,
+    period: q.period,
+    kind,
+    payNow: q.payNow,
+    renewal: q.renewal.amount,
+    effectiveAt: q.kind === "change" ? q.effectiveAt : null,
+    pack: result.pack,
+  });
+}
 
 const KIND_META: Record<
   AiUsagePageData["ledger"][number]["kind"],
@@ -73,15 +147,153 @@ function formatDateTime(iso: string): string {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    // India time, like every other billing date: the server renders in UTC,
+    // so an unpinned zone also disagreed between server and browser.
+    timeZone: "Asia/Kolkata",
   });
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    day: "2-digit",
+// ---------------------------------------------------------------------------
+// Cancelling, as the merchant reads it (renewal-cancel design 8.1 and 8.3).
+//
+// ★ EVERY SENTENCE MUST STAY TRUE: an unpaid renewal invoice is closed when
+// the plan ends, and a renewal payment that arrives is refunded. The refund
+// timing is the billing emails' own (lib/email/billing-emails.ts): while
+// automatic sending is off a refund may be sent by hand, so the sentence
+// promises the usual time rather than the moment the plan ends.
+// ---------------------------------------------------------------------------
+
+const REFUND_TIMING = "after your plan ends, usually within 5 working days";
+
+/** A date in India time: "30 Oct 2026", or "1 Nov 2026, 14:00 IST" with the
+ *  time, the shape the billing emails and the cancel toast print. Pinned to
+ *  the zone so the server render and the browser agree. */
+function istDate(iso: string, opts: { time?: boolean } = {}): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const day = date.toLocaleDateString("en-GB", {
+    day: "numeric",
     month: "short",
     year: "numeric",
+    timeZone: "Asia/Kolkata",
   });
+  if (!opts.time) return day;
+  const time = date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Kolkata",
+  });
+  return `${day}, ${time} IST`;
+}
+
+/** "₹2,400", or to the paisa when there is one ("₹1,234.50"). */
+function rupeesFromPaise(paise: number): string {
+  const amount = paise / 100;
+  const whole = Number.isInteger(amount);
+  return `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  })}`;
+}
+
+/** In grace the plan ends when grace ends, so that date carries its time. */
+function inGrace(status: string | null): boolean {
+  return status === "past_due" || status === "grace";
+}
+
+/** What the next cycle's invoice means, read the way the cancellation email
+ *  and the cancel toast read it, so all three agree. */
+function nextInvoiceCase(
+  next: NextInvoiceView | null,
+): "none" | "open" | "in_flight" | "paid" {
+  if (!next) return "none";
+  if (next.status === "paid") return "paid";
+  if (next.inFlight || next.status === "processing") return "in_flight";
+  if (next.status === "open") return "open";
+  return "none";
+}
+
+/**
+ * The confirmation before cancelling (design 8.1), by the state the
+ * subscription is in and what its next invoice says. Grace with a renewal
+ * already paid is not in the design's seven; it reads like the email's.
+ */
+function cancelConfirmText(s: SubscriptionView, planName: string): string {
+  const grace = inGrace(s.status);
+  const endsAt = grace ? s.graceEndsAt : s.currentEnd;
+  // No paid cycle: nothing is kept, so nothing is promised.
+  if (!endsAt) return "Cancel your subscription? No payments will be taken.";
+  const next = nextInvoiceCase(s.nextInvoice);
+  const amount = s.nextInvoice ? rupeesFromPaise(s.nextInvoice.totalPaise) : "";
+
+  if (grace) {
+    const when = istDate(endsAt, { time: true });
+    if (next === "in_flight") {
+      return `Cancel your subscription? Your ${planName} plan ends on ${when} and your store moves to the Free plan. A renewal payment of ${amount} is still going through. If it completes, we refund it.`;
+    }
+    if (next === "paid") {
+      return `Cancel your subscription? Your ${planName} plan ends on ${when} and your store moves to the Free plan. We refund your renewal payment of ${amount} ${REFUND_TIMING}.`;
+    }
+    return `Cancel your subscription? Your renewal hasn't been paid, so your ${planName} plan ends on ${when} and your store moves to the Free plan.${next === "open" ? " Your unpaid invoice won't be charged." : ""}`;
+  }
+
+  const keep = `Cancel your subscription? You keep your ${planName} plan until ${istDate(endsAt)}, then your store moves to the Free plan.`;
+  if (next === "open") {
+    const ref = s.nextInvoice?.invoiceRef ? ` ${s.nextInvoice.invoiceRef}` : "";
+    return `${keep} Your renewal invoice${ref} won't be charged.`;
+  }
+  if (next === "in_flight") {
+    return `${keep} A renewal payment of ${amount} is already under way and can't be stopped. If it goes through, we refund it ${REFUND_TIMING}.`;
+  }
+  if (next === "paid") {
+    return `${keep} We refund your renewal payment of ${amount} ${REFUND_TIMING}.`;
+  }
+  return `${keep} No more payments will be taken.`;
+}
+
+/**
+ * The cancelling banner (design 8.3). Shown ONLY while the subscription is
+ * live and cancelling: a plan that has ended has nothing left to keep, and
+ * telling a Free store it "keeps Pro until" a date was defect D6.
+ */
+function cancellingBannerText(s: SubscriptionView, planName: string): string {
+  const next = nextInvoiceCase(s.nextInvoice);
+  const amount = s.nextInvoice ? rupeesFromPaise(s.nextInvoice.totalPaise) : "";
+  let text: string;
+  if (inGrace(s.status)) {
+    const head = s.graceEndsAt
+      ? `Cancelled - your ${planName} plan ends on ${istDate(s.graceEndsAt, { time: true })}, then your store moves to Free.`
+      : `Cancelled - your ${planName} plan ends when grace ends, then your store moves to Free.`;
+    if (next === "in_flight") {
+      text = `${head} A renewal payment of ${amount} is still going through. If it completes, we refund it.`;
+    } else if (next === "paid") {
+      text = `${head} Your renewal was paid while you were cancelling. Choose Keep my plan to keep it, or we refund it ${REFUND_TIMING}.`;
+    } else if (next === "open") {
+      text = `${head} Your unpaid invoice won't be charged.`;
+    } else {
+      text = head;
+    }
+  } else {
+    const head = `Cancelled - you keep ${planName}${s.currentEnd ? ` until ${istDate(s.currentEnd)}` : " until the cycle ends"}, then move to Free.`;
+    if (next === "open") {
+      text = `${head} Your renewal invoice won't be charged.`;
+    } else if (next === "in_flight") {
+      text = `${head} A renewal payment of ${amount} is still going through. If it completes, we refund it ${REFUND_TIMING}.`;
+    } else if (next === "paid") {
+      text = `${head} We refund your renewal payment of ${amount} ${REFUND_TIMING}.`;
+    } else {
+      text = head;
+    }
+  }
+  // An operator cancelled for them, at their request: they should know who
+  // pressed the button and when.
+  if (s.cancelRequestedBy === "operator") {
+    text += s.cancelRequestedAt
+      ? ` Cancelled by StoreMink at your request on ${istDate(s.cancelRequestedAt)}.`
+      : " Cancelled by StoreMink at your request.";
+  }
+  return text;
 }
 
 // The bullets shown for each plan in "Available plans", derived from the plan
@@ -116,11 +328,23 @@ export function PlansBillingClient({
   canManage,
   pricing,
   includedCredits,
+  terms,
+  nextRenewal,
+  billingDetails,
 }: {
   initialData: AiUsagePageData;
   subscription: SubscriptionView;
   packs: CreditPack[];
   canManage: boolean;
+  /** The GST terms in force now, read LIVE (`getTaxTermsLive`, never the
+   *  cache: this page quotes a price and then charges it); null when the read
+   *  failed. */
+  terms: TaxTerms | null;
+  /** The store's next renewal as it will be invoiced; null without one. */
+  nextRenewal: RenewalQuote | null;
+  /** The Billing details view, for the packs panel's state and outside-India
+   *  prompts; null for a viewer or on a read failure. */
+  billingDetails: BillingDetailsView | null;
   /** Resolved server-side, with the MINK_CHARGE_CREDITS switch already applied
    *  — the flag is server-only, so a client that guessed at it would advertise
    *  the half that is not being enforced. */
@@ -139,22 +363,29 @@ export function PlansBillingClient({
   const [period, setPeriod] = useState<"monthly" | "yearly">("yearly");
   const [upgradeTo, setUpgradeTo] = useState<Plan | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  // ★ The amount guard's memory for the packs panel (design 7.4): a start
+  // that asked for a different amount than the card showed puts that amount
+  // on the card, and the next press must match it.
+  const [packAsked, setPackAsked] = useState<Record<string, number>>({});
+  const copyTerms = terms ?? NO_TERMS;
 
   const refresh = () => startRefresh(() => router.refresh());
 
+  // The plan being cancelled is the SUBSCRIPTION's, not the effective one: a
+  // comp can lift the effective plan above what they pay for, and the comp
+  // does not end when the subscription does.
+  const subscriptionPlanName =
+    PLAN_META[normalizePlan(subscription.plan ?? data.plan)].name;
+  const showCancellingBanner =
+    subscription.active && subscription.cancelAtPeriodEnd;
+
   async function handleCancel() {
-    // The promise has to match what the server will actually do. Access runs to
-    // the end of a cycle only if a cycle is running — between authorising the
-    // mandate and the first charge there isn't one, and telling someone they
-    // keep a plan they were never charged for sets up the wrong expectation.
-    const keepsCycle =
-      subscription.status === "active" && !!subscription.currentEnd;
+    // The promise has to match what the server will actually do: the plan
+    // ends at the cycle end (or when grace ends), and a renewal invoice that
+    // is open, paid or has a payment under way each get their own sentence.
+    // Kept as a native confirm, as the design asks.
     if (
-      !window.confirm(
-        keepsCycle
-          ? "Cancel your subscription? You keep your plan until the current cycle ends, then you'll move to Free. No further payments will be taken."
-          : "Cancel your subscription? No payments will be taken.",
-      )
+      !window.confirm(cancelConfirmText(subscription, subscriptionPlanName))
     ) {
       return;
     }
@@ -171,7 +402,9 @@ export function PlansBillingClient({
 
   // ★ NEW: changing your mind before the cycle ends. The old path could not offer
   // this — it cancelled the subscription at the gateway, so coming back meant
-  // re-authorising. Here it is clearing a flag.
+  // re-authorising. Here it is clearing a flag. It works in grace too: the
+  // button shows while the subscription is live (active, past due or grace),
+  // and the server's message says whether the plan continues now.
   async function handleResume() {
     setCancelling(true);
     const res = await resumeMySubscription();
@@ -232,12 +465,67 @@ export function PlansBillingClient({
       ? { label: "Free", tone: "gray" as const }
       : { label: "Active", tone: "green" as const };
 
+  /** What a pack's card shows as payable now, in paise. */
+  function packShownPaise(pack: CreditPack): number {
+    return (
+      packAsked[pack.id] ?? amountFor(pack.priceInr * 100, copyTerms).totalPaise
+    );
+  }
+
+  /** The pack's price as its card prints it (never a price per credit). */
+  function packLabel(pack: CreditPack): string {
+    const asked = packAsked[pack.id];
+    if (asked === undefined) return packPrice(copyTerms, pack.priceInr * 100);
+    return packTotalPrice(copyTerms, asked);
+  }
+
+  // GST charged now and no state of the merchant's anywhere, or a business
+  // outside India: the server refuses the pack payment (PAYMENT_REFUSAL), so
+  // the panel asks first (design 7.3).
+  const packBasis = billingDetails?.placeOfSupply.basis ?? null;
+  const packsNeedState = !!terms?.active && packBasis === "supplier_state";
+  const packsOutsideIndia = !!terms?.active && packBasis === "outside_india";
+
+  // The current plan's price is for the SUBSCRIPTION's own period (design
+  // 7.3): a yearly subscriber sees the yearly price.
+  const pricePeriod: "monthly" | "yearly" =
+    subscription.active &&
+    normalizePlan(subscription.plan ?? data.plan) === plan
+      ? (subscription.period ?? "monthly")
+      : "monthly";
+  const priceListPaise =
+    (pricePeriod === "yearly"
+      ? pricing[plan].yearlyInr
+      : pricing[plan].monthlyInr) * 100;
+  const renewalGstLine = nextRenewal
+    ? nextRenewalGstLine(nextRenewal.amount)
+    : null;
+  const renewalByHand =
+    nextRenewal && !showCancellingBanner
+      ? renewalByHandLine({
+          route: nextRenewal.route,
+          totalPaise: nextRenewal.amount.totalPaise,
+          dueOn: nextRenewal.renewsOn,
+          mandateMaxPaise: nextRenewal.mandateMaxPaise,
+        })
+      : null;
+
   async function handleBuy(pack: CreditPack) {
     setBuyingPack(pack.id);
     const start = await startCreditPurchase(pack.id);
     if ("error" in start) {
       toast.error(start.error);
       setBuyingPack(null);
+      return;
+    }
+    // ★★ THE AMOUNT GUARD (design 7.4): the window opens only for exactly
+    // the amount this card showed.
+    if (!shouldOpenPayment(packShownPaise(pack), start.amountPaise)) {
+      setPackAsked((prev) => ({ ...prev, [pack.id]: start.amountPaise }));
+      // The press named is this card's own button, "Buy now".
+      toast.info(amountChanged(start.amountPaise, "buy_now"));
+      setBuyingPack(null);
+      startRefresh(() => router.refresh());
       return;
     }
     const opened = await openRazorpayModal({
@@ -332,16 +620,24 @@ export function PlansBillingClient({
 
         <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
           <Detail label="Price">
-            {/* Resolved pricing, not PLAN_META — after an operator reprice the
+            {/* Resolved pricing, not PLAN_META: after an operator reprice the
                 constant is no longer what this store is on. */}
-            {pricing[plan].monthlyInr === 0
-              ? "Free"
-              : `₹${pricing[plan].monthlyInr.toLocaleString("en-IN")}/mo`}
+            {currentPlanPrice(copyTerms, pricePeriod, priceListPaise)}
           </Detail>
           <Detail label="Status">{status.label}</Detail>
           <Detail label={renewalLabel(term)}>
-            {expiresAt ? formatDate(expiresAt) : "No expiry"}
+            {expiresAt ? istShortDate(expiresAt) : "No expiry"}
           </Detail>
+          {nextRenewal && (
+            <Detail label={NEXT_RENEWAL_LABEL}>
+              {nextRenewalValue(nextRenewal.amount, nextRenewal.renewsOn)}
+              {renewalGstLine && (
+                <span className="mt-0.5 block text-xs font-normal text-[#5b6472]">
+                  {renewalGstLine}
+                </span>
+              )}
+            </Detail>
+          )}
           <Detail label="Billing">
             {data.planSource === "paid"
               ? "Paid subscription"
@@ -353,20 +649,20 @@ export function PlansBillingClient({
           </Detail>
         </dl>
 
-        {/* Autopay controls / notices */}
-        {(subscription.active ||
-          subscription.cancelAtPeriodEnd ||
-          subscription.scheduledPlan) && (
+        {renewalByHand && (
+          <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {renewalByHand}
+          </p>
+        )}
+
+        {/* Autopay controls / notices. Only for a LIVE subscription (active,
+            past due or grace): an ended one has no cycle to renew, cancel or
+            change, and a leftover flag on it is not something to report. */}
+        {subscription.active && (
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[rgba(17,24,39,0.08)] pt-4">
             <p className="text-sm text-[#5b6472]">
-              {subscription.cancelAtPeriodEnd ? (
-                <>
-                  Cancelled - you keep {planMeta.name}
-                  {subscription.currentEnd
-                    ? ` until ${formatDate(subscription.currentEnd)}`
-                    : " until the cycle ends"}
-                  , then move to Free.
-                </>
+              {showCancellingBanner ? (
+                cancellingBannerText(subscription, subscriptionPlanName)
               ) : subscription.scheduledPlan || subscription.scheduledPeriod ? (
                 <>
                   {
@@ -380,7 +676,7 @@ export function PlansBillingClient({
                     : ""}{" "}
                   starts at your next renewal
                   {subscription.currentEnd
-                    ? ` (${formatDate(subscription.currentEnd)})`
+                    ? ` (${istShortDate(subscription.currentEnd)})`
                     : ""}
                   .
                 </>
@@ -388,7 +684,7 @@ export function PlansBillingClient({
                 <>
                   Autopay renews your {planMeta.name} plan
                   {subscription.currentEnd
-                    ? ` on ${formatDate(subscription.currentEnd)}`
+                    ? ` on ${istShortDate(subscription.currentEnd)}`
                     : " automatically"}
                   .
                 </>
@@ -399,15 +695,14 @@ export function PlansBillingClient({
                       must DO rather than implying it renews itself. */}
                   Your {planMeta.name} plan runs
                   {subscription.currentEnd
-                    ? ` to ${formatDate(subscription.currentEnd)}`
+                    ? ` to ${istShortDate(subscription.currentEnd)}`
                     : " to the end of this cycle"}
                   . We&apos;ll send an invoice to pay before then.
                 </>
               )}
             </p>
             {canManage &&
-              subscription.active &&
-              (subscription.cancelAtPeriodEnd ? (
+              (showCancellingBanner ? (
                 <button
                   type="button"
                   onClick={handleResume}
@@ -487,7 +782,7 @@ export function PlansBillingClient({
                 </div>
               )}
               <p className="mt-2 text-xs text-[#5b6472]">
-                Resets {resetCountdown} ({formatDate(resetsAt)}).
+                Resets {resetCountdown} ({istShortDate(resetsAt)}).
               </p>
             </div>
           </div>
@@ -544,45 +839,64 @@ export function PlansBillingClient({
                 back soon.
               </p>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {packs.map((pack) => (
-                  <div
-                    key={pack.id}
-                    className={`relative rounded-lg border p-5 ${
-                      pack.popular
-                        ? "border-indigo-300 ring-1 ring-indigo-200"
-                        : "border-[rgba(17,24,39,0.08)]"
-                    }`}
-                  >
-                    {pack.popular && (
-                      <span className="absolute -top-2.5 left-4 rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white">
-                        Most popular
-                      </span>
-                    )}
-                    <div className="text-sm font-medium text-[#5b6472]">
-                      {pack.name}
-                    </div>
-                    <div className="mt-1 text-2xl font-bold text-[#111827]">
-                      {pack.credits}{" "}
-                      <span className="text-sm font-medium text-[#5b6472]">
-                        credits
-                      </span>
-                    </div>
-                    <div className="mt-1 text-sm text-[#5b6472]">
-                      ₹{pack.priceInr.toLocaleString("en-IN")} · ₹
-                      {(pack.priceInr / pack.credits).toFixed(2)}/credit
-                    </div>
-                    <button
-                      type="button"
-                      className="dash-btn dash-btn-primary mt-4 w-full justify-center"
-                      onClick={() => handleBuy(pack)}
-                      disabled={!canManage || buyingPack !== null}
-                    >
-                      {buyingPack === pack.id ? "Opening…" : "Buy now"}
-                    </button>
+              <>
+                {packsOutsideIndia ? (
+                  <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                    {CHECKOUT.outsideIndia}
+                  </p>
+                ) : packsNeedState && canManage ? (
+                  <div className="mb-4">
+                    <StatePrompt
+                      onSaved={() => startRefresh(() => router.refresh())}
+                    />
                   </div>
-                ))}
-              </div>
+                ) : null}
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {packs.map((pack) => (
+                    <div
+                      key={pack.id}
+                      className={`relative rounded-lg border p-5 ${
+                        pack.popular
+                          ? "border-indigo-300 ring-1 ring-indigo-200"
+                          : "border-[rgba(17,24,39,0.08)]"
+                      }`}
+                    >
+                      {pack.popular && (
+                        <span className="absolute -top-2.5 left-4 rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white">
+                          Most popular
+                        </span>
+                      )}
+                      <div className="text-sm font-medium text-[#5b6472]">
+                        {pack.name}
+                      </div>
+                      <div className="mt-1 text-2xl font-bold text-[#111827]">
+                        {pack.credits}{" "}
+                        <span className="text-sm font-medium text-[#5b6472]">
+                          credits
+                        </span>
+                      </div>
+                      {/* The amount payable now, never a price per credit
+                        (owner decision 10). */}
+                      <div className="mt-1 text-sm text-[#5b6472]">
+                        {packLabel(pack)}
+                      </div>
+                      <button
+                        type="button"
+                        className="dash-btn dash-btn-primary mt-4 w-full justify-center"
+                        onClick={() => handleBuy(pack)}
+                        disabled={
+                          !canManage ||
+                          buyingPack !== null ||
+                          packsNeedState ||
+                          packsOutsideIndia
+                        }
+                      >
+                        {buyingPack === pack.id ? "Opening…" : "Buy now"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -724,6 +1038,11 @@ export function PlansBillingClient({
                     </>
                   )}
                 </div>
+                {perMonth > 0 && plansGridSuffix(copyTerms) && (
+                  <div className="text-xs font-medium text-[#5b6472]">
+                    {plansGridSuffix(copyTerms)}
+                  </div>
+                )}
                 <p className="mt-1 text-xs text-[#5b6472]">{meta.tagline}</p>
 
                 <ul className="mt-4 flex-1 space-y-2">
@@ -787,6 +1106,7 @@ export function PlansBillingClient({
           currentPlan={plan}
           currentPeriod={subscription.period ?? "monthly"}
           hasAutopay={subscription.autopay}
+          terms={terms}
         />
       )}
     </div>
@@ -847,6 +1167,7 @@ function UpgradeModal({
   currentPlan,
   currentPeriod,
   hasAutopay,
+  terms,
 }: {
   plan: Plan;
   period: "monthly" | "yearly";
@@ -859,6 +1180,8 @@ function UpgradeModal({
   currentPlan: Plan;
   currentPeriod: "monthly" | "yearly";
   hasAutopay: boolean;
+  /** The GST terms in force now; null when they could not be read. */
+  terms: TaxTerms | null;
 }) {
   const [stage, setStage] = useState<1 | 2 | 3>(1);
   const [selectedPlan, setSelectedPlan] = useState<Plan>(plan);
@@ -876,11 +1199,53 @@ function UpgradeModal({
     selectedPeriod === "yearly"
       ? pricing[selectedPlan].yearlyInr
       : pricing[selectedPlan].monthlyInr;
-  // ⚠ An ESTIMATE: it cannot see tax, so with GST on it can read a shade low
-  // near the limit. The server decides authoritatively and reports `autopay`
-  // back, which is what the toast below corrects from — this only chooses which
-  // explanation to show before the call.
-  const autopayPossible = autopayRailFor(price * 100) !== null;
+
+  // ★★ The summary aside is rebuilt from `quoteCheckout` (design 7.3), asked
+  // when stage 3 opens and again after a state is saved or an amount moved.
+  // Only the newest answer is kept: an older one arriving late would show a
+  // total for a plan, period or pack no longer chosen.
+  const [quote, setQuote] = useState<QuoteState>({ status: "idle" });
+  const quoteSeq = useRef(0);
+  // ★ The amount guard's memory (design 7.4): what a start asked for when it
+  // differed from what the screen showed. Shown on screen, and the next press
+  // must match it.
+  const [askedPlanPaise, setAskedPlanPaise] = useState<number | null>(null);
+  const [askedPackPaise, setAskedPackPaise] = useState<number | null>(null);
+  // The plan payment went through but the credit pack's amount moved: the
+  // dialog stays open for the credits alone.
+  const [planDone, setPlanDone] = useState(false);
+  const okQuote = quote.status === "ok" ? quote.result : null;
+  const copyTerms = okQuote?.terms ?? terms ?? NO_TERMS;
+  const planPayNowPaise = okQuote?.plan.payNow?.totalPaise ?? null;
+  const packQuotePaise = okQuote?.pack?.totalPaise ?? null;
+  // ★ The rail note reads the quote's own renewal (design 7.3): it can see
+  // GST and the store's mandate, which a catalogue price cannot.
+  const quotedAutopay = okQuote?.plan.renewal?.autopay ?? null;
+
+  async function requestQuote(
+    target: Plan,
+    targetPeriod: "monthly" | "yearly",
+    packId: string | null,
+  ) {
+    const seq = ++quoteSeq.current;
+    if (target === "free") {
+      setQuote({ status: "idle" });
+      return;
+    }
+    setQuote({ status: "loading" });
+    try {
+      const result = await quoteCheckout(target, targetPeriod, packId);
+      if (seq !== quoteSeq.current) return;
+      setQuote(result.ok ? { status: "ok", result } : { status: "failed" });
+    } catch {
+      if (seq !== quoteSeq.current) return;
+      setQuote({ status: "failed" });
+    }
+  }
+
+  function requote() {
+    void requestQuote(selectedPlan, selectedPeriod, selectedPackId);
+  }
 
   // No live mandate yet (free, or an operator-granted paid plan) → start a
   // fresh subscription for the target plan. An existing active subscription →
@@ -924,6 +1289,16 @@ function UpgradeModal({
         `Your plan change is complete, but the credit top-up could not start: ${start.error}`,
       );
       onActivated();
+      return;
+    }
+    // ★★ THE AMOUNT GUARD (design 7.4). The plan is already paid for; the
+    // credits wait for another press at the amount now shown.
+    const shownPack = askedPackPaise ?? packQuotePaise;
+    if (!shouldOpenPayment(shownPack, start.amountPaise)) {
+      setAskedPackPaise(start.amountPaise);
+      setPlanDone(true);
+      setWorking(false);
+      toast.info(amountChanged(start.amountPaise, "continue_to_payment"));
       return;
     }
     const opened = await openRazorpayModal({
@@ -973,14 +1348,43 @@ function UpgradeModal({
       mandateMethod,
     );
     if (!start.ok) {
-      toast.error(start.error);
       setWorking(false);
+      if (start.waiting) {
+        // ★ The earlier payment went through and the plan switches on shortly
+        // (RC-F1b). Not a failure to retry: the message says not to pay again,
+        // so it is a notice and the window closes with nothing left to press.
+        toast.info(start.error);
+        onActivated();
+        return;
+      }
+      toast.error(start.error);
       return;
     }
-    if (!start.autopay && autopayPossible) {
-      // ★ The client's estimate cannot see tax, so it can read a shade low near
-      // the ₹15,000 limit. The SERVER is authoritative; correct the screen
-      // rather than opening a Checkout the merchant misreads as autopay.
+    if (start.completedEarlier) {
+      // ★★ An EARLIER payment for a plan was finished instead of opening a
+      // second one (RC-F1b): the plan is active, which is a success, never an
+      // error. Carry on exactly as after a payment made here. It carries no
+      // payment, so the amount guard below never sees it.
+      setWorking(false);
+      toast.success(start.message);
+      await buySelectedCredits();
+      return;
+    }
+    // ★★ THE AMOUNT GUARD (design 7.4): the window asks for exactly the
+    // "Pay now" the summary showed, or it does not open.
+    if (
+      !shouldOpenPayment(askedPlanPaise ?? planPayNowPaise, start.amountPaise)
+    ) {
+      setAskedPlanPaise(start.amountPaise);
+      setWorking(false);
+      toast.info(amountChanged(start.amountPaise, "continue_to_payment"));
+      requote();
+      return;
+    }
+    if (!start.autopay && quotedAutopay) {
+      // ★ The quote and the start can disagree (a mandate changed, a price
+      // moved). The SERVER is authoritative; correct the screen rather than
+      // opening a Checkout the merchant misreads as autopay.
       toast.info(
         "This plan is above the automatic-debit limit, so renewals will be invoiced.",
       );
@@ -1052,15 +1456,42 @@ function UpgradeModal({
     const res = await changeMyPlan(selectedPlan, selectedPeriod);
     if (!res.ok) {
       setWorking(false);
+      if (res.waiting) {
+        // ★ An earlier change was paid for and switches shortly (RC-F1b): a
+        // notice, never an error with a way to pay again.
+        toast.info(res.error);
+        onActivated();
+        return;
+      }
       toast.error(res.error);
       return;
     }
 
-    // Cheaper or equal: booked for the cycle end, nothing to pay.
+    // Cheaper or equal: booked for the cycle end, nothing to pay. Also an
+    // earlier paid change that was finished instead (`completedEarlier`),
+    // whose message names the plan that payment bought.
     if (!res.payment) {
       setWorking(false);
       toast.success(res.message);
       await buySelectedCredits();
+      return;
+    }
+
+    // ★★ THE AMOUNT GUARD (design 7.4). A change the summary showed as
+    // scheduled (nothing to pay now) that the server now wants paid is a
+    // mismatch too: the screen showed no amount.
+    if (
+      !shouldOpenPayment(
+        askedPlanPaise ?? planPayNowPaise,
+        res.payment.amountPaise,
+      )
+    ) {
+      setAskedPlanPaise(res.payment.amountPaise);
+      setWorking(false);
+      // After the requote the change is paid now, so the button reads "Pay
+      // prorated change" (R2-01).
+      toast.info(amountChanged(res.payment.amountPaise, "pay_prorated_change"));
+      requote();
       return;
     }
 
@@ -1105,10 +1536,37 @@ function UpgradeModal({
   }
 
   const steps = ["Choose plan", "Mink credits", "Review & pay"];
-  const recurringLabel = selectedPeriod === "yearly" ? "year" : "month";
+  // The quote decides a paid plan's summary; a move to Free has nothing to
+  // quote (the server refuses it with its own sentence, as before).
+  const quoted =
+    stage === 3 &&
+    selectedPlan !== "free" &&
+    (isNewSubscription || isPlanChange);
+  const summary = okQuote ? summaryOf(okQuote) : null;
+  // "Continue to payment" and "Pay prorated change" stay disabled until a
+  // total is shown, and while the state is missing or the business is outside
+  // India (design 7.3). An earlier payment to finish has nothing to show and
+  // nothing to pay, so it may go ahead.
+  const payReady =
+    !quoted ||
+    (okQuote !== null &&
+      !okQuote.needsState &&
+      !okQuote.outsideIndia &&
+      (summary !== null || okQuote.plan.earlierPayment));
+  const changeNow = okQuote
+    ? okQuote.plan.kind === "change"
+      ? okQuote.plan.timing === "now"
+      : true
+    : dearer;
+
+  function leave() {
+    // After the plan was paid for, closing still has to refresh the page.
+    if (planDone) onActivated();
+    else onClose();
+  }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !working && onClose()}>
+    <Dialog open onOpenChange={(open) => !open && !working && leave()}>
       <DialogContent
         showCloseButton={!working}
         className="max-h-[calc(100dvh-1rem)] gap-0 overflow-hidden p-0 sm:max-w-5xl"
@@ -1185,6 +1643,11 @@ function UpgradeModal({
                       selectedPeriod === "yearly"
                         ? pricing[candidate].yearlyInr
                         : pricing[candidate].monthlyInr;
+                    const card = checkoutPlanCard(
+                      copyTerms,
+                      selectedPeriod,
+                      amount * 100,
+                    );
                     const selected = candidate === selectedPlan;
                     const current =
                       candidate === currentPlan &&
@@ -1218,14 +1681,10 @@ function UpgradeModal({
                           )}
                         </div>
                         <div className="mt-2 text-xl font-bold text-[#111827]">
-                          {amount === 0
-                            ? "Free"
-                            : `₹${amount.toLocaleString("en-IN")}`}
+                          {card.amount}
                         </div>
                         <div className="mt-1 text-xs text-[#5b6472]">
-                          {amount === 0
-                            ? "No recurring charge"
-                            : `Billed every ${recurringLabel}`}
+                          {card.line}
                         </div>
                       </button>
                     );
@@ -1281,7 +1740,7 @@ function UpgradeModal({
                         {pack.credits} credits
                       </span>
                       <p className="mt-1 text-sm font-semibold text-[#111827]">
-                        ₹{pack.priceInr.toLocaleString("en-IN")} once
+                        {checkoutPackPrice(copyTerms, pack.priceInr * 100)}
                       </p>
                       <p className="mt-1 text-xs text-[#5b6472]">
                         {pack.name} pack · never expires
@@ -1314,7 +1773,11 @@ function UpgradeModal({
                     <span className="text-[#5b6472]">AI-credit add-on</span>
                     <span className="text-right font-semibold text-[#111827]">
                       {selectedPack
-                        ? `${selectedPack.credits} credits · ₹${selectedPack.priceInr.toLocaleString("en-IN")} once`
+                        ? checkoutCreditsRow(
+                            copyTerms,
+                            selectedPack.credits,
+                            selectedPack.priceInr * 100,
+                          )
                         : "None"}
                     </span>
                   </div>
@@ -1327,7 +1790,7 @@ function UpgradeModal({
                     UPI alike, so above it no supported rail can auto-debit at
                     all and we ask for no mandate rather than a ceiling we could
                     never exercise. */}
-                {autopayPossible ? (
+                {quotedAutopay === null ? null : quotedAutopay ? (
                   <div className="mt-5 rounded-xl border border-[#e5e7eb] bg-white p-4">
                     <p className="text-sm font-semibold text-[#111827]">
                       Renewals are charged by UPI Autopay
@@ -1396,20 +1859,112 @@ function UpgradeModal({
                   {selectedPeriod}
                 </dd>
               </div>
-              <div className="flex justify-between gap-3 border-t border-[#e5e7eb] pt-3">
-                <dt className="font-semibold text-[#111827]">
-                  Advertised plan price
-                </dt>
-                <dd className="text-lg font-bold text-[#111827]">
-                  {price === 0 ? "Free" : `₹${price.toLocaleString("en-IN")}`}
-                </dd>
-              </div>
+              {!quoted && (
+                <div className="flex justify-between gap-3 border-t border-[#e5e7eb] pt-3">
+                  <dt className="font-semibold text-[#111827]">
+                    Advertised plan price
+                  </dt>
+                  <dd className="text-right text-lg font-bold text-[#111827]">
+                    {
+                      checkoutPlanCard(copyTerms, selectedPeriod, price * 100)
+                        .amount
+                    }
+                  </dd>
+                </div>
+              )}
             </dl>
-            <p className="mt-3 text-xs leading-5 text-[#5b6472]">
-              StoreMink calculates the exact prorated amount, account credit and
-              configured tax on the server. Razorpay shows that final amount
-              before you authorise payment.
-            </p>
+            {planDone ? (
+              // The plan is paid for; only the credits wait for a press.
+              askedPackPaise !== null && (
+                <p
+                  role="status"
+                  className="mt-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"
+                >
+                  {amountChanged(askedPackPaise, "continue_to_payment")}
+                </p>
+              )
+            ) : quoted ? (
+              <div
+                className="mt-4 border-t border-[#e5e7eb] pt-3"
+                aria-live="polite"
+              >
+                {quote.status === "idle" || quote.status === "loading" ? (
+                  <p className="text-sm text-[#5b6472]">{CHECKOUT.working}</p>
+                ) : quote.status === "failed" ? (
+                  <div>
+                    <p role="alert" className="text-sm text-red-700">
+                      {CHECKOUT.failed}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={requote}
+                      className="dash-btn mt-2 justify-center"
+                    >
+                      {CHECKOUT.tryAgain}
+                    </button>
+                  </div>
+                ) : okQuote?.outsideIndia ? (
+                  <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    {CHECKOUT.outsideIndia}
+                  </p>
+                ) : okQuote?.needsState ? (
+                  <StatePrompt onSaved={requote} disabled={working} />
+                ) : summary ? (
+                  <>
+                    <dl className="space-y-3 text-sm">
+                      {summary.rows.map((row) => (
+                        <div key={row.label}>
+                          <div className="flex justify-between gap-3">
+                            <dt className="text-[#5b6472]">{row.label}</dt>
+                            {row.value !== null && (
+                              <dd className="text-right font-semibold text-[#111827]">
+                                {row.value}
+                              </dd>
+                            )}
+                          </div>
+                          {row.note && (
+                            <p className="mt-0.5 text-right text-xs text-[#5b6472]">
+                              {row.note}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </dl>
+                    {askedPlanPaise !== null &&
+                      askedPlanPaise !== planPayNowPaise && (
+                        <p
+                          role="status"
+                          className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"
+                        >
+                          {amountChanged(
+                            askedPlanPaise,
+                            // The button below: a new plan's "Continue to
+                            // payment", a plan change's "Pay prorated change".
+                            isNewSubscription
+                              ? "continue_to_payment"
+                              : "pay_prorated_change",
+                          )}
+                        </p>
+                      )}
+                    <p className="mt-3 text-xs leading-5 text-[#5b6472]">
+                      {summary.note}
+                    </p>
+                  </>
+                ) : (
+                  // An earlier payment is finished instead (RC-F1b): nothing
+                  // is charged now.
+                  <p className="text-sm text-[#5b6472]">
+                    {CHECKOUT.nothingChargedNow}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs leading-5 text-[#5b6472]">
+                StoreMink calculates the exact prorated amount, account credit
+                and configured tax on the server. Razorpay shows that final
+                amount before you authorise payment.
+              </p>
+            )}
             <div className="mt-4 rounded-lg bg-green-50 p-3 text-xs leading-5 text-green-800">
               <Lock className="mr-1 inline h-3.5 w-3.5" />
               {isNewSubscription
@@ -1420,10 +1975,29 @@ function UpgradeModal({
             </div>
 
             <div className="mt-6 space-y-2">
-              {stage < 3 ? (
+              {planDone ? (
                 <button
                   type="button"
-                  onClick={() => setStage((stage + 1) as 2 | 3)}
+                  onClick={buySelectedCredits}
+                  disabled={working}
+                  className="dash-btn dash-btn-primary w-full justify-center"
+                >
+                  {working ? "Opening secure payment…" : "Continue to payment"}
+                </button>
+              ) : stage < 3 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = (stage + 1) as 2 | 3;
+                    setStage(next);
+                    if (next === 3) {
+                      // A new plan, period or pack: what an earlier start
+                      // asked for no longer applies.
+                      setAskedPlanPaise(null);
+                      setAskedPackPaise(null);
+                      requote();
+                    }
+                  }}
                   disabled={stage === 1 && selectedPlan === currentPlan}
                   className="dash-btn dash-btn-primary w-full justify-center"
                 >
@@ -1433,7 +2007,7 @@ function UpgradeModal({
                 <button
                   type="button"
                   onClick={subscribe}
-                  disabled={working}
+                  disabled={working || !payReady}
                   className="dash-btn dash-btn-primary w-full justify-center"
                 >
                   {working ? "Opening secure payment…" : "Continue to payment"}
@@ -1442,12 +2016,12 @@ function UpgradeModal({
                 <button
                   type="button"
                   onClick={doChange}
-                  disabled={working}
+                  disabled={working || !payReady}
                   className="dash-btn dash-btn-primary w-full justify-center"
                 >
                   {working
                     ? "Preparing…"
-                    : dearer
+                    : changeNow
                       ? "Pay prorated change"
                       : "Schedule at renewal"}
                 </button>
@@ -1459,10 +2033,18 @@ function UpgradeModal({
                   Contact support
                 </a>
               )}
-              {stage > 1 && !working && (
+              {stage > 1 && !working && !planDone && (
                 <button
                   type="button"
-                  onClick={() => setStage((stage - 1) as 1 | 2)}
+                  onClick={() => {
+                    if (stage === 3) {
+                      // Forget the quote: its answer, if one is still on its
+                      // way, is for a choice that may now change.
+                      quoteSeq.current += 1;
+                      setQuote({ status: "idle" });
+                    }
+                    setStage((stage - 1) as 1 | 2);
+                  }}
                   className="dash-btn w-full justify-center"
                 >
                   Back

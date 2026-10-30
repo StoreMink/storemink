@@ -1,9 +1,11 @@
+import "server-only";
 import {
   getPublishedProducts,
   getActiveCategories,
   getPublishedBlogCards,
 } from "@/lib/storefront/queries";
 import { getStoreSetting } from "@/lib/settings/resolve";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import {
   mapSectionData,
   type SectionDatasets,
@@ -43,11 +45,15 @@ export async function fetchSectionDatasets(
     needsBlogs ? getPublishedBlogCards(storeId) : Promise.resolve([]),
   ]);
 
-  return {
+  // ★ The page swap (takedown, design 5.6). The three readers already mask
+  // their rows; masking the datasets again costs nothing when nothing is
+  // blocked (the value comes back unwalked) and keeps this export safe if a
+  // dataset ever comes from another read. Outside every scope: none is open.
+  return maskBlockedMedia({
     products: productsRes as unknown as SectionProduct[],
     categories: categoriesRes as unknown as CategoryTile[],
     blogs: blogsRes as unknown as BlogCardData[],
-  };
+  });
 }
 
 /**
@@ -65,5 +71,9 @@ export async function resolveSectionData(
     fetchSectionDatasets(sections, storeId),
     getStoreSetting("inventory.lowStockThreshold"),
   ]);
-  return mapSectionData(sections, datasets, lowStockThreshold as number);
+  // The resolved rows are built from masked datasets; masking them too covers
+  // sections handed in from anywhere other than getPublishedPage.
+  return maskBlockedMedia(
+    mapSectionData(sections, datasets, lowStockThreshold as number),
+  );
 }

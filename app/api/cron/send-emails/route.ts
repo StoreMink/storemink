@@ -7,6 +7,7 @@ import { runWhatsAppWorker } from "@/lib/whatsapp/worker";
 import { drainInboundEvents } from "@/lib/whatsapp/inbound";
 import { processAnnouncements } from "@/lib/announcements/worker";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
+import { runModerationFollowUps } from "@/lib/moderation/follow-ups";
 
 // Drains every outbound queue:
 //   • coupon campaigns          (email_campaign_recipients)
@@ -16,6 +17,8 @@ import { triggerEmailWorker } from "@/lib/email/trigger-worker";
 //   • notification WhatsApp     (notification_whatsapp_queue — WhatsApp slice 2)
 //   • WhatsApp webhook events   (whatsapp_inbound_events — what the webhook's
 //                                after() missed, and rows whose retry is due)
+// and, last, the content takedown follow-ups (complaint deadline alerts,
+// archive copies, file replacements, restores, notices: design 8.1).
 //
 // One route, because they share a trigger, a secret, and a self-chaining
 // pattern, so a single entry point that drains everything is more reliable
@@ -38,6 +41,25 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
+// ★ The takedown follow-ups get at most 40 seconds of their own and must end
+// 52 seconds into the route (A19), so a slow email step never pushes the
+// route past its 60.
+const FOLLOW_UPS_BUDGET_MS = 40_000;
+const FOLLOW_UPS_ROUTE_END_MS = 52_000;
+
+/**
+ * The takedown follow-ups, isolated like their neighbours: a failure is
+ * logged inside (`moderation: follow-up failed`) and reads as null here.
+ */
+function runFollowUps(routeStart: number) {
+  return runModerationFollowUps({
+    deadline: Math.min(
+      Date.now() + FOLLOW_UPS_BUDGET_MS,
+      routeStart + FOLLOW_UPS_ROUTE_END_MS,
+    ),
+  }).catch(() => null);
+}
+
 function authorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
   if (!secret) return false;
@@ -49,11 +71,23 @@ async function handle(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const routeStart = Date.now();
+
   // Sequential, not Promise.all: both workers send through the same Resend
   // account and claim from the same pool, so overlapping them buys nothing and
   // makes rate limits harder to reason about.
-  const campaigns = await processEmailQueue();
-  const notifications = await processNotificationEmails();
+  let campaigns: Awaited<ReturnType<typeof processEmailQueue>>;
+  let notifications: Awaited<ReturnType<typeof processNotificationEmails>>;
+  try {
+    campaigns = await processEmailQueue();
+    notifications = await processNotificationEmails();
+  } catch (err) {
+    // ★ The takedown follow-ups still run: they carry the complaint deadline
+    // alerts, and a broken email queue must not silence those too. The
+    // request still fails as before, so the scheduler sees it.
+    await runFollowUps(routeStart);
+    throw err;
+  }
 
   // ★ INBOUND WHATSAPP FIRST, THEN OUTBOUND WHATSAPP, THEN SMS. A delivery
   // status that reports a failed WhatsApp, and a send the worker could not
@@ -83,6 +117,11 @@ async function handle(request: Request) {
   // and therefore their rate limit.
   const announcements = await processAnnouncements().catch(() => null);
 
+  // ★ THE TAKEDOWN FOLLOW-UPS RUN LAST (design 8.1), on the same heartbeat
+  // for the reason above. Bounded by their own deadline, never chained: what
+  // they leave is due again on the next minute's run.
+  const moderation = await runFollowUps(routeStart);
+
   // More to do in ANY queue? Chain another run after this response is sent.
   // A full SMS batch means there is probably more behind it.
   if (
@@ -104,6 +143,7 @@ async function handle(request: Request) {
     whatsapp,
     inbound,
     announcements,
+    moderation,
   });
 }
 

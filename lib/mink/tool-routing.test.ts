@@ -3,7 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { addMinkCsvReference } from "./csv-input";
 import { addReviewedMinkDocument } from "./document-input";
-import { addSavedMinkMediaReference } from "./media-attachment";
+import {
+  MINK_ATTACHMENT_MARKER,
+  SAVED_MEDIA_MARKER,
+  addSavedMinkMediaReference,
+} from "./media-attachment";
 import {
   applyMinkToolRoute,
   MINK_TOOL_GROUP_TOOLS,
@@ -214,6 +218,34 @@ describe("routeMinkTools", () => {
     expect(toolsForRoute(route(withCsv))?.has("inspect_product_csv")).toBe(
       true,
     );
+  });
+
+  it("★ reads both picture markers: the new one and the one sent before the change", () => {
+    const payload = JSON.stringify({
+      filename: "sales-report.webp",
+      url: "/api/mink/attachments/0f8fad5b-d9cb-469f-a165-70867728950e",
+    });
+    const kept = `Put this photo on my homepage hero${MINK_ATTACHMENT_MARKER}${payload}`;
+    const legacy = `Put this photo on my homepage hero${SAVED_MEDIA_MARKER}${payload}`;
+    // The composer writes the new marker today.
+    expect(
+      addSavedMinkMediaReference("Put this photo on my homepage hero", {
+        url: "/api/mink/attachments/0f8fad5b-d9cb-469f-a165-70867728950e",
+        filename: "sales-report.webp",
+      }),
+    ).toBe(kept);
+    for (const message of [kept, legacy]) {
+      const routed = route(message);
+      // hasAttachment sees the marker.
+      expect(routed.groups).toContain("attachments");
+      expect(routed.light).toBe(false);
+      // visibleText strips the payload: "sales-report" never brings sales.
+      expect(routed.groups).not.toContain("sales");
+      expect(routed.groups).toEqual(
+        expect.arrayContaining(["builder", "media", "attachments"]),
+      );
+      expect(routed.wantsChange).toBe(true);
+    }
   });
 
   it("routes Hinglish and Devanagari questions", () => {

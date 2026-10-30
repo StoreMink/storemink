@@ -8,6 +8,10 @@ import {
 } from "@/lib/seo/brand-identity";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { PLAN_IDS } from "@/lib/plans";
+import { getPublicTaxSource } from "@/lib/billing/public-tax";
+import { priceGstSuffix } from "@/lib/billing/tax-copy";
+import { termsAt } from "@/lib/billing/tax-terms";
+import { logError } from "@/lib/observability/logger";
 import "./platform.css";
 
 // Branded share card for the platform itself. metadataBase is PLATFORM_URL
@@ -29,12 +33,23 @@ const OG_IMAGE = brandOgImageUrl({
 // every WhatsApp and social preview of the site. Deriving it from the same
 // resolved pricing the page renders means it cannot drift again, including
 // after an operator reprices from the console.
+//
+// ★ GST (design 7.1): "/month plus GST" or "/month including GST" while GST is
+// charged, from the cached public source worked out for this render. A failed
+// read says nothing about GST either way.
 export async function generateMetadata(): Promise<Metadata> {
-  const pricing = await getPlanPricing();
+  const [pricing, taxSource] = await Promise.all([
+    getPlanPricing(),
+    getPublicTaxSource().catch((error: unknown) => {
+      logError("billing.public_tax.read_failed", error, { page: "metadata" });
+      return null;
+    }),
+  ]);
+  const terms = taxSource ? termsAt(taxSource, new Date()) : null;
   const cheapestPaid = Math.min(
     ...PLAN_IDS.map((id) => pricing[id].monthlyInr).filter((n) => n > 0),
   );
-  const DESCRIPTION = `${BRAND_TAGLINE_DETAIL} ${BRAND_DESCRIPTION} Paid plans start at ₹${cheapestPaid.toLocaleString("en-IN")}/month with 0% StoreMink transaction fees.`;
+  const DESCRIPTION = `${BRAND_TAGLINE_DETAIL} ${BRAND_DESCRIPTION} Paid plans start at ₹${cheapestPaid.toLocaleString("en-IN")}/month${terms ? priceGstSuffix(terms) : ""} with 0% StoreMink transaction fees.`;
 
   return {
     title: `StoreMink: ${BRAND_TAGLINE}`,

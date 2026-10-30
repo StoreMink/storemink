@@ -29,6 +29,16 @@
   color: #111827;
 }
 
+/* "Original for recipient", under "Tax Invoice" (CGST rule 48). */
+.sminv-copy {
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+}
+
 .sminv-ref {
   margin: 4px 0 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -112,6 +122,13 @@
   padding-left: 16px;
 }
 
+/* The SAC column of a tax invoice: a short code, kept on one line. */
+.sminv-items .sac {
+  white-space: nowrap;
+  padding-left: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
 .sminv-totals {
   margin-left: auto;
   margin-top: 16px;
@@ -148,6 +165,11 @@
   margin: 0;
 }
 
+/* The LLP line, under the footer sentence on both kinds of invoice. */
+.sminv-foot .sminv-llp {
+  margin-top: 6px;
+}
+
 @media (max-width: 640px) {
   .sminv-head,
   .sminv-parties {
@@ -160,5 +182,30 @@
   }
   .sminv-totals {
     width: 100%;
+  }
+}
+
+/* ★ A TAX INVOICE'S TABLE SCROLLS IN ITS OWN BOX ON A PHONE (R2-07). At 360px
+ * the sheet leaves the table about 254px (the dashboard's 14px gutter, the
+ * wrap's 16px, the sheet's 1px border and 22px padding, each side), and five
+ * columns of nowrap figures need well over 300px. `.dash-content` clips
+ * horizontal overflow on phones, so the Amount column was cut off, not
+ * scrolled to. The table keeps `width: 100%` (so a table that fits still fills
+ * the sheet and its right-aligned figures meet the totals); only its wrapper
+ * scrolls. `display: block` on the table itself would let a narrow table
+ * shrink to its content instead. The long headers ("Amount (GST included)")
+ * may wrap and the gutters halve, which narrows what is left to scroll.
+ * Screen only: print lays the sheet flat at full width (invoice.css). */
+@media screen and (max-width: 640px) {
+  .sminv-items-scroll {
+    overflow-x: auto;
+  }
+  .sminv-items th.num,
+  .sminv-items th.sac {
+    white-space: normal;
+  }
+  .sminv-items .num,
+  .sminv-items .sac {
+    padding-left: 8px;
   }
 }

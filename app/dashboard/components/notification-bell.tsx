@@ -12,7 +12,7 @@
 // the refresh trigger.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Bell, CheckCheck, Loader2 } from "lucide-react";
 import {
@@ -21,10 +21,26 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   type NotificationRow,
+  type UnreadCounts,
 } from "@/app/actions/notification-inbox-actions";
+import {
+  NO_UNREAD,
+  STORE_NOTICES_HREF,
+  normalizeUnreadCounts,
+  useReportUnreadCounts,
+} from "./unread-counts-context";
 
 // Three times slower in development, for realtime-refresher.tsx's reason.
 const POLL_MS = 45_000 * (process.env.NODE_ENV === "development" ? 3 : 1);
+
+// ★ A NOTICE PAGE CLEARS ITS OWN BADGE. Opening a notice from StoreMink marks
+// the viewer's bell rows about it read (lib/moderation/merchant.ts
+// markNoticeSeen, called by the page as it opens), so the bell asks once more
+// a moment later instead of leaving the Notices badge up until the next poll.
+// The wait lets the page's own "seen" action go first: the browser sends
+// server actions one at a time, so this count queues behind it.
+const NOTICE_PAGE_PREFIX = `${STORE_NOTICES_HREF}/`;
+export const NOTICE_SEEN_SETTLE_MS = 1_500;
 
 const SEVERITY_DOT: Record<string, string> = {
   info: "bg-sky-500",
@@ -53,30 +69,59 @@ function timeAgo(iso: string): string {
 
 export function NotificationBell() {
   const router = useRouter();
+  const pathname = usePathname();
+  const report = useReportUnreadCounts();
   const [open, setOpen] = useState(false);
-  const [unread, setUnread] = useState(0);
+  const [counts, setCounts] = useState<UnreadCounts>(NO_UNREAD);
+  const countsRef = useRef<UnreadCounts>(NO_UNREAD);
   const [items, setItems] = useState<NotificationRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const unread = counts.total;
+
+  // The bell's own number and the sidebar's Notices badge move together:
+  // every change goes through here, never through setCounts alone.
+  const publish = useCallback(
+    (next: UnreadCounts) => {
+      const clean = normalizeUnreadCounts(next);
+      countsRef.current = clean;
+      setCounts(clean);
+      report(clean);
+    },
+    [report],
+  );
 
   const refreshCount = useCallback(async () => {
     try {
-      setUnread(await getUnreadNotificationCount());
+      publish(await getUnreadNotificationCount());
     } catch {
-      // A failed poll is not worth surfacing — the next tick retries.
+      // A failed poll is not worth surfacing: the next tick retries.
     }
-  }, []);
+  }, [publish]);
 
   const loadItems = useCallback(async () => {
     setLoading(true);
     try {
       const result = await getMyNotifications();
       setItems(result.notifications);
-      setUnread(result.unread);
+      // The list read counts every unread row, not the StoreMink ones; keep
+      // the last StoreMink count (normalize keeps it within the new total).
+      publish({
+        total: result.unread,
+        storemink: countsRef.current.storemink,
+      });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [publish]);
+
+  useEffect(() => {
+    if (!pathname?.startsWith(NOTICE_PAGE_PREFIX)) return;
+    const timer = setTimeout(() => {
+      void refreshCount();
+    }, NOTICE_SEEN_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [pathname, refreshCount]);
 
   // Poll only while the tab is visible, and catch up immediately on return.
   useEffect(() => {
@@ -141,8 +186,16 @@ export function NotificationBell() {
             n.id === item.id ? { ...n, read_at: new Date().toISOString() } : n,
           ) ?? prev,
       );
-      setUnread((n) => Math.max(0, n - 1));
-      void markNotificationRead(item.id);
+      publish({
+        total: countsRef.current.total - 1,
+        storemink: countsRef.current.storemink,
+      });
+      // The bell does not know which rows are notices from StoreMink, so it
+      // asks again once the row is read; the Notices badge follows from that.
+      void markNotificationRead(item.id).then(
+        () => refreshCount(),
+        () => undefined,
+      );
     }
     if (item.url) router.push(item.url);
   };
@@ -155,7 +208,7 @@ export function NotificationBell() {
           read_at: n.read_at ?? new Date().toISOString(),
         })) ?? prev,
     );
-    setUnread(0);
+    publish(NO_UNREAD);
     await markAllNotificationsRead();
   };
 

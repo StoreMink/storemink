@@ -24,6 +24,14 @@ import Link from "next/link";
 // Prices arrive resolved from the server (lib/plans/pricing.ts): code defaults
 // with any operator override folded in. This component never computes a price,
 // so it cannot disagree with what billing charges.
+//
+// ★ THE GST WORDS ARRIVE WRITTEN TOO (GST design 7.1). The line under each
+// price and the small "plus GST" after "/mo" are worked out on the server for
+// the GST terms of that render (`pricingCards`, pricing-content.tsx, from
+// lib/billing/tax-copy.ts), so a total with GST is never computed here and no
+// date is formatted in the visitor's time zone. With no notes (StoreMink's GST
+// settings could not be read), a card states its amount alone, with no GST
+// words at all: a failed read is never shown as "GST is off".
 // ---------------------------------------------------------------------------
 
 export interface PricingCard {
@@ -38,6 +46,14 @@ export interface PricingCard {
   /** Struck-through list price, or null when no offer is running. */
   baseMonthlyInr: number | null;
   baseYearlyInr: number | null;
+  /**
+   * The line under the price for each billing period, GST words included
+   * ("₹1,770 billed every month, including GST"). Null when the GST settings
+   * could not be read: the card then states the amount alone.
+   */
+  notes: { monthly: string; yearly: string } | null;
+  /** Small words after "/mo" while GST is added on top ("plus GST"), or null. */
+  priceSuffix: string | null;
 }
 
 const inr = (n: number) => `₹${n.toLocaleString("en-IN")}`;
@@ -118,17 +134,21 @@ export function PricingCards({
                     </s>
                   )}
                   <b>{inr(shown)}</b>
-                  <sub>/mo</sub>
+                  <sub>{p.priceSuffix ? `/mo ${p.priceSuffix}` : "/mo"}</sub>
                 </div>
               </div>
 
               {/* What they are actually charged, and when. */}
               <p className="stq-card-note">
-                {free
-                  ? "No card needed"
-                  : yearly
-                    ? `${inr(p.yearlyInr)} billed once a year`
-                    : `${inr(p.monthlyInr)} billed every month`}
+                {p.notes
+                  ? yearly
+                    ? p.notes.yearly
+                    : p.notes.monthly
+                  : free
+                    ? "No card needed"
+                    : yearly
+                      ? `${inr(p.yearlyInr)} billed once a year`
+                      : `${inr(p.monthlyInr)} billed every month`}
               </p>
 
               <Link

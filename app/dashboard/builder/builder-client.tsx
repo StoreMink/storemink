@@ -16,6 +16,7 @@ import {
   Redo2,
   Settings,
   Settings2,
+  ShieldAlert,
   Smartphone,
   Tablet,
   Undo2,
@@ -72,6 +73,7 @@ import { useBuilderShortcuts } from "./use-builder-shortcuts";
 import { builderRefineStillWanted } from "./image-refine-sweep";
 import { useChat } from "../chat-context";
 import { MinkMark } from "../mink-mark";
+import { ITEM, itemBlockedBanner } from "@/lib/moderation/copy";
 
 type Options = {
   products: ProductOption[];
@@ -97,6 +99,8 @@ export function BuilderClient({
   initialBrand,
   themeDefaults,
   schemeDesign,
+  blockedByStoreMink,
+  canSeeNotices = false,
 }: Options & {
   initialPages: PageListItem[];
   storeName: string;
@@ -107,6 +111,15 @@ export function BuilderClient({
   themeDefaults: ThemeDesignDefaults;
   /** What the section colour schemes are built from (lib/themes/schemes). */
   schemeDesign: SchemeDesign;
+  /**
+   * Pages StoreMink blocked and told the store about, page id to block id
+   * (takedown design 7.3). Named so to keep it apart from the autosave
+   * status `blocked` (a stale tab), which has nothing to do with it. A block
+   * kept from the store is not in here, so it shows nothing (D21).
+   */
+  blockedByStoreMink?: Record<string, string>;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 }) {
   // ★★ The builder's full-screen canvas covers the dashboard topbar
   // (dashboard.css), and with it the topbar's Mink AI button, so the
@@ -137,6 +150,11 @@ export function BuilderClient({
     chromeRef.current = chrome;
   }, [chrome]);
   const [draft, setDraft] = useState<PageDraft | null>(null);
+  // The block id of the open page when StoreMink blocked it and told the
+  // store, else null. Never `blocked`: that word is the autosave status.
+  const blockedNoticeId = draft
+    ? (blockedByStoreMink?.[draft.id] ?? null)
+    : null;
   // Starts TRUE whenever there is a page to auto-open, so the very first
   // (server-rendered, pre-hydration) paint says "Opening…" rather than
   // "Select a page" — which told the merchant to do something the builder was
@@ -879,11 +897,31 @@ export function BuilderClient({
                 <Redo2 className="h-4 w-4" />
               </button>
               <SaveStatusIndicator status={status} onRetry={() => flush()} />
-              <span
-                className={`sm-builder-status ${draft.status === "published" ? "is-live" : ""}`}
-              >
-                {draft.status === "published" ? "Live" : "Draft"}
-              </span>
+              {blockedNoticeId ? (
+                // ★ The takedown mark's colours come from dash-badge-storemink
+                // (dashboard.css): `.dashboard-shell .dash-badge-storemink`
+                // outranks builder.css's `.sm-builder-status`, both unlayered,
+                // and its words read at 4.5:1 or more on the red tint.
+                // Publish stays enabled: the merchant may still publish, and
+                // what they publish is what shows if the block is lifted.
+                <span
+                  className="sm-builder-status dash-badge-storemink"
+                  style={{ whiteSpace: "nowrap" }}
+                  title={
+                    draft.status === "published"
+                      ? "Published, but not shown on your store"
+                      : "Draft"
+                  }
+                >
+                  {ITEM.blocked}
+                </span>
+              ) : (
+                <span
+                  className={`sm-builder-status ${draft.status === "published" ? "is-live" : ""}`}
+                >
+                  {draft.status === "published" ? "Live" : "Draft"}
+                </span>
+              )}
               <Link
                 href={`/${draft.slug}`}
                 target="_blank"
@@ -917,6 +955,13 @@ export function BuilderClient({
           )}
         </div>
       </header>
+
+      {draft && blockedNoticeId ? (
+        <BlockedPageBanner
+          blockId={blockedNoticeId}
+          canSeeNotices={canSeeNotices}
+        />
+      ) : null}
 
       <nav className="sm-builder-mobile-nav" aria-label="Builder panels">
         {(["outline", "preview", "edit"] as const).map((panel) => (
@@ -966,6 +1011,7 @@ export function BuilderClient({
           canvasHoverId={canvasHoverId}
           hiddenSectionIds={hiddenSectionIds}
           chromeTarget={chromeTarget}
+          blockedByStoreMink={blockedByStoreMink}
           onSelectChrome={(t) => {
             // One inspector, one subject: selecting the header clears any
             // selected section, and vice versa.
@@ -1238,6 +1284,44 @@ export function BuilderClient({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * The open page is blocked by StoreMink (takedown design 7.3). A status, not
+ * an alert: it describes the page and changes nothing about editing, saving
+ * or publishing. See why opens the notice, for admins who can read notices.
+ */
+function BlockedPageBanner({
+  blockId,
+  canSeeNotices,
+}: {
+  blockId: string;
+  canSeeNotices: boolean;
+}) {
+  return (
+    <div
+      role="status"
+      data-testid="builder-blocked-banner"
+      className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--dash-red)]/30 bg-[var(--dash-red-soft)] px-4 py-2.5"
+    >
+      <ShieldAlert
+        className="h-4 w-4 shrink-0 text-[var(--dash-red)]"
+        aria-hidden="true"
+      />
+      <p className="min-w-0 flex-1 basis-56 text-[13px] text-[var(--dash-text)]">
+        <span className="font-semibold">{ITEM.blocked}.</span>{" "}
+        {itemBlockedBanner("page")}
+      </p>
+      {canSeeNotices ? (
+        <Link
+          href={`/dashboard/settings/notices/${blockId}`}
+          className="dash-btn dash-btn-ghost dash-btn-sm shrink-0 pointer-coarse:min-h-11"
+        >
+          {ITEM.seeWhy}
+        </Link>
+      ) : null}
     </div>
   );
 }

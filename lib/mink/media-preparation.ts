@@ -8,14 +8,16 @@ import { getStoreChrome } from "@/lib/chrome/queries";
 import { productPhotoSpec } from "@/lib/media/image-specs";
 import { mediaAssets } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
+import { uploadRefusal } from "@/lib/moderation/copy";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 import { logError, logWarn } from "@/lib/observability/logger";
 import {
   gcsDeletePaths,
   gcsDownloadObject,
   gcsPathFromUrl,
   gcsPublicUrl,
-  gcsUploadObject,
 } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { MinkToolInputError } from "./errors";
 import { readOwnedStorefrontImageUrls } from "./storefront-media-read";
 import type { MinkActorContext } from "./types";
@@ -129,11 +131,13 @@ function unprepared(url: string): MinkPreparedImageResult {
  * Resolve one exact current-store image and make a destination-shaped copy
  * when the source would otherwise be cropped through its subject.
  *
- * ★★ PREPARATION IS BEST-EFFORT; OWNERSHIP IS NOT. The ONLY refusal here is an
- *    image the store does not own, because that is the one the caller can act
- *    on. Everything else - a legacy object outside our bucket, a format sharp
- *    will not decode, a download or upload that failed, an admin without Media
- *    manage - falls back to the source URL unchanged, which is exactly what
+ * ★★ PREPARATION IS BEST-EFFORT; OWNERSHIP IS NOT. The ONLY refusals here are
+ *    an image the store does not own, because that is the one the caller can
+ *    act on, and a prepared copy whose bytes StoreMink has blocked (takedown
+ *    design 7.4: the sentence says where to read why). Everything else - a
+ *    legacy object outside our bucket, a format sharp will not decode, a
+ *    download or upload that failed, an admin without Media manage - falls
+ *    back to the source URL unchanged, which is exactly what
  *    every one of these calls did before preparation existed. Turning any of
  *    them into a hard failure would lose a whole blog or product proposal, and
  *    the credits already spent on its generated image, over a picture that
@@ -214,8 +218,21 @@ export async function prepareMinkImageForDestination(
   if (!rendered) return unprepared(sourceUrl);
 
   try {
-    await gcsUploadObject(path, rendered, "image/webp");
+    // ★ Through the store's one writer (takedown design 5.7). A copy whose
+    //   bytes StoreMink has blocked on this store is a refusal, not a
+    //   best-effort fall back to the source: the copy is the same photograph,
+    //   so placing the source instead would put the blocked picture back.
+    await writeStoreObject(path, rendered, "image/webp", {
+      storeId: actor.storeId,
+      via: "mink_media_preparation",
+      actor: actor.adminId,
+    });
   } catch (error) {
+    if (isBlockedUploadError(error)) {
+      throw new MinkToolInputError(
+        uploadRefusal({ told: error.told, kindWord: error.kindWord }),
+      );
+    }
     logError("mink prepared image upload failed", error, {
       destination,
       path,

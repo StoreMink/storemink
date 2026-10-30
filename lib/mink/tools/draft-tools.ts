@@ -196,7 +196,7 @@ export const proposeProductImagesTool: MinkTool = {
   declaration: {
     name: "propose_product_images",
     description:
-      "Update an existing product's photos using exact current-store image URLs: the merchant's own uploaded photos, or a catalogue photo generate_storefront_image made for this product with purpose=product earlier in this run. Campaign art (hero, banner, gallery, feature or blog cover images) is refused. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write.",
+      "Update an existing product's photos using exact current-store image URLs: the merchant's own uploaded or attached photos (an attachment by its exact address), or a catalogue photo generate_storefront_image made for this product with purpose=product earlier in this run. Campaign art (hero, banner, gallery, feature or blog cover images) is refused. Resolve the product with search_products first (or use the selected product). replace_primary replaces the main photo and preserves the other gallery photos; add appends photos; replace_gallery replaces the complete gallery. Creates a private proposal for human approval, never a live write.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -224,6 +224,8 @@ export const proposeProductImagesTool: MinkTool = {
   available: draftingAvailable,
   timeoutMs: 45_000,
   effect: "commit",
+  // An attached photo arrives as its Media Library copy (registry.ts).
+  attachmentArgs: ["image_urls"],
   artifact: proposalArtifact,
   async execute(actor, args, context) {
     const id = readString(args.product_id, "product_id", 36);
@@ -417,7 +419,7 @@ function blogDraftDeclaration(coverRequired: boolean): MinkToolDeclaration {
           minLength: 1,
           maxLength: 2_048,
           description: coverRequired
-            ? "Required exact current-store Media Library or catalogue image URL returned by a trusted read or image-generation tool. A blog-creation request includes its cover by default; never guess a URL or leave this out after generating the image."
+            ? "Required exact current-store Media Library or catalogue image URL returned by a trusted read or image-generation tool, or the exact address of an image the merchant attached in this chat. A blog-creation request includes its cover by default; never guess a URL or leave this out after generating the image."
             : "Unavailable to this admin, who holds no Media, Products or Categories View permission. Omit it rather than guessing a URL.",
         },
         seo_title: { type: "string", maxLength: 70 },
@@ -438,6 +440,10 @@ export const proposeBlogDraftTool: MinkTool = {
   available: draftingAvailable,
   timeoutMs: 25_000,
   effect: "commit",
+  // Only the cover may be an attachment. The Markdown body renders no image
+  // (lib/mink/blog-publication-content.ts), so an address there could only
+  // be printed as a public link, and the registry refuses it.
+  attachmentArgs: ["cover_image_url"],
   artifact: proposalArtifact,
   async execute(actor, args, context) {
     const title = readString(args.title, "title", 200);
@@ -666,7 +672,7 @@ export const proposeProductCreateTool: MinkTool = {
   declaration: {
     name: "propose_product_create",
     description:
-      "Create a charged, private proposal for a new draft product. The proposal can later create only an unpublished product with inventory tracking disabled; it cannot publish, add stock, variants, categories or tax/shipping settings. When the composer supplies an exact saved image URL with the request, pass that exact source as image_url; the server analyses its dimensions, preserves the complete authentic photo and automatically prepares a square product canvas when needed before storing the proposal. Never invent, omit or substitute an attached product image URL.",
+      "Create a charged, private proposal for a new draft product. The proposal can later create only an unpublished product with inventory tracking disabled; it cannot publish, add stock, variants, categories or tax/shipping settings. When the request carries an exact image address (attached or saved), pass it as image_url; the server analyses its dimensions, preserves the complete authentic photo and automatically prepares a square product canvas when needed before storing the proposal. Never invent, omit or substitute an attached product image address.",
     parametersJsonSchema: {
       type: "object",
       properties: {
@@ -688,7 +694,7 @@ export const proposeProductCreateTool: MinkTool = {
           type: "string",
           maxLength: 2048,
           description:
-            "Optional exact store-owned Media Library URL supplied with the current user message.",
+            "Optional exact image address supplied with the current user message: an attached image's address or a Media Library URL.",
         },
       },
       required: [
@@ -706,6 +712,7 @@ export const proposeProductCreateTool: MinkTool = {
   available: draftingAvailable,
   timeoutMs: 25_000,
   effect: "commit",
+  attachmentArgs: ["image_url"],
   artifact: proposalArtifact,
   async execute(actor, args, context) {
     await assertProductProposalCapacity(actor);
@@ -995,6 +1002,7 @@ export const proposeCategoryCreateTool: MinkTool = {
   available: draftingAvailable,
   timeoutMs: 8_000,
   effect: "commit",
+  attachmentArgs: ["image_url"],
   artifact: proposalArtifact,
   async execute(actor, args, context) {
     const content = categoryProposalContent(args);
@@ -1025,6 +1033,7 @@ export const proposeCategoryUpdateTool: MinkTool = {
   available: draftingAvailable,
   timeoutMs: 8_000,
   effect: "commit",
+  attachmentArgs: ["image_url"],
   artifact: proposalArtifact,
   async execute(actor, args, context) {
     const current = readString(args.current_category, "current_category", 200);
@@ -2603,7 +2612,7 @@ function categorySchema(updating: boolean) {
       type: "string",
       maxLength: 2_048,
       description:
-        "An exact image URL returned by list_storefront_media, search_products or search_storefront_categories for this store.",
+        "An exact image URL returned by list_storefront_media, search_products or search_storefront_categories for this store, or the exact address of an image the merchant attached in this chat.",
     },
     status: { type: "string", enum: ["active", "hidden"] },
   };

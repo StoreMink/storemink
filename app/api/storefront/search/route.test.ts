@@ -19,8 +19,36 @@ vi.mock("@/lib/storefront/queries", () => ({
     },
   ]),
 }));
+// The page swap, real (the pure half) over a set this file chooses: outside
+// addresses only, so no bucket configuration is involved.
+const blocked = vi.hoisted(() => ({ addresses: [] as string[] }));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  return {
+    ...actual,
+    maskBlockedMedia: vi.fn(async (value: unknown) =>
+      actual.maskBlockedMediaWith(
+        value,
+        actual.buildBlockedMediaSet(
+          blocked.addresses.map((objectPath, i) => ({
+            id: `block-${i}`,
+            objectPath,
+            fileSource: "external",
+            storeId: "store-1",
+            objectMd5: null,
+            tellStore: true,
+          })),
+          { bucket: null, loadedAt: Date.now() },
+        ),
+      ),
+    ),
+  };
+});
 
 import { getPublishedProducts } from "@/lib/storefront/queries";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
 import { GET } from "./route";
 
 const product = (over: Record<string, unknown>) => ({
@@ -46,6 +74,7 @@ const get = (q: string) =>
 
 describe("GET /api/storefront/search", () => {
   beforeEach(() => {
+    blocked.addresses = [];
     store.value = { id: "store-1" };
     products.rows = [
       product({}),
@@ -97,5 +126,29 @@ describe("GET /api/storefront/search", () => {
     const body = await (await get("shirt")).json();
     expect(body.total).toBe(0);
     expect(getPublishedProducts).not.toHaveBeenCalled();
+  });
+
+  it("masks the answer: a blocked thumbnail becomes the placeholder", async () => {
+    const photo = "https://cdn.example.com/linen-shirt.jpg";
+    products.rows = [product({ image_url: photo, images: [photo] })];
+    blocked.addresses = [photo];
+    const body = await (await get("shirt")).json();
+    expect(maskBlockedMedia).toHaveBeenCalledTimes(1);
+    expect(body.products[0].imageUrl).toBe(PLACEHOLDER_URL_PATH);
+    expect(JSON.stringify(body)).not.toContain(photo);
+    // Everything else in the answer is untouched.
+    expect(body.products[0]).toMatchObject({
+      name: "Linen shirt",
+      href: "/shop/linen-shirt",
+      price: 1200,
+    });
+  });
+
+  it("leaves a thumbnail nobody blocked as it is", async () => {
+    const photo = "https://cdn.example.com/linen-shirt.jpg";
+    products.rows = [product({ image_url: photo, images: [photo] })];
+    blocked.addresses = ["https://cdn.example.com/someone-else.jpg"];
+    const body = await (await get("shirt")).json();
+    expect(body.products[0].imageUrl).toBe(photo);
   });
 });

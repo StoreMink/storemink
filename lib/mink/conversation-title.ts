@@ -17,7 +17,7 @@
 import { MINK_NEW_CHAT_TITLE } from "./chat-session";
 import { MINK_CSV_MARKER } from "./csv-input";
 import { REVIEWED_DOCUMENT_MARKER } from "./document-input";
-import { SAVED_MEDIA_MARKER } from "./media-attachment";
+import { MINK_ATTACHMENT_MARKER, SAVED_MEDIA_MARKER } from "./media-attachment";
 import { withoutLongDashes } from "@/lib/text/long-dashes";
 
 /** The longest generated title kept: the sidebar shows one line. */
@@ -39,11 +39,14 @@ export interface MinkTitleInput {
 }
 
 // The composer's markers open with a blank line that a trimmed message loses,
-// so they are matched by their words.
+// so they are matched by their words. A picture carries the new marker (kept
+// privately with the chat) or, in a message sent before that change, the old
+// one (a Media Library copy): both are a photo.
 const MARKERS: Array<{
   marker: string;
   kind: (payload: string) => MinkTitleAttachment;
 }> = [
+  { marker: MINK_ATTACHMENT_MARKER.trim(), kind: () => "photo" },
   { marker: SAVED_MEDIA_MARKER.trim(), kind: () => "photo" },
   {
     marker: REVIEWED_DOCUMENT_MARKER.trim(),

@@ -1,6 +1,8 @@
+import "server-only";
 import { cache } from "react";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { withAnon } from "@/lib/db/client";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import {
   blogCategories,
   blogTags,
@@ -28,6 +30,19 @@ import {
 // retaining rows between requests can show yesterday's prices after a save.
 // Each new request reads Postgres; React.cache deduplicates layout/page work.
 // withAnon keeps published/active RLS and store filters as the read boundary.
+//
+// ★ THE PAGE SWAP (takedown, design 5.6). Every reader below that returns an
+// image address or stored HTML hands its rows to maskBlockedMedia AFTER its
+// withAnon scope has returned, so the address of a file StoreMink blocked
+// reaches no page: the placeholder's own address takes its place. Never
+// inside the scope's callback: a reload of the blocked set opens its own
+// withService scope (CODEBASE §5 item 2). React.cache keeps the masked rows
+// for one request only, so a block or a lift shows on the next request; a
+// masked read must never be wrapped in unstable_cache, which would keep a
+// blocked address for the cache's whole lifetime. The readers that return no
+// address (blog taxonomy names, tax classes, page slugs) are exempt, each with
+// its reason, in lib/moderation/mask-coverage.test.ts. A blocked ROW (product,
+// collection, page, post) is hidden by RLS before any of this runs.
 
 export interface ProductCardRow {
   id: string;
@@ -107,8 +122,9 @@ export interface BlogCardRow {
 
 export const getPublishedProducts = cache(
   async (storeId: string): Promise<ProductCardRow[]> => {
+    let rows: ProductCardRow[];
     try {
-      return await withAnon(async (db) => {
+      rows = await withAnon(async (db) => {
         // Columns the shop + homepage product cards actually render (aliased to
         // the snake_case shape the components expect). Deliberately NOT every
         // column — we only need pricing-relevant fields. The category name is
@@ -195,13 +211,17 @@ export const getPublishedProducts = cache(
       );
       return [];
     }
+    // The scope has returned (module comment): a blocked photo becomes the
+    // placeholder in the card, the gallery, the variants and the search box.
+    return maskBlockedMedia(rows);
   },
 );
 
 export const getActiveCategories = cache(
   async (storeId: string): Promise<CategoryRow[]> => {
+    let rows: CategoryRow[];
     try {
-      return await withAnon((db) =>
+      rows = await withAnon((db) =>
         db
           .select({
             id: categories.id,
@@ -227,11 +247,13 @@ export const getActiveCategories = cache(
       );
       return [];
     }
+    return maskBlockedMedia(rows);
   },
 );
 
 export const getPublishedBlogCards = cache(
   async (storeId: string): Promise<BlogCardRow[]> => {
+    let cards: BlogCardRow[];
     try {
       // Crucially excludes `content` (full article HTML), which the
       // listing/cards never render but `select('*')` used to ship per post.
@@ -255,7 +277,7 @@ export const getPublishedBlogCards = cache(
           .orderBy(desc(blogs.publishedAt)),
       );
       // tags is nullable at the DB level; cards expect an array.
-      return rows.map((r) => ({ ...r, tags: r.tags ?? [] }));
+      cards = rows.map((r) => ({ ...r, tags: r.tags ?? [] }));
     } catch (err) {
       console.error(
         "getPublishedBlogCards:",
@@ -263,11 +285,13 @@ export const getPublishedBlogCards = cache(
       );
       return [];
     }
+    return maskBlockedMedia(cards);
   },
 );
 
 // Category/tag OPTIONS offered by the customer write editor (names only — the
 // storefront never needs row ids). Managed per store in /dashboard/blogs/settings.
+// Names carry no address, so the page swap has nothing to do here.
 export const getBlogTaxonomyNames = cache(
   async (
     storeId: string,
@@ -315,6 +339,7 @@ export interface PublishedPage {
 
 export const getPublishedPage = cache(
   async (storeId: string, slug: string): Promise<PublishedPage | null> => {
+    let page: PublishedPage;
     try {
       const rows = await withAnon((db) =>
         db
@@ -360,10 +385,14 @@ export const getPublishedPage = cache(
           reason: drop.reason,
         });
       }
-      return { ...row, published_sections: salvaged.sections };
+      page = { ...row, published_sections: salvaged.sections };
     } catch {
       return null;
     }
+    // Every section's image fields, rich text HTML and custom code (which the
+    // sandboxed frame renders from here) get the placeholder in place of a
+    // blocked address.
+    return maskBlockedMedia(page);
   },
 );
 
@@ -372,6 +401,7 @@ export const getPublishedPage = cache(
 // by the storefront layout → MenuProvider → Header/Footer.
 export const getStoreMenus = cache(
   async (storeId: string): Promise<StoreMenus> => {
+    let menus: StoreMenus;
     try {
       const rows = await withAnon((db) =>
         db
@@ -384,16 +414,19 @@ export const getStoreMenus = cache(
           .where(eq(storeMenus.storeId, storeId))
           .limit(1),
       );
-      return normalizeMenus(rows[0] ?? null);
+      menus = normalizeMenus(rows[0] ?? null);
     } catch {
-      return normalizeMenus(null);
+      menus = normalizeMenus(null);
     }
+    // A menu's feature image is an address like any other.
+    return maskBlockedMedia(menus);
   },
 );
 
 // Per-store tax classes (named rate buckets), sorted for display. Read by the
 // storefront/checkout to resolve a product's tax rate and by the invoice
-// renderer. Empty when the store has none / the table is missing.
+// renderer. Empty when the store has none / the table is missing. Names and
+// rates carry no address, so the page swap has nothing to do here.
 export const getStoreTaxClasses = cache(
   async (storeId: string): Promise<TaxClass[]> => {
     try {
@@ -420,6 +453,7 @@ export const getStoreTaxClasses = cache(
 // for a store with no row (tax off, generic invoice), so callers never null-check.
 export const getStoreBillingSettings = cache(
   async (storeId: string): Promise<BillingSettings> => {
+    let settings: BillingSettings;
     try {
       const rows = await withAnon((db) =>
         db
@@ -444,16 +478,26 @@ export const getStoreBillingSettings = cache(
           .where(eq(storeBillingSettings.storeId, storeId))
           .limit(1),
       );
-      return rowToBillingSettings(
+      settings = rowToBillingSettings(
         (rows[0] as Record<string, unknown> | undefined) ?? null,
       );
     } catch {
       return rowToBillingSettings(null);
     }
+    const masked = await maskBlockedMedia(settings);
+    // ★ A BLOCKED LOGO LEAVES THE LOGO SLOT EMPTY, the invoice's own no-logo
+    // state (it prints the business name), rather than printing the
+    // placeholder as though it were the store's mark: the same rule as the
+    // storefront brand (lib/store/brand.ts).
+    return masked.logoUrl === settings.logoUrl
+      ? masked
+      : { ...masked, logoUrl: null };
   },
 );
 
-// Published page slugs for the current store — used by the sitemap.
+// Published page slugs for the current store, used by the sitemap. Slugs and
+// dates carry no address (a blocked page is already hidden by RLS), so the
+// page swap has nothing to do here.
 export const getPublishedPageSlugs = cache(
   async (
     storeId: string,

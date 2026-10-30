@@ -12,7 +12,10 @@
 // Nothing here may settle an attempt on a timestamp alone.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { CAPTURED_DRAFT_REPAIR } from "./tax-copy";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -28,19 +31,84 @@ vi.mock("@/lib/db/client", () => ({
 const provider = vi.hoisted(() => ({ getPlatformRazorpayCreds: vi.fn() }));
 vi.mock("@/lib/payments/provider", () => provider);
 
-const collect = vi.hoisted(() => ({ settleAttempt: vi.fn() }));
+// ★ No test here may reach Razorpay: every gateway read is injected, and a
+// default reader left in by mistake throws instead of going to the network.
+vi.mock("@/lib/payments/razorpay", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/payments/razorpay")>();
+  const offline = async () => {
+    throw new Error("reconcile.test never calls Razorpay");
+  };
+  return {
+    ...actual,
+    rzpFetchOrderPayments: vi.fn(offline),
+    rzpFetchPayment: vi.fn(offline),
+  };
+});
+
+const collect = vi.hoisted(() => ({
+  settleAttempt: vi.fn(),
+  // RC-F1b: no captured draft purchase to finish unless a test says so.
+  capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
+  fileRecoveredPurchase: vi.fn(async () => true),
+  readAddonOrderTarget: vi.fn(async (): Promise<unknown> => null),
+}));
 vi.mock("./collect", () => collect);
 
 const worker = vi.hoisted(() => ({ advanceAfterPayment: vi.fn() }));
 vi.mock("./renewal-worker", () => worker);
 
+// The repair pass issues through `issueInvoice` (GST Stage 4); what it does to
+// a draft is invoice-store's own business, tested there and in gst.local.
+const store = vi.hoisted(() => ({
+  issueInvoice: vi.fn(
+    async (input: { invoiceId: string }): Promise<unknown> => ({
+      invoice: {
+        id: input.invoiceId,
+        status: "open",
+        finalizedAt: "2026-09-10T00:00:00.000Z",
+      },
+      claimed: true,
+      restamp: "unchanged",
+    }),
+  ),
+}));
+vi.mock("./invoice-store", () => store);
+
+// The three completions are the purchase modules' own; reconcile only finds
+// the purchases and dispatches them.
+const enrol = vi.hoisted(() => ({
+  completeEnrolmentPurchase: vi.fn(
+    async (): Promise<{ status: string }> => ({ status: "completed" }),
+  ),
+}));
+vi.mock("./enrol", () => enrol);
+const planChange = vi.hoisted(() => ({
+  completePlanChangePurchase: vi.fn(
+    async (): Promise<{ status: string }> => ({ status: "completed" }),
+  ),
+}));
+vi.mock("./plan-change", () => planChange);
+const locations = vi.hoisted(() => ({
+  completeLocationPurchase: vi.fn(
+    async (): Promise<{ status: string }> => ({ status: "completed" }),
+  ),
+}));
+vi.mock("./locations", () => locations);
+
 import {
+  CAPTURED_DRAFT_WAIT_MINUTES,
+  capturedDraftsWhere,
   countOpenReconciliationItems,
+  creditDraftsWhere,
   FAIL_AFTER_HOURS,
+  issueCapturedDrafts,
   listReconciliationItems,
   reconcileStrandedAttempts,
   resolveReconciliationItem,
   STALE_AFTER_MINUTES,
+  UNISSUED_ALERT_AFTER_HOURS,
+  unissuedSeverity,
 } from "./reconcile";
 
 const STORE = "store-1";
@@ -198,6 +266,113 @@ describe("★★ finding money", () => {
     });
   });
 
+  describe("★★ a deleted store's payment on a CLOSED invoice is the refund pass's", () => {
+    // deleteStore closes a live plan's unreached invoices before the store
+    // goes (renewal-cancel, design 6.9), and the refund pass detects a captured
+    // payment on an issued void or uncollectible invoice with no store at all.
+    // Filing it as well would give one payment two owners.
+    function seedDeleted(invoice: Record<string, unknown> | Error | null) {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[attempt({ storeId: null })]],
+        selectByTable: {
+          billing_invoices: [
+            invoice instanceof Error ? invoice : invoice ? [invoice] : [],
+          ],
+        },
+      });
+    }
+    const ISSUED = "2026-09-01T00:00:00.000Z";
+
+    it.each(["void", "uncollectible"])(
+      "★★ records the money and files NO orphan item for an issued %s invoice",
+      async (status) => {
+        seedDeleted({ status, finalizedAt: ISSUED });
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([CAPTURED]) as any,
+        });
+        expect(res.recovered).toBe(1);
+        expect(res.flagged).toBe(0);
+        expect(dbHolder.current.calls.insert).toHaveLength(0);
+        expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+        expect(logInfo).toHaveBeenCalledWith(
+          "billing.reconcile.recovered_closed",
+          { attemptId: "att-1", invoiceId: "inv-1" },
+        );
+      },
+    );
+
+    it("★ reads the invoice AFTER the settle, so it describes where the money landed", async () => {
+      seedDeleted({ status: "void", finalizedAt: ISSUED });
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      const db = dbHolder.current.db;
+      // Select #1 is the scan, select #2 the invoice re-read.
+      expect(collect.settleAttempt.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(db.select).mock.invocationCallOrder[1]!,
+      );
+    });
+
+    it.each([
+      ["a kept draft", { status: "draft", finalizedAt: null }],
+      // A closed DRAFT cannot be refunded (the refund guard refuses an
+      // unissued invoice), so only a person can return that money.
+      ["a closed draft", { status: "void", finalizedAt: null }],
+      ["an open invoice", { status: "open", finalizedAt: ISSUED }],
+    ])("★ the orphan flag STAYS for %s", async (_label, invoice) => {
+      seedDeleted(invoice);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(res.flagged).toBe(1);
+      expect(
+        dbHolder.current.calls.values.find(
+          (v: any) => v.kind === "orphan_payment",
+        ),
+      ).toBeTruthy();
+    });
+
+    it("★ an unreadable invoice is filed for a person, never assumed closed", async () => {
+      seedDeleted(new Error("db down"));
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(res.flagged).toBe(1);
+      expect(res.errors).toBe(0);
+    });
+
+    it("★ a mismatch on a closed invoice is still flagged for a person", async () => {
+      seedDeleted({ status: "void", finalizedAt: ISSUED });
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([{ ...CAPTURED, amount: 400_000 }]) as any,
+      });
+      expect(res.flagged).toBe(1);
+      expect(dbHolder.current.calls.values).toEqual([
+        expect.objectContaining({ kind: "amount_mismatch" }),
+      ]);
+    });
+
+    it("a live store's payment never reads the invoice (the plan advances)", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[attempt()]],
+        selectByTable: {
+          billing_invoices: [[{ status: "void", finalizedAt: ISSUED }]],
+        },
+      });
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(worker.advanceAfterPayment).toHaveBeenCalledWith(STORE, NOW);
+      expect(dbHolder.current.db.select).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("★ a mismatch on a DELETED store's payment is marked the same way", async () => {
     seed([attempt({ storeId: null })]);
     const res = await reconcileStrandedAttempts({
@@ -329,6 +504,857 @@ describe("★★ never guessing", () => {
     });
     expect(STALE_AFTER_MINUTES).toBeGreaterThan(0);
     expect(dbHolder.current.calls.where.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Finishing purchases a closed tab left on a draft invoice (RC-F1b).
+// ---------------------------------------------------------------------------
+
+function draftPurchase(over: Record<string, unknown> = {}) {
+  return {
+    attemptId: "att-9",
+    invoiceId: "inv-9",
+    storeId: STORE,
+    kind: "subscription",
+    providerOrderId: "order_9",
+    providerPaymentId: "pay_9",
+    amountPaise: 500_000,
+    currency: "INR",
+    createdAt: STALE,
+    ...over,
+  };
+}
+
+describe("★★ finishing a purchase whose confirm never came (RC-F1b)", () => {
+  beforeEach(() => seed([]));
+
+  it("★★ finishes a captured enrolment through the confirm's own completion", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([draftPurchase()]);
+    const fetchOrderPayments = gateway([CAPTURED]);
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: fetchOrderPayments as any,
+    });
+    expect(res.completed).toBe(1);
+    expect(enrol.completeEnrolmentPurchase).toHaveBeenCalledWith({
+      storeId: STORE,
+      invoiceId: "inv-9",
+      attemptId: "att-9",
+      providerPaymentId: null,
+      source: "recovery",
+      verifyCapture: true,
+      fetchOrderPayments: expect.any(Function),
+      // The gateway's answer carries no created_at: the issue reads now.
+      paidAt: undefined,
+      now: NOW,
+    });
+    expect(logInfo).toHaveBeenCalledWith(
+      "billing.reconcile.purchase_completed",
+      expect.objectContaining({ attemptId: "att-9", outcome: "completed" }),
+    );
+  });
+
+  it("★★ the capture's own time goes into the completion (GST paidAt), from ONE gateway read", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([draftPurchase()]);
+    const answer = {
+      ok: true as const,
+      data: [{ ...CAPTURED, id: "pay_9", created_at: 1_757_440_800 }],
+    };
+    const fetchOrderPayments = vi.fn(async () => answer);
+    await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: fetchOrderPayments as any,
+    });
+    const input = (enrol.completeEnrolmentPurchase.mock.calls[0] as any[])[0];
+    expect(input.paidAt).toEqual(new Date(1_757_440_800 * 1000));
+    // The completion is handed the same answer: the gateway is not asked
+    // again for this order.
+    expect(await input.fetchOrderPayments({}, "order_9")).toBe(answer);
+    expect(fetchOrderPayments).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ a read that fails is not shared: the completion asks again itself", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([draftPurchase()]);
+    const fetchOrderPayments = vi.fn(async () => ({
+      ok: false as const,
+      error: "timeout",
+      outcome: "unknown" as const,
+    }));
+    await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: fetchOrderPayments as any,
+    });
+    expect(enrol.completeEnrolmentPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ fetchOrderPayments, paidAt: undefined }),
+    );
+  });
+
+  it("★ looks only at captures older than the stale window and not held by a person", async () => {
+    await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(collect.capturedDraftPurchases).toHaveBeenCalledWith({
+      createdBefore: new Date(
+        NOW.getTime() - STALE_AFTER_MINUTES * 60_000,
+      ).toISOString(),
+      excludeHeld: true,
+      limit: 50,
+    });
+  });
+
+  it("★★ an add-on order that names a plan change goes to the plan change, with the ORDER's target", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([
+      draftPurchase({ kind: "addon" }),
+    ]);
+    collect.readAddonOrderTarget.mockResolvedValue({
+      kind: "plan_change",
+      plan: "pro",
+      period: "yearly",
+    });
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(res.completed).toBe(1);
+    expect(planChange.completePlanChangePurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        attemptId: "att-9",
+        source: "recovery",
+        verifyCapture: true,
+        target: { plan: "pro", period: "yearly" },
+      }),
+    );
+    expect(locations.completeLocationPurchase).not.toHaveBeenCalled();
+  });
+
+  it("★★ an add-on order that names locations goes to the location purchase", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([
+      draftPurchase({ kind: "addon" }),
+    ]);
+    collect.readAddonOrderTarget.mockResolvedValue({
+      kind: "locations",
+      count: 3,
+    });
+    await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(locations.completeLocationPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ attemptId: "att-9", source: "recovery" }),
+    );
+  });
+
+  it("★ an add-on order that names neither is filed for a person, nothing applied", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([
+      draftPurchase({ kind: "addon" }),
+    ]);
+    collect.readAddonOrderTarget.mockResolvedValue({ kind: "unknown" });
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(res.flagged).toBe(1);
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repairKey: "purchase_refused:att-9",
+        purchase: "unknown",
+        kind: "state_conflict",
+      }),
+    );
+    expect(planChange.completePlanChangePurchase).not.toHaveBeenCalled();
+    expect(locations.completeLocationPurchase).not.toHaveBeenCalled();
+  });
+
+  it("★ an unreadable add-on order is left for the next pass", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([
+      draftPurchase({ kind: "addon" }),
+    ]);
+    collect.readAddonOrderTarget.mockResolvedValue(null);
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(res.stillUnknown).toBe(1);
+    expect(res.completed).toBe(0);
+    expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+  });
+
+  it("★ a refused completion counts as flagged; a waiting one as still unknown", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([
+      draftPurchase({ attemptId: "att-a" }),
+      draftPurchase({ attemptId: "att-b" }),
+    ]);
+    enrol.completeEnrolmentPurchase
+      .mockResolvedValueOnce({ status: "refused" })
+      .mockResolvedValueOnce({ status: "not_ready" });
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(res.flagged).toBe(1);
+    expect(res.stillUnknown).toBe(1);
+    expect(res.completed).toBe(0);
+  });
+
+  it("★ one completion that throws does not stop the next", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([
+      draftPurchase({ attemptId: "att-a" }),
+      draftPurchase({ attemptId: "att-b" }),
+    ]);
+    enrol.completeEnrolmentPurchase
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce({ status: "already_complete" });
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(res.errors).toBe(1);
+    expect(res.completed).toBe(1);
+  });
+
+  it("★ an unreadable scan is an error, never a clean sweep", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue(null);
+    const res = await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(res.errors).toBe(1);
+  });
+
+  it("★★ runs after the in-flight attempts are settled, in the same pass", async () => {
+    seed([attempt()]);
+    collect.capturedDraftPurchases.mockResolvedValue([draftPurchase()]);
+    await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([CAPTURED]) as any,
+    });
+    expect(collect.settleAttempt.mock.invocationCallOrder[0]).toBeLessThan(
+      collect.capturedDraftPurchases.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("★★ nothing is finished without platform credentials", async () => {
+    provider.getPlatformRazorpayCreds.mockReturnValue(null);
+    collect.capturedDraftPurchases.mockResolvedValue([draftPurchase()]);
+    await reconcileStrandedAttempts({
+      now: NOW,
+      fetchOrderPayments: gateway([]) as any,
+    });
+    expect(collect.capturedDraftPurchases).not.toHaveBeenCalled();
+    expect(enrol.completeEnrolmentPurchase).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The repair pass: a captured payment's invoice left as a draft (GST A4).
+// ---------------------------------------------------------------------------
+
+/** A capture an hour and more old: the pass's to repair. */
+const TWO_HOURS_AGO = new Date(NOW.getTime() - 2 * 3_600_000).toISOString();
+/** Razorpay's created_at for that payment, in seconds. */
+const PAID_SECONDS = Math.floor(
+  (NOW.getTime() - 2 * 3_600_000 - 60_000) / 1000,
+);
+const PAID_AT = new Date(PAID_SECONDS * 1000);
+
+function purchaseDraft(over: Record<string, unknown> = {}) {
+  return {
+    attemptId: "att-5",
+    invoiceId: "inv-5",
+    storeId: STORE,
+    kind: "subscription",
+    providerOrderId: "order_5",
+    providerPaymentId: "pay_5",
+    amountPaise: 500_000,
+    currency: "INR",
+    createdAt: TWO_HOURS_AGO,
+    resolvedAt: TWO_HOURS_AGO,
+    held: false,
+    ...over,
+  };
+}
+
+function creditDraft(over: Record<string, unknown> = {}) {
+  return {
+    purchaseId: "purchase-1",
+    invoiceId: "inv-c",
+    storeId: STORE,
+    rzpPaymentId: "pay_c",
+    updatedAt: TWO_HOURS_AGO,
+    ...over,
+  };
+}
+
+/** The pass's reads, by table: the drafts, the credit receipts, and (each
+ *  time it is about to file) whether a person already holds the payment. */
+function seedDrafts(
+  opts: {
+    purchases?: unknown[];
+    credits?: unknown[];
+    items?: unknown[][];
+  } = {},
+) {
+  dbHolder.current = makeDbMock({
+    selectByTable: {
+      billing_payment_attempts: [opts.purchases ?? []],
+      ai_credit_purchases: [opts.credits ?? []],
+      billing_reconciliation_items: opts.items ?? [[]],
+    },
+  });
+}
+
+/** The gateway's payment, with the moment it was made. */
+const paymentRead = () =>
+  vi.fn(async () => ({
+    ok: true as const,
+    data: { id: "pay_5", created_at: PAID_SECONDS },
+  }));
+
+/** The rendered SQL and parameters of every WHERE the pass ran. */
+const renderedWheres = () =>
+  dbHolder.current.calls.where.map((clause: any) =>
+    new PgDialect().sqlToQuery(clause),
+  );
+
+describe("★★ the repair pass: a captured payment's invoice left as a draft", () => {
+  beforeEach(() => seedDrafts());
+
+  describe("which drafts it takes", () => {
+    it("★★ waits an hour from the capture, IN THE QUERY, for the confirm and the completion to go first", () => {
+      const cutoff = new Date(
+        NOW.getTime() - CAPTURED_DRAFT_WAIT_MINUTES * 60_000,
+      ).toISOString();
+      const purchases = new PgDialect().sqlToQuery(
+        capturedDraftsWhere({ now: NOW, storeId: null })!,
+      );
+      expect(CAPTURED_DRAFT_WAIT_MINUTES).toBe(60);
+      expect(purchases.sql).toContain(
+        '"billing_payment_attempts"."resolved_at" < $',
+      );
+      expect(purchases.params).toContain(cutoff);
+      expect(purchases.sql).toContain('"billing_payment_attempts"."state" = $');
+      expect(purchases.params).toContain("captured");
+      expect(purchases.sql).toContain('"billing_invoices"."status" = $');
+      expect(purchases.params).toContain("draft");
+      expect(purchases.sql).toContain(
+        '"billing_invoices"."finalized_at" is null',
+      );
+      const credits = new PgDialect().sqlToQuery(
+        creditDraftsWhere({ now: NOW, storeId: null })!,
+      );
+      expect(credits.sql).toContain('"ai_credit_purchases"."updated_at" < $');
+      expect(credits.params).toContain(cutoff);
+      expect(credits.params).toContain("ai_credits");
+    });
+
+    it("★★ the pass runs those very conditions", async () => {
+      await issueCapturedDrafts({ now: NOW });
+      const sqls = renderedWheres().map((q: { sql: string }) => q.sql);
+      expect(sqls).toContain(
+        new PgDialect().sqlToQuery(
+          capturedDraftsWhere({ now: NOW, storeId: null })!,
+        ).sql,
+      );
+      expect(sqls).toContain(
+        new PgDialect().sqlToQuery(
+          creditDraftsWhere({ now: NOW, storeId: null })!,
+        ).sql,
+      );
+    });
+
+    it("★★ with storeId: that one store's drafts, and no wait", () => {
+      const purchases = new PgDialect().sqlToQuery(
+        capturedDraftsWhere({ now: NOW, storeId: "store-9" })!,
+      );
+      expect(purchases.sql).toContain(
+        '"billing_payment_attempts"."store_id" = $',
+      );
+      expect(purchases.params).toContain("store-9");
+      expect(purchases.sql).not.toContain("resolved_at");
+      const credits = new PgDialect().sqlToQuery(
+        creditDraftsWhere({ now: NOW, storeId: "store-9" })!,
+      );
+      expect(credits.sql).toContain('"ai_credit_purchases"."store_id" = $');
+      expect(credits.params).toContain("store-9");
+      expect(credits.sql).not.toContain("updated_at");
+    });
+  });
+
+  describe("a subscription or add-on draft", () => {
+    it("★★ goes to the purchase's own completion first, with the capture's time", async () => {
+      seedDrafts({ purchases: [purchaseDraft()] });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: vi.fn(async () => ({
+          ok: true as const,
+          data: [
+            {
+              ...CAPTURED,
+              id: "pay_5",
+              order_id: "order_5",
+              created_at: PAID_SECONDS,
+            },
+          ],
+        })) as any,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(res).toMatchObject({ considered: 1, completed: 1, issued: 0 });
+      expect(enrol.completeEnrolmentPurchase).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storeId: STORE,
+          invoiceId: "inv-5",
+          attemptId: "att-5",
+          source: "recovery",
+          verifyCapture: true,
+          paidAt: PAID_AT,
+        }),
+      );
+      // Completed means issued, paid and applied: nothing left to do here.
+      expect(store.issueInvoice).not.toHaveBeenCalled();
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+    });
+
+    it("★★ the completion declined: issued alone at the capture's time, settled (paid, NO receipt), filed once", async () => {
+      seedDrafts({ purchases: [purchaseDraft()], items: [[]] });
+      enrol.completeEnrolmentPurchase.mockResolvedValue({ status: "refused" });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(store.issueInvoice).toHaveBeenCalledWith({
+        invoiceId: "inv-5",
+        now: NOW,
+        paidAt: PAID_AT,
+      });
+      // The capture is recorded already; settling it again makes the issued
+      // invoice paid (RC-F1). ★★ R1-04: with NO receipt: the purchase was not
+      // applied and a person is checking it, so "Your plan is active" is untrue.
+      expect(collect.settleAttempt).toHaveBeenCalledTimes(1);
+      expect(collect.settleAttempt).toHaveBeenCalledWith("att-5", "captured", {
+        now: NOW,
+        notify: false,
+      });
+      expect(store.issueInvoice.mock.invocationCallOrder[0]).toBeLessThan(
+        collect.settleAttempt.mock.invocationCallOrder[0],
+      );
+      expect(collect.fileRecoveredPurchase).toHaveBeenCalledTimes(1);
+      expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith({
+        storeId: STORE,
+        kind: "state_conflict",
+        repairKey: "captured_draft:inv-5",
+        note: CAPTURED_DRAFT_REPAIR.detail,
+        invoiceId: "inv-5",
+        attemptId: "att-5",
+        providerPaymentId: "pay_5",
+        providerOrderId: "order_5",
+        expectedPaise: 500_000,
+        purchase: "enrolment",
+        now: NOW,
+      });
+      expect(res).toMatchObject({ issued: 1, filed: 1, completed: 0 });
+    });
+
+    it("★★ never applies what was bought: no plan, no plan change, no location", async () => {
+      seedDrafts({ purchases: [purchaseDraft({ kind: "addon" })] });
+      collect.readAddonOrderTarget.mockResolvedValue({ kind: "unknown" });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+        fetchPayment: paymentRead() as any,
+      });
+      // The completion's own refusal (an order naming neither) was filed,
+      // and the draft was then issued alone.
+      expect(store.issueInvoice).toHaveBeenCalledTimes(1);
+      expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+      expect(planChange.completePlanChangePurchase).not.toHaveBeenCalled();
+      expect(locations.completeLocationPurchase).not.toHaveBeenCalled();
+    });
+
+    it("★★ none filed when RC-F1b (or anyone) already holds the payment", async () => {
+      seedDrafts({ purchases: [purchaseDraft()], items: [[{ id: "item-1" }]] });
+      enrol.completeEnrolmentPurchase.mockResolvedValue({ status: "refused" });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(store.issueInvoice).toHaveBeenCalledTimes(1);
+      expect(collect.settleAttempt).toHaveBeenCalledTimes(1);
+      expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ issued: 1, filed: 0 });
+      // The question asked: an open or in-review item about this attempt or
+      // this payment.
+      const held = renderedWheres().find((q: { sql: string }) =>
+        q.sql.includes('"billing_reconciliation_items"."status"'),
+      );
+      expect(held.params).toEqual(
+        expect.arrayContaining(["open", "manual_review", "att-5", "pay_5"]),
+      );
+    });
+
+    it("★★ a payment a person already holds skips the completion and is issued alone", async () => {
+      seedDrafts({ purchases: [purchaseDraft({ held: true })], items: [[]] });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(enrol.completeEnrolmentPurchase).not.toHaveBeenCalled();
+      expect(store.issueInvoice).toHaveBeenCalledTimes(1);
+      expect(collect.settleAttempt).toHaveBeenCalledTimes(1);
+      expect(res.issued).toBe(1);
+    });
+
+    it("★★ with storeId (deleteStore): issued only, never completed", async () => {
+      seedDrafts({ purchases: [purchaseDraft()], items: [[]] });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        storeId: STORE,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(enrol.completeEnrolmentPurchase).not.toHaveBeenCalled();
+      expect(planChange.completePlanChangePurchase).not.toHaveBeenCalled();
+      expect(locations.completeLocationPurchase).not.toHaveBeenCalled();
+      expect(store.issueInvoice).toHaveBeenCalledWith({
+        invoiceId: "inv-5",
+        now: NOW,
+        paidAt: PAID_AT,
+      });
+      expect(collect.settleAttempt).toHaveBeenCalledWith("att-5", "captured", {
+        now: NOW,
+        notify: false,
+      });
+      expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+        expect.objectContaining({ repairKey: "captured_draft:inv-5" }),
+      );
+      expect(res).toMatchObject({ issued: 1, filed: 1, completed: 0 });
+    });
+
+    it("★★ a completion that is not ready changes nothing and is reported as still a draft", async () => {
+      seedDrafts({ purchases: [purchaseDraft()] });
+      enrol.completeEnrolmentPurchase.mockResolvedValue({
+        status: "not_ready",
+      });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      // Issuing it alone would take it out of every completion's reach.
+      expect(store.issueInvoice).not.toHaveBeenCalled();
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ deferred: 1, unissued: 1, issued: 0 });
+      // ★ R1-14: two hours in, it is retried next pass: a WARNING, never an
+      // ERROR that pages for a gateway blip.
+      expect(logWarn).toHaveBeenCalledWith("billing.captured_draft_unissued", {
+        invoiceId: "inv-5",
+        attemptId: "att-5",
+        storeId: STORE,
+        reason: "its completion was not ready",
+        waitedHours: 2,
+      });
+      expect(logError).not.toHaveBeenCalledWith(
+        "billing.captured_draft_unissued",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("★★ R1-14: still a draft six hours after the capture, it is an ERROR, with how long it waited", async () => {
+      const SEVEN_HOURS_AGO = new Date(
+        NOW.getTime() - 7 * 3_600_000,
+      ).toISOString();
+      seedDrafts({
+        purchases: [
+          purchaseDraft({
+            createdAt: SEVEN_HOURS_AGO,
+            resolvedAt: SEVEN_HOURS_AGO,
+          }),
+        ],
+      });
+      enrol.completeEnrolmentPurchase.mockResolvedValue({
+        status: "not_ready",
+      });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(logError).toHaveBeenCalledWith(
+        "billing.captured_draft_unissued",
+        expect.objectContaining({ message: "its completion was not ready" }),
+        {
+          invoiceId: "inv-5",
+          attemptId: "att-5",
+          storeId: STORE,
+          waitedHours: 7,
+        },
+      );
+      expect(logWarn).not.toHaveBeenCalledWith(
+        "billing.captured_draft_unissued",
+        expect.anything(),
+      );
+    });
+
+    it("★ with no platform credentials it cannot finish, so it waits and says so", async () => {
+      provider.getPlatformRazorpayCreds.mockReturnValue(null);
+      seedDrafts({ purchases: [purchaseDraft()] });
+      const res = await issueCapturedDrafts({ now: NOW });
+      expect(enrol.completeEnrolmentPurchase).not.toHaveBeenCalled();
+      expect(store.issueInvoice).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ deferred: 1, unissued: 1 });
+    });
+
+    it("★ the settle saying it is not captured any more: nothing issued, nothing filed", async () => {
+      seedDrafts({ purchases: [purchaseDraft()] });
+      enrol.completeEnrolmentPurchase.mockResolvedValue({
+        status: "not_captured",
+      });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(store.issueInvoice).not.toHaveBeenCalled();
+      expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ issued: 0, unissued: 0, deferred: 0 });
+    });
+
+    it("★★ an issue that fails is reported as still a draft, never settled or filed", async () => {
+      seedDrafts({ purchases: [purchaseDraft({ held: true })] });
+      store.issueInvoice.mockResolvedValue({
+        invoice: null,
+        claimed: false,
+        restamp: "unchanged",
+      });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ unissued: 1, issued: 0 });
+      expect(logWarn).toHaveBeenCalledWith(
+        "billing.captured_draft_unissued",
+        expect.objectContaining({
+          invoiceId: "inv-5",
+          reason: "the invoice could not be issued",
+        }),
+      );
+    });
+
+    it("★ someone else issued it first: settled, never filed by this pass", async () => {
+      seedDrafts({ purchases: [purchaseDraft({ held: true })] });
+      store.issueInvoice.mockResolvedValue({
+        invoice: {
+          id: "inv-5",
+          status: "open",
+          finalizedAt: "2026-09-09T23:00:00.000Z",
+        },
+        claimed: false,
+        restamp: "unchanged",
+      });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(collect.settleAttempt).toHaveBeenCalledTimes(1);
+      expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ issued: 0, filed: 0, unissued: 0 });
+    });
+
+    it("★ the capture's time falls back to the attempt's own record when the gateway has none", async () => {
+      seedDrafts({ purchases: [purchaseDraft({ held: true })], items: [[]] });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: vi.fn(async () => ({
+          ok: false as const,
+          error: "timeout",
+          outcome: "unknown" as const,
+        })) as any,
+      });
+      expect(store.issueInvoice).toHaveBeenCalledWith({
+        invoiceId: "inv-5",
+        now: NOW,
+        paidAt: new Date(TWO_HOURS_AGO),
+      });
+    });
+
+    it("★ an add-on's item says what its order bought", async () => {
+      seedDrafts({
+        purchases: [purchaseDraft({ kind: "addon", held: true })],
+        items: [[]],
+      });
+      collect.readAddonOrderTarget.mockResolvedValue({
+        kind: "plan_change",
+        plan: "pro",
+        period: "yearly",
+      });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+        expect.objectContaining({ purchase: "plan_change" }),
+      );
+    });
+
+    it("★ one draft that throws does not stop the next", async () => {
+      seedDrafts({
+        purchases: [
+          purchaseDraft({ held: true }),
+          purchaseDraft({ held: true, invoiceId: "inv-6", attemptId: "att-6" }),
+        ],
+        items: [[], []],
+      });
+      store.issueInvoice.mockRejectedValueOnce(new Error("boom"));
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(res).toMatchObject({ considered: 2, errors: 1, issued: 1 });
+    });
+  });
+
+  describe("a credit pack's receipt", () => {
+    it("★★ is issued straight to paid, at the payment's time; nothing settled or filed", async () => {
+      seedDrafts({ credits: [creditDraft()] });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(store.issueInvoice).toHaveBeenCalledWith({
+        invoiceId: "inv-c",
+        now: NOW,
+        paid: true,
+        paidAt: PAID_AT,
+      });
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ considered: 1, issued: 1 });
+    });
+
+    it("★★ R1-14: a receipt that will not issue is a WARNING while young, an ERROR after six hours", async () => {
+      store.issueInvoice.mockResolvedValue({
+        invoice: null,
+        claimed: false,
+        restamp: "unchanged",
+      });
+      seedDrafts({ credits: [creditDraft()] });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(logWarn).toHaveBeenCalledWith("billing.captured_draft_unissued", {
+        invoiceId: "inv-c",
+        purchaseId: "purchase-1",
+        storeId: STORE,
+        reason: "the credit pack's invoice could not be issued",
+        waitedHours: 2,
+      });
+
+      const NINE_HOURS_AGO = new Date(
+        NOW.getTime() - 9 * 3_600_000,
+      ).toISOString();
+      seedDrafts({ credits: [creditDraft({ updatedAt: NINE_HOURS_AGO })] });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(logError).toHaveBeenCalledWith(
+        "billing.captured_draft_unissued",
+        expect.objectContaining({
+          message: "the credit pack's invoice could not be issued",
+        }),
+        {
+          invoiceId: "inv-c",
+          purchaseId: "purchase-1",
+          storeId: STORE,
+          waitedHours: 9,
+        },
+      );
+    });
+
+    it("★ falls back to the purchase's own record of the payment", async () => {
+      seedDrafts({ credits: [creditDraft({ rzpPaymentId: null })] });
+      await issueCapturedDrafts({
+        now: NOW,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(store.issueInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({ paidAt: new Date(TWO_HOURS_AGO) }),
+      );
+    });
+  });
+
+  describe("the pass as a whole", () => {
+    it("★ a scan that fails is one error, never a clean pass", async () => {
+      dbHolder.current = makeDbMock();
+      dbHolder.current.db.select = () => {
+        throw new Error("db down");
+      };
+      const res = await issueCapturedDrafts({ now: NOW });
+      expect(res).toMatchObject({ errors: 1, considered: 0 });
+      expect(store.issueInvoice).not.toHaveBeenCalled();
+    });
+
+    it("★ says when a batch came back full", async () => {
+      seedDrafts({ purchases: [purchaseDraft({ held: true })], items: [[]] });
+      const res = await issueCapturedDrafts({
+        now: NOW,
+        limit: 1,
+        fetchPayment: paymentRead() as any,
+      });
+      expect(res.more).toBe(true);
+    });
+
+    it("★ nothing waiting: nothing done", async () => {
+      const res = await issueCapturedDrafts({ now: NOW });
+      expect(res).toEqual({
+        considered: 0,
+        issued: 0,
+        completed: 0,
+        filed: 0,
+        deferred: 0,
+        unissued: 0,
+        errors: 0,
+        more: false,
+      });
+    });
+  });
+});
+
+describe("★★ R1-14: unissuedSeverity", () => {
+  const at = (hours: number) =>
+    new Date(NOW.getTime() - hours * 3_600_000).toISOString();
+
+  it("a WARNING while the capture is younger than the alert line", () => {
+    expect(unissuedSeverity(at(1.5), NOW)).toEqual({
+      level: "warn",
+      waitedHours: 1.5,
+    });
+    expect(unissuedSeverity(at(5.9), NOW).level).toBe("warn");
+  });
+
+  it("an ERROR from the alert line on", () => {
+    expect(UNISSUED_ALERT_AFTER_HOURS).toBe(6);
+    expect(unissuedSeverity(at(6), NOW)).toEqual({
+      level: "error",
+      waitedHours: 6,
+    });
+    expect(unissuedSeverity(at(48), NOW).level).toBe("error");
+  });
+
+  it("★ an ERROR when there is nothing to measure the wait against", () => {
+    expect(unissuedSeverity(null, NOW)).toEqual({
+      level: "error",
+      waitedHours: null,
+    });
+    expect(unissuedSeverity("not a date", NOW)).toEqual({
+      level: "error",
+      waitedHours: null,
+    });
   });
 });
 

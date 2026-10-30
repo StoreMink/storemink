@@ -16,10 +16,18 @@ import {
   platformWebsiteSchema,
 } from "@/lib/seo/brand-identity";
 import { serializeJsonLd } from "@/lib/seo/json-ld";
-import { allowanceLabel, includedMinkCredits } from "@/lib/plans";
+import { includedMinkCredits } from "@/lib/plans";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
+import { getPublicTaxSource } from "@/lib/billing/public-tax";
+import {
+  priceGstSuffix,
+  pricingFootnote,
+  valueAddedTaxIncluded,
+} from "@/lib/billing/tax-copy";
+import { termsAt } from "@/lib/billing/tax-terms";
+import { logError } from "@/lib/observability/logger";
 import {
   canPreviewTheme,
   isThemeSelectable,
@@ -29,8 +37,8 @@ import {
 import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 import { SiteFooter } from "./site-footer";
 import { SiteHeader } from "./site-header";
-import { PricingCards, type PricingCard } from "./pricing-cards";
-import { FAQS, PLANS } from "./pricing-content";
+import { PricingCards } from "./pricing-cards";
+import { PLANS, pricingCards, pricingFaqs } from "./pricing-content";
 import { CommerceCommandCentre, MinkArt } from "./homepage-art";
 import {
   BuilderArt,
@@ -168,11 +176,21 @@ export default async function StoreminkLanding() {
   // The theme rail reads the live catalogue (bundled themes plus every
   // published Theme Studio release), newest first, so a theme published this
   // morning is on the homepage this morning with its own preview image.
-  const [pricing, allowances, themeCatalog] = await Promise.all([
+  // ★ GST (design 7.1, 8): the cached public source, beside the prices, worked
+  // out for THIS render (`termsAt`), so a scheduled start shows once the page
+  // regenerates; both reads revalidate at 300 s and the page with them. A
+  // failed read gives null terms: the prices show with no GST words at all,
+  // never as "GST is off".
+  const [pricing, allowances, themeCatalog, taxSource] = await Promise.all([
     getPlanPricing(),
     getPlanAllowances(),
     getThemeCatalog(),
+    getPublicTaxSource().catch((error: unknown) => {
+      logError("billing.public_tax.read_failed", error, { page: "/" });
+      return null;
+    }),
   ]);
+  const terms = taxSource ? termsAt(taxSource, new Date()) : null;
   const themes = newestThemesFirst(
     themeCatalog.filter(isThemeSelectable),
   ).slice(0, HOMEPAGE_THEME_COUNT);
@@ -186,18 +204,12 @@ export default async function StoreminkLanding() {
     ),
   );
 
-  const pricingCards: PricingCard[] = PLANS.map((plan) => ({
-    id: plan.meta.id,
-    name: plan.meta.name,
-    who: plan.who,
-    features: [
-      ...plan.features,
-      `${allowanceLabel(included[plan.meta.id])} Mink credits a month`,
-    ],
-    cta: plan.cta,
-    popular: plan.popular,
-    ...pricing[plan.meta.id],
-  }));
+  const cards = pricingCards(pricing, included, terms);
+  const pricingGst = terms ? priceGstSuffix(terms) : "";
+  const gstFootnote = terms ? pricingFootnote(terms) : null;
+  // Only while GST is charged: true when prices include it, false when it is
+  // added on top. Omitted with GST off and when the GST read failed.
+  const vatIncluded = terms ? valueAddedTaxIncluded(terms) : undefined;
 
   const planOffers = PLANS.map((plan) => ({
     "@type": "Offer",
@@ -219,6 +231,9 @@ export default async function StoreminkLanding() {
         value: 1,
         unitCode: "MON",
       },
+      ...(vatIncluded === undefined
+        ? {}
+        : { valueAddedTaxIncluded: vatIncluded }),
     },
   }));
 
@@ -840,12 +855,12 @@ export default async function StoreminkLanding() {
                 <p className="smh-lead">
                   Every plan includes a real storefront and 0% StoreMink
                   transaction fees. Paid plans start at{" "}
-                  {priceInr(cheapestPaidInr)} per month.
+                  {priceInr(cheapestPaidInr)} per month{pricingGst}.
                 </p>
               </div>
               <div className="smh-pricing-component">
                 <PricingCards
-                  plans={pricingCards}
+                  plans={cards}
                   aside={
                     <Link href="/pricing" className="smh-text-link">
                       Compare all features <ArrowRight size={16} />
@@ -857,6 +872,7 @@ export default async function StoreminkLanding() {
                 <CircleCheck size={16} /> Your store data is never deleted by a
                 plan downgrade or failed payment.
               </p>
+              {gstFootnote && <p className="smh-pricing-foot">{gstFootnote}</p>}
             </div>
           </section>
 
@@ -942,7 +958,7 @@ export default async function StoreminkLanding() {
                 </p>
               </div>
               <div className="smh-faq-list">
-                {FAQS.map((faq) => (
+                {pricingFaqs(terms).map((faq) => (
                   <details key={faq.q}>
                     <summary>
                       {faq.q}

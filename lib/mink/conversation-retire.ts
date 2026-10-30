@@ -20,6 +20,8 @@ import { logWarn } from "@/lib/observability/logger";
 //   2. strip every redesign of the chat that was never applied: the
 //      merchant's interview words, the requester's email, the snapshot, the
 //      plan, the result and the raw error go; billing facts stay (D7);
+//   2b. mark the chat's attached pictures for the purge (mink_attachments),
+//      on both paths and before a delete could unlink them;
 //   3. ask whether the chat holds a RECORD: an approval acted on (audited, or
 //      any status but pending), a blog publication, an approval a campaign
 //      names, or a redesign that was applied (or, as a guard, is still live);
@@ -160,6 +162,20 @@ export async function retireMinkConversation(
      where v.store_id = ${s} and v.conversation_id = ${c}
        and v.applied_at is null
        and v.status in ('ready', 'failed', 'cancelled', 'superseded')
+  `);
+
+  // 2b. ★ The chat's attached pictures go with it (lib/mink/attachments.ts):
+  //     marked here, in the retiring transaction, BEFORE a delete could set
+  //     their chat to NULL (the foreign key's ON DELETE SET NULL would make
+  //     this statement match nothing afterwards); the objects are deleted
+  //     after commit (the merchant's delete schedules a purge) or tonight
+  //     (the nightly purge). Both paths, delete and reduce, retire the chat,
+  //     so both mark. One raw statement: no import of attachments.ts here.
+  await db.execute(sql`
+    update public.mink_attachments
+       set discard_requested_at = now()
+     where store_id = ${s} and conversation_id = ${c}
+       and discard_requested_at is null
   `);
 
   // 3. ★ Every `exists` carries its own parentheses (the lesson of the old

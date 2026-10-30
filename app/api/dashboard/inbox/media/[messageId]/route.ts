@@ -1,12 +1,14 @@
 // One WhatsApp chat file (a photo, voice note, video or PDF) for the inbox.
 //
 // ★★ THE ONLY WAY TO READ CHAT MEDIA. Files live in the PRIVATE bucket
-// (GCS_PRIVATE_BUCKET), never the public media bucket, whose allUsers
-// objectViewer grant includes listing: anyone could enumerate and download
-// every store's chat photos from it. This route is the gate instead: a signed-
-// in viewer with Inbox view, on the store the host names, asking for a
-// message that belongs to that store. Anything else is a 404 that says
-// nothing about whether the id exists elsewhere.
+// (GCS_PRIVATE_BUCKET), never the public media bucket. That bucket's allUsers
+// objectViewer grant included listing, so anyone could enumerate and download
+// every store's chat photos from it. Since the storage release (owner step
+// P1) it grants roles/storage.legacyObjectReader (get, no list), but anyone
+// holding a URL can still read the file, so chat media stays private. This
+// route is the gate instead: a signed-in viewer with Inbox view, on the store
+// the host names, asking for a message that belongs to that store. Anything
+// else is a 404 that says nothing about whether the id exists elsewhere.
 //
 // ★ RANGES, because an <audio> element asks for them and Safari will not
 // play a voice note without them. One range; several get the whole file.
@@ -17,7 +19,7 @@
 // never execute on the dashboard's origin.
 //
 // Files stored before the private bucket existed are still read from the
-// public one (same path) until scripts/whatsapp-media-to-private.ts moves them.
+// public one (same path) until scripts/whatsapp-media-to-private.mjs moves them.
 
 import type { NextRequest } from "next/server";
 import { getViewerContext } from "@/app/dashboard/lib/access";

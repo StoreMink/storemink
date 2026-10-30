@@ -14,10 +14,14 @@ const state = vi.hoisted(() => {
     chargeError: null as Error | null,
     executed: [] as string[],
     inserts: [] as Record<string, unknown>[],
-    /** PUBLIC uploads (gcsUploadObject): only ever after the charge. */
-    uploads: [] as { path: string; bytes: Buffer }[],
+    /** PUBLIC writes (writeStoreObject): only ever after the charge. */
+    uploads: [] as { path: string; bytes: Buffer; options?: unknown }[],
     /** Throws on this many public uploads before one succeeds. */
     uploadFailures: 0,
+    /** Every public write tried, failed ones included. */
+    uploadAttempts: 0,
+    /** Thrown by every public write while set (a blocked upload). */
+    uploadError: null as Error | null,
     /** PRIVATE stages (gcsPrivateUploadObject). */
     staged: [] as { path: string; bytes: Buffer }[],
     deleted: [] as { path: string; kind: string }[],
@@ -78,19 +82,29 @@ vi.mock("@/lib/storage/gcs", () => ({
     state.events.push("stage");
     state.onStage?.();
   },
-  gcsUploadObject: async (path: string, bytes: Buffer) => {
-    if (state.uploadFailures > 0) {
-      state.uploadFailures -= 1;
-      throw new Error("upload failed");
-    }
-    state.uploads.push({ path, bytes });
-    state.events.push("upload");
-    return `https://storage.googleapis.com/bucket/${path}`;
-  },
   gcsDeletePaths: async (paths: string[], kind = "public") => {
     state.deleted.push(...paths.map((path) => ({ path, kind })));
     state.events.push(`delete:${kind}`);
     return [];
+  },
+}));
+// ★ The public copy goes through the store's one writer (takedown design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: async (
+    path: string,
+    bytes: Buffer,
+    _contentType: string,
+    options: unknown,
+  ) => {
+    state.uploadAttempts += 1;
+    if (state.uploadError) throw state.uploadError;
+    if (state.uploadFailures > 0) {
+      state.uploadFailures -= 1;
+      throw new Error("upload failed");
+    }
+    state.uploads.push({ path, bytes, options });
+    state.events.push("upload");
+    return `https://storage.googleapis.com/bucket/${path}`;
   },
 }));
 // ★ The stop handshake is mocked whole (refine-stop.test.ts pins it): a fresh
@@ -218,6 +232,8 @@ beforeEach(async () => {
   state.inserts = [];
   state.uploads = [];
   state.uploadFailures = 0;
+  state.uploadAttempts = 0;
+  state.uploadError = null;
   state.staged = [];
   state.deleted = [];
   state.events = [];
@@ -295,6 +311,11 @@ describe("refineStoreImage", () => {
     expect(state.uploads.map((upload) => upload.path)).toEqual([
       `stores/${STORE}/refined/${refinementId}.webp`,
     ]);
+    // Through the store's one writer, for the store the path names.
+    expect(state.uploads[0].options).toEqual({
+      storeId: STORE,
+      via: "mink_refine",
+    });
     expect(state.deleted).toEqual([{ path: stagePath, kind: "private" }]);
     expect(state.inserts[0]).toMatchObject({
       url: result.url,
@@ -705,6 +726,22 @@ describe("★★ the stop, the stage and the charge", () => {
     // Charged, in the Media Library, and the stage kept for the sweep.
     expect(charged()).toBe(1);
     expect(state.inserts).toHaveLength(1);
+    expect(state.deleted).toEqual([]);
+  });
+
+  it("★★ a refined copy StoreMink has blocked is not tried again: 'still being saved', stage kept", async () => {
+    const { BlockedUploadError } =
+      await import("@/lib/moderation/upload-guard");
+    state.uploadError = new BlockedUploadError({
+      told: true,
+      kindWord: "image",
+      blockId: "33333333-3333-4333-8333-333333333333",
+    });
+    const error = await refine({ stopToken: TOKEN }).catch((caught) => caught);
+    expect(error).toMatchObject({ code: "refine_saving", status: 503 });
+    // One write, refused; no retries spent against a block.
+    expect(state.uploadAttempts).toBe(1);
+    expect(state.uploads).toHaveLength(0);
     expect(state.deleted).toEqual([]);
   });
 

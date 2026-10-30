@@ -35,6 +35,17 @@ const mail = vi.hoisted(() => ({
     subject: "free",
     html: "<p>f</p>",
   })),
+  // The real conversion is tested in billing-emails.test.ts; this stand-in
+  // keeps its shape so the test can see what dunning hands the template.
+  emailTaxFromInvoice: vi.fn((inv: any) =>
+    inv.taxPaise > 0
+      ? {
+          taxPaise: inv.taxPaise,
+          ratePct: (inv.taxRateBps ?? 0) / 100,
+          inclusive: inv.taxInclusive === true,
+        }
+      : null,
+  ),
 }));
 vi.mock("@/lib/email/billing-emails", () => mail);
 
@@ -87,13 +98,52 @@ describe("notifyInvoiceIssued", () => {
     );
   });
 
-  it("★ quotes the amount in RUPEES, resolved from the plan id", async () => {
+  it("★ quotes the amount in PAISE, resolved from the plan id", async () => {
     await notifyInvoiceIssued(args);
     expect(mail.renewalDueTemplate.mock.calls[0][0]).toMatchObject({
-      amountInr: 7_000,
+      amountPaise: 7_000_00,
+      tax: null,
       planName: "Pro",
       autopay: false,
     });
+  });
+
+  it("★★ never rounds an amount with paise to whole rupees", async () => {
+    // ₹433.33 used to reach the email as "₹433".
+    await notifyInvoiceIssued({
+      ...args,
+      amountPaise: 43_333,
+      previousAmountPaise: 40_001,
+    });
+    expect(mail.renewalDueTemplate.mock.calls[0][0]).toMatchObject({
+      amountPaise: 43_333,
+      previousAmountPaise: 40_001,
+    });
+  });
+
+  it("★★ passes the issued invoice's and the previous cycle's GST", async () => {
+    await notifyInvoiceIssued({
+      ...args,
+      amountPaise: 1_770_00,
+      previousAmountPaise: 1_500_00,
+      tax: { taxPaise: 270_00, taxRateBps: 1800, taxInclusive: false },
+      previousTax: { taxPaise: 0, taxRateBps: null, taxInclusive: false },
+    });
+    expect(mail.renewalDueTemplate.mock.calls[0][0]).toMatchObject({
+      amountPaise: 1_770_00,
+      tax: { taxPaise: 270_00, ratePct: 18, inclusive: false },
+      previousAmountPaise: 1_500_00,
+      // No GST last cycle: the template reads the rise as "GST started".
+      previousTax: null,
+    });
+  });
+
+  it("a previous cycle passes through even when the amount is unchanged", async () => {
+    // The template decides there is nothing to say (tax-copy's renewalChange).
+    await notifyInvoiceIssued({ ...args, previousAmountPaise: 7_000_00 });
+    expect(mail.renewalDueTemplate.mock.calls[0][0].previousAmountPaise).toBe(
+      7_000_00,
+    );
   });
 
   it("★★ passes autopay through unchanged — it decides what the email IS", async () => {

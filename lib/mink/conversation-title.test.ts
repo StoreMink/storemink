@@ -12,12 +12,25 @@ import {
 } from "./conversation-title";
 import { addMinkCsvReference } from "./csv-input";
 import { addReviewedMinkDocument } from "./document-input";
-import { addSavedMinkMediaReference } from "./media-attachment";
+import {
+  MINK_ATTACHMENT_MARKER,
+  SAVED_MEDIA_MARKER,
+  addSavedMinkMediaReference,
+} from "./media-attachment";
 
 const PHOTO = {
+  url: "/api/mink/attachments/0f8fad5b-d9cb-469f-a165-70867728950e",
+  filename: "shoe.webp",
+};
+
+/** A message as the composer wrote it before the change (the old marker). */
+const LEGACY_PHOTO = {
   url: "https://storage.googleapis.com/bucket/stores/s/media/shoe.webp",
   filename: "shoe.webp",
 };
+function legacyReference(message: string): string {
+  return message.trim() + SAVED_MEDIA_MARKER + JSON.stringify(LEGACY_PHOTO);
+}
 
 // The stream route trims what the composer sends, which is what is stored.
 const sent = (message: string) => message.trim();
@@ -46,6 +59,38 @@ describe("minkTitleInput: the merchant's words, apart from their files", () => {
       words: "",
       attachments: ["photo"],
     });
+  });
+
+  it("★ a picture kept privately with the chat is a photo, and the composer writes that marker", () => {
+    const message = sent(
+      addSavedMinkMediaReference("Make this the hero", PHOTO),
+    );
+    expect(message).toContain(MINK_ATTACHMENT_MARKER.trim());
+    expect(minkTitleInput(message)).toEqual({
+      words: "Make this the hero",
+      attachments: ["photo"],
+    });
+  });
+
+  it("★ a message sent before the change (the old marker) is still a photo", () => {
+    expect(minkTitleInput(sent(legacyReference("Make this the hero")))).toEqual(
+      { words: "Make this the hero", attachments: ["photo"] },
+    );
+    expect(minkTitleInput(sent(legacyReference("")))).toEqual({
+      words: "",
+      attachments: ["photo"],
+    });
+    // One of each, in the order they were attached.
+    const both = sent(
+      addSavedMinkMediaReference(legacyReference("Two shots"), PHOTO),
+    );
+    expect(minkTitleInput(both)).toEqual({
+      words: "Two shots",
+      attachments: ["photo", "photo"],
+    });
+    expect(provisionalMinkConversationTitle(sent(legacyReference("")))).toBe(
+      "Photo",
+    );
   });
 
   it("tells a read photo from a read document, and keeps the order they were attached in", () => {

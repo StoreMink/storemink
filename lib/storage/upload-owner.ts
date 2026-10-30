@@ -12,8 +12,13 @@ interface UploadIdentity {
   email: string | null;
 }
 
+/**
+ * `staff` says whether the uploader works for the store (an admin, POS staff
+ * or a platform operator) rather than shopping there. A takedown refusal names
+ * the store's notices only to staff: a shopper cannot open them.
+ */
 export type UploadOwner =
-  | { kind: "store"; storeId: string }
+  | { kind: "store"; storeId: string; staff: boolean }
   | { kind: "platform" };
 
 /**
@@ -73,8 +78,11 @@ export async function resolveUploadOwner(
             .limit(1)
         : Promise.resolve([]),
     ]);
-    return Boolean(admin[0] || customer[0] || staff[0] || operator[0]);
+    if (admin[0] || staff[0] || operator[0]) return "staff" as const;
+    return customer[0] ? ("shopper" as const) : null;
   });
 
-  return allowed ? { kind: "store", storeId: store.id } : null;
+  return allowed
+    ? { kind: "store", storeId: store.id, staff: allowed === "staff" }
+    : null;
 }

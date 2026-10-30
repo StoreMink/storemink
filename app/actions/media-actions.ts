@@ -12,11 +12,13 @@ import {
 } from "@/app/dashboard/lib/access";
 import {
   gcsConfigured,
-  gcsUploadObject,
   gcsPathFromUrl,
   gcsDeletePaths,
 } from "@/lib/storage/gcs";
 import { processImageUpload } from "@/lib/storage/process-image";
+import { writeStoreObject } from "@/lib/storage/store-objects";
+import { uploadRefusal } from "@/lib/moderation/copy";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 import { listLibraryAssets, MEDIA_ASSET_COLUMNS } from "@/lib/media/library";
 import {
   listProductImages,
@@ -38,6 +40,10 @@ import { mediaSourceLabel, type MediaSource } from "@/lib/media/sources";
  * with /api/upload), store to GCS under a store-scoped path, and record a
  * media_assets row. Gated on the `media` section. If the DB write fails the
  * just-uploaded object is removed so no orphan is left in the bucket.
+ *
+ * The write goes through `writeStoreObject`, so bytes StoreMink has blocked
+ * are refused with the sentence of takedown design 7.4 and nothing is
+ * stored or recorded in the library.
  *
  * `purpose: "mink_attachment"` (sent by the Mink chat composer) labels the row
  * so the Library does not list it. It is a display label, not a permission:
@@ -67,12 +73,18 @@ export async function uploadMediaAsset(
 
   let url: string;
   try {
-    url = await gcsUploadObject(
+    url = await writeStoreObject(
       path,
       processed.data.bytes,
       processed.data.contentType,
+      { storeId, via: "media_library", actor: userId },
     );
   } catch (err) {
+    if (isBlockedUploadError(err)) {
+      return {
+        error: uploadRefusal({ told: err.told, kindWord: err.kindWord }),
+      };
+    }
     console.error(
       "uploadMediaAsset (GCS):",
       err instanceof Error ? err.message : err,

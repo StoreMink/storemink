@@ -3,10 +3,18 @@
 # the owner's decision of 23 Oct 2026 ("alerts and uptime checks, emailed to
 # me"); what each alert means and what to do: docs/monitoring.md.
 #
-# The last five policies watch Theme Studio work (Theme Studio plan P6,
-# defined 25 Oct 2026). They are definitions until the owner approves applying
-# them after the Theme Studio release (step A1): an --apply run before then
-# would create them as well.
+# Five policies watch Theme Studio work (Theme Studio plan P6, defined 25 Oct
+# 2026). They are definitions until the owner approves applying them after the
+# Theme Studio release (step A1): an --apply run before then would create them
+# as well. The two after them watch refunds StoreMink owes merchants (the
+# refunds release, decision D10), the two after those watch the GST StoreMink
+# charges on its own invoices (the GST release), and the last four watch
+# content takedowns (the takedown release, decision D12, production step P4):
+# a complaint deadline, the every-minute follow-up failing or stopping, and
+# the send-emails schedule that runs it. Applying each group is the owner's
+# production step after its release, the same way; the takedown "follow-ups
+# stopped" alert only after that release is deployed (it is a metric-absence
+# condition, see absence()).
 #
 #   python3 -I scripts/prod-monitoring.py                      dry run: prints
 #                                                              every body, no network
@@ -27,8 +35,8 @@
 # does, one named policy at a time, keeping the policy's notification channels
 # and display name; it needs no --email because it creates nothing.
 #
-# Writes ONLY to storemink-prod: one email channel, three uptime checks, one
-# log-based counter, and the alert policies below. Reads only configuration we
+# Writes ONLY to storemink-prod: one email channel, three uptime checks, two
+# log-based counters, and the alert policies below. Reads only configuration we
 # need to stay idempotent (our channels, checks, policies, log metrics) and
 # metric DESCRIPTORS (metadata), never time series, log entries, env vars or
 # secrets. Uses the caller's gcloud login (gcloud auth print-access-token).
@@ -71,6 +79,13 @@ LOGGING = f"https://logging.googleapis.com/v2/projects/{PROJECT}"
 LABELS = {"managed-by": "storemink-alerts"}
 CHANNEL_NAME = "StoreMink owner email"
 CHAT_FAILURE_METRIC = "mink_chat_run_failures"
+# Counts the INFO heartbeat every takedown follow-up run writes in a `finally`
+# (lib/moderation/follow-ups.ts); "Takedown: follow-ups stopped" fires when it
+# has had no point for 10 minutes.
+FOLLOWUPS_RAN_METRIC = "moderation_followups_ran"
+# The Cloud Scheduler job that calls /api/cron/send-emails every minute in
+# production (docs/cron-jobs.md); the takedown follow-ups run last in it.
+SEND_EMAILS_SCHEDULE = "storemink-send-emails"
 
 WEB_LOGS = f'resource.type="cloud_run_revision" AND resource.labels.service_name="{WEB}"'
 
@@ -92,6 +107,9 @@ THEME_LOGS = (
 THEME_SCHEDULES = ["storemink-theme-studio-runs", "storemink-theme-studio-qa"]
 SET_UP_23_OCT = "Set up 23 Oct 2026 (owner-approved)."
 THEME_STUDIO_ORIGIN = "Theme Studio alert (plan P6), defined 25 Oct 2026 and applied after the Theme Studio release with the owner's OK."
+REFUNDS_ORIGIN = "Set up with the refunds release (owner-approved)."
+GST_ORIGIN = "Set up with the GST release (owner-approved)."
+TAKEDOWN_ORIGIN = "Set up with the content takedown release (owner-approved, decision D12, production step P4)."
 
 UPTIME_CHECKS = [
     {"displayName": "Uptime: storemink.com", "host": "storemink.com", "path": "/"},
@@ -185,8 +203,42 @@ def threshold(display, filt, aligner, period, reducer, comparison, value, durati
     return {"displayName": display, "conditionThreshold": condition}
 
 
-def log_match(display, filt):
-    return {"displayName": display, "conditionMatchedLog": {"filter": filt}}
+def absence(display, filt, aligner, period, reducer, duration, group_by=None):
+    # A metric-absence condition: met once the filter's series has had no
+    # data point for `duration` seconds. Google requires at least 120 seconds
+    # in whole minutes, and the condition can only be met after the metric
+    # has received a point since the policy was created, so a policy made
+    # before the line it counts is deployed stays silent until it is
+    # (https://docs.cloud.google.com/monitoring/alerts/metric-absence).
+    # Reduce across series (no group_by) to watch ONE series: per revision,
+    # every deploy would leave the old revision's series absent and fire it.
+    if duration < 120 or duration % 60:
+        raise ValueError(f"{display}: an absence duration is at least 120 s in whole minutes")
+    aggregation = {
+        "alignmentPeriod": f"{period}s",
+        "perSeriesAligner": aligner,
+        "crossSeriesReducer": reducer,
+    }
+    if group_by:
+        aggregation["groupByFields"] = group_by
+    return {
+        "displayName": display,
+        "conditionAbsent": {
+            "filter": filt,
+            "aggregations": [aggregation],
+            "duration": f"{duration}s",
+            "trigger": {"count": 1},
+        },
+    }
+
+
+def log_match(display, filt, labels=None):
+    # labels: label key -> extractor (EXTRACT(jsonPayload.x)). Each combination
+    # of extracted values notifies on its own, and the notification shows them.
+    condition = {"filter": filt}
+    if labels:
+        condition["labelExtractors"] = labels
+    return {"displayName": display, "conditionMatchedLog": condition}
 
 
 def promql(display, query, duration, evaluation=60):
@@ -222,16 +274,28 @@ def policy(name, severity, conditions, documentation, combiner="OR", log_based=F
     return body
 
 
+def metric_filters(policy_body):
+    # The filter of every threshold or absence condition (the ones that name
+    # a metric type).
+    for condition in policy_body["conditions"]:
+        metric_condition = condition.get("conditionThreshold") or condition.get("conditionAbsent")
+        if metric_condition:
+            yield metric_condition["filter"]
+
+
 def metric_types(policy_body):
     types = set()
-    for condition in policy_body["conditions"]:
-        threshold_condition = condition.get("conditionThreshold")
-        if not threshold_condition:
-            continue
-        for part in threshold_condition["filter"].split(" AND "):
+    for filt in metric_filters(policy_body):
+        for part in filt.split(" AND "):
             if part.startswith("metric.type="):
                 types.add(part.split("=", 1)[1].strip('"'))
     return types
+
+
+def names_log_metric(policy_body):
+    # A new log-based metric's descriptor can lag behind its creation, so a
+    # policy on one is retried (apply()).
+    return any("logging.googleapis.com/user/" in filt for filt in metric_filters(policy_body))
 
 
 # Vertex AI's model_invocation_count in PromQL (checked against storemink-prod's
@@ -450,6 +514,112 @@ def policies(uptime_check_ids):
             THEME_STUDIO_ORIGIN),
         log_based=True,
     ))
+    # Refunds StoreMink owes merchants (lib/billing/refunds.ts). Both match a
+    # line the hourly billing run writes in the web service; ":" (has), not
+    # "=", because logError puts the stack after the message in production.
+    found.append(policy(
+        "Billing: a refund to a merchant failed", "ERROR",
+        [log_match("billing.refund_failed",
+                   f'{WEB_LOGS} AND jsonPayload.message:"billing.refund_failed"')],
+        doc("StoreMink: a refund to a merchant failed",
+            "The billing.refund_failed log line: Razorpay refused a refund StoreMink owes a merchant, reported it failed, or had no record of it 30 minutes after it was sent. The money is still with StoreMink. The line names the refundId, invoiceId, attemptId and amountPaise, and automatic says whether the refund run raised it (an automatic refund is never tried again by the run; a person does that).",
+            "storemink.com console, Billing & tax, Refunds, Needs a person: the reason is on the row. Press Try again, or pay by bank transfer and use Record a refund made outside StoreMink, then write to the merchant within 2 working days.",
+            REFUNDS_ORIGIN),
+        log_based=True,
+    ))
+    found.append(policy(
+        "Billing: refunds waiting more than a day", "WARNING",
+        [log_match("billing.refund_waiting",
+                   f'{WEB_LOGS} AND jsonPayload.message:"billing.refund_waiting"')],
+        doc("StoreMink: refunds owed to merchants are waiting",
+            "The billing.refund_waiting log line, written by the billing run in the 09:00 IST hour (about 09:50 IST): at least one refund has been owed, or sent without Razorpay confirming it, for more than 24 hours, or failed with nothing done since. Merchants were told it comes after their plan ends, usually within 5 working days. The line counts owed, pending and failed, and oldestAt is the oldest one's date. A billing run retried or started by hand in that hour writes the line again; this alert emails at most once an hour.",
+            "storemink.com console, Billing & tax, Refunds: the Needs a person and In progress tabs. If Send refunds automatically is off, press Send on each owed refund or switch it on.",
+            REFUNDS_ORIGIN),
+        log_based=True,
+    ))
+    # GST on StoreMink's own invoices (lib/billing/renewal-worker.ts,
+    # lib/billing/reconcile.ts). Both lines come from the hourly billing run
+    # in the web service.
+    found.append(policy(
+        "Billing: renewals cannot read the GST settings", "ERROR",
+        [log_match("billing.renewal_tax_snapshot",
+                   f'{WEB_LOGS} AND jsonPayload.message:"billing.renewal_tax_snapshot"')],
+        doc("StoreMink: renewals are waiting because the GST settings cannot be read",
+            "The billing.renewal_tax_snapshot log line: the billing run could not read the GST terms for a renewal invoice (reason read_failed), or the settings charge GST without StoreMink's GSTIN, state or SAC code (reason settings_incomplete). The renewal is left for the next hourly run and nothing is written; the merchant keeps their plan meanwhile, because the invoice is raised four days before the cycle turns. The line names the storeId and the reason. If it keeps failing past the cycle end, the cycle does not turn: the store stays on its plan, unbilled, until the settings can be read.",
+            "storemink.com console, Billing & tax, GST status. read_failed: Cloud SQL health and the logs at that minute. settings_incomplete: fill in the missing GSTIN, state or SAC code under StoreMink's tax identity; the next hourly run issues the waiting invoices.",
+            GST_ORIGIN),
+        log_based=True,
+    ))
+    found.append(policy(
+        "Billing: a captured payment's invoice is still a draft", "ERROR",
+        [log_match("billing.captured_draft_unissued (ERROR)",
+                   f'{WEB_LOGS} AND jsonPayload.message:"billing.captured_draft_unissued" AND severity>=ERROR')],
+        doc("StoreMink: a paid invoice is still a draft",
+            "The billing.captured_draft_unissued log line at ERROR: a merchant paid (the payment is captured) and the invoice behind it is still an unnumbered draft six hours after the capture, or the capture time is unknown. The hourly repair pass tries again every run and logs the same line as a WARNING for the first six hours, which this alert ignores. The line names the invoiceId, the attemptId (or purchaseId for a credit pack), the storeId and waitedHours, and its message says why: no gateway credentials to finish it, its completion was not ready, the invoice could not be issued, or the credit pack's invoice could not be issued.",
+            "Logs Explorer in storemink-prod: search \"billing.captured_draft\" for that invoiceId to see each pass's step. Then the storemink.com console, Billing & tax, Reconciliation, for a captured_draft or kept_draft item about the payment. A missing GSTIN, state or SAC code under Billing & tax stops every issue; fix it and the next run issues the drafts.",
+            GST_ORIGIN),
+        log_based=True,
+    ))
+    # Content takedowns (lib/moderation/follow-ups.ts, run last in
+    # /api/cron/send-emails every minute). The first three are the alerts
+    # meant to wake someone at night (decision D12): once applied, the owner
+    # adds the console's mobile-app and SMS channels to them (step P4).
+    # ★ The messages are matched by PREFIX (=~ "^..."): in production
+    # logError appends the stack to the message ("message\nstack"), so a
+    # filter on the whole message never matches an error line.
+    found.append(policy(
+        "Takedown: a complaint needs action", "ERROR",
+        [log_match("moderation: complaint ... (WARNING or above)",
+                   f'{WEB_LOGS} AND jsonPayload.message=~"^moderation: complaint " AND severity>=WARNING',
+                   {
+                       "ref": "EXTRACT(jsonPayload.ref)",
+                       "kind": "EXTRACT(jsonPayload.kind)",
+                       "stage": "EXTRACT(jsonPayload.stage)",
+                       "phase": "EXTRACT(jsonPayload.phase)",
+                   })],
+        doc("StoreMink: a complaint deadline is close or has passed",
+            "A \"moderation: complaint due\" log line (WARNING): a logged complaint's deadline is 30 minutes away (a 2 or 3 hour deadline), 2 hours away (any other), or has passed. The notification names the complaint (ref, such as SM-000123), its kind, the stage (acknowledge, act or resolve) and the phase (soon or overdue). Every operator also got it in the bell and by email.",
+            "storemink.com console, Complaints: open the complaint named by ref and do what is due (acknowledge it, remove or block what it names, give the information asked for, or resolve it). The takedown runbook has the order of work for each kind, including the 2-hour path at night.",
+            TAKEDOWN_ORIGIN),
+        # One notification in 5 minutes (design P4), for each complaint and
+        # stage: the labels above make each combination its own rule, so two
+        # complaints due together are two notifications, never one.
+        strategy={"notificationRateLimit": {"period": "300s"}, "autoClose": "1800s"},
+    ))
+    found.append(policy(
+        "Takedown: follow-ups failing", "ERROR",
+        [log_match("moderation: follow-up failed (ERROR, matched by prefix)",
+                   f'{WEB_LOGS} AND jsonPayload.message=~"^moderation: follow-up failed" AND severity>=ERROR')],
+        doc("StoreMink: the takedown follow-up is failing",
+            "A \"moderation: follow-up failed\" log line (ERROR): one step of the every-minute takedown follow-up threw (its step field: alerts, archives, replacements, restores or notices), or one row of a step did (with blockId or complaintId). The steps after it still ran, and claimed rows are tried again once their claim lapses (2 minutes). When the step is alerts, complaint deadline alerts may not be going out.",
+            "Logs Explorer in storemink-prod: search \"moderation: follow-up failed\" for the step and its error and cause, then \"moderation: follow-ups ran\" at the same minute for failedSteps and the counts. A database or storage outage shows in the other alerts at the same time.",
+            TAKEDOWN_ORIGIN),
+        log_based=True,
+    ))
+    found.append(policy(
+        "Takedown: follow-ups stopped", "ERROR",
+        [absence(f"No \"moderation: follow-ups ran\" for 10 minutes ({FOLLOWUPS_RAN_METRIC})",
+                 f'metric.type="logging.googleapis.com/user/{FOLLOWUPS_RAN_METRIC}" AND {WEB_LOGS}',
+                 "ALIGN_SUM", 60, "REDUCE_SUM", 600)],
+        doc("StoreMink: the takedown follow-up has stopped running",
+            "The log-based counter moderation_followups_ran has had no point for 10 minutes. Every takedown follow-up run writes the INFO line \"moderation: follow-ups ran\", even when a step fails, so silence means the follow-up is not running at all: complaint deadline alerts, file replacements, restores and notices all wait, and so do order and notification emails (the same route, /api/cron/send-emails).",
+            f"Cloud Scheduler, {SEND_EMAILS_SCHEDULE}: is it enabled, and what did its last attempts answer (the alert \"Cloud Scheduler attempt failed (send-emails)\")? Then Logs Explorer in storemink-prod for /api/cron/send-emails at that time, and Cloud Run storemink-web-prod's health.",
+            TAKEDOWN_ORIGIN),
+        # Open until the counter has data again, so one email when it opens
+        # and one when it closes; 7 days is the longest auto-close Google
+        # allows, and a shorter one would close it while still stopped.
+        strategy={"autoClose": "604800s"},
+    ))
+    found.append(policy(
+        "Cloud Scheduler attempt failed (send-emails)", "WARNING",
+        [log_match(f"Cloud Scheduler attempt failed ({SEND_EMAILS_SCHEDULE})",
+                   f'resource.type="cloud_scheduler_job" AND resource.labels.job_id="{SEND_EMAILS_SCHEDULE}" AND log_id("cloudscheduler.googleapis.com/executions") AND severity>=ERROR')],
+        doc("StoreMink: a send-emails schedule attempt failed",
+            f"Cloud Scheduler's own attempt log (there is no app line): an every-minute call of {SEND_EMAILS_SCHEDULE} (/api/cron/send-emails) failed. The route answered an error (it re-throws when an email queue throws, after the takedown follow-ups have run; 401 when the shared secret does not match) or did not answer within the attempt deadline. Queued emails, SMS and WhatsApp messages wait for the next call that succeeds, a minute later; nothing is lost.",
+            f"Cloud Scheduler, {SEND_EMAILS_SCHEDULE}: its last attempts and their status. Then Logs Explorer in storemink-prod at that minute for the route's error. If the attempts keep failing for 10 minutes and \"moderation: follow-ups ran\" stops too, \"Takedown: follow-ups stopped\" opens.",
+            TAKEDOWN_ORIGIN),
+        log_based=True,
+    ))
     return found
 
 
@@ -460,6 +630,21 @@ def chat_failure_metric():
         "filter": f'{WEB_LOGS} AND (jsonPayload.message:"mink.run: failed" OR jsonPayload.message:"mink.run: timed out")',
         "metricDescriptor": {"metricKind": "DELTA", "valueType": "INT64", "unit": "1"},
     }
+
+
+def followups_ran_metric():
+    # The shape of chat_failure_metric(). The INFO line carries no stack, so
+    # ":" (has) on the whole message is enough here.
+    return {
+        "name": FOLLOWUPS_RAN_METRIC,
+        "description": "Takedown follow-up runs: one point per run of the every-minute follow-up (the line moderation: follow-ups ran). Set up with the content takedown release (owner-approved, decision D12).",
+        "filter": f'{WEB_LOGS} AND jsonPayload.message:"moderation: follow-ups ran"',
+        "metricDescriptor": {"metricKind": "DELTA", "valueType": "INT64", "unit": "1"},
+    }
+
+
+def log_metrics():
+    return [chat_failure_metric(), followups_ran_metric()]
 
 
 def channel_body():
@@ -499,11 +684,12 @@ def dry_run():
     print("## notification channel\n" + json.dumps(channel_body(), indent=2))
     for check in UPTIME_CHECKS:
         print("## uptime check\n" + json.dumps(uptime_body(check), indent=2))
-    print("## log-based metric\n" + json.dumps(chat_failure_metric(), indent=2))
+    for metric in log_metrics():
+        print("## log-based metric\n" + json.dumps(metric, indent=2))
     for body in policies(["<check-id-1>", "<check-id-2>", "<check-id-3>"]):
         body["notificationChannels"] = ["<channel>"]
         print("## alert policy\n" + json.dumps(body, indent=2))
-    print(f"\n# {len(policies(['x']))} alert policies, {len(UPTIME_CHECKS)} uptime checks, 1 log metric, 1 channel")
+    print(f"\n# {len(policies(['x']))} alert policies, {len(UPTIME_CHECKS)} uptime checks, {len(log_metrics())} log metrics, 1 channel")
 
 
 def apply():
@@ -530,11 +716,12 @@ def apply():
         check_ids.append(config["name"].rsplit("/", 1)[-1])
 
     metric_names = {m["name"].rsplit("/", 1)[-1] for m in list_all(f"{LOGGING}/metrics", "metrics")}
-    if CHAT_FAILURE_METRIC in metric_names:
-        print("log metric exists:", CHAT_FAILURE_METRIC)
-    else:
-        api("POST", f"{LOGGING}/metrics", chat_failure_metric())
-        print("log metric created:", CHAT_FAILURE_METRIC)
+    for metric in log_metrics():
+        if metric["name"] in metric_names:
+            print("log metric exists:", metric["name"])
+        else:
+            api("POST", f"{LOGGING}/metrics", metric)
+            print("log metric created:", metric["name"])
 
     existing = {p["displayName"]: p for p in list_all(f"{MON}/alertPolicies", "alertPolicies")}
     problems = []
@@ -554,7 +741,7 @@ def apply():
                 print("policy created:", body["displayName"], "->", created["name"].rsplit("/", 1)[-1])
                 break
             except RuntimeError as error:
-                if CHAT_FAILURE_METRIC in body["conditions"][0].get("conditionThreshold", {}).get("filter", "") and attempt < 3:
+                if names_log_metric(body) and attempt < 3:
                     time.sleep(20)  # a new log-based metric's descriptor can lag
                     continue
                 problems.append(f"{body['displayName']}: {error}")

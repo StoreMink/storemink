@@ -31,8 +31,20 @@ const gateway = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/billing/gateway", () => gateway);
 
-const recon = vi.hoisted(() => ({ reconcileStrandedAttempts: vi.fn() }));
+const recon = vi.hoisted(() => ({
+  reconcileStrandedAttempts: vi.fn(),
+  issueCapturedDrafts: vi.fn(),
+}));
 vi.mock("@/lib/billing/reconcile", () => recon);
+
+const taxSettings = vi.hoisted(() => ({ promoteDueTaxChange: vi.fn() }));
+vi.mock("@/lib/billing/platform-settings", () => taxSettings);
+
+const publicTax = vi.hoisted(() => ({ bustPlatformTax: vi.fn() }));
+vi.mock("@/lib/billing/public-tax", () => publicTax);
+
+const refundPass = vi.hoisted(() => ({ processBillingRefunds: vi.fn() }));
+vi.mock("@/lib/billing/refunds", () => refundPass);
 
 const pricing = vi.hoisted(() => ({
   getPlanPricingLive: vi.fn(),
@@ -65,7 +77,44 @@ const EMPTY_EVAL = {
   ended: 0,
   errors: 0,
 };
-const EMPTY_DOWN = { downgraded: 0, shiftsClosed: 0, errors: 0 };
+const EMPTY_DOWN = {
+  downgraded: 0,
+  shiftsClosed: 0,
+  ended: 0,
+  advancedAfterGrace: 0,
+  errors: 0,
+};
+const EMPTY_REPAIR = {
+  considered: 0,
+  issued: 0,
+  completed: 0,
+  filed: 0,
+  deferred: 0,
+  unissued: 0,
+  errors: 0,
+  more: false,
+};
+const PROMOTED = {
+  enabled: true,
+  inclusive: false,
+  rateBps: 1800,
+  startsAt: "2026-12-01T00:00:00.000+05:30",
+  noticeId: "4a3c8a51-0b4e-4f63-9e2b-2f0f3f6c1a10",
+};
+const EMPTY_REFUNDS = {
+  repairedInvoices: 0,
+  flaggedForPerson: 0,
+  detected: 0,
+  sent: 0,
+  processed: 0,
+  failed: 0,
+  stillPending: 0,
+  creditNotes: 0,
+  notified: 0,
+  waiting: 0,
+  errors: 0,
+  more: false,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -81,6 +130,9 @@ beforeEach(() => {
     errors: 0,
   });
   worker.downgradeExpired.mockResolvedValue({ ...EMPTY_DOWN });
+  recon.issueCapturedDrafts.mockResolvedValue({ ...EMPTY_REPAIR });
+  taxSettings.promoteDueTaxChange.mockResolvedValue(null);
+  refundPass.processBillingRefunds.mockResolvedValue({ ...EMPTY_REFUNDS });
   gateway.getRecurringCharge.mockReturnValue(vi.fn());
   gateway.chargeUnavailableReason.mockReturnValue(null);
   pricing.getPlanPricingLive.mockResolvedValue({
@@ -327,5 +379,259 @@ describe("★★ reconciliation", () => {
       errors: 1,
     });
     expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(503);
+  });
+});
+
+describe("★★ the refund pass", () => {
+  it("runs AFTER downgrade, so an invoice a plan end closed this run is refunded this run", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(worker.downgradeExpired.mock.invocationCallOrder[0]).toBeLessThan(
+      refundPass.processBillingRefunds.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("gets the same `now` as every renewal pass", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    const passNow = worker.downgradeExpired.mock.calls[0][0].now;
+    expect(refundPass.processBillingRefunds.mock.calls[0][0].now).toBe(passNow);
+  });
+
+  it("does not run when unauthorised", async () => {
+    await GET(req("Bearer nope"));
+    expect(refundPass.processBillingRefunds).not.toHaveBeenCalled();
+  });
+
+  it("★ a database error in the pass 503s, so Scheduler retries", async () => {
+    refundPass.processBillingRefunds.mockResolvedValue({
+      ...EMPTY_REFUNDS,
+      errors: 1,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(503);
+    expect((await res.json()).ok).toBe(false);
+  });
+
+  it("★★ a FAILED or WAITING refund is not an error: it is a person's job", async () => {
+    refundPass.processBillingRefunds.mockResolvedValue({
+      ...EMPTY_REFUNDS,
+      sent: 2,
+      failed: 2,
+      waiting: 3,
+      flaggedForPerson: 1,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+  });
+
+  it("puts the pass's summary in the body", async () => {
+    refundPass.processBillingRefunds.mockResolvedValue({
+      ...EMPTY_REFUNDS,
+      detected: 1,
+      processed: 1,
+      notified: 1,
+    });
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(body.refunds).toMatchObject({
+      detected: 1,
+      processed: 1,
+      notified: 1,
+    });
+  });
+
+  it("★ reports `more` when the refund pass filled a batch", async () => {
+    refundPass.processBillingRefunds.mockResolvedValue({
+      ...EMPTY_REFUNDS,
+      more: true,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).more).toBe(true);
+  });
+});
+
+describe("★ `more` counts every downgrade-pass outcome", () => {
+  it("counts subscriptions the pass ENDED", async () => {
+    worker.downgradeExpired.mockResolvedValue({ ...EMPTY_DOWN, ended: 50 });
+    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(true);
+  });
+
+  it("counts renewals it ADVANCED after grace", async () => {
+    worker.downgradeExpired.mockResolvedValue({
+      ...EMPTY_DOWN,
+      advancedAfterGrace: 50,
+    });
+    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(true);
+  });
+
+  it("adds the three together", async () => {
+    worker.downgradeExpired.mockResolvedValue({
+      ...EMPTY_DOWN,
+      downgraded: 20,
+      ended: 20,
+      advancedAfterGrace: 10,
+    });
+    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(true);
+  });
+
+  it("stays false below a batch", async () => {
+    worker.downgradeExpired.mockResolvedValue({
+      ...EMPTY_DOWN,
+      downgraded: 10,
+      ended: 10,
+      advancedAfterGrace: 10,
+    });
+    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(
+      false,
+    );
+  });
+});
+
+describe("★★ promoting a scheduled GST change (GST design 5.12)", () => {
+  it("runs once, before every renewal pass", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(taxSettings.promoteDueTaxChange).toHaveBeenCalledTimes(1);
+    const p = taxSettings.promoteDueTaxChange.mock.invocationCallOrder[0];
+    expect(p).toBeLessThan(
+      worker.collectDueRenewals.mock.invocationCallOrder[0],
+    );
+    expect(p).toBeLessThan(
+      recon.reconcileStrandedAttempts.mock.invocationCallOrder[0],
+    );
+    expect(p).toBeLessThan(
+      recon.issueCapturedDrafts.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("gets the same `now` as every renewal pass", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(taxSettings.promoteDueTaxChange.mock.calls[0][0]).toBe(
+      worker.collectDueRenewals.mock.calls[0][0].now,
+    );
+  });
+
+  it("★ does not bust the public tax cache when nothing was promoted", async () => {
+    taxSettings.promoteDueTaxChange.mockResolvedValue(null);
+    await GET(req(`Bearer ${SECRET}`));
+    expect(publicTax.bustPlatformTax).not.toHaveBeenCalled();
+  });
+
+  it("★ busts the public tax cache once when it promoted a change, and reports it", async () => {
+    taxSettings.promoteDueTaxChange.mockResolvedValue({ ...PROMOTED });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(publicTax.bustPlatformTax).toHaveBeenCalledTimes(1);
+    expect(
+      taxSettings.promoteDueTaxChange.mock.invocationCallOrder[0],
+    ).toBeLessThan(publicTax.bustPlatformTax.mock.invocationCallOrder[0]);
+    expect(res.status).toBe(200);
+    expect((await res.json()).promote).toEqual({
+      promoted: PROMOTED,
+      errors: 0,
+    });
+  });
+
+  it("★ a failed promotion 503s, busts nothing, and the renewal passes still run", async () => {
+    taxSettings.promoteDueTaxChange.mockRejectedValue(new Error("db down"));
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.promote).toEqual({ promoted: null, errors: 1 });
+    expect(publicTax.bustPlatformTax).not.toHaveBeenCalled();
+    expect(worker.collectDueRenewals).toHaveBeenCalled();
+    expect(recon.issueCapturedDrafts).toHaveBeenCalled();
+    expect(worker.evaluateCycleTurns).toHaveBeenCalled();
+    expect(refundPass.processBillingRefunds).toHaveBeenCalled();
+  });
+
+  it("does not run when unauthorised", async () => {
+    await GET(req("Bearer nope"));
+    expect(taxSettings.promoteDueTaxChange).not.toHaveBeenCalled();
+    expect(publicTax.bustPlatformTax).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ the repair pass (GST design 5.4b)", () => {
+  it("runs AFTER reconcile and BEFORE evaluate", async () => {
+    // A payment repaired in this run must count as paid when the cycle turn
+    // is evaluated in this run.
+    await GET(req(`Bearer ${SECRET}`));
+    const repair = recon.issueCapturedDrafts.mock.invocationCallOrder[0];
+    expect(
+      recon.reconcileStrandedAttempts.mock.invocationCallOrder[0],
+    ).toBeLessThan(repair);
+    expect(repair).toBeLessThan(
+      worker.evaluateCycleTurns.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("runs over the whole database with the run's `now`, never one store", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(recon.issueCapturedDrafts).toHaveBeenCalledTimes(1);
+    expect(recon.issueCapturedDrafts.mock.calls[0][0]).toEqual({
+      now: worker.collectDueRenewals.mock.calls[0][0].now,
+    });
+  });
+
+  it("★ its errors 503, so Scheduler retries", async () => {
+    recon.issueCapturedDrafts.mockResolvedValue({ ...EMPTY_REPAIR, errors: 1 });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(503);
+    expect((await res.json()).ok).toBe(false);
+  });
+
+  it("★ its `more` joins the run's `more`", async () => {
+    recon.issueCapturedDrafts.mockResolvedValue({
+      ...EMPTY_REPAIR,
+      more: true,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).more).toBe(true);
+  });
+
+  it("puts its counts in the body; a draft left for the next run is not an error", async () => {
+    recon.issueCapturedDrafts.mockResolvedValue({
+      ...EMPTY_REPAIR,
+      considered: 3,
+      completed: 1,
+      issued: 1,
+      deferred: 1,
+      unissued: 1,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).repair).toMatchObject({
+      considered: 3,
+      completed: 1,
+      issued: 1,
+      deferred: 1,
+      unissued: 1,
+    });
+  });
+
+  it("does not run when unauthorised", async () => {
+    await GET(req("Bearer nope"));
+    expect(recon.issueCapturedDrafts).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ the refund pass stays LAST", () => {
+  it("runs after promote, collect, reconcile, repair, evaluate and downgrade", async () => {
+    taxSettings.promoteDueTaxChange.mockResolvedValue({ ...PROMOTED });
+    await GET(req(`Bearer ${SECRET}`));
+    const refunds =
+      refundPass.processBillingRefunds.mock.invocationCallOrder[0];
+    for (const earlier of [
+      taxSettings.promoteDueTaxChange,
+      publicTax.bustPlatformTax,
+      worker.collectDueRenewals,
+      recon.reconcileStrandedAttempts,
+      recon.issueCapturedDrafts,
+      worker.evaluateCycleTurns,
+      worker.downgradeExpired,
+    ]) {
+      expect(earlier.mock.invocationCallOrder[0]).toBeLessThan(refunds);
+    }
   });
 });

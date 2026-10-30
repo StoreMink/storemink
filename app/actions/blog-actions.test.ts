@@ -8,6 +8,11 @@ vi.mock("next/cache", () => ({
   revalidateTag: vi.fn(),
 }));
 vi.mock("next/server", () => ({ after: vi.fn() }));
+// The told blocks of posts, by item id (D21: an untold block is never here).
+// None by default; a test names the posts StoreMink told the store about.
+vi.mock("@/lib/moderation/merchant", () => ({
+  blockedItemIds: vi.fn(async () => new Map<string, string>()),
+}));
 vi.mock("@/lib/seo/store-indexing", () => ({
   notifyStoreContentPublished: vi.fn(),
 }));
@@ -60,6 +65,34 @@ vi.mock("@/lib/settings/resolve", () => ({
 vi.mock("@/lib/auth/server-user", () => ({ getServerUser: vi.fn() }));
 vi.mock("@/lib/blog-taxonomy", () => ({ fetchBlogTaxonomy: vi.fn() }));
 
+// The takedown page swap, real (the pure half) over a set this file chooses:
+// outside addresses only, so no bucket configuration is involved, and the
+// real loader never opens a scope of its own against the db mock below.
+const blockedHolder = vi.hoisted(() => ({ addresses: [] as string[] }));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  return {
+    ...actual,
+    maskBlockedMedia: vi.fn(async (value: unknown) =>
+      actual.maskBlockedMediaWith(
+        value,
+        actual.buildBlockedMediaSet(
+          blockedHolder.addresses.map((objectPath, i) => ({
+            id: `block-${i}`,
+            objectPath,
+            fileSource: "external",
+            storeId: "a0000000-0000-4000-8000-000000000001",
+            objectMd5: null,
+            tellStore: true,
+          })),
+          { bucket: null, loadedAt: Date.now() },
+        ),
+      ),
+    ),
+  };
+});
+
 // The ported data layer: with* runners invoke the callback with the mock db.
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
@@ -84,7 +117,18 @@ import {
   bulkSetBlogFeatured,
   bulkDeleteBlogs,
   autosaveBlog,
+  getMySubmissions,
+  saveCustomerBlogDraft,
+  updateCustomerBlog,
 } from "./blog-actions";
+import { withUser } from "@/lib/db/client";
+import { after } from "next/server";
+import { PgDialect } from "drizzle-orm/pg-core";
+import { notifyStoreContentPublished } from "@/lib/seo/store-indexing";
+import { blockedItemIds } from "@/lib/moderation/merchant";
+import { getCurrentStoreId } from "@/lib/store/resolve";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
 import { getManagerIdentity } from "@/app/dashboard/lib/access";
 import { getServerUser } from "@/lib/auth/server-user";
 import { fetchBlogTaxonomy } from "@/lib/blog-taxonomy";
@@ -569,6 +613,31 @@ describe("blog-actions", () => {
       expect(emitted("blog.approved")).toBe(true);
     });
 
+    // A customer post StoreMink blocked (told or untold) stays off the
+    // storefront, so publishing it from the editor must not tell the author
+    // it is live (takedown fix pass, as in approveCustomerBlog).
+    it("★ does not tell the author a blocked post is live when it is published from the editor", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [],
+          [
+            {
+              status: "pending_review",
+              published_at: null,
+              submitted_by: "cust-1",
+              is_customer_submission: true,
+              cover_image_url: null,
+              content: null,
+              moderation_blocked_at: "2026-10-30T10:00:00.000Z",
+            },
+          ],
+          [{ email: "ada@example.com", firstName: "Ada" }],
+        ],
+      });
+      await updateBlog("b1", { ...blogForm, status: "published" });
+      expect(emitted("blog.approved")).toBe(false);
+    });
+
     // Updating a regular published post should NOT trigger the customer email.
     it("does not email when updating a non-customer submission", async () => {
       dbHolder.current = makeDbMock({
@@ -919,5 +988,478 @@ describe("deleteUploadedImage", () => {
     vi.mocked(getServerUser).mockResolvedValue(null);
     await deleteUploadedImage(gcs("blog-covers/abc.webp"));
     expect(deleteStorageUrls).not.toHaveBeenCalled();
+  });
+});
+
+// ── Takedown (stage T8b): the author's submissions list ──────────────────────
+
+describe("getMySubmissions", () => {
+  const BLOCKED_COVER = "https://cdn.example.com/blocked-cover.jpg";
+  const SHOWN_COVER = "https://cdn.example.com/summer.jpg";
+  const row = (over: Record<string, unknown>) => ({
+    id: "b1",
+    title: "Summer edit",
+    slug: "summer-edit",
+    excerpt: "x",
+    content: "<p>body</p>",
+    cover_image_url: SHOWN_COVER,
+    author: "Ada",
+    status: "published",
+    categories: [],
+    tags: [],
+    reading_time: 2,
+    created_at: "2026-10-20T10:00:00.000Z",
+    updated_at: "2026-10-20T10:00:00.000Z",
+    submitted_by: "u1",
+    is_customer_submission: true,
+    moderation_blocked_at: null,
+    ...over,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    blockedHolder.addresses = [];
+    vi.mocked(getServerUser).mockResolvedValue({
+      id: "u1",
+      email: "ada@example.test",
+    } as any);
+  });
+
+  it("refuses an anonymous caller without reading", async () => {
+    vi.mocked(getServerUser).mockResolvedValue(null);
+    expect(await getMySubmissions()).toEqual({ error: "Not authenticated." });
+    expect(withUser).not.toHaveBeenCalled();
+  });
+
+  it("★ returns the removed flag, never the moderation timestamp", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          row({
+            id: "b1",
+            moderation_blocked_at: "2026-10-29T09:00:00.000Z",
+          }),
+          row({ id: "b2", slug: "winter-edit" }),
+        ],
+      ],
+    });
+
+    const res = await getMySubmissions();
+
+    expect(res.success).toBe(true);
+    const submissions = (res.data as any).submissions as any[];
+    expect(submissions.map((s) => [s.id, s.blocked_by_storemink])).toEqual([
+      ["b1", true],
+      ["b2", false],
+    ]);
+    for (const s of submissions) {
+      expect(s).not.toHaveProperty("moderation_blocked_at");
+    }
+  });
+
+  it("★ swaps a blocked cover and body picture for the placeholder", async () => {
+    blockedHolder.addresses = [BLOCKED_COVER];
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          row({
+            cover_image_url: BLOCKED_COVER,
+            content: `<p>look</p><img src="${BLOCKED_COVER}">`,
+          }),
+        ],
+      ],
+    });
+
+    const res = await getMySubmissions();
+
+    const [only] = (res.data as any).submissions as any[];
+    expect(only.cover_image_url).toBe(PLACEHOLDER_URL_PATH);
+    expect(only.content).toContain(PLACEHOLDER_URL_PATH);
+    expect(JSON.stringify(res)).not.toContain(BLOCKED_COVER);
+  });
+
+  it("★ runs the swap once the author's scope has closed", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [[row({})]] });
+    let open = 0;
+    const maskOpenedInside: number[] = [];
+    vi.mocked(withUser).mockImplementation(async (_id: any, fn: any) => {
+      open++;
+      try {
+        return await fn(dbHolder.current.db);
+      } finally {
+        open--;
+      }
+    });
+    const real = vi.mocked(maskBlockedMedia).getMockImplementation()!;
+    vi.mocked(maskBlockedMedia).mockImplementation(async (value: any) => {
+      maskOpenedInside.push(open);
+      return real(value);
+    });
+
+    await getMySubmissions();
+
+    expect(maskOpenedInside).toEqual([0]);
+  });
+});
+
+// ── Takedown fix pass (FX-A) ────────────────────────────────────────────────
+
+const BLOCKED_AT = "2026-10-29T09:00:00.000Z";
+const REMOVED =
+  "StoreMink has removed this post from the store, so it can't be edited.";
+
+/** The paths a publish announced, by running the deferred ping. */
+async function pingedPaths(): Promise<string[][]> {
+  for (const [task] of vi.mocked(after).mock.calls) {
+    await (task as () => unknown)();
+  }
+  return vi
+    .mocked(notifyStoreContentPublished)
+    .mock.calls.map(([input]) => (input as { paths: string[] }).paths);
+}
+
+describe("a customer's post StoreMink removed (must-do 16)", () => {
+  beforeEach(() => {
+    vi.mocked(getServerUser).mockResolvedValue(serverUser);
+    vi.mocked(fetchBlogTaxonomy).mockResolvedValue({
+      categories: [{ id: "c1", name: "Recipes" }],
+      tags: [{ id: "t1", name: "Indian Food" }],
+    });
+  });
+
+  const told = () =>
+    vi.mocked(blockedItemIds).mockResolvedValue(new Map([["b1", "block-1"]]));
+
+  it("★ refuses a draft save while a block the store was told about stands", async () => {
+    told();
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ store_id: STORE_ID, blocked_at: BLOCKED_AT }], [ada]],
+    });
+
+    const res = await saveCustomerBlogDraft(customerForm, "b1");
+
+    expect(res).toEqual({ error: REMOVED });
+    expect(blockedItemIds).toHaveBeenCalledWith(STORE_ID, "blog_post");
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(REMOVED).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  it("★ a block kept from the store saves the draft exactly as before (D21)", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ store_id: STORE_ID, blocked_at: BLOCKED_AT }], [ada]],
+    });
+
+    const res = await saveCustomerBlogDraft(customerForm, "b1");
+
+    expect(res.success).toBe(true);
+    expect(blockedItemIds).toHaveBeenCalledWith(STORE_ID, "blog_post");
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      title: "My Post",
+      status: "draft",
+    });
+  });
+
+  it("a post with no block saves without asking about blocks", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ store_id: STORE_ID, blocked_at: null }], [ada]],
+    });
+
+    const res = await saveCustomerBlogDraft(customerForm, "b1");
+
+    expect(res.success).toBe(true);
+    expect(blockedItemIds).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(1);
+  });
+
+  it("a new draft is never checked: nothing can block it yet", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [[ada], []],
+      returning: [{ id: "new-1" }],
+    });
+
+    const res = await saveCustomerBlogDraft(customerForm);
+
+    expect(res.success).toBe(true);
+    expect(blockedItemIds).not.toHaveBeenCalled();
+  });
+
+  it("★ refuses an edit and submit, before anything is written or purged", async () => {
+    told();
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ store_id: STORE_ID, blocked_at: BLOCKED_AT }]],
+    });
+
+    const res = await updateCustomerBlog("B1", customerForm);
+
+    expect(res).toEqual({ error: REMOVED });
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(deleteStorageUrls).not.toHaveBeenCalled();
+  });
+
+  it("★ an edit of a post under a block kept from the store goes ahead (D21)", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ store_id: STORE_ID, blocked_at: BLOCKED_AT }],
+        [{ cover_image_url: null, content: "<p>old</p>" }],
+      ],
+    });
+
+    const res = await updateCustomerBlog("b1", customerForm);
+
+    expect(res.success).toBe(true);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      title: "My Post",
+      status: "pending_review",
+    });
+  });
+
+  it("a failed block read refuses nothing", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [new Error("db down"), [ada]],
+    });
+
+    const res = await saveCustomerBlogDraft(customerForm, "b1");
+
+    expect(res.success).toBe(true);
+    expect(blockedItemIds).not.toHaveBeenCalled();
+  });
+
+  it("★ deleting the removed post stays allowed and asks nothing about blocks", async () => {
+    told();
+    dbHolder.current = makeDbMock({
+      returning: [{ id: "b1", cover_image_url: null, content: null }],
+    });
+
+    const res = await deleteCustomerBlog("b1");
+
+    expect(res.success).toBe(true);
+    expect(dbHolder.current.calls.delete).toHaveLength(1);
+    expect(blockedItemIds).not.toHaveBeenCalled();
+  });
+});
+
+describe("getMySubmissions store scope (must-do 17)", () => {
+  beforeEach(() => {
+    vi.mocked(getServerUser).mockResolvedValue({
+      id: "u1",
+      email: "ada@example.test",
+    } as any);
+  });
+
+  function storeParam(): unknown[] {
+    const where = dbHolder.current.calls.where[0];
+    const query = new PgDialect().sqlToQuery(where);
+    expect(query.sql).toMatch(/"blogs"\."store_id" = \$\d/);
+    return query.params;
+  }
+
+  it("★ lists only the host store's posts", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [[]] });
+    await getMySubmissions();
+    expect(storeParam()).toContain(STORE_ID);
+  });
+
+  it("★ another store's host reads that store, never this one", async () => {
+    const OTHER = "b0000000-0000-4000-8000-000000000002";
+    vi.mocked(getCurrentStoreId).mockResolvedValueOnce(OTHER);
+    dbHolder.current = makeDbMock({ selectQueue: [[]] });
+    await getMySubmissions();
+    const params = storeParam();
+    expect(params).toContain(OTHER);
+    expect(params).not.toContain(STORE_ID);
+  });
+});
+
+describe("no discovery ping for a blocked post (must-do 29)", () => {
+  beforeEach(() => {
+    vi.mocked(getManagerIdentity).mockResolvedValue({
+      uid: "user-1",
+      email: "admin@example.com",
+    });
+  });
+
+  it("★ publishBlog announces a post with no block", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [{ slug: "summer", blocked_at: null }],
+    });
+    expect((await publishBlog("b1")).success).toBe(true);
+    expect(await pingedPaths()).toEqual([["/blogs/summer", "/blogs", "/"]]);
+  });
+
+  it("★ publishBlog never announces a blocked post, and still publishes", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [{ slug: "summer", blocked_at: BLOCKED_AT }],
+    });
+    expect((await publishBlog("b1")).success).toBe(true);
+    expect(dbHolder.current.calls.set[0].status).toBe("published");
+    expect(after).not.toHaveBeenCalled();
+    expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+  });
+
+  it("★ a bulk publish announces only the posts with no block", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [
+        { slug: "open", blocked_at: null },
+        { slug: "removed", blocked_at: BLOCKED_AT },
+      ],
+    });
+    await bulkSetBlogStatus(["b1", "b2"], "published");
+    expect(await pingedPaths()).toEqual([["/blogs/open", "/blogs", "/"]]);
+  });
+
+  it("★ a bulk publish of only blocked posts pings nothing", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [{ slug: "removed", blocked_at: BLOCKED_AT }],
+    });
+    await bulkSetBlogStatus(["b1"], "published");
+    expect(after).not.toHaveBeenCalled();
+  });
+
+  it("★ saving a blocked post as published in the editor pings nothing", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [],
+        [
+          {
+            status: "published",
+            published_at: BLOCKED_AT,
+            submitted_by: null,
+            is_customer_submission: false,
+            cover_image_url: null,
+            content: null,
+            moderation_blocked_at: BLOCKED_AT,
+          },
+        ],
+      ],
+    });
+    const res = await updateBlog("b1", { ...blogForm, status: "published" });
+    expect(res.success).toBe(true);
+    expect(after).not.toHaveBeenCalled();
+  });
+
+  it("saving a post with no block as published in the editor pings it", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [],
+        [
+          {
+            status: "draft",
+            published_at: null,
+            submitted_by: null,
+            is_customer_submission: false,
+            cover_image_url: null,
+            content: null,
+            moderation_blocked_at: null,
+          },
+        ],
+      ],
+    });
+    await updateBlog("b1", { ...blogForm, status: "published" });
+    expect(await pingedPaths()).toEqual([["/blogs/hello", "/blogs", "/"]]);
+  });
+
+  it("★ approving a blocked submission pings nothing; an open one is announced", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [
+        { title: "T", slug: "t", submitted_by: null, blocked_at: BLOCKED_AT },
+      ],
+    });
+    await approveCustomerBlog("b1");
+    expect(after).not.toHaveBeenCalled();
+
+    dbHolder.current = makeDbMock({
+      returning: [
+        { title: "T", slug: "t", submitted_by: null, blocked_at: null },
+      ],
+    });
+    await approveCustomerBlog("b1");
+    expect(await pingedPaths()).toEqual([["/blogs/t", "/blogs", "/"]]);
+  });
+
+  it("★ a direct-publish customer edit of a blocked post pings nothing", async () => {
+    vi.mocked(getServerUser).mockResolvedValue(serverUser);
+    vi.mocked(fetchBlogTaxonomy).mockResolvedValue({
+      categories: [{ id: "c1", name: "Recipes" }],
+      tags: [{ id: "t1", name: "Indian Food" }],
+    });
+    vi.mocked(getStoreSettings).mockResolvedValueOnce(
+      settingsWith({
+        "blogs.customerSubmissions": true,
+        "blogs.requireApproval": false,
+      }),
+    );
+    dbHolder.current = makeDbMock({
+      // A block kept from the store: the edit goes ahead (D21).
+      selectQueue: [
+        [{ store_id: STORE_ID, blocked_at: BLOCKED_AT }],
+        [{ cover_image_url: null, content: null }],
+      ],
+      returning: [{ slug: "removed", blocked_at: BLOCKED_AT }],
+    });
+    expect((await updateCustomerBlog("b1", customerForm)).success).toBe(true);
+    expect(after).not.toHaveBeenCalled();
+  });
+});
+
+// ── Takedown follow-up (FX-C) ───────────────────────────────────────────────
+
+describe("approving a customer post StoreMink blocked (FX-C)", () => {
+  beforeEach(() => {
+    vi.mocked(getManagerIdentity).mockResolvedValue({
+      uid: "user-1",
+      email: "admin@example.com",
+    });
+  });
+
+  it("★ tells the author an unblocked post is live", async () => {
+    dbHolder.current = makeDbMock({
+      returning: [
+        { title: "T", slug: "t", submitted_by: "cust-1", blocked_at: null },
+      ],
+    });
+    expect((await approveCustomerBlog("b1")).success).toBe(true);
+    expect(emitted("blog.approved")).toBe(true);
+    expect(vi.mocked(emitEvent).mock.calls.at(-1)?.[0]).toMatchObject({
+      type: "blog.approved",
+      customerId: "cust-1",
+      payload: { title: "T", url: "/blogs/t" },
+    });
+  });
+
+  it("★ approves a told-blocked post but never tells the author it is live", async () => {
+    vi.mocked(blockedItemIds).mockResolvedValue(new Map([["b1", "block-1"]]));
+    dbHolder.current = makeDbMock({
+      returning: [
+        {
+          title: "T",
+          slug: "t",
+          submitted_by: "cust-1",
+          blocked_at: BLOCKED_AT,
+        },
+      ],
+    });
+    const res = await approveCustomerBlog("b1");
+    // The approval itself still goes through (design 3.1).
+    expect(res.success).toBe(true);
+    expect(dbHolder.current.calls.set[0].status).toBe("published");
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("★ a block kept from the store (D21) tells the author nothing either", async () => {
+    // The told-only set does not name the post; the row's own flag does.
+    vi.mocked(blockedItemIds).mockResolvedValue(new Map());
+    dbHolder.current = makeDbMock({
+      returning: [
+        {
+          title: "T",
+          slug: "t",
+          submitted_by: "cust-1",
+          blocked_at: BLOCKED_AT,
+        },
+      ],
+    });
+    expect((await approveCustomerBlog("b1")).success).toBe(true);
+    expect(emitEvent).not.toHaveBeenCalled();
+    expect(blockedItemIds).not.toHaveBeenCalled();
   });
 });

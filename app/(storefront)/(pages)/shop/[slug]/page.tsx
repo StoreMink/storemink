@@ -27,6 +27,8 @@ import ProductDetailClient, {
 } from "./product-detail-client";
 import { sanitizeBlogContent } from "@/lib/sanitize";
 import type { ProductTemplate } from "@/lib/themes/templates";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
 
 /** A template's rich-text block is stored HTML (a theme's or the merchant's),
  *  so it is sanitised here, at the render boundary, before it reaches the
@@ -45,6 +47,14 @@ import type { RelatedProduct } from "./related-products";
 import type { ProductReview } from "./reviews-section";
 import "../shop.css";
 
+/** True for an address that names a real picture: not empty, and not the
+ *  placeholder the takedown page swap puts where a blocked image was. The
+ *  JSON-LD image list and the share image leave the placeholder out, so a
+ *  search engine or a chat preview is never handed "Image not available". */
+function isShownImage(url: string | null | undefined): url is string {
+  return !!url && !url.includes(PLACEHOLDER_URL_PATH);
+}
+
 // The storefront layout renders dynamically so saved catalogue changes appear
 // on the next request; there is no persistent product-page cache.
 
@@ -58,7 +68,7 @@ type PageProps = {
 const getProduct = cache(
   async (slug: string, storeId: string): Promise<DetailProduct | null> => {
     try {
-      return await withAnon(async (db) => {
+      const product = await withAnon(async (db) => {
         const rows = await db
           .select({
             id: products.id,
@@ -142,6 +152,12 @@ const getProduct = cache(
           variants,
         };
       });
+      // The takedown page swap runs AFTER the read scope has closed: it may
+      // open its own service scope to reload the blocked set, and a scope must
+      // never open inside another's callback. A blocked product itself never
+      // reaches here (RLS hides it from the anonymous read); this swaps a
+      // blocked picture on a product that is still shown.
+      return product ? await maskBlockedMedia(product) : null;
     } catch (err) {
       console.error("getProduct:", err instanceof Error ? err.message : err);
       return null;
@@ -161,7 +177,7 @@ async function getRelated(
 ): Promise<RelatedProduct[]> {
   if (!categoryId) return [];
   try {
-    return await withAnon(async (db) => {
+    const related = await withAnon(async (db) => {
       // Category name flattened via the join for the card eyebrow.
       const rows = await db
         .select({
@@ -221,6 +237,7 @@ async function getRelated(
       }
       return rows.map((r) => ({ ...r, variants: byProduct.get(r.id) ?? [] }));
     });
+    return await maskBlockedMedia(related);
   } catch (err) {
     console.error("getRelated:", err instanceof Error ? err.message : err);
     return [];
@@ -233,7 +250,7 @@ async function getReviews(
   storeId: string,
 ): Promise<ProductReview[]> {
   try {
-    return await withAnon((db) =>
+    const reviews = await withAnon((db) =>
       db
         .select({
           id: productReviews.id,
@@ -252,6 +269,9 @@ async function getReviews(
         )
         .orderBy(desc(productReviews.createdAt)),
     );
+    // A blocked review is hidden by RLS; a shown one may still quote a
+    // blocked picture's address in its text.
+    return await maskBlockedMedia(reviews);
   } catch (err) {
     console.error("getReviews:", err instanceof Error ? err.message : err);
     return [];
@@ -275,7 +295,11 @@ export async function generateMetadata({
     product.description ||
     `Shop ${product.name} at ${brand.name}.`;
 
-  const ogImageUrl = getOgImageUrl(product.image_url);
+  // A taken-down main photo arrives as the placeholder path; the share card
+  // then carries no image rather than "Image not available".
+  const ogImageUrl = getOgImageUrl(
+    isShownImage(product.image_url) ? product.image_url : null,
+  );
 
   return {
     title,
@@ -402,7 +426,7 @@ export default async function ProductDetailPage({
     slug: product.slug,
     description: product.seo_description || product.description,
     category: product.category?.name ?? null,
-    images: [product.image_url, ...(product.images ?? [])],
+    images: [product.image_url, ...(product.images ?? [])].filter(isShownImage),
     price: { low: Math.min(...prices), high: Math.max(...prices) },
     inStock,
     rating: ratingCount ? { value: ratingValue, count: ratingCount } : null,
@@ -422,6 +446,12 @@ export default async function ProductDetailPage({
     { name: product.name, path: `/shop/${product.slug}` },
   ]);
 
+  // The product template comes partly from the installed theme's preset,
+  // which no masked reader returns, so its stored HTML is swapped here.
+  const template = await maskBlockedMedia(
+    sanitizedProductTemplate(layout.templates.product),
+  );
+
   return (
     <>
       <JsonLd data={[productLd, breadcrumbLd]} />
@@ -430,7 +460,7 @@ export default async function ProductDetailPage({
         related={related}
         reviews={reviews}
         grocery={layout.productDetail === "grocery"}
-        template={sanitizedProductTemplate(layout.templates.product)}
+        template={template}
         storeLowStockThreshold={lowStockThreshold as number}
         offerMarker={offerMarker}
         requestedVariantId={requestedVariant}

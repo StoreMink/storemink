@@ -1,10 +1,14 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Check } from "lucide-react";
 import { PLAN_IDS, PLAN_META, type Plan } from "@/lib/plans";
 import {
   chargeFor,
+  firstRenewalPaise,
   formatInr,
+  listPricePaise,
+  signupAmount,
   yearlySavingLabel,
   type BillingPeriod,
   type SignupPlanQuote,
@@ -13,6 +17,11 @@ import {
   autopayRailFor,
   type MandateMethod,
 } from "@/lib/billing/mandate-types";
+import {
+  pricingPriceSuffix,
+  signupPayNowLine,
+  signupYearlyLine,
+} from "@/lib/billing/tax-copy";
 import { PLANS } from "../pricing-content";
 
 /** How many of a plan's feature lines a signup card shows. The full list
@@ -30,35 +39,58 @@ export function periodWord(period: BillingPeriod): string {
  * Presentational only. Every price comes from the live quote the wizard
  * fetched (never `PLAN_META`'s compiled defaults), and nothing here charges
  * anyone: the wizard re-reads the price and the server computes the amount.
+ *
+ * GST (design 7.2) comes from the quote's live terms through the one copy
+ * module (lib/billing/tax-copy.ts): the card price stays the list price, with
+ * "plus GST" beside it while GST is added on top; the yearly line and the
+ * pay-now line quote what the invoice builder works out. An answer with no
+ * terms (an older API) shows list prices and promises the exact amount before
+ * payment.
  */
 export function PlanPicker({
   quote,
+  quotedAt,
   plan,
   period,
   mandateMethod,
   disabled,
+  outsideIndia = false,
+  stateStep,
   onPlanChange,
   onPeriodChange,
   onMandateMethodChange,
 }: {
   quote: SignupPlanQuote;
+  /** When the quote was read (ms), for the first renewal's GST terms. */
+  quotedAt: number;
   plan: Plan;
   period: BillingPeriod;
   mandateMethod: MandateMethod;
   disabled: boolean;
+  /**
+   * A business outside India while GST is charged now: the paid plans stay
+   * visible with their prices but cannot be chosen (design 7.2).
+   */
+  outsideIndia?: boolean;
+  /** The state and GSTIN fields, shown above the pay-now line. */
+  stateStep?: ReactNode;
   onPlanChange: (plan: Plan) => void;
   onPeriodChange: (period: BillingPeriod) => void;
   onMandateMethodChange: (method: MandateMethod) => void;
 }) {
   const saving = yearlySavingLabel(quote.plans);
-  const paidSelected = quote.paidCheckout && plan !== "free";
-  // ⚠ An ESTIMATE: it cannot see tax, so near the ₹15,000 line it can read a
-  // shade low. The server decides the rail authoritatively when payment
-  // starts; this only chooses which explanation to show.
+  const terms = quote.tax;
+  const paidSelected = quote.paidCheckout && !outsideIndia && plan !== "free";
+  const suffix = terms ? pricingPriceSuffix(terms) : null;
+  // ⚠ An ESTIMATE: the first renewal's total under the GST terms in force when
+  // it is collected (`termsLater`), as enrolment decides the rail. The server
+  // decides authoritatively when payment starts; this only chooses which
+  // explanation to show.
   const autopay =
     paidSelected &&
-    autopayRailFor(Math.round(chargeFor(quote.plans[plan], period) * 100)) !==
-      null;
+    autopayRailFor(
+      firstRenewalPaise(quote.plans[plan], period, terms, new Date(quotedAt)),
+    ) !== null;
 
   return (
     <div className="sgn-plan-picker">
@@ -91,8 +123,10 @@ export function PlanPicker({
           const base =
             period === "yearly" ? price.baseYearlyInr : price.baseMonthlyInr;
           // Paying needs the platform's own gateway. Without it a paid card is
-          // shown for comparison and cannot be chosen here.
-          const locked = id !== "free" && !quote.paidCheckout;
+          // shown for comparison and cannot be chosen here. A business outside
+          // India while GST is charged sees the prices but cannot choose one.
+          const noCheckout = id !== "free" && !quote.paidCheckout;
+          const locked = noCheckout || (id !== "free" && outsideIndia);
           const selected = plan === id;
           return (
             <label
@@ -110,7 +144,9 @@ export function PlanPicker({
                 value={id}
                 checked={selected}
                 disabled={locked}
-                aria-label={`${PLAN_META[id].name}, ${formatInr(amount)} a ${periodWord(period)}`}
+                aria-label={`${PLAN_META[id].name}, ${formatInr(amount)} a ${periodWord(period)}${
+                  suffix && amount > 0 ? ` ${suffix}` : ""
+                }`}
                 onChange={() => onPlanChange(id)}
               />
               <span className="sgn-plan-head">
@@ -127,14 +163,15 @@ export function PlanPicker({
                 )}
                 <strong>{formatInr(amount)}</strong>
                 <span>/{periodWord(period)}</span>
+                {suffix && amount > 0 && <span>{suffix}</span>}
               </span>
               <span className="sgn-plan-billing">
-                {locked
+                {noCheckout
                   ? "Choose this from your dashboard after signup"
                   : amount === 0
                     ? "No card needed"
                     : period === "yearly"
-                      ? `${formatInr(Math.round(amount / 12))} a month, billed yearly`
+                      ? signupYearlyLine(terms, listPricePaise(price, period))
                       : "Billed monthly"}
               </span>
               {/* Spans, not ul/li: a label may hold phrasing content only. */}
@@ -195,8 +232,13 @@ export function PlanPicker({
               renewal we email you an invoice to pay. Nothing is auto-debited.
             </p>
           )}
-          <p className="sgn-plan-rail-quiet">
-            You&apos;ll see the exact amount, including any GST, before you pay.
+          {stateStep}
+          <p className={terms ? undefined : "sgn-plan-rail-quiet"}>
+            {signupPayNowLine(
+              terms,
+              period,
+              signupAmount(quote.plans[plan], period, terms),
+            )}
           </p>
         </div>
       )}

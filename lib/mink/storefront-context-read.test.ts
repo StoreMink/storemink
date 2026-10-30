@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { withService } from "@/lib/db/client";
+import {
+  buildBlockedMediaSet,
+  maskBlockedMedia,
+  type BlockedMediaSet,
+} from "@/lib/moderation/blocked-objects";
+import { blockedItemIds } from "@/lib/moderation/merchant";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
 import type { MinkActorContext } from "./types";
 import {
   readMinkStorefrontDesignContext,
@@ -9,11 +16,32 @@ import {
   readMinkStorefrontSectionContext,
 } from "./storefront-context-read";
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+const { execute, blocks } = vi.hoisted(() => ({
+  execute: vi.fn(),
+  blocks: {
+    marks: new Map<string, string>(),
+    set: null as BlockedMediaSet | null,
+  },
+}));
 
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((run: (db: unknown) => unknown) => run({ execute })),
 }));
+vi.mock("@/lib/moderation/merchant", () => ({
+  blockedItemIds: vi.fn(async () => blocks.marks),
+}));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  const current = () => blocks.set ?? actual.emptyBlockedMediaSet(1, "b");
+  return {
+    ...actual,
+    blockedMedia: vi.fn(async () => current()),
+    maskBlockedMedia: vi.fn(async (value: unknown) =>
+      actual.maskBlockedMediaWith(value, current()),
+    ),
+  };
+});
 vi.mock("@/lib/themes/runtime-registry", () => ({
   resolveInstalledThemeDefinitionWithDb: vi.fn(
     async (
@@ -59,6 +87,7 @@ const CUSTOM_SECTION = {
 
 function pageRow(overrides: Record<string, unknown> = {}) {
   return {
+    id: "11111111-1111-4111-8111-111111111111",
     slug: "",
     title: "Home",
     status: "published",
@@ -74,7 +103,11 @@ function pageRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Phase 7A storefront context reads", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    blocks.marks = new Map();
+    blocks.set = null;
+  });
 
   it("lists bounded current-store pages and maps the homepage sentinel to home", async () => {
     execute.mockResolvedValue({
@@ -277,5 +310,123 @@ describe("Phase 7A storefront context reads", () => {
       expect(compiled.params).toContain("store-1");
       expect(compiled.sql).not.toContain("store-1");
     }
+  });
+});
+
+describe("takedown: blocked pages and pictures in the Builder reads", () => {
+  const TOLD = "22222222-2222-4222-8222-222222222222";
+  const UNTOLD = "33333333-3333-4333-8333-333333333333";
+  const BLOCKED_PHOTO =
+    "https://storage.googleapis.com/b/stores/store-1/media/x.webp";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    blocks.marks = new Map([[TOLD, "44444444-4444-4444-8444-444444444444"]]);
+    blocks.set = buildBlockedMediaSet(
+      [
+        {
+          id: "55555555-5555-4555-8555-555555555555",
+          objectPath: "stores/store-1/media/x.webp",
+          fileSource: "bucket",
+          storeId: "store-1",
+          objectMd5: null,
+          tellStore: false,
+        },
+      ],
+      { bucket: "b", loadedAt: 1 },
+    );
+  });
+
+  function listRow(id: string, title: string, slug: string) {
+    return {
+      id,
+      slug,
+      title,
+      status: "published",
+      draft_section_count: 1,
+      published_section_count: 1,
+      has_unpublished_changes: false,
+      published_at: "2026-09-01T10:00:00.000000+00:00",
+      updated_at: "2026-09-04T10:20:30.123456+00:00",
+    };
+  }
+
+  it("marks a page StoreMink blocked and told the store about, by its title", async () => {
+    execute.mockResolvedValue({
+      rows: [
+        listRow(TOLD, "Size guide", "size-guide"),
+        listRow(UNTOLD, "Our story", "our-story"),
+      ],
+    });
+    const output = await readMinkStorefrontPages(ACTOR);
+    expect(output.pages[0]).toMatchObject({
+      pageSlug: "size-guide",
+      blockedByStoreMink: true,
+      storeMinkNotice:
+        "StoreMink has blocked Size guide. It stays hidden from your store until StoreMink lifts the block. You can read why in Settings, Notices from StoreMink.",
+    });
+    // A page with no told block (kept from the store, or not blocked at all)
+    // carries no mark and no word about one.
+    expect(output.pages[1]).not.toHaveProperty("blockedByStoreMink");
+    expect(JSON.stringify(output.pages[1])).not.toMatch(/block/i);
+    expect(vi.mocked(blockedItemIds)).toHaveBeenCalledWith("store-1", "page");
+    // The page ids are read for the lookup but never returned.
+    expect(JSON.stringify(output)).not.toContain(UNTOLD);
+    const compiled = new PgDialect().sqlToQuery(execute.mock.calls[0][0]);
+    expect(compiled.sql).toMatch(/select\s+id,/);
+  });
+
+  it("looks the marks up after the page read's scope has closed", async () => {
+    execute.mockResolvedValue({ rows: [listRow(TOLD, "Size guide", "x")] });
+    await readMinkStorefrontPages(ACTOR);
+    expect(
+      vi.mocked(blockedItemIds).mock.invocationCallOrder[0],
+    ).toBeGreaterThan(vi.mocked(withService).mock.invocationCallOrder[0]);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks the page context of a told block", async () => {
+    execute.mockResolvedValue({
+      rows: [pageRow({ id: TOLD, slug: "size-guide", title: "Size guide" })],
+    });
+    const output = await readMinkStorefrontPageContext(ACTOR, {
+      pageSlug: "size-guide",
+    });
+    expect(output.page).toMatchObject({
+      blockedByStoreMink: true,
+      storeMinkNotice: expect.stringContaining("Size guide"),
+    });
+    execute.mockResolvedValue({ rows: [pageRow({ id: UNTOLD })] });
+    const untold = await readMinkStorefrontPageContext(ACTOR, {
+      pageSlug: "home",
+    });
+    expect(untold.page).not.toHaveProperty("blockedByStoreMink");
+    expect(untold.page).not.toHaveProperty("storeMinkNotice");
+  });
+
+  it("hands a section's blocked picture over only as the placeholder", async () => {
+    const section = {
+      ...CUSTOM_SECTION,
+      config: {
+        ...CUSTOM_SECTION.config,
+        html: `<img src="${BLOCKED_PHOTO}" alt="">`,
+      },
+    };
+    execute.mockResolvedValue({ rows: [pageRow({ sections: [section] })] });
+    const output = await readMinkStorefrontSectionContext(ACTOR, {
+      pageSlug: "home",
+      sectionId: "section-1",
+      codeField: "html",
+    });
+    const text = JSON.stringify(output);
+    expect(text).not.toContain(BLOCKED_PHOTO);
+    expect(text).toContain(PLACEHOLDER_URL_PATH);
+    // The digest still describes what is stored, so a proposal's lock holds.
+    const stored = await readMinkStorefrontSectionContext(ACTOR, {
+      pageSlug: "home",
+      sectionId: "section-1",
+    });
+    expect(stored.section.sectionDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(vi.mocked(maskBlockedMedia)).toHaveBeenCalled();
   });
 });

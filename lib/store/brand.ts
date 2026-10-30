@@ -1,5 +1,7 @@
+import "server-only";
 import { getCurrentStore, lookupStoreById } from "@/lib/store/resolve";
 import { PLATFORM_EMAIL_DOMAIN, senderDomainFor } from "@/lib/email/sender";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 
 // A store's public brand + footer identity. Stored under stores.settings.brand
 // (jsonb) and edited from the dashboard (/dashboard/branding). Everything falls
@@ -91,19 +93,54 @@ export function brandFromSettings(
   };
 }
 
-// The brand for the CURRENT request's store (resolved from host).
+/**
+ * ★ A BLOCKED LOGO LEAVES THE LOGO SLOT EMPTY (takedown, design 5.6). The two
+ * readers below mask the brand like every storefront read, and a logo the
+ * mask changed becomes null rather than the placeholder's address: every logo
+ * slot already has a designed no-logo state (the header, footer, password and
+ * in-progress pages print the store's name, an email prints the name in
+ * serif), while the placeholder is a relative address an email client cannot
+ * load and a favicon or a JSON-LD logo should not carry.
+ */
+function withoutBlockedLogo(brand: StoreBrand, masked: StoreBrand): StoreBrand {
+  return masked.logoUrl === brand.logoUrl
+    ? masked
+    : { ...masked, logoUrl: null };
+}
+
+// The brand for the CURRENT request's store (resolved from host), with a
+// blocked logo removed (above). Never inside a database scope's callback:
+// the mask may reload the blocked set through its own scope.
 export async function getStoreBrand(): Promise<StoreBrand> {
+  const brand = await getStoreBrandForEditing();
+  return withoutBlockedLogo(brand, await maskBlockedMedia(brand));
+}
+
+// The brand for a specific store by ID, masked like getStoreBrand: its
+// callers are emails and receipts.
+export async function getStoreBrandById(id: string): Promise<StoreBrand> {
+  const store = await lookupStoreById(id);
+  const domain = store ? senderDomainFor(store) : PLATFORM_EMAIL_DOMAIN;
+  const brand = brandFromSettings(
+    store?.settings,
+    store?.name || "Store",
+    domain,
+  );
+  return withoutBlockedLogo(brand, await maskBlockedMedia(brand));
+}
+
+/**
+ * The CURRENT request's brand exactly as saved, for an EDITOR that writes it
+ * back. Not masked, on purpose: the Website Builder saves `logoUrl` with every
+ * brand change, so reading the masked brand there would quietly erase a
+ * blocked logo from the store's settings, and lifting the block could not
+ * bring it back. Never render this to a shopper or put it in an email.
+ */
+export async function getStoreBrandForEditing(): Promise<StoreBrand> {
   const store = await getCurrentStore();
   // `domain` feeds the email From address, so it MUST be a Resend-verified
   // sending domain. A plain {slug}.storemink.com subdomain is never verified in
   // Resend, so senderDomainFor() falls back to the shared platform domain until
   // the store verifies its own custom domain — otherwise every send is rejected.
   return brandFromSettings(store.settings, store.name, senderDomainFor(store));
-}
-
-// The brand for a specific store by ID.
-export async function getStoreBrandById(id: string): Promise<StoreBrand> {
-  const store = await lookupStoreById(id);
-  const domain = store ? senderDomainFor(store) : PLATFORM_EMAIL_DOMAIN;
-  return brandFromSettings(store?.settings, store?.name || "Store", domain);
 }

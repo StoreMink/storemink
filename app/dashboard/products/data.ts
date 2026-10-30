@@ -3,7 +3,8 @@ import "server-only";
 import { and, asc, count, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { categories, products, stores, taxClasses } from "@/drizzle/schema";
-import { getActingStoreId } from "@/app/dashboard/lib/access";
+import { getActingStoreId, getViewerAccess } from "@/app/dashboard/lib/access";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 import { resolveStoreSettings } from "@/lib/settings/registry";
 import { PRODUCT_COLUMNS, VARIANT_COLUMNS } from "./columns";
 import { productVariants } from "@/drizzle/schema";
@@ -114,71 +115,9 @@ export async function getProductEditData(id: string): Promise<{
     "grossMargin",
   );
 
+  let data: Awaited<ReturnType<typeof readProductEditData>>;
   try {
-    return await withService(async (db) => {
-      const productRows = await db
-        .select({
-          ...PRODUCT_COLUMNS,
-          cat_id: categories.id,
-          cat_name: categories.name,
-          cat_slug: categories.slug,
-        })
-        .from(products)
-        .leftJoin(categories, eq(products.categoryId, categories.id))
-        .where(and(eq(products.id, id), eq(products.storeId, storeId)))
-        .limit(1);
-      const variants = await db
-        .select(VARIANT_COLUMNS)
-        .from(productVariants)
-        .where(eq(productVariants.productId, id))
-        .orderBy(asc(productVariants.sortOrder));
-      const categoryRows = await db
-        .select({
-          id: categories.id,
-          name: categories.name,
-          slug: categories.slug,
-          status: categories.status,
-        })
-        .from(categories)
-        .where(eq(categories.storeId, storeId))
-        .orderBy(asc(categories.sortOrder), asc(categories.name));
-      const taxClassRows = await db
-        .select({
-          id: taxClasses.id,
-          name: taxClasses.name,
-          rate: taxClasses.rate,
-        })
-        .from(taxClasses)
-        .where(eq(taxClasses.storeId, storeId))
-        .orderBy(asc(taxClasses.sortOrder), asc(taxClasses.name));
-
-      const row = productRows[0];
-      if (!row) {
-        // Don't swallow the reason: a null here renders a 404. If the row
-        // exists (it usually does), the culprit is almost always a store_id
-        // mismatch — this log makes it obvious.
-        console.error(
-          `getProductEditData: no product for id=${id} store=${storeId} (0 rows matched)`,
-        );
-        return null;
-      }
-
-      const { cat_id, cat_name, cat_slug, ...productFields } = row;
-      const product = {
-        ...productFields,
-        category: cat_id
-          ? { id: cat_id, name: cat_name!, slug: cat_slug! }
-          : null,
-        variants,
-      } as unknown as Product;
-
-      return {
-        product,
-        categories: categoryRows as CategoryOption[],
-        taxClasses: taxClassRows as TaxClassOption[],
-        canUseGrossMargin,
-      };
-    });
+    data = await readProductEditData(id, storeId, canUseGrossMargin);
   } catch (err) {
     console.error(
       "getProductEditData:",
@@ -186,4 +125,100 @@ export async function getProductEditData(id: string): Promise<{
     );
     return null;
   }
+  if (!data) return null;
+  // StoreMink's block on this product (takedown design 7.3), read in its own
+  // scope once the editor's has closed (never inside another scope's
+  // callback). It never throws, and a failed read marks nothing; a block kept
+  // from the store is not in it (D21).
+  const blocked = await blockedItemIds(storeId, "product").catch(
+    () => new Map<string, string>(),
+  );
+  const blockId = blocked.get(data.product.id) ?? null;
+  if (blockId) {
+    // "See why" opens Settings, Notices from StoreMink, which needs Settings
+    // view. The viewer is already resolved for this request (cached).
+    const access = await getViewerAccess();
+    data.product.blockedByStoreMink = {
+      blockId,
+      canSeeNotices: access?.can("settings", "view") ?? false,
+    };
+  }
+  return data;
+}
+
+/** The editor's one scope: the product, its variants and the option lists. */
+async function readProductEditData(
+  id: string,
+  storeId: string,
+  canUseGrossMargin: boolean,
+): Promise<{
+  product: Product;
+  categories: CategoryOption[];
+  taxClasses: TaxClassOption[];
+  canUseGrossMargin: boolean;
+} | null> {
+  return await withService(async (db) => {
+    const productRows = await db
+      .select({
+        ...PRODUCT_COLUMNS,
+        cat_id: categories.id,
+        cat_name: categories.name,
+        cat_slug: categories.slug,
+      })
+      .from(products)
+      .leftJoin(categories, eq(products.categoryId, categories.id))
+      .where(and(eq(products.id, id), eq(products.storeId, storeId)))
+      .limit(1);
+    const variants = await db
+      .select(VARIANT_COLUMNS)
+      .from(productVariants)
+      .where(eq(productVariants.productId, id))
+      .orderBy(asc(productVariants.sortOrder));
+    const categoryRows = await db
+      .select({
+        id: categories.id,
+        name: categories.name,
+        slug: categories.slug,
+        status: categories.status,
+      })
+      .from(categories)
+      .where(eq(categories.storeId, storeId))
+      .orderBy(asc(categories.sortOrder), asc(categories.name));
+    const taxClassRows = await db
+      .select({
+        id: taxClasses.id,
+        name: taxClasses.name,
+        rate: taxClasses.rate,
+      })
+      .from(taxClasses)
+      .where(eq(taxClasses.storeId, storeId))
+      .orderBy(asc(taxClasses.sortOrder), asc(taxClasses.name));
+
+    const row = productRows[0];
+    if (!row) {
+      // Don't swallow the reason: a null here renders a 404. If the row
+      // exists (it usually does), the culprit is almost always a store_id
+      // mismatch — this log makes it obvious.
+      console.error(
+        `getProductEditData: no product for id=${id} store=${storeId} (0 rows matched)`,
+      );
+      return null;
+    }
+
+    const { cat_id, cat_name, cat_slug, ...productFields } = row;
+    const product = {
+      ...productFields,
+      category: cat_id
+        ? { id: cat_id, name: cat_name!, slug: cat_slug! }
+        : null,
+      variants,
+    } as unknown as Product;
+
+    return {
+      product,
+      categories: categoryRows as CategoryOption[],
+      taxClasses: taxClassRows as TaxClassOption[],
+      canUseGrossMargin,
+    };
+  });
 }

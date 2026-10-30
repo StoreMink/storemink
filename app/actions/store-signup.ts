@@ -420,7 +420,13 @@ export async function createStore(
   // (never a secret — convention #9). Only the country is certain at signup;
   // the address arrives later from Taxes & invoices and the go-live checklist
   // refuses to open the store without it.
-  const countryInput = (input.country || "").trim().slice(0, 2).toUpperCase();
+  //
+  // ★ The code is read WHOLE, never cut to 2 characters: the list's "Other" is
+  // `OTHER`, and cutting it to "OT" turned every store outside the listed
+  // countries into an Indian one, which decides GST's place of supply (GST
+  // design 5.7). Anything not on the list is still the home country.
+  const countryInput =
+    typeof input.country === "string" ? input.country.trim().toUpperCase() : "";
   const country = COUNTRIES.some((c) => c.code === countryInput)
     ? countryInput
     : DEFAULT_COUNTRY;

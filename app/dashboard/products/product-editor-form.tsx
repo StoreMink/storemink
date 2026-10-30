@@ -3,6 +3,7 @@
 import {
   forwardRef,
   useEffect,
+  useId,
   useImperativeHandle,
   useRef,
   useState,
@@ -40,6 +41,7 @@ import { ImageSourceMenu } from "@/components/ui/image-source-menu";
 import { MediaLibraryPicker } from "../components/media-library-picker";
 import { NumberField } from "@/components/ui/number-field";
 import { slugify } from "@/lib/slug";
+import { ITEM } from "@/lib/moderation/copy";
 import {
   MINK_PRODUCT_PREFILL_PARAM,
   MINK_PRODUCT_PREFILL_VALUE,
@@ -514,6 +516,14 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
     const [errorTab, setErrorTab] = useState<TabId | null>(null);
     const descriptionRef = useRef<HTMLTextAreaElement>(null);
     const isEditing = !!product;
+    // StoreMink's block, set by the editor's read only for a block the store
+    // was told about (takedown design 7.3; D21: an untold block never reaches
+    // here and shows nothing). While it stands the Status select is disabled
+    // with the reason under it, as the list's Publish and Unpublish are; the
+    // product keeps the status it was saved with (takedown fix pass).
+    const blockedByStoreMink = !!product?.blockedByStoreMink;
+    const statusId = useId();
+    const statusReasonId = `${statusId}-blocked`;
 
     // Grow the description textarea to fit its content.
     const autosize = (el: HTMLTextAreaElement | null) => {
@@ -1666,10 +1676,17 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className={labelClass}>Status</label>
+                    <label className={labelClass} htmlFor={statusId}>
+                      Status
+                    </label>
                     <select
-                      className={fieldClass}
+                      id={statusId}
+                      className={`${fieldClass} disabled:cursor-not-allowed disabled:bg-[#f3f4f6]`}
                       value={form.status}
+                      disabled={blockedByStoreMink}
+                      aria-describedby={
+                        blockedByStoreMink ? statusReasonId : undefined
+                      }
                       onChange={(e) =>
                         set("status", e.target.value as "draft" | "published")
                       }
@@ -1679,6 +1696,14 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                       </option>
                       <option value="published">Published - live</option>
                     </select>
+                    {blockedByStoreMink ? (
+                      <p
+                        id={statusReasonId}
+                        className="mt-1 text-[12px] font-medium text-[#4b5563]"
+                      >
+                        {ITEM.blocked}
+                      </p>
+                    ) : null}
                   </div>
                   <div>
                     <label className={labelClass}>Sort order</label>

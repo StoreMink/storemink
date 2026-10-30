@@ -23,6 +23,7 @@ import { ProductsManagementView } from "./products-management-view";
 import { RealtimeRefresher } from "../components/realtime-refresher";
 import { storeHasAnalyticsFeature } from "@/lib/analytics/store-entitlement";
 import { getStorePlanContext } from "@/lib/plans/entitlements";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 
 export type ProductFilter = "all" | "published" | "drafts" | "featured";
 const PRODUCT_FILTERS: ProductFilter[] = [
@@ -111,6 +112,21 @@ export interface Product {
   // Joined
   category: ProductCategoryRef | null;
   variants: ProductVariant[];
+  /**
+   * Not a column. Set only by the editor's read (`getProductEditData`) when
+   * StoreMink blocked this product and told the store (takedown design 7.3);
+   * absent or null otherwise, and always for a block kept from the store
+   * (D21).
+   */
+  blockedByStoreMink?: ProductStoreMinkBlock | null;
+}
+
+/** StoreMink's block on a product, as the editor shows it (design 7.3). */
+export interface ProductStoreMinkBlock {
+  /** The notice "See why" opens. */
+  blockId: string;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices: boolean;
 }
 
 export type ProductListItem = Omit<Product, "variants"> & {
@@ -179,6 +195,7 @@ export default async function ProductsPage({
   let counts: ProductCounts;
   let categoryOptions: CategoryOption[];
   let missingCostCount = 0;
+  let blockedProducts = new Map<string, string>();
   try {
     const result = await withService(async (db) => {
       const rows = await db
@@ -299,6 +316,17 @@ export default async function ProductsPage({
     }
 
     categoryOptions = result.categoryRows as CategoryOption[];
+
+    // The products StoreMink blocked and told the store about (takedown
+    // design 7.3), each with the notice "See why" opens. Read once, in its
+    // own scope after the list's scope has closed (never inside another
+    // scope's callback); it never throws, and a failed read marks nothing. A
+    // block kept from the store is not in it (D21).
+    if (list.length > 0) {
+      blockedProducts = await blockedItemIds(storeId, "product").catch(
+        () => new Map<string, string>(),
+      );
+    }
   } catch (err) {
     console.error("ProductsPage load error:", err);
     return (
@@ -338,6 +366,8 @@ export default async function ProductsPage({
             counts.all < planContext.limits.maxProducts)
         }
         productLimit={planContext.limits.maxProducts}
+        blockedByStoreMink={Object.fromEntries(blockedProducts)}
+        canSeeNotices={access.can("settings", "view")}
       />
     </>
   );

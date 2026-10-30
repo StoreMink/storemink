@@ -17,7 +17,7 @@ export type UpgradePlan = "basic" | "pro";
 
 export interface ReportLock {
   plan: UpgradePlan;
-  /** Whether this viewer may open Plan & billing; staff without it are told to ask. */
+  /** Whether this viewer may open Plans & Billing; staff without it are told to ask. */
   canUpgrade: boolean;
 }
 

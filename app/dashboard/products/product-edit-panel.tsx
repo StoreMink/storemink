@@ -3,8 +3,10 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ITEM, itemBlockedBanner } from "@/lib/moderation/copy";
+import { STORE_NOTICES_HREF } from "@/app/dashboard/components/unread-counts-context";
 import {
   ProductEditorForm,
   type ProductEditorFormHandle,
@@ -37,6 +39,9 @@ export function ProductEditorPanel({
   const [isPending, setIsPending] = useState(false);
   const isEditing = product !== null;
   const published = product?.status === "published";
+  // StoreMink's block, set by the editor's read only for a block the store
+  // was told about (takedown design 7.3; D21: an untold block shows nothing).
+  const block = isEditing ? (product.blockedByStoreMink ?? null) : null;
 
   return (
     <div
@@ -61,7 +66,13 @@ export function ProductEditorPanel({
             >
               {product?.name || "New product"}
             </h1>
-            {isEditing && (
+            {isEditing && block ? (
+              // The product keeps the status it was saved with; the block
+              // hides it whatever that says.
+              <span className="dash-badge dash-badge-storemink shrink-0">
+                {ITEM.blocked}
+              </span>
+            ) : isEditing ? (
               <span
                 className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
                 style={
@@ -78,7 +89,7 @@ export function ProductEditorPanel({
               >
                 {published ? "Published" : "Draft"}
               </span>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -101,7 +112,7 @@ export function ProductEditorPanel({
                 ? "Save changes"
                 : "Create product"}
           </Button>
-          {published && product && (
+          {published && product && !block && (
             <a
               href={`/shop/${product.slug}`}
               target="_blank"
@@ -118,6 +129,30 @@ export function ProductEditorPanel({
       {/* Form stays centred at a readable max width; the header above spans
           the full content area. */}
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        {block ? (
+          <div
+            role="status"
+            data-testid="product-blocked-banner"
+            className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--dash-radius)] border border-[var(--dash-red)]/30 bg-[var(--dash-red-soft)] px-4 py-3"
+          >
+            <ShieldAlert
+              className="h-5 w-5 shrink-0 text-[var(--dash-red)]"
+              aria-hidden="true"
+            />
+            <p className="min-w-0 flex-1 basis-56 text-[13px] text-[var(--dash-text)]">
+              <span className="font-semibold">{ITEM.blocked}.</span>{" "}
+              {itemBlockedBanner("product")}
+            </p>
+            {block.canSeeNotices ? (
+              <Link
+                href={`${STORE_NOTICES_HREF}/${block.blockId}`}
+                className="dash-btn dash-btn-ghost dash-btn-sm shrink-0 pointer-coarse:min-h-11"
+              >
+                {ITEM.seeWhy}
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
         <ProductEditorForm
           ref={formRef}
           hideActions

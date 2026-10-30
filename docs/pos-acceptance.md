@@ -278,6 +278,68 @@ After setting a price, open the public pricing page.
 change that would put "Extra location" on the page as a plan someone could try
 to sign up to.
 
+**PS-1.19 ★★: The amount with GST is shown before anything is paid**
+Pro monthly store with autopay active and its state saved under Plans & Billing
+→ Billing details; extra location ₹1,000/month; in the operator console
+(Billing & tax) GST is charged at 18% and added on top of prices; 12 days of a
+30-day cycle left. Open `/dashboard/locations`.
+**Expect:** the button reads **Add a location · ₹1,000/month plus GST**. Press
+it: the confirmation reads "Add a location for ₹1,000/month plus GST,
+₹1,180/month in all. You'll pay ₹472 now for the rest of this cycle (₹400 plus
+₹72 GST), then ₹1,180/month from your next renewal." and its button reads **Pay
+₹472**. Once a location is paid for, the line under the count reads "1 extra at
+₹1,000/month each, plus GST". With GST included in prices the button carries no
+"plus GST" and the confirmation says the payment includes its GST; with GST off
+no GST words appear on the card. **Watch for:** a figure on the card that the
+invoice does not carry. Every amount comes from the invoice the purchase would
+issue, under the same tax reading as the charge.
+
+**PS-1.20 ★★: The payment window asks for exactly the amount shown**
+With the PS-1.19 confirmation open, raise the extra-location price to
+₹1,500/month in the operator console (Plan pricing), then press **Pay ₹472**.
+**Expect:** no payment window opens. The confirmation shows "The amount to pay
+is now ₹708. Check it and press Pay again." and the card refreshes; pressing Pay
+again opens Razorpay for exactly ₹708, and the invoice issued for it carries
+₹600 plus ₹108 GST. **Watch for:** a payment window opening for an amount the
+screen never showed (the amount guard, `shouldOpenPayment`).
+
+**PS-1.21 ★: The renewal figure is that renewal's own, and absent when no
+renewal bills it**
+(a) Turn GST off, then schedule GST at 18% added on top (Billing & tax) to start
+after this store's next renewal is invoiced (renewals are invoiced 4 days before
+the cycle ends). Open the confirmation.
+**Expect:** "Add a location for ₹1,000/month. You'll pay ₹400 now for the rest
+of this cycle, then ₹1,000/month from your next renewal. GST at 18% is added to
+renewals invoiced from {date}." Move the start before that invoice date: the
+renewal figure becomes "then ₹1,180/month including GST from your next
+renewal." and the last sentence goes.
+(b) Cancel the plan (Plans & Billing → Cancel subscription) and open the
+confirmation again.
+**Expect:** it ends at "You'll pay ₹400 now for the rest of this cycle." with no
+renewal figure, because no renewal will bill the location. **Watch for:**
+today's price standing in for a renewal that will not happen, or a renewal
+quoted short of the GST it will carry.
+
+**PS-1.22 ★★: No state, or a business outside India, gets a sentence instead of
+Pay**
+(a) With GST charged, clear the store's state under Billing details and leave
+its GSTIN empty. Open the confirmation.
+**Expect:** in place of **Pay**, "Add your state before you pay. It goes on your
+GST invoice." with a state picker and **Save**; saving refreshes the card and
+the Pay button returns. Call `startBuyLocations` directly before saving: refused
+with "Add your state under Billing details before you pay. It goes on your GST
+invoice.", and no Razorpay order or payment attempt is created.
+(b) Set the billing country to one other than India.
+**Expect:** in place of **Pay**, "We can't take payments from businesses outside
+India yet. Write to support@storemink.com and we'll help." No payment window
+can open, and a direct `startBuyLocations` call is refused with the same words.
+
+**PS-1.23 ★: Only someone who manages billing sees Pay**
+Sign in as an admin whose role manages Locations but not Plans & Billing.
+**Expect:** the card shows "Only someone who manages billing can add or release
+paid locations." and no Add, Release, Pay or state picker. A direct
+`startBuyLocations` call is refused on the same permission.
+
 **PS-1.12 — Downgrading never deletes a shop**
 Store with 4 locations (2 paid) → downgrade to Basic.
 **Expect:** all 4 locations still exist and POS stops working. No new ones can

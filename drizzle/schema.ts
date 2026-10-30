@@ -228,6 +228,10 @@ export const aiCreditPurchases = pgTable(
     packId: text("pack_id").notNull(),
     credits: integer().notNull(),
     amountInr: integer("amount_inr").notNull(),
+    /** What the merchant is charged for the pack, GST included when prices
+     *  exclude GST (0266). `amountInr` stays the listed pack price; NULL on
+     *  purchases made before it existed, read as `amountInr * 100`. */
+    amountPaise: bigint("amount_paise", { mode: "number" }),
     rzpOrderId: text("rzp_order_id"),
     rzpPaymentId: text("rzp_payment_id"),
     invoiceId: uuid("invoice_id"),
@@ -255,6 +259,10 @@ export const aiCreditPurchases = pgTable(
     }).onDelete("cascade"),
     unique("ai_credit_purchases_rzp_order_id_key").on(table.rzpOrderId),
     check("ai_credit_purchases_amount_inr_check", sql`amount_inr > 0`),
+    check(
+      "ai_credit_purchases_amount_paise_check",
+      sql`(amount_paise IS NULL) OR (amount_paise > 0)`,
+    ),
     check("ai_credit_purchases_credits_check", sql`credits > 0`),
     check(
       "ai_credit_purchases_status_check",
@@ -300,6 +308,113 @@ export const billingAccounts = pgTable(
     check(
       "billing_accounts_state_code_numeric",
       sql`(state_code IS NULL) OR (state_code ~ '^[0-9]{2}$'::text)`,
+    ),
+    // A GSTIN that cannot be valid never reaches an invoice (0266; the
+    // isValidGstinFormat pattern, lib/billing/gst.ts).
+    check(
+      "billing_accounts_gstin_format",
+      sql`(gstin IS NULL) OR (gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$'::text)`,
+    ),
+    // ★ A registered recipient's place of supply is its State of registration
+    // (IGST Act s.12(2)(a)), so the state saved beside a GSTIN is the GSTIN's.
+    check(
+      "billing_accounts_gstin_matches_state",
+      sql`(gstin IS NULL) OR ((state_code IS NOT NULL) AND ("left"(gstin, 2) = state_code))`,
+    ),
+  ],
+);
+
+/** StoreMink's gapless credit-note series, one counter per Indian financial
+ *  year (migration 0264). Only billing_next_credit_note_no(text), called by the
+ *  issuing trigger, writes it; the app roles hold nothing on it. */
+export const billingCreditNoteCounters = pgTable(
+  "billing_credit_note_counters",
+  {
+    fyLabel: text("fy_label").primaryKey().notNull(),
+    nextSeq: integer("next_seq").default(1).notNull(),
+  },
+  () => [
+    check("billing_credit_note_counters_next_seq_check", sql`next_seq >= 1`),
+  ],
+);
+
+/** StoreMink's own credit notes against its invoices (migration 0264): one per
+ *  completed refund except a returned duplicate payment, or one cancelling a
+ *  closed unpaid invoice that charged GST. Never edited or deleted (trigger).
+ *  No store column: the store is the invoice's. */
+export const billingCreditNotes = pgTable(
+  "billing_credit_notes",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    invoiceId: uuid("invoice_id").notNull(),
+    /** Null only for 'invoice_cancelled' (billing_credit_notes_refund_shape). */
+    refundId: uuid("refund_id"),
+    reason: text().notNull(),
+    /** NOT NULL in the database, allocated by the billing_credit_notes_issue
+     *  trigger; optional here so an insert omits it (as with invoice_ref). */
+    creditNoteNo: integer("credit_note_no"),
+    /** "CN/2026-27/00001": at most 16 characters (a GST serial's limit). */
+    creditNoteRef: text("credit_note_ref"),
+    fyLabel: text("fy_label"),
+    /** Set to now() by the issuing trigger, whatever the insert carries. */
+    issuedAt: timestamp("issued_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    taxablePaise: bigint("taxable_paise", { mode: "number" }).notNull(),
+    taxPaise: bigint("tax_paise", { mode: "number" }).notNull(),
+    totalPaise: bigint("total_paise", { mode: "number" }).notNull(),
+    /** Copied from the invoice by the issuing trigger; never carried in. */
+    taxRateBps: integer("tax_rate_bps"),
+    supplierGstin: text("supplier_gstin"),
+    customerGstin: text("customer_gstin"),
+    placeOfSupply: text("place_of_supply"),
+    /** NOT NULL in the database: the invoice's parties record, copied by the
+     *  issuing trigger (a forged value is replaced). */
+    parties: jsonb(),
+    issuedBy: text("issued_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("billing_credit_notes_invoice_idx").using(
+      "btree",
+      table.invoiceId.asc().nullsLast().op("uuid_ops"),
+      table.issuedAt.desc().nullsFirst().op("timestamptz_ops"),
+    ),
+    foreignKey({
+      columns: [table.invoiceId],
+      foreignColumns: [billingInvoices.id],
+      name: "billing_credit_notes_invoice_id_fkey",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.refundId],
+      foreignColumns: [billingRefunds.id],
+      name: "billing_credit_notes_refund_id_fkey",
+    }).onDelete("restrict"),
+    unique("billing_credit_notes_ref_key").on(table.creditNoteRef),
+    unique("billing_credit_notes_no_key").on(table.fyLabel, table.creditNoteNo),
+    // One note per refund.
+    unique("billing_credit_notes_refund_key").on(table.refundId),
+    check(
+      "billing_credit_notes_reason_check",
+      sql`reason = ANY (ARRAY['cycle_not_reached'::text, 'feature_removed'::text, 'suspended_by_mistake'::text, 'declined_terms'::text, 'goodwill'::text, 'other'::text, 'invoice_cancelled'::text])`,
+    ),
+    check(
+      "billing_credit_notes_amounts_check",
+      sql`(taxable_paise >= 0) AND (tax_paise >= 0) AND (total_paise > 0) AND (total_paise = (taxable_paise + tax_paise))`,
+    ),
+    check(
+      "billing_credit_notes_ref_length",
+      sql`char_length(credit_note_ref) <= 16`,
+    ),
+    check(
+      "billing_credit_notes_refund_shape",
+      sql`(reason = 'invoice_cancelled'::text) = (refund_id IS NULL)`,
+    ),
+    check(
+      "billing_credit_notes_issued_by_check",
+      sql`length(btrim(issued_by)) > 0`,
     ),
   ],
 );
@@ -433,6 +548,17 @@ export const billingInvoices = pgTable(
     placeOfSupply: text("place_of_supply"),
     supplierGstin: text("supplier_gstin"),
     customerGstin: text("customer_gstin"),
+    /** StoreMink's SAC code, stamped with the rate and the GSTINs (0266). Once
+     *  StoreMink's own SAC code is set, an invoice charging GST is issued only
+     *  with it (trigger billing_invoices_tax_invoice_complete). */
+    sacCode: text("sac_code"),
+    /** True when the line amounts include GST (0266). Frozen once issued. */
+    taxInclusive: boolean("tax_inclusive").default(false).notNull(),
+    /** Where `placeOfSupply` came from (0266): 'recipient' (the merchant's
+     *  GSTIN or a state of theirs on record), 'supplier' (no state of theirs
+     *  anywhere: StoreMink's own) or 'outside_india' (place of supply 96).
+     *  NULL on invoices written before it existed. Frozen once issued. */
+    placeOfSupplyBasis: text("place_of_supply_basis"),
     /** Who the invoice is from and to, recorded when it is issued (0243):
      *  stamped by trigger, written once, read by the printable document. */
     parties: jsonb(),
@@ -458,6 +584,13 @@ export const billingInvoices = pgTable(
     index("billing_invoices_open_idx")
       .using("btree", table.dueAt.asc().nullsLast().op("timestamptz_ops"))
       .where(sql`(status = ANY (ARRAY['open'::text, 'processing'::text]))`),
+    // The refund pass's read of closed subscription invoices (0264): a
+    // captured payment on one is money for a cycle the plan does not reach.
+    index("billing_invoices_closed_idx")
+      .using("btree", table.updatedAt.asc().nullsLast().op("timestamptz_ops"))
+      .where(
+        sql`((kind = 'subscription'::text) AND (status = ANY (ARRAY['void'::text, 'uncollectible'::text])))`,
+      ),
     // ★ Two renewal workers cannot both create an invoice for one cycle (§35).
     uniqueIndex("billing_invoices_one_per_cycle")
       .using(
@@ -508,6 +641,23 @@ export const billingInvoices = pgTable(
     check(
       "billing_invoices_addon_target_shape",
       sql`(addon_target_count IS NULL) OR ((kind = 'addon'::text) AND (addon_target_count >= 0) AND (addon_target_count <= 50))`,
+    ),
+    // 0266: the SAC code and the place of supply have the shapes the
+    // settings already have.
+    check(
+      "billing_invoices_sac_code_format",
+      sql`(sac_code IS NULL) OR (sac_code ~ '^99[0-9]{4}$'::text)`,
+    ),
+    check(
+      "billing_invoices_place_of_supply_numeric",
+      sql`(place_of_supply IS NULL) OR (place_of_supply ~ '^[0-9]{2}$'::text)`,
+    ),
+    // ★ 96 is the GST code for a place of supply outside India, and only an
+    // outside_india invoice uses it; a basis always comes with a place of
+    // supply. Every branch is a non-NULL boolean and ELSE is false (0266).
+    check(
+      "billing_invoices_place_of_supply_basis",
+      sql`CASE WHEN (place_of_supply_basis IS NULL) THEN ((place_of_supply IS NULL) OR (place_of_supply <> '96'::text)) WHEN (place_of_supply_basis = 'outside_india'::text) THEN ((place_of_supply IS NOT NULL) AND (place_of_supply = '96'::text)) WHEN (place_of_supply_basis = ANY (ARRAY['recipient'::text, 'supplier'::text])) THEN ((place_of_supply IS NOT NULL) AND (place_of_supply <> '96'::text)) ELSE false END`,
     ),
   ],
 );
@@ -734,6 +884,12 @@ export const billingReconciliationItems = pgTable(
       .where(
         sql`((status = 'open'::text) AND (provider_payment_id IS NOT NULL))`,
       ),
+    // ★ A repair item (detail.repair_key, filed by the refund pass for money
+    // older code kept) is filed once in ANY status, so an item an operator
+    // resolved is never filed again (0264). Insert with ON CONFLICT DO NOTHING.
+    uniqueIndex("billing_reconciliation_repair_once")
+      .using("btree", sql`(detail ->> 'repair_key'::text)`)
+      .where(sql`(detail ? 'repair_key'::text)`),
     foreignKey({
       columns: [table.storeId],
       foreignColumns: [stores.id],
@@ -760,6 +916,172 @@ export const billingReconciliationItems = pgTable(
     check(
       "billing_reconciliation_resolved_shape",
       sql`(status = 'resolved'::text) = (resolved_at IS NOT NULL)`,
+    ),
+  ],
+);
+
+/** One row per refund of a payment StoreMink received (migration 0264),
+ *  written BEFORE any gateway call with our own idempotency key. What a refund
+ *  IS never changes once written; the billing_refunds_guard trigger locks the
+ *  payment, refuses refunds past it and allows only owed -> pending |
+ *  processed | failed | cancelled and pending -> processed | failed. Never
+ *  deleted (billing_refunds_keep). No store column: the store is the
+ *  invoice's. app_service: SELECT, INSERT, UPDATE; app_user: nothing. */
+export const billingRefunds = pgTable(
+  "billing_refunds",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    invoiceId: uuid("invoice_id").notNull(),
+    attemptId: uuid("attempt_id").notNull(),
+    reason: text().notNull(),
+    /** owed | pending | processed | failed | cancelled | recorded. A row is
+     *  inserted owed, or recorded (a refund made outside this tool). */
+    status: text().notNull(),
+    /** razorpay | bank_transfer (a bank transfer is always recorded). */
+    method: text().default("razorpay").notNull(),
+    amountPaise: bigint("amount_paise", { mode: "number" }).notNull(),
+    /** OURS, minted before the gateway call; Razorpay's key shape. */
+    idempotencyKey: text("idempotency_key").notNull(),
+    providerPaymentId: text("provider_payment_id"),
+    /** Write-once. */
+    providerRefundId: text("provider_refund_id"),
+    externalReference: text("external_reference"),
+    failureReason: text("failure_reason"),
+    /** 'system' for the refund pass, the operator's email otherwise. */
+    requestedBy: text("requested_by").notNull(),
+    /** Required when a person asks (billing_refunds_person_gives_reason). */
+    note: text(),
+    resolutionNote: text("resolution_note"),
+    sentAt: timestamp("sent_at", { withTimezone: true, mode: "string" }),
+    resolvedAt: timestamp("resolved_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    /** When the merchant was told the refund reached them: written once, and
+     *  the only column a final row may still take. */
+    notifiedAt: timestamp("notified_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    // ★ One automatic refund per payment, ever. An operator's retry (same
+    // reason, requested_by an email) is not blocked.
+    uniqueIndex("billing_refunds_one_automatic")
+      .using("btree", table.attemptId.asc().nullsLast().op("uuid_ops"))
+      .where(sql`(requested_by = 'system'::text)`),
+    uniqueIndex("billing_refunds_provider_refund_key")
+      .using("btree", table.providerRefundId.asc().nullsLast().op("text_ops"))
+      .where(sql`(provider_refund_id IS NOT NULL)`),
+    index("billing_refunds_work_idx")
+      .using(
+        "btree",
+        table.status.asc().nullsLast().op("text_ops"),
+        table.updatedAt.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(
+        sql`(status = ANY (ARRAY['owed'::text, 'pending'::text, 'failed'::text]))`,
+      ),
+    index("billing_refunds_to_notify_idx")
+      .using("btree", table.resolvedAt.asc().nullsLast().op("timestamptz_ops"))
+      .where(
+        sql`((status = ANY (ARRAY['processed'::text, 'recorded'::text])) AND (notified_at IS NULL))`,
+      ),
+    index("billing_refunds_invoice_idx").using(
+      "btree",
+      table.invoiceId.asc().nullsLast().op("uuid_ops"),
+      table.createdAt.desc().nullsFirst().op("timestamptz_ops"),
+    ),
+    index("billing_refunds_attempt_idx").using(
+      "btree",
+      table.attemptId.asc().nullsLast().op("uuid_ops"),
+    ),
+    foreignKey({
+      columns: [table.invoiceId],
+      foreignColumns: [billingInvoices.id],
+      name: "billing_refunds_invoice_id_fkey",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.attemptId],
+      foreignColumns: [billingPaymentAttempts.id],
+      name: "billing_refunds_attempt_id_fkey",
+    }).onDelete("restrict"),
+    unique("billing_refunds_key_key").on(table.idempotencyKey),
+    check("billing_refunds_amount_check", sql`amount_paise > 0`),
+    check(
+      "billing_refunds_reason_check",
+      sql`reason = ANY (ARRAY['cycle_not_reached'::text, 'feature_removed'::text, 'suspended_by_mistake'::text, 'declined_terms'::text, 'duplicate_payment'::text, 'goodwill'::text, 'other'::text])`,
+    ),
+    check(
+      "billing_refunds_status_check",
+      sql`status = ANY (ARRAY['owed'::text, 'pending'::text, 'processed'::text, 'failed'::text, 'cancelled'::text, 'recorded'::text])`,
+    ),
+    check(
+      "billing_refunds_method_check",
+      sql`method = ANY (ARRAY['razorpay'::text, 'bank_transfer'::text])`,
+    ),
+    check(
+      "billing_refunds_key_shape",
+      sql`idempotency_key ~ '^[A-Za-z0-9_-]{10,}$'::text`,
+    ),
+    check(
+      "billing_refunds_requested_by_check",
+      sql`length(btrim(requested_by)) > 0`,
+    ),
+    check(
+      "billing_refunds_resolved_shape",
+      sql`(status = ANY (ARRAY['processed'::text, 'failed'::text, 'cancelled'::text, 'recorded'::text])) = (resolved_at IS NOT NULL)`,
+    ),
+    check(
+      "billing_refunds_sent_shape",
+      sql`(status <> ALL (ARRAY['pending'::text, 'processed'::text])) OR (sent_at IS NOT NULL)`,
+    ),
+    check(
+      "billing_refunds_gateway_needs_payment",
+      sql`(method <> 'razorpay'::text) OR (provider_payment_id IS NOT NULL)`,
+    ),
+    // Razorpay refuses a refund under 1 rupee; a recorded one may be less.
+    check(
+      "billing_refunds_gateway_minimum",
+      sql`(method <> 'razorpay'::text) OR (status = 'recorded'::text) OR (amount_paise >= 100)`,
+    ),
+    check(
+      "billing_refunds_processed_has_refund",
+      sql`(status <> 'processed'::text) OR (provider_refund_id IS NOT NULL)`,
+    ),
+    check(
+      "billing_refunds_bank_transfer_is_recorded",
+      sql`(method <> 'bank_transfer'::text) OR (status = 'recorded'::text)`,
+    ),
+    check(
+      "billing_refunds_recorded_has_reference",
+      sql`(status <> 'recorded'::text) OR (provider_refund_id IS NOT NULL) OR (external_reference IS NOT NULL)`,
+    ),
+    check(
+      "billing_refunds_person_gives_reason",
+      sql`(requested_by = 'system'::text) OR ((note IS NOT NULL) AND (length(btrim(note)) > 0))`,
+    ),
+    check(
+      "billing_refunds_system_is_automatic",
+      sql`(requested_by <> 'system'::text) OR ((reason = 'cycle_not_reached'::text) AND (status <> 'recorded'::text))`,
+    ),
+    check(
+      "billing_refunds_cancel_says_why",
+      sql`(status <> 'cancelled'::text) OR ((resolution_note IS NOT NULL) AND (length(btrim(resolution_note)) > 0))`,
+    ),
+    check(
+      "billing_refunds_failure_says_why",
+      sql`(status <> 'failed'::text) OR ((failure_reason IS NOT NULL) AND (length(btrim(failure_reason)) > 0))`,
+    ),
+    check(
+      "billing_refunds_notified_shape",
+      sql`(notified_at IS NULL) OR (status = ANY (ARRAY['processed'::text, 'recorded'::text]))`,
     ),
   ],
 );
@@ -809,6 +1131,14 @@ export const billingSubscriptions = pgTable(
       withTimezone: true,
       mode: "string",
     }),
+    /** When and by whom a cancellation was asked for (0264): written with
+     *  cancelAtPeriodEnd, cleared on Keep my plan. Not tied to the flag by a
+     *  CHECK, since a revision without these columns may cancel meanwhile. */
+    cancelRequestedAt: timestamp("cancel_requested_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    cancelRequestedBy: text("cancel_requested_by"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
@@ -891,6 +1221,10 @@ export const billingSubscriptions = pgTable(
     check(
       "billing_subscriptions_cycle_order",
       sql`(current_period_end IS NULL) OR (current_period_start IS NULL) OR (current_period_end > current_period_start)`,
+    ),
+    check(
+      "billing_subscriptions_cancel_requested_by_check",
+      sql`(cancel_requested_by IS NULL) OR (length(btrim(cancel_requested_by)) > 0)`,
     ),
   ],
 );
@@ -1000,6 +1334,12 @@ export const blogComments = pgTable(
       .defaultNow()
       .notNull(),
     storeId: uuid("store_id").notNull(),
+    // A StoreMink block (migration 20261030_0269): set and cleared only by
+    // content_blocks_apply; the public read policy hides the row while set.
+    moderationBlockedAt: timestamp("moderation_blocked_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_blog_comments_blog").using(
@@ -1047,6 +1387,7 @@ export const blogComments = pgTable(
       as: "permissive",
       for: "select",
       to: ["public"],
+      using: sql`((moderation_blocked_at IS NULL) OR (user_id = ( SELECT auth.uid() AS uid)))`,
     }),
     check(
       "blog_comments_body_check",
@@ -1187,6 +1528,12 @@ export const blogs = pgTable(
       .default(false)
       .notNull(),
     storeId: uuid("store_id").notNull(),
+    // A StoreMink block (migration 20261030_0269): set and cleared only by
+    // content_blocks_apply; the public read policy hides the row while set.
+    moderationBlockedAt: timestamp("moderation_blocked_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_blogs_categories_gin")
@@ -1258,7 +1605,12 @@ export const blogs = pgTable(
       using: sql`(( SELECT is_store_admin(blogs.store_id) AS is_store_admin) OR ((submitted_by = ( SELECT auth.uid() AS uid)) AND (is_customer_submission = true) AND (status = ANY (ARRAY['draft'::text, 'pending_review'::text]))))`,
       withCheck: sql`(( SELECT is_store_admin(blogs.store_id) AS is_store_admin) OR ((submitted_by = ( SELECT auth.uid() AS uid)) AND (is_customer_submission = true) AND (status = ANY (ARRAY['draft'::text, 'pending_review'::text]))))`,
     }),
-    pgPolicy("Read blogs", { as: "permissive", for: "select", to: ["public"] }),
+    pgPolicy("Read blogs", {
+      as: "permissive",
+      for: "select",
+      to: ["public"],
+      using: sql`(((status = 'published'::text) AND (moderation_blocked_at IS NULL)) OR ((submitted_by = ( SELECT auth.uid() AS uid)) AND (is_customer_submission = true)) OR ( SELECT is_store_admin(blogs.store_id) AS is_store_admin))`,
+    }),
     pgPolicy("Insert blogs", {
       as: "permissive",
       for: "insert",
@@ -1342,6 +1694,12 @@ export const categories = pgTable(
       .defaultNow()
       .notNull(),
     storeId: uuid("store_id").notNull(),
+    // A StoreMink block (migration 20261030_0269): set and cleared only by
+    // content_blocks_apply; the public read policy hides the row while set.
+    moderationBlockedAt: timestamp("moderation_blocked_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_categories_slug").using(
@@ -1366,7 +1724,7 @@ export const categories = pgTable(
       as: "permissive",
       for: "select",
       to: ["public"],
-      using: sql`((status = 'active'::text) OR ( SELECT is_store_admin(categories.store_id) AS is_store_admin))`,
+      using: sql`(((status = 'active'::text) AND (moderation_blocked_at IS NULL)) OR ( SELECT is_store_admin(categories.store_id) AS is_store_admin))`,
     }),
     pgPolicy("Admins can update categories", {
       as: "permissive",
@@ -2847,8 +3205,43 @@ export const platformBillingSettings = pgTable(
       .defaultNow()
       .notNull(),
     updatedBy: text("updated_by"),
+    /** Whether the refund pass sends owed refunds by itself (0264). Ships
+     *  false: until an operator turns it on, an owed refund waits for a person
+     *  to press Send. */
+    autoRefunds: boolean("auto_refunds").default(false).notNull(),
+    /** When automatic refunds were installed (0264 stamped the row). A payment
+     *  recorded on a closed invoice before it was kept by older code and is
+     *  filed for a person, never refunded by the pass on its own. */
+    automaticRefundsFrom: timestamp("automatic_refunds_from", {
+      withTimezone: true,
+      mode: "string",
+    })
+      .defaultNow()
+      .notNull(),
+    /** ★★ ONE SCHEDULED CHANGE OF GST (0266), all four set or all NULL. The
+     *  columns above stay the values IN FORCE; an invoice built at or after
+     *  `nextTaxStartsAt` uses these, and the hourly billing run copies a change
+     *  that has started into the in-force columns. */
+    nextTaxEnabled: boolean("next_tax_enabled"),
+    nextTaxInclusive: boolean("next_tax_inclusive"),
+    nextTaxRateBps: integer("next_tax_rate_bps"),
+    nextTaxStartsAt: timestamp("next_tax_starts_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    /** The operational announcement that gave merchants notice of a scheduled
+     *  change that raises what they pay (0266). */
+    nextTaxNoticeId: uuid("next_tax_notice_id"),
+    /** Services Accounting Code printed on every tax invoice, 6 digits chosen
+     *  with the accountant (0266). The issuing check on billing_invoices
+     *  starts once it is set. */
+    sacCode: text("sac_code"),
+    /** The LLP's identification number and registered office, printed on
+     *  every invoice (LLP Act s.21, 0266). */
+    llpin: text(),
+    registeredOffice: text("registered_office"),
   },
-  () => [
+  (table) => [
     check("platform_billing_settings_id_check", sql`id`),
     check(
       "platform_billing_settings_tax_rate_bps_check",
@@ -2870,6 +3263,46 @@ export const platformBillingSettings = pgTable(
     check(
       "platform_billing_state_code_numeric",
       sql`(state_code IS NULL) OR (state_code ~ '^[0-9]{2}$'::text)`,
+    ),
+    // Evidence of the notice (0266). Not a store foreign key, so 0243's check
+    // that every other store foreign key cascades still holds.
+    foreignKey({
+      columns: [table.nextTaxNoticeId],
+      foreignColumns: [platformAnnouncements.id],
+      name: "platform_billing_settings_next_tax_notice_fkey",
+    }).onDelete("set null"),
+    // The SAC code (99 and 4 digits) and the LLPIN (AAA-0000) are well formed.
+    check(
+      "platform_billing_sac_code_format",
+      sql`(sac_code IS NULL) OR (sac_code ~ '^99[0-9]{4}$'::text)`,
+    ),
+    check(
+      "platform_billing_llpin_format",
+      sql`(llpin IS NULL) OR (llpin ~ '^[A-Z]{3}-[0-9]{4}$'::text)`,
+    ),
+    // At most 2 characters: SM/2026-27/00001 is the 16 rule 46(b) allows.
+    check(
+      "platform_billing_invoice_prefix_length",
+      sql`invoice_prefix ~ '^[A-Z0-9]{1,2}$'::text`,
+    ),
+    // No half-scheduled change, and a scheduled rate between 0 and 100%.
+    check(
+      "platform_billing_next_tax_shape",
+      sql`((next_tax_starts_at IS NULL) AND (next_tax_enabled IS NULL) AND (next_tax_inclusive IS NULL) AND (next_tax_rate_bps IS NULL)) OR ((next_tax_starts_at IS NOT NULL) AND (next_tax_enabled IS NOT NULL) AND (next_tax_inclusive IS NOT NULL) AND (next_tax_rate_bps IS NOT NULL) AND (next_tax_rate_bps >= 0) AND (next_tax_rate_bps <= 10000))`,
+    ),
+    // ★★ What a tax invoice (rule 46) and an LLP's invoice (LLP Act s.21)
+    // need before GST is on: the SAC code, state, legal name, LLPIN,
+    // registered office, address line and PIN (the GSTIN is
+    // platform_billing_tax_needs_gstin's). Added NOT VALID by 0266 and
+    // validated where the row allowed; it governs every later write either way.
+    check(
+      "platform_billing_tax_needs_invoice_identity",
+      sql`(tax_enabled = false) OR ((sac_code IS NOT NULL) AND (state_code IS NOT NULL) AND (legal_name IS NOT NULL) AND (btrim(legal_name) <> ''::text) AND (llpin IS NOT NULL) AND (registered_office IS NOT NULL) AND (btrim(registered_office) <> ''::text) AND (COALESCE(btrim((address ->> 'line1'::text)), ''::text) <> ''::text) AND (COALESCE(btrim((address ->> 'postalCode'::text)), ''::text) ~ '^[1-9][0-9]{5}$'::text))`,
+    ),
+    // The same, with the GSTIN, before GST can even be scheduled on.
+    check(
+      "platform_billing_next_tax_needs_invoice_identity",
+      sql`(next_tax_enabled IS NULL) OR (next_tax_enabled = false) OR ((gstin IS NOT NULL) AND (gstin <> ''::text) AND (sac_code IS NOT NULL) AND (state_code IS NOT NULL) AND (legal_name IS NOT NULL) AND (btrim(legal_name) <> ''::text) AND (llpin IS NOT NULL) AND (registered_office IS NOT NULL) AND (btrim(registered_office) <> ''::text) AND (COALESCE(btrim((address ->> 'line1'::text)), ''::text) <> ''::text) AND (COALESCE(btrim((address ->> 'postalCode'::text)), ''::text) ~ '^[1-9][0-9]{5}$'::text))`,
     ),
   ],
 );
@@ -2949,6 +3382,12 @@ export const productReviews = pgTable(
       .defaultNow()
       .notNull(),
     storeId: uuid("store_id").notNull(),
+    // A StoreMink block (migration 20261030_0269): set and cleared only by
+    // content_blocks_apply; the public read policy hides the row while set.
+    moderationBlockedAt: timestamp("moderation_blocked_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_product_reviews_product").using(
@@ -3005,6 +3444,7 @@ export const productReviews = pgTable(
       as: "permissive",
       for: "select",
       to: ["public"],
+      using: sql`((moderation_blocked_at IS NULL) OR (user_id = ( SELECT auth.uid() AS uid)))`,
     }),
     check("product_reviews_rating_check", sql`(rating >= 1) AND (rating <= 5)`),
   ],
@@ -3241,6 +3681,12 @@ export const products = pgTable(
       scale: 2,
       mode: "number",
     }),
+    // A StoreMink block (migration 20261030_0269): set and cleared only by
+    // content_blocks_apply; the public read policy hides the row while set.
+    moderationBlockedAt: timestamp("moderation_blocked_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_products_category").using(
@@ -3320,7 +3766,7 @@ export const products = pgTable(
       as: "permissive",
       for: "select",
       to: ["public"],
-      using: sql`((status = 'published'::text) OR ( SELECT is_store_admin(products.store_id) AS is_store_admin))`,
+      using: sql`(((status = 'published'::text) AND (moderation_blocked_at IS NULL)) OR ( SELECT is_store_admin(products.store_id) AS is_store_admin))`,
     }),
     pgPolicy("Admins can update products", {
       as: "permissive",
@@ -4914,6 +5360,12 @@ export const storePages = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
       .defaultNow()
       .notNull(),
+    // A StoreMink block (migration 20261030_0269): set and cleared only by
+    // content_blocks_apply; the public read policy hides the row while set.
+    moderationBlockedAt: timestamp("moderation_blocked_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
   },
   (table) => [
     index("idx_store_pages_store").using(
@@ -4931,7 +5383,7 @@ export const storePages = pgTable(
       as: "permissive",
       for: "select",
       to: ["public"],
-      using: sql`((status = 'published'::text) OR ( SELECT is_store_admin(store_pages.store_id) AS is_store_admin))`,
+      using: sql`(((status = 'published'::text) AND (moderation_blocked_at IS NULL)) OR ( SELECT is_store_admin(store_pages.store_id) AS is_store_admin))`,
     }),
     pgPolicy("Admins update store_pages", {
       as: "permissive",
@@ -8099,8 +8551,10 @@ export const minkCreditPackPrices = pgTable(
 // migration.
 //
 // ★ Editing one cannot rewrite history: ai_credit_purchases snapshots `credits`
-// and `amount_inr` at checkout and the confirm path grants from that row, so a
-// pack change never alters what a completed purchase granted or charged.
+// and the listed `amount_inr` at checkout, and since 0266 `amount_paise`, the
+// exact amount charged with any GST (NULL on older rows: `amount_inr * 100`).
+// The confirm path grants from that row, so a pack change never alters what a
+// completed purchase granted or charged.
 export const minkCreditPacks = pgTable(
   "mink_credit_packs",
   {
@@ -9474,6 +9928,801 @@ export const minkRefineRequests = pgTable(
     check(
       "mink_refine_requests_started_or_stopped_check",
       sql`refinement_id IS NOT NULL OR stop_requested_at IS NOT NULL`,
+    ),
+  ],
+);
+
+// Mink AI chat attachments, kept in the private bucket and deleted with their
+// chat (migration 20261028_0262, lib/mink/attachments.ts). One row per
+// attached picture, at stores/{store}/mink-attachments/{database}/{id}.{ext},
+// written BEFORE its object so the purge never lists the bucket. The chat is
+// set when the message that carries the picture is sent (linked_at with it),
+// discard_requested_at when the chat is retired or the picture was never
+// sent, purge_failed_at when the nightly purge could not delete the object.
+// The chat foreign key is composite (a picture never points at another
+// store's chat) and ON DELETE SET NULL (conversation_id), PostgreSQL's
+// column-list form that Drizzle cannot spell: deleting the chat row keeps
+// the attachment row, its store and its path, so the purge still finds the
+// object. The store foreign key cascades. Service-only: RLS on, no policies,
+// app_user has no grants. The attachments code reads and writes it with raw
+// SQL; this declaration records its shape and constraints.
+export const minkAttachments = pgTable(
+  "mink_attachments",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id").notNull(),
+    adminId: text("admin_id").notNull(),
+    conversationId: uuid("conversation_id"),
+    path: text().notNull(),
+    filename: text().default("").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    linkedAt: timestamp("linked_at", { withTimezone: true, mode: "string" }),
+    discardRequestedAt: timestamp("discard_requested_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    purgeFailedAt: timestamp("purge_failed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+  },
+  (table) => [
+    // Retire's mark and the foreign key's own SET NULL.
+    index("mink_attachments_conversation_idx")
+      .on(table.conversationId, table.storeId)
+      .where(sql`${table.conversationId} IS NOT NULL`),
+    // The purge: pictures whose chat was retired, oldest first.
+    index("mink_attachments_discard_idx")
+      .on(table.discardRequestedAt, table.id)
+      .where(sql`${table.discardRequestedAt} IS NOT NULL`),
+    // The purge: pictures never sent, oldest first; and the per-admin cap on
+    // pictures waiting to be sent.
+    index("mink_attachments_unlinked_idx")
+      .on(table.createdAt, table.id)
+      .where(
+        sql`${table.conversationId} IS NULL AND ${table.discardRequestedAt} IS NULL`,
+      ),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "mink_attachments_store_id_fkey",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.conversationId, table.storeId],
+      foreignColumns: [minkConversations.id, minkConversations.storeId],
+      name: "mink_attachments_conversation_fkey",
+    }).onDelete("set null"),
+    // The path names its own store and its own id, under one database's
+    // folder, with one of the five processed image extensions.
+    check(
+      "mink_attachments_path_check",
+      sql`starts_with(path, 'stores/' || store_id::text || '/mink-attachments/') AND path ~ '^stores/[0-9a-f-]{36}/mink-attachments/[A-Za-z0-9_-]{1,63}/[0-9a-f-]{36}\\.(webp|png|jpg|gif|avif)$' AND split_part(path, '/', 5) LIKE id::text || '.%'`,
+    ),
+    check(
+      "mink_attachments_type_check",
+      sql`content_type IN ('image/webp', 'image/png', 'image/jpeg', 'image/gif', 'image/avif')`,
+    ),
+    check("mink_attachments_size_check", sql`size_bytes BETWEEN 1 AND 5242880`),
+    check("mink_attachments_filename_check", sql`char_length(filename) <= 160`),
+    check("mink_attachments_admin_check", sql`btrim(admin_id) <> ''`),
+    check(
+      "mink_attachments_linked_check",
+      sql`conversation_id IS NULL OR linked_at IS NOT NULL`,
+    ),
+    check(
+      "mink_attachments_purge_check",
+      sql`purge_failed_at IS NULL OR discard_requested_at IS NOT NULL`,
+    ),
+  ],
+);
+
+// TEMPORARY, with the nightly job that handles pictures attached to Mink AI
+// before they were private (migration 20261028_0262,
+// lib/mink/attachments-legacy.ts moveLegacyMinkAttachments): one row per
+// picture handled, its memory (a failed picture is retried the next night and
+// given up after three failures) and its record (what became of it, with the
+// public path, so a mistaken deletion can be restored from the bucket's soft
+// delete). Ids, paths and closed codes only: never a file name or any
+// content. No foreign key to media_assets: the job deletes that row and this
+// one must outlive it. Service-only like mink_attachments. Dropped with the
+// job.
+export const minkAttachmentLegacyLog = pgTable(
+  "mink_attachment_legacy_log",
+  {
+    mediaAssetId: uuid("media_asset_id").primaryKey().notNull(),
+    storeId: uuid("store_id").notNull(),
+    publicPath: text("public_path").notNull(),
+    outcome: text().notNull(),
+    reason: text().notNull(),
+    attempts: integer().default(0).notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", {
+      withTimezone: true,
+      mode: "string",
+    })
+      .defaultNow()
+      .notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true, mode: "string" }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "mink_attachment_legacy_log_store_id_fkey",
+    }).onDelete("cascade"),
+    check(
+      "mink_attachment_legacy_log_path_check",
+      sql`starts_with(public_path, 'stores/' || store_id::text || '/') AND char_length(public_path) <= 1024 AND strpos(public_path, '..') = 0`,
+    ),
+    // Each outcome pairs with its own reasons.
+    check(
+      "mink_attachment_legacy_log_outcome_check",
+      sql`(outcome = 'kept' AND reason IN ('in_use', 'live_proposal', 'several_chats', 'not_movable', 'gave_up')) OR (outcome = 'moved' AND reason = 'moved_with_chat') OR (outcome = 'deleted' AND reason = 'no_live_use') OR (outcome = 'missing' AND reason = 'object_missing') OR (outcome = 'failing' AND reason IN ('read_failed', 'copy_failed', 'copy_mismatch', 'chat_busy', 'delete_failed', 'keep_failed'))`,
+    ),
+    check(
+      "mink_attachment_legacy_log_attempts_check",
+      sql`attempts BETWEEN 0 AND 100`,
+    ),
+    // decided_at is set exactly when the outcome is final.
+    check(
+      "mink_attachment_legacy_log_decided_check",
+      sql`(outcome = 'failing') = (decided_at IS NULL)`,
+    ),
+  ],
+);
+
+// ★ OPERATOR TAKEDOWN (migration 20261030_0269_content_takedown; IT Rules
+// 3(1)(d), 3(1)(g), 3(1)(j), 3(2)). Six service-only tables: RLS on, no
+// policies, app_user has no grants; app_service has SELECT, INSERT, UPDATE
+// (moderation_events: SELECT, INSERT only, so the record is append-only for
+// the app). Store keys are ON DELETE SET NULL with a store label that
+// survives the store (20261025_0243's "every other store key cascades"
+// query is superseded by 0269's, which names these four). The triggers
+// (content_blocks_keep_record, content_blocks_apply_flag,
+// content_block_archives_write_once, stores_keep_for_investigation,
+// stores_keep_moderation_suspension, the moderation guards on the six
+// content tables) live in the migration; these declarations record shape
+// and constraints only.
+
+// The complaints log. ref_no is shown as "SM-000123". The deadlines are the
+// app's, never later than grievance_complaints_due_check allows by kind;
+// erasure (after resolving) blanks the words and keeps the facts.
+export const grievanceComplaints = pgTable(
+  "grievance_complaints",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    refNo: integer("ref_no").generatedAlwaysAsIdentity({
+      name: "grievance_complaints_ref_no_seq",
+      startWith: "1",
+      increment: "1",
+      minValue: "1",
+      maxValue: "2147483647",
+      cache: "1",
+      cycle: false,
+    }),
+    receivedAt: timestamp("received_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    /** email | post | web_form | gac | court | government | other */
+    channel: text().notNull(),
+    /** court_order | government_order | information_order |
+     *  intimate_or_impersonation | listed_content | other_removal |
+     *  grievance | data_request */
+    kind: text().notNull(),
+    complainantName: text("complainant_name").default("").notNull(),
+    complainantContact: text("complainant_contact").default("").notNull(),
+    actingFor: text("acting_for").default("").notNull(),
+    authorityRef: text("authority_ref").default("").notNull(),
+    storeId: uuid("store_id"),
+    storeLabel: text("store_label").default("").notNull(),
+    urls: text().array().default([]).notNull(),
+    summary: text().notNull(),
+    acknowledgeDueAt: timestamp("acknowledge_due_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    actionDueAt: timestamp("action_due_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    resolveDueAt: timestamp("resolve_due_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    acknowledgedAt: timestamp("acknowledged_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    acknowledgedBy: text("acknowledged_by"),
+    acknowledgementEmailed: boolean("acknowledgement_emailed")
+      .default(false)
+      .notNull(),
+    actionedAt: timestamp("actioned_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    actionedBy: text("actioned_by"),
+    resolvedAt: timestamp("resolved_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    resolvedBy: text("resolved_by"),
+    /** removed | partly_removed | not_removed | not_ours | withdrawn |
+     *  answered; set exactly when resolved. */
+    outcome: text(),
+    outcomeNote: text("outcome_note").default("").notNull(),
+    /** Which alert stages were sent (the every-minute follow-up). */
+    alerts: jsonb().default({}).notNull(),
+    alertClaimedAt: timestamp("alert_claimed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    erasedAt: timestamp("erased_at", { withTimezone: true, mode: "string" }),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("grievance_complaints_open_idx")
+      .using("btree", table.actionDueAt.asc().nullsLast().op("timestamptz_ops"))
+      .where(sql`(resolved_at IS NULL)`),
+    index("grievance_complaints_store_idx").using(
+      "btree",
+      table.storeId.asc().nullsLast().op("uuid_ops"),
+      table.receivedAt.desc().nullsFirst().op("timestamptz_ops"),
+    ),
+    index("grievance_complaints_resolved_idx")
+      .using("btree", table.resolvedAt.asc().nullsLast().op("timestamptz_ops"))
+      .where(sql`((resolved_at IS NOT NULL) AND (erased_at IS NULL))`),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "grievance_complaints_store_id_fkey",
+    }).onDelete("set null"),
+    unique("grievance_complaints_ref_no_key").on(table.refNo),
+    check(
+      "grievance_complaints_channel_check",
+      sql`channel = ANY (ARRAY['email'::text, 'post'::text, 'web_form'::text, 'gac'::text, 'court'::text, 'government'::text, 'other'::text])`,
+    ),
+    check(
+      "grievance_complaints_kind_check",
+      sql`kind = ANY (ARRAY['court_order'::text, 'government_order'::text, 'information_order'::text, 'intimate_or_impersonation'::text, 'listed_content'::text, 'other_removal'::text, 'grievance'::text, 'data_request'::text])`,
+    ),
+    check(
+      "grievance_complaints_outcome_check",
+      sql`outcome IS NULL OR (outcome = ANY (ARRAY['removed'::text, 'partly_removed'::text, 'not_removed'::text, 'not_ours'::text, 'withdrawn'::text, 'answered'::text]))`,
+    ),
+    check(
+      "grievance_complaints_summary_check",
+      sql`erased_at IS NOT NULL OR char_length(btrim(summary)) >= 1 AND char_length(btrim(summary)) <= 4000`,
+    ),
+    check(
+      "grievance_complaints_erased_check",
+      sql`erased_at IS NULL OR resolved_at IS NOT NULL AND complainant_name = ''::text AND complainant_contact = ''::text AND acting_for = ''::text AND authority_ref = ''::text AND summary = ''::text AND cardinality(urls) = 0 AND outcome_note = ''::text`,
+    ),
+    check(
+      "grievance_complaints_text_lengths",
+      sql`char_length(complainant_name) <= 200 AND char_length(complainant_contact) <= 320 AND char_length(acting_for) <= 200 AND char_length(authority_ref) <= 500 AND char_length(store_label) <= 300 AND char_length(outcome_note) <= 4000`,
+    ),
+    check("grievance_complaints_urls_check", sql`cardinality(urls) <= 50`),
+    check(
+      "grievance_complaints_alerts_check",
+      sql`jsonb_typeof(alerts) = 'object'::text`,
+    ),
+    check(
+      "grievance_complaints_received_check",
+      sql`received_at <= (created_at + '00:05:00'::interval) AND received_at > (created_at - '1 year'::interval)`,
+    ),
+    check(
+      "grievance_complaints_ack_pair",
+      sql`(acknowledged_at IS NULL) = (acknowledged_by IS NULL) AND (acknowledged_at IS NOT NULL OR NOT acknowledgement_emailed)`,
+    ),
+    check(
+      "grievance_complaints_action_pair",
+      sql`(actioned_at IS NULL) = (actioned_by IS NULL)`,
+    ),
+    check(
+      "grievance_complaints_resolve_triple",
+      sql`(resolved_at IS NULL) = (resolved_by IS NULL) AND (resolved_at IS NULL) = (outcome IS NULL)`,
+    ),
+    check(
+      "grievance_complaints_due_check",
+      sql`acknowledge_due_at > received_at AND acknowledge_due_at <= (received_at + '24:00:00'::interval) AND action_due_at > received_at AND resolve_due_at >= action_due_at AND resolve_due_at <= (received_at +
+CASE kind
+    WHEN 'court_order'::text THEN '03:00:00'::interval
+    WHEN 'government_order'::text THEN '03:00:00'::interval
+    WHEN 'intimate_or_impersonation'::text THEN '36:00:00'::interval
+    WHEN 'listed_content'::text THEN '36:00:00'::interval
+    WHEN 'information_order'::text THEN '72:00:00'::interval
+    WHEN 'data_request'::text THEN '15 days'::interval
+    ELSE '7 days'::interval
+END) AND (kind <> 'intimate_or_impersonation'::text OR action_due_at <= (received_at + '02:00:00'::interval))`,
+    ),
+  ],
+);
+
+// One blocked item (product, page, blog post, collection, review, blog
+// comment, file) or a whole store. One live block per item and per object.
+// A record: content_blocks_keep_record refuses any change to what was
+// blocked, when, by whom, why and with which words, and undoing a lift.
+// content_blocks_apply_flag sets the item's moderation_blocked_at (or
+// suspends the store) in the same statement and clears it on the lift.
+// file_source: bucket (a path in this environment's bucket), bundled (a
+// /themes/ file) or external (a full https address on another host).
+// object_md5 is Google's base64 MD5.
+export const contentBlocks = pgTable(
+  "content_blocks",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id"),
+    storeLabel: text("store_label").notNull(),
+    /** product | page | blog_post | collection | review | blog_comment |
+     *  file | store */
+    itemKind: text("item_kind").notNull(),
+    itemId: uuid("item_id"),
+    objectPath: text("object_path"),
+    objectMd5: text("object_md5"),
+    fileSource: text("file_source"),
+    authorUserId: text("author_user_id"),
+    parentItemId: uuid("parent_item_id"),
+    storeStatusBefore: text("store_status_before"),
+    parentBlockId: uuid("parent_block_id"),
+    itemLabel: text("item_label").notNull(),
+    itemUrl: text("item_url").default("").notNull(),
+    complaintId: uuid("complaint_id"),
+    /** court_order | government_order | intimate_or_impersonation |
+     *  listed_content | other_removal | terms_breach | store_request */
+    reasonKind: text("reason_kind").notNull(),
+    legalBasis: text("legal_basis").default("").notNull(),
+    storeMessage: text("store_message").notNull(),
+    /** False only for a court or government order with its reference. */
+    tellStore: boolean("tell_store").default(true).notNull(),
+    storageState: text("storage_state").default("none").notNull(),
+    storageAttempts: integer("storage_attempts").default(0).notNull(),
+    storageNextAttemptAt: timestamp("storage_next_attempt_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    storageClaimedAt: timestamp("storage_claimed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    storageError: text("storage_error").default("").notNull(),
+    blockedAt: timestamp("blocked_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    blockedBy: text("blocked_by").notNull(),
+    merchantNotifiedAt: timestamp("merchant_notified_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    noticeClaimedAt: timestamp("notice_claimed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    merchantSeenAt: timestamp("merchant_seen_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    liftedAt: timestamp("lifted_at", { withTimezone: true, mode: "string" }),
+    liftedBy: text("lifted_by"),
+    liftNote: text("lift_note").default("").notNull(),
+    erasedAt: timestamp("erased_at", { withTimezone: true, mode: "string" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("content_blocks_active_item_key")
+      .using(
+        "btree",
+        table.itemKind.asc().nullsLast().op("text_ops"),
+        table.itemId.asc().nullsLast().op("uuid_ops"),
+      )
+      .where(sql`((lifted_at IS NULL) AND (item_id IS NOT NULL))`),
+    uniqueIndex("content_blocks_active_file_key")
+      .using("btree", table.objectPath.asc().nullsLast().op("text_ops"))
+      .where(sql`((lifted_at IS NULL) AND (object_path IS NOT NULL))`),
+    index("content_blocks_store_idx").using(
+      "btree",
+      table.storeId.asc().nullsLast().op("uuid_ops"),
+      table.blockedAt.desc().nullsFirst().op("timestamptz_ops"),
+    ),
+    index("content_blocks_complaint_idx")
+      .using("btree", table.complaintId.asc().nullsLast().op("uuid_ops"))
+      .where(sql`(complaint_id IS NOT NULL)`),
+    index("content_blocks_md5_idx")
+      .using(
+        "btree",
+        table.storeId.asc().nullsLast().op("uuid_ops"),
+        table.objectMd5.asc().nullsLast().op("text_ops"),
+      )
+      .where(sql`((lifted_at IS NULL) AND (object_md5 IS NOT NULL))`),
+    // The author guard's lookup (moderation_author_guard).
+    index("content_blocks_author_idx")
+      .using(
+        "btree",
+        table.authorUserId.asc().nullsLast().op("text_ops"),
+        table.parentItemId.asc().nullsLast().op("uuid_ops"),
+      )
+      .where(sql`((lifted_at IS NULL) AND (author_user_id IS NOT NULL))`),
+    index("content_blocks_storage_due_idx")
+      .using(
+        "btree",
+        table.storageNextAttemptAt.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(
+        sql`(storage_state = ANY (ARRAY['pending'::text, 'restoring'::text]))`,
+      ),
+    index("content_blocks_notice_due_idx")
+      .using("btree", table.blockedAt.asc().nullsLast().op("timestamptz_ops"))
+      .where(
+        sql`(tell_store AND (merchant_notified_at IS NULL) AND (lifted_at IS NULL))`,
+      ),
+    index("content_blocks_erase_idx")
+      .using("btree", table.liftedAt.asc().nullsLast().op("timestamptz_ops"))
+      .where(sql`((lifted_at IS NOT NULL) AND (erased_at IS NULL))`),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "content_blocks_store_id_fkey",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.parentBlockId],
+      foreignColumns: [table.id],
+      name: "content_blocks_parent_block_id_fkey",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.complaintId],
+      foreignColumns: [grievanceComplaints.id],
+      name: "content_blocks_complaint_id_fkey",
+    }).onDelete("restrict"),
+    check(
+      "content_blocks_kind_check",
+      sql`item_kind = ANY (ARRAY['product'::text, 'page'::text, 'blog_post'::text, 'collection'::text, 'review'::text, 'blog_comment'::text, 'file'::text, 'store'::text])`,
+    ),
+    check(
+      "content_blocks_reason_check",
+      sql`reason_kind = ANY (ARRAY['court_order'::text, 'government_order'::text, 'intimate_or_impersonation'::text, 'listed_content'::text, 'other_removal'::text, 'terms_breach'::text, 'store_request'::text])`,
+    ),
+    check(
+      "content_blocks_store_request_check",
+      sql`reason_kind <> 'store_request'::text OR (item_kind = ANY (ARRAY['review'::text, 'blog_comment'::text]))`,
+    ),
+    check(
+      "content_blocks_tell_check",
+      sql`tell_store OR (reason_kind = ANY (ARRAY['court_order'::text, 'government_order'::text])) AND char_length(btrim(legal_basis)) > 0`,
+    ),
+    check(
+      "content_blocks_storage_values_check",
+      sql`storage_state = ANY (ARRAY['none'::text, 'pending'::text, 'failed'::text, 'replaced'::text, 'restoring'::text, 'restored'::text, 'not_restored'::text, 'cancelled'::text, 'not_ours'::text, 'manual'::text, 'removed_by_hand'::text])`,
+    ),
+    check(
+      "content_blocks_target_check",
+      sql`
+CASE item_kind
+    WHEN 'file'::text THEN item_id IS NULL AND object_path IS NOT NULL AND char_length(object_path) >= 1 AND char_length(object_path) <= 2048 AND author_user_id IS NULL AND parent_item_id IS NULL AND store_status_before IS NULL AND
+    CASE file_source
+        WHEN 'bucket'::text THEN object_path !~ '^(https?:)?/'::text
+        WHEN 'bundled'::text THEN object_path ~ '^/themes/[A-Za-z0-9._/-]+$'::text AND object_path !~ '(^|/)[.][.](/|$)'::text
+        WHEN 'external'::text THEN object_path ~ '^https://'::text
+        ELSE false
+    END
+    WHEN 'store'::text THEN item_id IS NOT NULL AND object_path IS NULL AND object_md5 IS NULL AND file_source IS NULL AND author_user_id IS NULL AND parent_item_id IS NULL AND store_status_before IS NOT NULL AND (store_status_before = ANY (ARRAY['active'::text, 'pending'::text, 'suspended'::text])) AND (store_id IS NULL OR store_id = item_id)
+    WHEN 'review'::text THEN item_id IS NOT NULL AND object_path IS NULL AND object_md5 IS NULL AND file_source IS NULL AND store_status_before IS NULL AND author_user_id IS NOT NULL AND parent_item_id IS NOT NULL
+    WHEN 'blog_comment'::text THEN item_id IS NOT NULL AND object_path IS NULL AND object_md5 IS NULL AND file_source IS NULL AND store_status_before IS NULL AND author_user_id IS NOT NULL AND parent_item_id IS NOT NULL
+    ELSE item_id IS NOT NULL AND object_path IS NULL AND object_md5 IS NULL AND file_source IS NULL AND store_status_before IS NULL AND author_user_id IS NULL AND parent_item_id IS NULL
+END`,
+    ),
+    check(
+      "content_blocks_storage_kind_check",
+      sql`
+CASE
+    WHEN item_kind <> 'file'::text THEN storage_state = 'none'::text
+    WHEN file_source = 'bucket'::text THEN storage_state = ANY (ARRAY['pending'::text, 'failed'::text, 'replaced'::text, 'restoring'::text, 'restored'::text, 'not_restored'::text, 'cancelled'::text])
+    WHEN file_source = 'external'::text THEN storage_state = 'not_ours'::text
+    WHEN file_source = 'bundled'::text THEN storage_state = ANY (ARRAY['manual'::text, 'removed_by_hand'::text])
+    ELSE false
+END`,
+    ),
+    check(
+      "content_blocks_storage_lift_check",
+      sql`
+CASE
+    WHEN lifted_at IS NULL THEN storage_state <> ALL (ARRAY['restoring'::text, 'restored'::text, 'not_restored'::text, 'cancelled'::text])
+    ELSE storage_state <> ALL (ARRAY['pending'::text, 'failed'::text, 'replaced'::text])
+END`,
+    ),
+    check(
+      "content_blocks_label_check",
+      sql`char_length(item_label) >= 1 AND char_length(item_label) <= 300 AND char_length(store_label) >= 1 AND char_length(store_label) <= 300 AND char_length(item_url) <= 2048 AND char_length(legal_basis) <= 1000 AND char_length(lift_note) <= 2000 AND char_length(storage_error) <= 1000`,
+    ),
+    check(
+      "content_blocks_message_check",
+      sql`char_length(btrim(store_message)) >= 1 AND char_length(btrim(store_message)) <= 2000`,
+    ),
+    check(
+      "content_blocks_lift_check",
+      sql`(lifted_at IS NULL) = (lifted_by IS NULL) AND (lifted_at IS NULL OR lifted_at >= blocked_at)`,
+    ),
+    check(
+      "content_blocks_erased_check",
+      sql`erased_at IS NULL OR lifted_at IS NOT NULL AND item_label = 'Erased'::text AND item_url = ''::text AND legal_basis = ''::text AND lift_note = ''::text AND store_message = 'Erased'::text`,
+    ),
+    check("content_blocks_attempts_check", sql`storage_attempts >= 0`),
+  ],
+);
+
+// The conversation about a block, from the store or from StoreMink. Only
+// the store may ask for a review; seen_at feeds the other side's unread
+// count.
+export const contentBlockMessages = pgTable(
+  "content_block_messages",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    blockId: uuid("block_id").notNull(),
+    /** store | storemink */
+    fromSide: text("from_side").notNull(),
+    author: text().notNull(),
+    body: text().notNull(),
+    asksReview: boolean("asks_review").default(false).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    seenAt: timestamp("seen_at", { withTimezone: true, mode: "string" }),
+  },
+  (table) => [
+    index("content_block_messages_block_idx").using(
+      "btree",
+      table.blockId.asc().nullsLast().op("uuid_ops"),
+      table.createdAt.asc().nullsLast().op("timestamptz_ops"),
+    ),
+    index("content_block_messages_unseen_idx")
+      .using(
+        "btree",
+        table.fromSide.asc().nullsLast().op("text_ops"),
+        table.createdAt.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(sql`(seen_at IS NULL)`),
+    foreignKey({
+      columns: [table.blockId],
+      foreignColumns: [contentBlocks.id],
+      name: "content_block_messages_block_id_fkey",
+    }).onDelete("restrict"),
+    check(
+      "content_block_messages_side_check",
+      sql`from_side = ANY (ARRAY['store'::text, 'storemink'::text])`,
+    ),
+    check(
+      "content_block_messages_author_check",
+      sql`char_length(author) >= 1 AND char_length(author) <= 320`,
+    ),
+    check(
+      "content_block_messages_body_check",
+      sql`char_length(btrim(body)) >= 1 AND char_length(btrim(body)) <= 4000`,
+    ),
+    check(
+      "content_block_messages_review_check",
+      sql`NOT asks_review OR from_side = 'store'::text`,
+    ),
+  ],
+);
+
+// The preserved copy of a blocked item, one per block, out of the
+// merchant's reach. Write-once (content_block_archives_write_once): the
+// snapshot never changes, the file list freezes once copied, keep_until only
+// grows and is at least 180 days after created_at, and the purge empties
+// the copy (snapshot_sha256 kept) only when due and not held. Never deleted.
+export const contentBlockArchives = pgTable(
+  "content_block_archives",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    blockId: uuid("block_id").notNull(),
+    storeId: uuid("store_id"),
+    snapshot: jsonb(),
+    snapshotSha256: text("snapshot_sha256").notNull(),
+    files: jsonb().default([]).notNull(),
+    /** none | pending | copied | failed */
+    filesState: text("files_state").default("none").notNull(),
+    filesAttempts: integer("files_attempts").default(0).notNull(),
+    filesNextAttemptAt: timestamp("files_next_attempt_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    filesClaimedAt: timestamp("files_claimed_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    filesError: text("files_error").default("").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    keepUntil: timestamp("keep_until", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    legalHold: boolean("legal_hold").default(false).notNull(),
+    legalHoldNote: text("legal_hold_note").default("").notNull(),
+    legalHoldSetAt: timestamp("legal_hold_set_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    legalHoldSetBy: text("legal_hold_set_by"),
+    purgedAt: timestamp("purged_at", { withTimezone: true, mode: "string" }),
+  },
+  (table) => [
+    index("content_block_archives_due_idx")
+      .using("btree", table.keepUntil.asc().nullsLast().op("timestamptz_ops"))
+      .where(sql`((purged_at IS NULL) AND (NOT legal_hold))`),
+    index("content_block_archives_files_due_idx")
+      .using(
+        "btree",
+        table.filesNextAttemptAt.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(sql`(files_state = 'pending'::text)`),
+    // Read by the store delete guard (stores_guard_delete).
+    index("content_block_archives_unfinished_idx")
+      .using("btree", table.storeId.asc().nullsLast().op("uuid_ops"))
+      .where(sql`(files_state = ANY (ARRAY['pending'::text, 'failed'::text]))`),
+    foreignKey({
+      columns: [table.blockId],
+      foreignColumns: [contentBlocks.id],
+      name: "content_block_archives_block_id_fkey",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "content_block_archives_store_id_fkey",
+    }).onDelete("set null"),
+    unique("content_block_archives_block_id_key").on(table.blockId),
+    check(
+      "content_block_archives_files_check",
+      sql`jsonb_typeof(files) = 'array'::text`,
+    ),
+    check(
+      "content_block_archives_files_state_check",
+      sql`files_state = ANY (ARRAY['none'::text, 'pending'::text, 'copied'::text, 'failed'::text])`,
+    ),
+    check(
+      "content_block_archives_attempts_check",
+      sql`files_attempts >= 0 AND char_length(files_error) <= 1000`,
+    ),
+    check(
+      "content_block_archives_sha_check",
+      sql`snapshot_sha256 ~ '^[0-9a-f]{64}$'::text`,
+    ),
+    check(
+      "content_block_archives_keep_check",
+      sql`keep_until >= (created_at + '180 days'::interval)`,
+    ),
+    check(
+      "content_block_archives_purge_check",
+      sql`(purged_at IS NULL) = (snapshot IS NOT NULL)`,
+    ),
+    check(
+      "content_block_archives_hold_check",
+      sql`(legal_hold_set_at IS NULL) = (legal_hold_set_by IS NULL) AND (NOT legal_hold OR purged_at IS NULL AND legal_hold_set_at IS NOT NULL)`,
+    ),
+  ],
+);
+
+// A store kept for an investigation: stores_keep_for_investigation refuses
+// to delete a store while it has an active hold (or an archive whose files
+// are not copied yet). One active hold per store, and an active hold always
+// names its store. Not told to the merchant.
+export const storeLegalHolds = pgTable(
+  "store_legal_holds",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    storeId: uuid("store_id"),
+    storeLabel: text("store_label").notNull(),
+    reason: text().notNull(),
+    authorityRef: text("authority_ref").default("").notNull(),
+    complaintId: uuid("complaint_id"),
+    setAt: timestamp("set_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    setBy: text("set_by").notNull(),
+    reviewOn: date("review_on", { mode: "string" }),
+    releasedAt: timestamp("released_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    releasedBy: text("released_by"),
+    releaseNote: text("release_note").default("").notNull(),
+  },
+  (table) => [
+    uniqueIndex("store_legal_holds_one_active_key")
+      .using("btree", table.storeId.asc().nullsLast().op("uuid_ops"))
+      .where(sql`(released_at IS NULL)`),
+    foreignKey({
+      columns: [table.storeId],
+      foreignColumns: [stores.id],
+      name: "store_legal_holds_store_id_fkey",
+    }).onDelete("set null"),
+    foreignKey({
+      columns: [table.complaintId],
+      foreignColumns: [grievanceComplaints.id],
+      name: "store_legal_holds_complaint_id_fkey",
+    }).onDelete("restrict"),
+    check(
+      "store_legal_holds_reason_check",
+      sql`char_length(btrim(reason)) >= 1 AND char_length(btrim(reason)) <= 2000 AND char_length(authority_ref) <= 500 AND char_length(store_label) >= 1 AND char_length(store_label) <= 300`,
+    ),
+    check(
+      "store_legal_holds_release_pair",
+      sql`(released_at IS NULL) = (released_by IS NULL)`,
+    ),
+    check(
+      "store_legal_holds_active_store",
+      sql`released_at IS NOT NULL OR store_id IS NOT NULL`,
+    ),
+  ],
+);
+
+// The record of every takedown action. Append-only for the app (no UPDATE
+// or DELETE grant); moderation_prune_events(floor, limit), SECURITY DEFINER
+// and executable by app_service only, is the one delete: never under a year
+// old, never while the store or the block's archive is held. No foreign
+// keys: the record outlives everything it names.
+export const moderationEvents = pgTable(
+  "moderation_events",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    at: timestamp("at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    actor: text().notNull(),
+    action: text().notNull(),
+    complaintId: uuid("complaint_id"),
+    blockId: uuid("block_id"),
+    holdId: uuid("hold_id"),
+    storeId: uuid("store_id"),
+    detail: jsonb().default({}).notNull(),
+  },
+  (table) => [
+    index("moderation_events_store_idx").using(
+      "btree",
+      table.storeId.asc().nullsLast().op("uuid_ops"),
+      table.at.desc().nullsFirst().op("timestamptz_ops"),
+    ),
+    index("moderation_events_complaint_idx")
+      .using(
+        "btree",
+        table.complaintId.asc().nullsLast().op("uuid_ops"),
+        table.at.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(sql`(complaint_id IS NOT NULL)`),
+    index("moderation_events_block_idx")
+      .using(
+        "btree",
+        table.blockId.asc().nullsLast().op("uuid_ops"),
+        table.at.asc().nullsLast().op("timestamptz_ops"),
+      )
+      .where(sql`(block_id IS NOT NULL)`),
+    index("moderation_events_at_idx").using(
+      "btree",
+      table.at.asc().nullsLast().op("timestamptz_ops"),
+    ),
+    check(
+      "moderation_events_actor_check",
+      sql`char_length(actor) >= 1 AND char_length(actor) <= 320`,
+    ),
+    check(
+      "moderation_events_detail_check",
+      sql`jsonb_typeof(detail) = 'object'::text AND pg_column_size(detail) <= 16384`,
+    ),
+    check(
+      "moderation_events_action_check",
+      sql`action = ANY (ARRAY['complaint_logged'::text, 'complaint_updated'::text, 'complaint_acknowledged'::text, 'complaint_actioned'::text, 'complaint_resolved'::text, 'complaint_reopened'::text, 'complaint_alerted'::text, 'complaint_erased'::text, 'block_created'::text, 'block_lifted'::text, 'block_erased'::text, 'store_told'::text, 'archive_written'::text, 'archive_files_copied'::text, 'archive_files_failed'::text, 'archive_viewed'::text, 'archive_downloaded'::text, 'archive_kept_longer'::text, 'archive_hold_set'::text, 'archive_hold_released'::text, 'archive_purged'::text, 'archive_purge_skipped'::text, 'storage_replaced'::text, 'storage_failed'::text, 'storage_cancelled'::text, 'storage_restored'::text, 'storage_not_restored'::text, 'storage_removed_by_hand'::text, 'merchant_notified'::text, 'merchant_notify_failed'::text, 'store_replied'::text, 'storemink_replied'::text, 'reupload_refused'::text, 'store_hold_set'::text, 'store_hold_released'::text, 'store_delete_refused'::text, 'store_deleted'::text, 'store_suspended'::text, 'store_reactivated'::text])`,
     ),
   ],
 );

@@ -16,7 +16,12 @@
 // count — a full extra cycle charged for a shop that is gone.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
+import { logError, logWarn } from "@/lib/observability/logger";
+import { resolveTaxSnapshot, type SnapshotRow } from "./tax-snapshot";
+import { PAYMENT_REFUSAL } from "./tax-copy";
+import { collectionStartsAt } from "./cycle";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -37,27 +42,42 @@ vi.mock("@/lib/plans/pricing", () => pricing);
 
 const rzp = vi.hoisted(() => ({
   rzpCreateOrder: vi.fn(),
+  // The verified payment, read back for its time (R1-07).
+  rzpFetchPayment: vi.fn(),
   verifyCapturedCheckoutPayment: vi.fn(),
   verifyCheckoutSignature: vi.fn(),
 }));
 vi.mock("@/lib/payments/razorpay", () => rzp);
 
 const store = vi.hoisted(() => ({
-  loadTaxContext: vi.fn(),
-  loadInvoiceParties: vi.fn(),
+  loadTaxSnapshot: vi.fn(),
   createAddonInvoice: vi.fn(),
   finalizeInvoice: vi.fn(),
   amountDueForInvoice: vi.fn(),
+  // Read after the settle: the count moves only once the invoice is paid.
+  getInvoice: vi.fn(async () => ({ id: "inv-1", status: "paid" })),
 }));
 vi.mock("./invoice-store", () => store);
 
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // RC-F1b: no earlier captured purchase unless a test says so.
+  capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
+  fileRecoveredPurchase: vi.fn(async () => true),
+  verifyRecoveredCapture: vi.fn(
+    async (): Promise<unknown> => ({ status: "ok", paymentId: "pay_old" }),
+  ),
+  readAddonOrderTarget: vi.fn(
+    async (): Promise<unknown> => ({ kind: "locations", count: 2 }),
+  ),
 }));
 vi.mock("./collect", () => collect);
 
 import {
+  LOCATIONS_RECOVERED_MESSAGE,
+  LOCATIONS_RECOVERY_WAITING_MESSAGE,
+  completeLocationPurchase,
   confirmLocationPurchase,
   getLocationBillingState,
   releaseLocations,
@@ -95,6 +115,37 @@ function seed(rows: any[][]) {
   dbHolder.current = makeDbMock({ selectQueue: rows });
 }
 
+/** GST off, StoreMink's identity complete, a merchant with no records; read
+ *  through the REAL `resolveTaxSnapshot`. */
+const SNAPSHOT_ROW: SnapshotRow = {
+  taxEnabled: false,
+  taxInclusive: false,
+  taxRateBps: 1800,
+  nextTaxEnabled: null,
+  nextTaxInclusive: null,
+  nextTaxRateBps: null,
+  nextTaxStartsAt: null,
+  supplierGstin: "03ABCDE1234F1Z5",
+  supplierStateCode: "03",
+  sacCode: "998314",
+  accountGstin: null,
+  accountStateCode: null,
+  accountCountry: null,
+  taxIdGstin: null,
+  storeTaxStateCode: null,
+  locationGstin: null,
+  locationStateCode: null,
+  taxAddress: null,
+  signupStateName: null,
+  signupCountry: null,
+};
+
+function readingFor(row: SnapshotRow) {
+  store.loadTaxSnapshot.mockImplementation(async (_store: string, at: Date) =>
+    resolveTaxSnapshot(row, at),
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   provider.getPlatformRazorpayCreds.mockReturnValue({
@@ -127,25 +178,19 @@ beforeEach(() => {
     ok: true,
     gatewayRead: true,
   });
-  store.loadTaxContext.mockResolvedValue({
-    enabled: false,
-    rateBps: 0,
-    inclusive: false,
-    supplierStateCode: null,
-    placeOfSupply: null,
-  });
-  store.loadInvoiceParties.mockResolvedValue({
-    supplierGstin: null,
-    customerGstin: null,
-    placeOfSupply: null,
-  });
+  rzp.rzpFetchPayment.mockResolvedValue({ ok: true, data: { id: "pay_1" } });
+  readingFor(SNAPSHOT_ROW);
   store.createAddonInvoice.mockResolvedValue({
     id: "inv-1",
     status: "draft",
     finalizedAt: null,
     invoiceRef: null,
   });
-  store.finalizeInvoice.mockResolvedValue({ id: "inv-1", status: "open" });
+  store.finalizeInvoice.mockResolvedValue({
+    id: "inv-1",
+    status: "open",
+    finalizedAt: NOW.toISOString(),
+  });
   store.amountDueForInvoice.mockResolvedValue(50_000);
   collect.beginAttempt.mockResolvedValue({
     attemptId: "att-1",
@@ -227,6 +272,265 @@ describe("getLocationBillingState", () => {
       now: NOW,
     });
     expect(s).toBeNull();
+  });
+});
+
+// GST design 7.5: every amount the card shows comes from the invoice that
+// would carry it. The renewal is the REAL `quoteLocationRenewal` (quote.ts is
+// not mocked), which reads the subscription a third time: hence the third row.
+describe("getLocationBillingState: the GST amounts (design 7.5)", () => {
+  /** Four days before the cycle that starts at PERIOD_END: 12 Sep 2026. */
+  const ISSUED_AT = collectionStartsAt(new Date(PERIOD_END)).toISOString();
+  /** GST added on top at 18%, scheduled to start at `startsAt`. */
+  function scheduledEx(startsAt: string): SnapshotRow {
+    return {
+      ...SNAPSHOT_ROW,
+      nextTaxEnabled: true,
+      nextTaxInclusive: false,
+      nextTaxRateBps: 1800,
+      nextTaxStartsAt: startsAt,
+    };
+  }
+  const ON_EX: SnapshotRow = { ...SNAPSHOT_ROW, taxEnabled: true };
+  const ON_IN: SnapshotRow = {
+    ...SNAPSHOT_ROW,
+    taxEnabled: true,
+    taxInclusive: true,
+  };
+
+  async function read(over: { now?: Date } = {}) {
+    return getLocationBillingState({
+      storeId: STORE,
+      store: PRO,
+      locationPrice: PRICE,
+      now: over.now ?? NOW,
+    });
+  }
+
+  it("GST off: the list price, the part period and the renewal carry no GST", async () => {
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read();
+    expect(s?.perPeriod).toEqual({
+      listedPaise: 100_000,
+      taxablePaise: 100_000,
+      taxPaise: 0,
+      totalPaise: 100_000,
+      rateBps: 0,
+      inclusive: false,
+    });
+    // Half a 30-day cycle left of a ₹1,000 location, as the charge builds it.
+    expect(s?.nextPurchase).toMatchObject({ totalPaise: 50_000, taxPaise: 0 });
+    expect(s?.nextRenewal).toEqual({
+      perLocation: expect.objectContaining({ totalPaise: 100_000 }),
+      issuedAt: ISSUED_AT,
+    });
+    expect(s?.terms).toMatchObject({ active: false, upcoming: null });
+    expect(s?.needsState).toBe(false);
+    expect(s?.outsideIndia).toBe(false);
+    // The fields an older bundle reads, unchanged.
+    expect(s?.pricePerPeriodInr).toBe(1000);
+    expect(s?.nextPurchaseInr).toBe(500);
+    expect(s?.canBuy).toBe(true);
+  });
+
+  // ★★ The stage's mutation: the renewal is priced under the terms at ITS
+  // invoice's issue, four days before the cycle, never today's. A start
+  // after that issue leaves the renewal untaxed though the cycle begins
+  // after the start.
+  it.each([
+    ["after the renewal is invoiced", "2026-09-14T00:00:00.000Z", 100_000, 0],
+    [
+      "before the renewal is invoiced",
+      "2026-09-05T00:00:00.000Z",
+      118_000,
+      18_000,
+    ],
+  ])(
+    "★★ GST scheduled to start %s (%s): the renewal is %d paise",
+    async (_label, startsAt, renewalTotal, renewalTax) => {
+      readingFor(scheduledEx(startsAt));
+      seed([[subRow()], [{ n: 2 }], [subRow()]]);
+      const s = await read();
+      expect(s?.nextRenewal?.perLocation).toMatchObject({
+        totalPaise: renewalTotal,
+        taxPaise: renewalTax,
+        listedPaise: 100_000,
+      });
+      expect(s?.nextRenewal?.issuedAt).toBe(ISSUED_AT);
+      // Today's terms still charge no GST: the list price and the part period
+      // are untaxed either way.
+      expect(s?.perPeriod?.totalPaise).toBe(100_000);
+      expect(s?.nextPurchase).toMatchObject({
+        totalPaise: 50_000,
+        taxPaise: 0,
+      });
+      expect(s?.terms).toMatchObject({
+        active: false,
+        upcoming: { enabled: true, inclusive: false, startsAt },
+      });
+    },
+  );
+
+  it("★ a renewal invoiced under GST needs the store's state when it has none", async () => {
+    readingFor(scheduledEx("2026-09-05T00:00:00.000Z"));
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    expect((await read())?.needsState).toBe(true);
+
+    // A start after the renewal's issue: nothing needs the state yet.
+    readingFor(scheduledEx("2026-09-14T00:00:00.000Z"));
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    expect((await read())?.needsState).toBe(false);
+
+    // A state on the billing account: the renewal has its place of supply.
+    readingFor({
+      ...scheduledEx("2026-09-05T00:00:00.000Z"),
+      accountStateCode: "07",
+    });
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read();
+    expect(s?.needsState).toBe(false);
+    expect(s?.nextRenewal?.perLocation.totalPaise).toBe(118_000);
+  });
+
+  it("ON-EX now: 18% is added to the list price and the part period", async () => {
+    readingFor({ ...ON_EX, accountStateCode: "07" });
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read();
+    expect(s?.perPeriod).toMatchObject({
+      listedPaise: 100_000,
+      taxablePaise: 100_000,
+      taxPaise: 18_000,
+      totalPaise: 118_000,
+      rateBps: 1800,
+      inclusive: false,
+    });
+    expect(s?.nextPurchase).toMatchObject({
+      taxablePaise: 50_000,
+      taxPaise: 9_000,
+      totalPaise: 59_000,
+    });
+    expect(s?.nextRenewal?.perLocation.totalPaise).toBe(118_000);
+    expect(s?.needsState).toBe(false);
+    expect(s?.outsideIndia).toBe(false);
+    expect(s?.canBuy).toBe(true);
+  });
+
+  it("ON-IN now: the GST is carved out of the list price, which is what is charged", async () => {
+    readingFor({ ...ON_IN, accountStateCode: "07" });
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read();
+    expect(s?.perPeriod).toMatchObject({
+      listedPaise: 100_000,
+      totalPaise: 100_000,
+      rateBps: 1800,
+      inclusive: true,
+    });
+    expect(s?.perPeriod?.taxPaise).toBeGreaterThan(0);
+    expect(s?.nextPurchase?.totalPaise).toBe(50_000);
+    expect(s?.nextPurchase?.taxPaise).toBeGreaterThan(0);
+  });
+
+  it("★ GST charged now with only StoreMink's own state: the state is needed now", async () => {
+    readingFor(ON_EX);
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read();
+    expect(s?.needsState).toBe(true);
+    expect(s?.outsideIndia).toBe(false);
+  });
+
+  it("★ GST charged now for a business outside India: the payment would be refused", async () => {
+    readingFor({ ...ON_EX, signupCountry: "OTHER" });
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read();
+    expect(s?.outsideIndia).toBe(true);
+    expect(s?.needsState).toBe(false);
+
+    // GST not charged: nothing is refused.
+    readingFor({ ...SNAPSHOT_ROW, signupCountry: "OTHER" });
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    expect((await read())?.outsideIndia).toBe(false);
+  });
+
+  it("★ nothing due now (the part period rounds to nothing): no purchase amount, no refusal now", async () => {
+    readingFor(ON_EX);
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    const s = await read({ now: new Date(PERIOD_END) });
+    expect(s?.nextPurchase).toBeNull();
+    expect(s?.nextPurchaseInr).toBe(0);
+    // No payment now, so only the renewal could need the state, and under
+    // GST charged now it does.
+    expect(s?.nextRenewal?.perLocation.totalPaise).toBe(118_000);
+    expect(s?.needsState).toBe(true);
+    expect(s?.outsideIndia).toBe(false);
+  });
+
+  it("★ a store that cannot buy gets the list price only: no purchase, no renewal read", async () => {
+    readingFor(ON_EX);
+    seed([[null], [{ n: 1 }]]);
+    const s = await read();
+    expect(s?.canBuy).toBe(false);
+    expect(s?.perPeriod?.totalPaise).toBe(118_000);
+    expect(s?.nextPurchase).toBeNull();
+    expect(s?.nextRenewal).toBeNull();
+    expect(s?.needsState).toBe(false);
+    expect(s?.outsideIndia).toBe(false);
+    // The subscription and the count; the renewal quote never read it again.
+    expect(dbHolder.current.calls.select).toHaveLength(2);
+  });
+
+  it("★ a renewal that cannot be quoted is null, never a guess", async () => {
+    seed([[subRow()], [{ n: 2 }], [subRow({ cancelAtPeriodEnd: true })]]);
+    const s = await read();
+    expect(s?.nextRenewal).toBeNull();
+    expect(s?.perPeriod?.totalPaise).toBe(100_000);
+  });
+
+  it("★ incomplete GST settings refuse the purchase with the payment's own sentence", async () => {
+    readingFor({ ...ON_EX, supplierGstin: null });
+    seed([[subRow()], [{ n: 2 }]]);
+    const s = await read();
+    expect(s?.canBuy).toBe(false);
+    expect(s?.blockedReason).toBe(PAYMENT_REFUSAL.settingsIncomplete);
+    expect(s?.perPeriod).toBeUndefined();
+    expect(s?.nextRenewal).toBeUndefined();
+    // The fields an older bundle reads are still there.
+    expect(s?.nextPurchaseInr).toBe(500);
+    expect(logWarn).toHaveBeenCalledWith(
+      "billing.locations.state_tax_settings_incomplete",
+      expect.objectContaining({
+        storeId: STORE,
+        reason: "settings_incomplete",
+      }),
+    );
+  });
+
+  it("★ incomplete settings keep an earlier reason for not buying", async () => {
+    readingFor({ ...ON_EX, supplierGstin: null });
+    seed([[null], [{ n: 1 }]]);
+    const s = await read();
+    expect(s?.canBuy).toBe(false);
+    expect(s?.blockedReason).toMatch(/subscri/i);
+  });
+
+  it("★ a tax reading that fails is a read failure: NULL", async () => {
+    store.loadTaxSnapshot.mockRejectedValueOnce(new Error("db down"));
+    seed([[subRow()], [{ n: 2 }]]);
+    expect(await read()).toBeNull();
+    expect(logError).toHaveBeenCalledWith(
+      "billing.locations.state_tax_snapshot",
+      expect.any(Error),
+      { storeId: STORE },
+    );
+  });
+
+  it("reads the tax terms at `now`, once, before the renewal", async () => {
+    seed([[subRow()], [{ n: 2 }], [subRow()]]);
+    await read();
+    // Ours, then the renewal quote's own reading, both at `now`.
+    expect(store.loadTaxSnapshot).toHaveBeenCalledTimes(2);
+    for (const call of store.loadTaxSnapshot.mock.calls) {
+      expect(call).toEqual([STORE, NOW]);
+    }
   });
 });
 
@@ -364,13 +668,7 @@ describe("startLocationPurchase", () => {
   });
 
   it("★★ includes exclusive GST in the mandate ceiling", async () => {
-    store.loadTaxContext.mockResolvedValueOnce({
-      enabled: true,
-      rateBps: 1800,
-      inclusive: false,
-      supplierStateCode: "27",
-      placeOfSupply: "27",
-    });
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, accountStateCode: "27" });
     // Listed renewal is ₹7,000 but the actual debit is ₹8,260 with GST.
     seed([
       [subRow({ mandateId: "mand-1" })],
@@ -431,10 +729,53 @@ describe("confirmLocationPurchase", () => {
     now: NOW,
   };
 
-  /** invoice (with its target), then the attempt, then the write. */
+  /** The confirm's reads, then the completion's facts, then the claim. */
   function seedConfirm(target: number | null = 2) {
-    seed([[{ target }], [{ id: "att-1", providerOrderId: "order_1" }], []]);
+    seedComplete({ target });
   }
+
+  it("★★ R1-07: issues at the payment's own time, from the gateway's record", async () => {
+    const CAPTURED_SECONDS = Math.floor(NOW.getTime() / 1000) - 600;
+    rzp.rzpFetchPayment.mockResolvedValue({
+      ok: true,
+      data: { id: "pay_1", created_at: CAPTURED_SECONDS },
+    });
+    seedConfirm();
+    const res = await confirmLocationPurchase(args);
+    expect(res.ok).toBe(true);
+    expect(rzp.rzpFetchPayment).toHaveBeenCalledWith(
+      expect.anything(),
+      "pay_1",
+    );
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(
+      "inv-1",
+      NOW,
+      new Date(CAPTURED_SECONDS * 1000),
+    );
+  });
+
+  it("★ R1-07: an unreadable payment time issues at the confirm, and the purchase still applies", async () => {
+    rzp.rzpFetchPayment.mockRejectedValue(new Error("socket hang up"));
+    seedConfirm();
+    const res = await confirmLocationPurchase(args);
+    expect(res.ok).toBe(true);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
+    expect(logWarn).toHaveBeenCalledWith("billing.locations.payment_time", {
+      paymentId: "pay_1",
+      reason: "socket hang up",
+    });
+  });
+
+  it("★ R1-07: verified by signature alone (gateway unreadable), no time is taken from the gateway", async () => {
+    rzp.verifyCapturedCheckoutPayment.mockResolvedValue({
+      ok: true,
+      gatewayRead: false,
+    });
+    seedConfirm();
+    await confirmLocationPurchase(args);
+    expect(rzp.rzpFetchPayment).not.toHaveBeenCalled();
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
+  });
 
   it("★★ FINALIZES BEFORE SETTLING — settling a DRAFT leaves a paid invoice unpaid", async () => {
     // Same regression as confirmEnrolment, same cause, same cost. See the note
@@ -482,7 +823,7 @@ describe("confirmLocationPurchase", () => {
   it("★ issues the document only once it has really been paid", async () => {
     seedConfirm();
     await confirmLocationPurchase(args);
-    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
   });
 
   it("★ refuses an invoice with no recorded target", async () => {
@@ -498,7 +839,7 @@ describe("confirmLocationPurchase", () => {
   });
 
   it("★★ money IN but the grant failed is never a bare failure", async () => {
-    seed([[{ target: 2 }], [{ id: "att-1", providerOrderId: "order_1" }]]);
+    seedConfirm(2);
     dbHolder.current.db.update = () => {
       throw new Error("db down");
     };
@@ -512,6 +853,271 @@ describe("confirmLocationPurchase", () => {
     seedConfirm(2);
     await confirmLocationPurchase(args);
     expect(dbHolder.current.calls.set[0].scheduledLocations).toBeNull();
+  });
+
+  it("★★ the raise is a CLAIM: live, same cycle, still below the target", async () => {
+    seedConfirm(2);
+    await confirmLocationPurchase(args);
+    const where = dbHolder.current.calls.where
+      .map((w: unknown) => render(w))
+      .find((w: { sql: string }) =>
+        w.sql.includes('"billing_subscriptions"."billed_locations" <'),
+      );
+    expect(where).toBeDefined();
+    if (!where) return;
+    expect(where.sql).toContain(
+      '"billing_subscriptions"."current_cycle_seq" =',
+    );
+    expect(where.params).toEqual(expect.arrayContaining([STORE, 3, 2]));
+  });
+
+  it("★★ a confirm after the purchase was finished changes nothing", async () => {
+    seedComplete({
+      target: 2,
+      invoiceStatus: "paid",
+      attemptState: "captured",
+      claimed: false,
+      after: subRow({ billedLocations: 2 }),
+    });
+    collect.settleAttempt.mockResolvedValue(null);
+    const res = await confirmLocationPurchase(args);
+    expect(res).toEqual({ ok: true, data: { billedLocations: 2 } });
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+  });
+});
+
+/** A Drizzle condition, as Postgres would receive it. */
+function render(query: unknown) {
+  const q = new PgDialect().sqlToQuery(query as any);
+  return { sql: q.sql.replace(/\s+/g, " ").trim(), params: q.params };
+}
+
+/**
+ * The completion's reads, by table: (unless `recovery`) the confirm's own
+ * target and attempt reads, then invoice, attempt, store and subscription,
+ * then the loser's re-read.
+ */
+function seedComplete(
+  opts: {
+    target?: number | null;
+    recovery?: boolean;
+    invoiceStatus?: string;
+    attemptState?: string;
+    sub?: Record<string, unknown>;
+    claimed?: boolean;
+    after?: Record<string, unknown>;
+    invoiceCreatedAt?: string;
+  } = {},
+) {
+  const target = opts.target === undefined ? 2 : opts.target;
+  dbHolder.current = makeDbMock({
+    selectByTable: {
+      billing_invoices: [
+        ...(opts.recovery ? [] : [[{ target }]]),
+        [
+          {
+            storeId: STORE,
+            kind: "addon",
+            status: opts.invoiceStatus ?? "draft",
+            addonTargetCount: target,
+            createdAt: opts.invoiceCreatedAt ?? "2026-08-31T00:00:00.000Z",
+          },
+        ],
+      ],
+      billing_payment_attempts: [
+        ...(opts.recovery
+          ? []
+          : [
+              [
+                {
+                  id: "att-1",
+                  providerOrderId: "order_1",
+                  amountPaise: 50_000,
+                },
+              ],
+            ]),
+        [
+          {
+            id: "att-1",
+            invoiceId: "inv-1",
+            storeId: STORE,
+            state: opts.attemptState ?? "processing",
+            amountPaise: 50_000,
+            currency: "INR",
+            providerOrderId: "order_1",
+            providerPaymentId: null,
+          },
+        ],
+      ],
+      stores: [[{ id: STORE }]],
+      billing_subscriptions: [
+        [
+          {
+            state: "active",
+            plan: "pro",
+            billedLocations: 1,
+            currentCycleSeq: 3,
+            currentPeriodStart: "2026-08-17T00:00:00.000Z",
+            ...opts.sub,
+          },
+        ],
+        opts.after ? [opts.after] : [],
+      ],
+    },
+    returningQueue: [opts.claimed === false ? [] : [{ storeId: STORE }]],
+  });
+}
+
+describe("completeLocationPurchase (recovery, RC-F1b)", () => {
+  const recovery = {
+    storeId: STORE,
+    invoiceId: "inv-1",
+    attemptId: "att-1",
+    providerPaymentId: null,
+    source: "recovery" as const,
+    verifyCapture: true,
+    now: NOW,
+  };
+
+  it("★★ finishes a closed-tab purchase: issues, settles, raises to the INVOICE's count", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    const res = await completeLocationPurchase(recovery);
+    expect(res).toEqual({ status: "completed", data: { billedLocations: 2 } });
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
+    expect(dbHolder.current.calls.set[0].billedLocations).toBe(2);
+  });
+
+  it("★ issues the draft at the capture time it is given (GST paidAt)", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    const paidAt = new Date(NOW.getTime() - 2 * 3_600_000);
+    const res = await completeLocationPurchase({ ...recovery, paidAt });
+    expect(res.status).toBe("completed");
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, paidAt);
+  });
+
+  it("★★ a captured amount that differs is filed, never applied", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    collect.verifyRecoveredCapture.mockResolvedValue({
+      status: "mismatch",
+      reason: "the captured amount or currency differs from the attempt",
+      paymentId: "pay_old",
+      observedPaise: 1_00,
+    });
+    const res = await completeLocationPurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "amount_mismatch",
+        purchase: "locations",
+        repairKey: "purchase_refused:att-1",
+      }),
+    );
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+
+  it("★ a plan that no longer includes locations is filed", async () => {
+    seedComplete({
+      recovery: true,
+      attemptState: "captured",
+      sub: { plan: "basic" },
+    });
+    const res = await completeLocationPurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        note: expect.stringMatching(/no longer includes extra locations/),
+      }),
+    );
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("★ a draft whose count was reached another way is filed", async () => {
+    seedComplete({
+      recovery: true,
+      attemptState: "captured",
+      sub: { billedLocations: 2 },
+    });
+    const res = await completeLocationPurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("★ a purchase from an earlier cycle is filed", async () => {
+    seedComplete({
+      recovery: true,
+      attemptState: "captured",
+      invoiceCreatedAt: "2026-08-01T00:00:00.000Z",
+    });
+    expect((await completeLocationPurchase(recovery)).status).toBe("refused");
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+});
+
+describe("startLocationPurchase finishes an earlier paid purchase (RC-F1b)", () => {
+  const args = {
+    storeId: STORE,
+    store: PRO,
+    requested: 3,
+    locationPrice: PRICE,
+    now: NOW,
+  };
+  const earlier = {
+    attemptId: "att-1",
+    invoiceId: "inv-1",
+    storeId: STORE,
+    kind: "addon",
+    providerOrderId: "order_1",
+    providerPaymentId: "pay_old",
+    amountPaise: 50_000,
+    currency: "INR",
+    createdAt: NOW.toISOString(),
+  };
+
+  it("★★ completes it instead of opening a second order", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    seedComplete({ recovery: true, attemptState: "captured" });
+    const res = await startLocationPurchase(args);
+    expect(res).toEqual({ ok: false, error: LOCATIONS_RECOVERED_MESSAGE });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(store.createAddonInvoice).not.toHaveBeenCalled();
+  });
+
+  it("★★ when it cannot be finished, says the payment went through and opens nothing", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    seedComplete({ recovery: true, attemptState: "captured" });
+    collect.verifyRecoveredCapture.mockResolvedValue({ status: "unreadable" });
+    const res = await startLocationPurchase(args);
+    expect(res).toEqual({
+      ok: false,
+      error: LOCATIONS_RECOVERY_WAITING_MESSAGE,
+    });
+    expect(LOCATIONS_RECOVERY_WAITING_MESSAGE).toMatch(/don't pay again/);
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ fails CLOSED when the earlier purchases can't be read", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue(null);
+    const res = await startLocationPurchase(args);
+    expect(res).toEqual({
+      ok: false,
+      error: "Couldn't check your subscription. Try again.",
+    });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ an earlier PLAN CHANGE is not this flow's to finish", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    collect.readAddonOrderTarget.mockResolvedValue({
+      kind: "plan_change",
+      plan: "pro",
+      period: "yearly",
+    });
+    seed([[subRow()], [{ n: 2 }]]);
+    await startLocationPurchase(args);
+    // It went on to the ordinary purchase path rather than finishing a plan
+    // change through the location flow.
+    expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
   });
 });
 
@@ -592,5 +1198,164 @@ describe("releaseLocations", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toMatch(/buy flow/i);
+  });
+});
+
+describe("startLocationPurchase reads the tax once (GST Stage 7)", () => {
+  const args = {
+    storeId: STORE,
+    store: PRO,
+    requested: 2,
+    locationPrice: PRICE,
+    now: NOW,
+  };
+
+  function expectNothingWritten() {
+    expect(store.createAddonInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  }
+
+  it("★ builds the part period with the reading's GST and stamps it", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, accountStateCode: "29" });
+    seed([[subRow()], [{ n: 2 }]]);
+    const res = await startLocationPurchase(args);
+    expect(res.ok).toBe(true);
+    const arg = store.createAddonInvoice.mock.calls[0][0];
+    // ₹500 + 18% exclusive.
+    expect(arg.built).toMatchObject({ taxPaise: 9_000, totalPaise: 59_000 });
+    expect(arg.stamp).toEqual({
+      supplierGstin: "03ABCDE1234F1Z5",
+      customerGstin: null,
+      placeOfSupply: "29",
+      placeOfSupplyBasis: "recipient",
+      sacCode: "998314",
+    });
+    expect(arg).not.toHaveProperty("supplierGstin");
+    expect(store.loadTaxSnapshot).toHaveBeenCalledWith(STORE, NOW);
+  });
+
+  it("a reading that fails", async () => {
+    store.loadTaxSnapshot.mockRejectedValue(new Error("connection reset"));
+    seed([[subRow()], [{ n: 2 }]]);
+    expect(await startLocationPurchase(args)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.invoiceFailed,
+    });
+    expectNothingWritten();
+    expect(logError).toHaveBeenCalledWith(
+      "billing.locations.tax_snapshot",
+      expect.any(Error),
+      { storeId: STORE },
+    );
+  });
+
+  it("GST on without StoreMink's full tax identity", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, supplierStateCode: null });
+    seed([[subRow()], [{ n: 2 }]]);
+    expect(await startLocationPurchase(args)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.settingsIncomplete,
+    });
+    expectNothingWritten();
+  });
+
+  it("★ GST on and no state of the merchant anywhere", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true });
+    seed([[subRow()], [{ n: 2 }]]);
+    expect(await startLocationPurchase(args)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.needsState,
+    });
+    expectNothingWritten();
+  });
+
+  it("★ GST on and a business outside India", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, accountCountry: "US" });
+    seed([[subRow()], [{ n: 2 }]]);
+    expect(await startLocationPurchase(args)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.outsideIndia,
+    });
+    expectNothingWritten();
+  });
+
+  it("★ a ZERO part period is granted without a reading", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true }); // would refuse
+    seed([[subRow({ currentPeriodEnd: NOW.toISOString() })], [{ n: 2 }], []]);
+    const res = await startLocationPurchase(args);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/next renewal/i);
+    expect(store.loadTaxSnapshot).not.toHaveBeenCalled();
+  });
+
+  describe("★★ the ceiling prices the renewal under ITS terms", () => {
+    // Pro monthly with 2 extra locations renews at ₹7,000 untaxed. GST off
+    // today, an exclusive 18% start scheduled: if it starts before the renewal
+    // is collected (from 12 Sep, four days before the cycle ends on 16 Sep),
+    // the debit is ₹8,260 and a ₹7,500 mandate cannot take it.
+    const scheduledFrom = (startsAt: string): SnapshotRow => ({
+      ...SNAPSHOT_ROW,
+      accountStateCode: "29",
+      nextTaxEnabled: true,
+      nextTaxInclusive: false,
+      nextTaxRateBps: 1800,
+      nextTaxStartsAt: startsAt,
+    });
+    const withMandate = () =>
+      seed([
+        [subRow({ mandateId: "mand-1" })],
+        [{ n: 2 }],
+        [{ maxAmountPaise: 750_000 }],
+      ]);
+
+    it("★★ a start before the renewal is collected is refused", async () => {
+      readingFor(scheduledFrom("2026-09-10T00:00:00.000Z"));
+      withMandate();
+      const res = await startLocationPurchase(args);
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.error).toMatch(/autopay limit/i);
+      expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    });
+
+    it("control: a start after the renewal is collected is allowed", async () => {
+      readingFor(scheduledFrom("2026-09-14T00:00:00.000Z"));
+      withMandate();
+      const res = await startLocationPurchase(args);
+      expect(res.ok).toBe(true);
+      // The part period itself is charged under today's terms: no GST.
+      expect(store.createAddonInvoice.mock.calls[0][0].built.totalPaise).toBe(
+        50_000,
+      );
+    });
+  });
+});
+
+describe("completeLocationPurchase: a failed issue (GST Stage 7)", () => {
+  it("★ is logged, and nothing is settled or applied", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    store.finalizeInvoice.mockResolvedValue(null);
+    const res = await completeLocationPurchase({
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+      providerPaymentId: null,
+      source: "recovery",
+      verifyCapture: true,
+      now: NOW,
+    });
+    expect(res.status).toBe("not_ready");
+    expect(logWarn).toHaveBeenCalledWith("billing.confirm_issue_failed", {
+      purchase: "locations",
+      source: "recovery",
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+    });
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(0);
   });
 });

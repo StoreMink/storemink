@@ -160,9 +160,15 @@ describe("section nesting", () => {
   });
 
   // Renaming a permission key silently revokes it for every existing role, so
-  // the label may drift but the key may not. `ai` is labelled "Plan & billing".
+  // the label may drift but the key may not. `ai` is labelled "Plans & Billing".
   it("keeps the legacy `ai` key for the plan section", () => {
     expect(getSection("ai")?.href).toBe("/dashboard/plans");
+  });
+
+  // Owner decision 11 (the GST release): one name for the billing page
+  // everywhere, so the sidebar says what the page's heading and the Terms say.
+  it("labels the `ai` section Plans & Billing", () => {
+    expect(getSection("ai")?.label).toBe("Plans & Billing");
   });
 });
 
@@ -310,6 +316,21 @@ describe("SECTIONS catalog", () => {
     for (const s of SECTIONS) {
       expect(s.actions.length).toBeGreaterThan(0);
     }
+  });
+
+  // Notices from StoreMink (takedown design 7.1) is a child of Settings, so
+  // it shows to anyone who can view Settings and needs no key of its own.
+  it("lists Notices from StoreMink under Settings", () => {
+    const settings = getSection("settings");
+    const notices = settings?.children?.find(
+      (child) => child.href === "/dashboard/settings/notices",
+    );
+    expect(notices).toEqual({
+      label: "Notices from StoreMink",
+      href: "/dashboard/settings/notices",
+      icon: "mail",
+    });
+    expect(SECTIONS.some((s) => s.key === "notices")).toBe(false);
   });
 
   // Sanity check the role-color palette stayed in sync with the badge map.

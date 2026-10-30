@@ -7,22 +7,45 @@ import {
 } from "../errors";
 import type { MinkActorContext } from "../types";
 
-const h = vi.hoisted(() => ({ logError: vi.fn() }));
+const h = vi.hoisted(() => ({
+  logError: vi.fn(),
+  // The default hands the arguments back untouched; a test that wants copies
+  // overrides it.
+  promote: vi.fn<
+    (
+      actor: unknown,
+      args: Record<string, unknown>,
+      attachmentArgs?: readonly string[],
+      options?: { signal?: AbortSignal },
+    ) => Promise<Record<string, unknown>>
+  >(async (_actor, args) => args),
+}));
 vi.mock("@/lib/observability/logger", () => ({
   logError: h.logError,
   logWarn: vi.fn(),
   logInfo: vi.fn(),
 }));
+// attachments.ts is the server side (database, storage): the registry's
+// contract with it is what these tests pin, so it is a recorder here.
+vi.mock("../attachments", () => ({
+  MINK_ATTACHMENT_ONLY_AS_A_PICTURE:
+    "An attached image can be used only as a picture in the store, such as a product photo, a page section, a category image or a blog cover. Leave its address out of this request.",
+  promoteMinkAttachmentRefs: h.promote,
+}));
 
 import {
+  ATTACHMENT_ONLY_AS_A_PICTURE,
   MinkToolRegistry,
   TOOL_COMMIT_GRACE_MS,
+  assertAttachmentArgs,
   effectOf,
+  usesAttachmentCopies,
   type MinkTool,
   type MinkToolContext,
 } from "./registry";
 
 const logError = h.logError;
+const promote = h.promote;
 
 function actor(overrides: Partial<MinkActorContext> = {}): MinkActorContext {
   return {
@@ -810,5 +833,261 @@ describe("★★ a stop the merchant asked for ends a tool as a stop", () => {
       response: { error: { code: "tool_timeout" } },
     });
     expect(write).not.toHaveBeenCalled();
+  });
+});
+
+// ★★ AN ATTACHED PICTURE REACHES THE STORE ONLY THROUGH A PICTURE ARGUMENT OF
+//    A PICTURE-PLACING TOOL (storage build, 2026-10-28). The registry refuses
+//    an attachment address anywhere else before anything is claimed or
+//    copied, and copies the attachment into the Media Library just before the
+//    tool runs; read tools, and the tool that reads attachments itself, get
+//    the model's own arguments.
+describe("★★ attachment addresses and the picture-placing tools", () => {
+  const ATTACHMENT =
+    "/api/mink/attachments/cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const COPY = "https://media.test/stores/s/media/mink-attachment-local-c.webp";
+  const manager = () =>
+    actor({ permissions: { products: ["manage"], media: ["manage"] } });
+  const call = (args: Record<string, unknown>) => ({
+    id: "call-1",
+    name: "read_products",
+    args,
+  });
+
+  it("names the refusal, and who copies", () => {
+    expect(ATTACHMENT_ONLY_AS_A_PICTURE).toBe(
+      "An attached image can be used only as a picture in the store, such as a product photo, a page section, a category image or a blog cover. Leave its address out of this request.",
+    );
+    expect(usesAttachmentCopies({}, "write")).toBe(true);
+    expect(usesAttachmentCopies({}, "commit")).toBe(true);
+    expect(usesAttachmentCopies({}, "read")).toBe(false);
+    expect(
+      usesAttachmentCopies({ readsAttachmentsItself: true }, "commit"),
+    ).toBe(false);
+    // The check is pure: an address in a named argument passes, elsewhere it
+    // throws, and a read tool is never checked.
+    expect(() =>
+      assertAttachmentArgs({ attachmentArgs: ["image_url"] }, "write", {
+        image_url: ATTACHMENT,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertAttachmentArgs({ attachmentArgs: ["image_url"] }, "write", {
+        image_url: "x",
+        body: `see ${ATTACHMENT}`,
+      }),
+    ).toThrow(MinkToolInputError);
+    expect(() =>
+      assertAttachmentArgs({}, "read", { body: ATTACHMENT }),
+    ).not.toThrow();
+  });
+
+  it("★ read tools get the originals, and no copy is asked for", async () => {
+    const execute = vi.fn<MinkTool["execute"]>(async () => ({ ok: true }));
+    const registry = new MinkToolRegistry([
+      tool({ effect: "read", attachmentArgs: ["image_url"], execute }),
+    ]);
+    const args = { image_url: ATTACHMENT, note: `and ${ATTACHMENT}` };
+    const response = await registry.execute(manager(), call(args));
+    expect(response.response).toEqual({ output: { ok: true } });
+    expect(execute.mock.calls[0][1]).toBe(args);
+    expect(promote).not.toHaveBeenCalled();
+    // A read tool with no list is never refused either.
+    const registry2 = new MinkToolRegistry([
+      tool({ repeatSafe: true, execute }),
+    ]);
+    await expect(
+      registry2.execute(manager(), call({ q: ATTACHMENT })),
+    ).resolves.toMatchObject({ response: { output: { ok: true } } });
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it("★ the tool that reads attachments itself gets the originals", async () => {
+    const execute = vi.fn(
+      async (_a: unknown, _args: unknown, context?: MinkToolContext) => ({
+        saved: await context!.commit(async () => "draft-1"),
+      }),
+    );
+    const registry = new MinkToolRegistry([
+      tool({ effect: "commit", readsAttachmentsItself: true, execute }),
+    ]);
+    const args = { reference_image_urls: [ATTACHMENT], prompt: "a shelf" };
+    const response = await registry.execute(manager(), call(args));
+    expect(response.response).toEqual({ output: { saved: "draft-1" } });
+    expect(execute.mock.calls[0][1]).toBe(args);
+    expect(promote).not.toHaveBeenCalled();
+  });
+
+  it("★★ refused outside its picture arguments, before the claim and before any copy", async () => {
+    const execute = vi.fn(async () => ({ ok: true }));
+    const claimAct = vi.fn(async () => undefined);
+    const registry = new MinkToolRegistry([
+      tool({ attachmentArgs: ["image_url"], execute }),
+    ]);
+    const response = await registry.execute(
+      manager(),
+      call({ image_url: ATTACHMENT, description: `Photo: ${ATTACHMENT}` }),
+      { claimAct },
+    );
+    expect(response.response).toEqual({
+      error: {
+        code: "invalid_tool_input",
+        message: ATTACHMENT_ONLY_AS_A_PICTURE,
+      },
+    });
+    expect(claimAct).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("★★ a write or commit tool with no picture arguments refuses every address (mutation check 16)", async () => {
+    const execute = vi.fn(async () => ({ ok: true }));
+    const claimAct = vi.fn(async () => undefined);
+    for (const marking of [{}, { effect: "commit" as const }]) {
+      const registry = new MinkToolRegistry([tool({ ...marking, execute })]);
+      const response = await registry.execute(
+        manager(),
+        call({ message: `Your photo: ${ATTACHMENT}` }),
+        { claimAct },
+      );
+      expect(response.response.error).toMatchObject({
+        code: "invalid_tool_input",
+        message: ATTACHMENT_ONLY_AS_A_PICTURE,
+      });
+    }
+    expect(claimAct).not.toHaveBeenCalled();
+    expect(promote).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("★★ the promoted arguments reach the tool, with the tool's own signal, and the model's own arguments are unchanged", async () => {
+    const execute = vi.fn<MinkTool["execute"]>(async () => ({ ok: true }));
+    const registry = new MinkToolRegistry([
+      tool({ attachmentArgs: ["image_urls"], execute }),
+    ]);
+    promote.mockImplementation(async (_actor, args) => ({
+      ...args,
+      image_urls: [COPY],
+    }));
+    const args = { product_id: "p1", image_urls: [ATTACHMENT], mode: "add" };
+    const before = structuredClone(args);
+    const trusted = manager();
+    await expect(registry.execute(trusted, call(args))).resolves.toMatchObject({
+      response: { output: { ok: true } },
+    });
+    expect(promote).toHaveBeenCalledWith(trusted, args, ["image_urls"], {
+      signal: expect.any(AbortSignal),
+    });
+    expect(execute).toHaveBeenCalledWith(
+      trusted,
+      { product_id: "p1", image_urls: [COPY], mode: "add" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    // ★ Mutation check 12: `call.args` is what the memo and the run log keep.
+    expect(args).toEqual(before);
+    expect(execute.mock.calls[0][1]).not.toBe(args);
+  });
+
+  it("★ a write tool claims before the copy is made, then runs", async () => {
+    const order: string[] = [];
+    const registry = new MinkToolRegistry([
+      tool({
+        attachmentArgs: ["image_url"],
+        execute: vi.fn(async () => {
+          order.push("execute");
+          return { ok: true };
+        }),
+      }),
+    ]);
+    promote.mockImplementation(async (_actor, args) => {
+      order.push("promote");
+      return args;
+    });
+    await expect(
+      registry.execute(manager(), call({ image_url: ATTACHMENT }), {
+        claimAct: vi.fn(async () => {
+          order.push("claim");
+        }),
+      }),
+    ).resolves.toMatchObject({ response: { output: { ok: true } } });
+    expect(order).toEqual(["claim", "promote", "execute"]);
+  });
+
+  it("★★ a commit tool's copy precedes its claim inside commit", async () => {
+    const order: string[] = [];
+    const registry = new MinkToolRegistry([
+      tool({
+        effect: "commit",
+        attachmentArgs: ["image_url"],
+        execute: vi.fn(async (_actor, _args, context?: MinkToolContext) => {
+          order.push("paid work");
+          const saved = await context!.commit(async () => {
+            order.push("write");
+            return "draft-1";
+          });
+          return { saved };
+        }),
+      }),
+    ]);
+    promote.mockImplementation(async (_actor, args) => {
+      order.push("promote");
+      return args;
+    });
+    await expect(
+      registry.execute(manager(), call({ image_url: ATTACHMENT }), {
+        claimAct: vi.fn(async () => {
+          order.push("claim");
+        }),
+      }),
+    ).resolves.toMatchObject({ response: { output: { saved: "draft-1" } } });
+    expect(order).toEqual(["promote", "paid work", "claim", "write"]);
+  });
+
+  it("★ a promotion refusal becomes invalid_tool_input with its sentence, and the tool never runs", async () => {
+    const execute = vi.fn(async () => ({ ok: true }));
+    const registry = new MinkToolRegistry([
+      tool({ attachmentArgs: ["image_url"], execute }),
+    ]);
+    promote.mockRejectedValue(
+      new MinkToolInputError(
+        "That attached image is no longer available. Attach it again to use it.",
+      ),
+    );
+    const response = await registry.execute(
+      manager(),
+      call({ image_url: ATTACHMENT }),
+    );
+    expect(response.response).toEqual({
+      error: {
+        code: "invalid_tool_input",
+        message:
+          "That attached image is no longer available. Attach it again to use it.",
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("★ a stop during the copy ends the call as a stop, before the tool runs", async () => {
+    const run = new AbortController();
+    const execute = vi.fn(async () => ({ ok: true }));
+    const registry = new MinkToolRegistry([
+      tool({ effect: "commit", attachmentArgs: ["image_url"], execute }),
+    ]);
+    promote.mockImplementation(
+      () => new Promise<Record<string, unknown>>(() => {}),
+    );
+    const pending = registry.execute(
+      manager(),
+      call({ image_url: ATTACHMENT }),
+      { signal: run.signal },
+    );
+    run.abort(new MinkRunStoppedError());
+    await expect(pending).resolves.toMatchObject({
+      response: { error: { code: "run_stopped" } },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    // The copy's signal is the tool's own, so the promotion saw the stop.
+    expect(promote.mock.calls[0][3]?.signal?.aborted).toBe(true);
   });
 });

@@ -373,18 +373,42 @@ stronger answer to §26 than "latest valid state wins".
 `unknown` is a first-class state, not an error. It is what a timeout produces,
 and the only exit is provider verification.
 
+A refund StoreMink sends its merchant does not move the attempt: the refund
+pass (`lib/billing/refunds.ts`) leaves it `captured` and records the refund in
+`billing_refunds` (§5). An attempt that does reach `refunded` still counts as
+paid (`invoiceStatusForAttempts` agrees with `isSettled`), so it never reopens
+its invoice.
+
 ### Invoice
 
 ```
-draft ──▶ open ──▶ processing ──▶ paid ──▶ partially_refunded ──▶ refunded
+draft ──▶ open ──▶ processing ──▶ paid
             │  ▲        │
             │  └────────┴──▶ failed ──┐
             │                          │ (retry creates a NEW attempt)
             │◀─────────────────────────┘
             │
-            ├──▶ uncollectible   (grace expired → downgrade)
-            └──▶ void            (operator only, audited, reason required)
+            └──▶ uncollectible   (grace expired → downgrade)
+
+draft | open | processing | paid ──▶ void
+        (a plan end closes every cycle it did not reach; the refund pass's
+         repair closes an unpaid leftover, never a draft)
 ```
+
+**`void` is written in two places only:** when a plan ends,
+`closeUnreachedInvoices` (`lib/billing/close-cycle.ts`) closes every
+subscription invoice above the last cycle the plan reached, whatever its
+status, in the same transaction as the end; and the hourly refund pass's repair
+closes an issued, unpaid `open` invoice above an ended plan's cycle or below a
+live plan's, issued over an hour ago, with no payment in flight or captured.
+**`refunded` and `partially_refunded` are never written** (rule R9): a refund
+never changes its invoice, so a refunded `void` invoice stays `void`, a paid
+invoice whose duplicate payment was returned stays `paid`, and the refunds are
+read from `billing_refunds` by invoice. A captured payment on a `void` or
+`uncollectible` subscription invoice is money for a cycle the plan does not
+reach, and the refund pass returns it (§7). The attempts' claim moves an
+invoice to paid, open or processing only from `open` or `processing`, so
+neither a closed nor a paid invoice is ever moved by its attempts.
 
 ### Subscription
 
@@ -392,12 +416,19 @@ draft ──▶ open ──▶ processing ──▶ paid ──▶ partially_ref
 free ──▶ active ──▶ past_due ──▶ grace ──┬──▶ active      (paid in time)
            ▲                              └──▶ downgraded ──▶ free
            │
-           └── cancelled (at period end)
+           └── cancelled (at period end, or at grace end when cancelled in grace)
 ```
 
 Subscription state is **derived and stored**, never a boolean. `active` requires
 a paid invoice for the current `cycle_seq`; the downgrade claim re-checks that
 rather than trusting the column.
+
+**A cancelling subscription (`cancel_at_period_end`) never enters another
+cycle** (rule R2): not at the cycle turn, not at grace end, not when a payment
+lands. It ends as `cancelled` at the period end, or, when it was cancelled in
+`past_due` or `grace`, when grace ends; it is never downgraded. Keep my plan
+clears the flag in any live state and then advances the cycle if the renewal
+was paid meanwhile.
 
 ### Mandate
 
@@ -431,11 +462,67 @@ create table platform_billing_settings (
   tax_enabled     boolean not null default false,
   tax_inclusive   boolean not null default false,  -- billing_05_tax_mode.sql
   tax_rate_bps    integer not null default 1800,   -- 18.00%
-  invoice_prefix  text not null default 'SM',
+  invoice_prefix  text not null default 'SM',   -- 1 or 2 letters or digits since 0266
   updated_at      timestamptz not null default now(),
-  updated_by      text
+  updated_by      text,
+  -- 20261029_0266_gst_on_storemink_fees:
+  next_tax_enabled   boolean,      -- one scheduled change: all four set, or all NULL
+  next_tax_inclusive boolean,
+  next_tax_rate_bps  integer,
+  next_tax_starts_at timestamptz,
+  next_tax_notice_id uuid references platform_announcements(id) on delete set null,
+  sac_code           text,         -- ^99[0-9]{4}$, printed on every tax invoice
+  llpin              text,         -- ^[A-Z]{3}-[0-9]{4}$, LLP Act section 21
+  registered_office  text          -- printed with the LLPIN on every invoice
 );
 ```
+
+- **★★ THE IN-FORCE COLUMNS AND ONE SCHEDULED CHANGE.** `tax_enabled`,
+  `tax_inclusive` and `tax_rate_bps` are the GST in force; the four `next_tax_*`
+  columns hold at most one change still to come
+  (`platform_billing_next_tax_shape`). `termsAt(settings, instant)`
+  (`lib/billing/tax-terms.ts`, pure) applies a started change BY TIME, so an
+  invoice built at or after `next_tax_starts_at` uses the new values even if the
+  hourly billing run has not yet copied them into the in-force columns
+  (`promoteDueTaxChange`, the run's first step, docs/cron-jobs.md). Nothing a
+  merchant pays depends on when that run fires.
+- **★★ WHAT GST NEEDS BEFORE IT CAN BE ON.** `platform_billing_tax_needs_invoice_identity`
+  refuses `tax_enabled = true` without the SAC code, state, legal name, LLPIN,
+  registered office, address line 1 and a 6-digit PIN;
+  `platform_billing_next_tax_needs_invoice_identity` asks the same, plus the
+  GSTIN, before a switch-on can even be scheduled. The older
+  `platform_billing_tax_needs_gstin` still stands.
+- **★★ A RISE NEEDS A MONTH'S NOTICE** (`scheduleTaxChange`,
+  `lib/billing/platform-settings.ts`). A change that raises what merchants pay
+  (`raisesPayable`: switching GST on under prices that exclude it, or a higher
+  rate under them) can only be scheduled, at least 1 calendar month in India
+  time after an Operational email announcement that reached every store owner
+  (`noticeQualifies`: Operational, sent or partly sent with at least one
+  delivery, email among its channels, aimed at all owners with no plan, status,
+  age or launch filter). The notice is read from `platform_announcements` in the
+  same transaction as the write, never taken from the browser. "Now" is allowed
+  only when nothing anyone pays goes up. A start must be at least 5 minutes and
+  at most 400 days ahead. `LAW_SET_RATE_RISE_WITHOUT_NOTICE` stays `false`
+  until the published Terms say a rate set by law applies from the date the law
+  sets.
+  ⚠ **A notice whose status is `partial` counts as given** (review R1-12,
+  coordinator's decision, recorded as the owner's choice): one bounced address
+  must not block a lawful tax change. The owners whose email failed got no
+  notice; the owner may resend to them before the start, or change the rule to
+  require `sent` with no failures.
+- **★ CANCELLING** (`cancelScheduledTaxChange`) promotes a change that has
+  already started first, then clears the schedule, with one clock for both
+  (review R1-13); a change that started while the page was open is refused.
+- **★★ NEVER `INSERT .. ON CONFLICT` THE SINGLETON.** A CHECK judges the
+  PROPOSED insert row before the conflict is detected, and the proposed row has
+  no GSTIN or SAC code, so an upsert of the singleton is refused by the new
+  identity CHECKs whenever GST is on (found by `gst.local` case 10). The three
+  tax saves (`saveTaxIdentity`, `scheduleTaxChange`, `cancelScheduledTaxChange`,
+  through `writeTaxColumns`) update the locked row and insert only when none
+  exists. ⚠ `savePlatformAutoRefunds` still upserts: it is safe only because its
+  insert never meets a row with GST on, and a CHECK violation (SQLSTATE 23514)
+  there is mapped to "Couldn't save this switch: StoreMink's tax identity is
+  incomplete. Save StoreMink's tax identity first, then try again."
 
 - **★ `tax_inclusive` is the operator's choice, and it changes more than the
   arithmetic.** EXCLUSIVE (the default) means ₹15,000 + 18% = ₹17,700 charged;
@@ -448,23 +535,62 @@ create table platform_billing_settings (
     inclusive mode (`taxInclusive: true`).
   - **Inclusive keeps more plans auto-collectable.** Basic yearly stays at
     ₹15,000, on the AFA line, instead of ₹17,700, over it (§2a).
-  - **It must match what the pricing page advertises.** The page derives from
-    `PLAN_META`, so a merchant reading "₹1,500" and being debited ₹1,770 will
-    say so. Exclusive is the ordinary Indian B2B convention and lets them claim
-    input tax credit cleanly; inclusive is the honest-headline-price option.
-- **`tax_enabled = false` until a GSTIN exists.** Invoices then carry
-  `tax_paise = 0`, render no GSTIN block, and state that tax is not applicable.
+  - **The pricing pages read this setting, so they cannot disagree with it.**
+    The storemink.com pricing page, homepage and POS page read the tax terms
+    through `getPublicTaxSource()` (`lib/billing/public-tax.ts`: only the seven
+    columns that decide which GST applies, cached 300 s under the tag
+    `platform-tax`) and call `termsAt` at render, so "plus GST" and the
+    footnote follow the setting, and a scheduled start shows within one
+    revalidation without a deploy. The three console saves and the hourly
+    promote bust the tag after they commit (`bustPlatformTax`). A failed read
+    shows the prices with no GST wording and logs
+    `billing.public_tax.read_failed`; it is never read as "GST off".
+    Anything followed by a payment (the dashboard, signup, every quote) reads
+    live (`getTaxTermsLive`), never this cache. Exclusive is the ordinary
+    Indian B2B convention and lets merchants claim input tax credit cleanly;
+    inclusive is the honest-headline-price option.
+- **`tax_enabled = false` until StoreMink's identity is complete** (above).
+  Invoices then carry `tax_paise = 0`, render no GSTIN block, and state that
+  tax is not applicable. The release ships with GST off.
 - **Turning tax on is never retroactive.** It applies to invoices finalized
   after the change. Historical invoices are immutable (§23), so a merchant's
   April invoice does not sprout GST in September.
-- Edited from the operator console beside `pricing-panel.tsx`. Every change is
-  audited with the operator's identity.
+- Edited from the operator console, Billing & tax (docs/operator-console.md):
+  the identity card (`saveTaxIdentity`), the Charging GST card
+  (`scheduleTaxChange`, with an impact preview from `lib/billing/gst-impact.ts`)
+  and the status card (`cancelScheduledTaxChange`), superadmin only. A
+  scheduled change the hourly run applies is recorded as
+  `system: scheduled GST change` in `updated_by`.
+- **`auto_refunds`** (default false) and **`automatic_refunds_from`** (the
+  moment migration 0264 ran) belong to the refunds below: the switch that lets
+  the refund pass send its own refunds, and the line before which a payment
+  kept on an `uncollectible` invoice is history for a person.
 
 ### `billing_accounts` — one per store
 
 `store_id` PK, billing email, legal name, address, `state_code`, and the
-**merchant's** `gstin` (nullable — they need it on the invoice to claim input
-tax credit). Operator-editable; merchant-editable later.
+**merchant's** `gstin` (nullable; they need it on the invoice to claim input
+tax credit).
+
+- **Merchant-editable now**, under Billing details on Plans & Billing
+  (`lib/billing/billing-details.ts`, `saveBillingDetails`): business name, the
+  address, the country, and either a GSTIN (whose first two digits give the
+  state) or a state. A business outside India chooses its country instead
+  (`address.country`, with `countryName` for "Other"). The form is prefilled
+  from Taxes & invoices, the default location and the signup answers, but only
+  the billing account is written, and never `billing_email`.
+- **0266 checks** (added NOT VALID, then validated): `billing_accounts_gstin_format`
+  (a well-formed GSTIN or none) and `billing_accounts_gstin_matches_state` (a
+  GSTIN's first two digits equal `state_code`).
+- **★ The place of supply comes from the merchant's own records, first match
+  winning** (`placeOfSupplyFor`, `lib/billing/gst.ts`): the Billing details
+  GSTIN, a Billing details country outside India (place of supply 96), the
+  Billing details state, the Taxes & invoices GSTIN, then state, the default
+  location's GSTIN, then state, the state named in the typed business address,
+  the signup state, a signup country outside India (96), and only while GST is
+  charged StoreMink's own state. The invoice records which with
+  `place_of_supply_basis`, and only a `recipient` basis prints a State for the
+  merchant: an invoice never says a merchant is in Punjab because StoreMink is.
 
 ### `subscriptions`
 
@@ -472,7 +598,9 @@ tax credit). Operator-editable; merchant-editable later.
 `current_period_start/end`, `billed_locations`, `scheduled_plan`,
 `scheduled_period`, `cancel_at_period_end`, `grace_started_at`, `grace_ends_at`,
 `mandate_id`, and the **existing** `plan_source` / `plan_expires_at`, which are
-load-bearing (§8 below).
+load-bearing (§8 below). `cancel_requested_at` and `cancel_requested_by`
+(`merchant:<uid>` or `operator:<email>`, never blank) record who asked to
+cancel; they stay when the plan ends and clear only on Keep my plan.
 
 ### `mandates`
 
@@ -490,7 +618,7 @@ merchant authorised.
 ### `invoices`
 
 ```sql
-kind            text not null check (kind in ('subscription','ai_credits')),
+kind            text not null check (kind in ('subscription','ai_credits','addon')),
 number          text,          -- allocated on finalize, never on draft
 number_seq      integer,
 status          text not null,
@@ -505,6 +633,10 @@ period_end      timestamptz,
 finalized_at    timestamptz,
 due_at          timestamptz,
 paid_at         timestamptz,
+-- 20261029_0266_gst_on_storemink_fees:
+sac_code              text,      -- StoreMink's SAC code, stamped with the GST
+tax_inclusive         boolean not null default false,  -- line amounts include GST
+place_of_supply_basis text,      -- recipient | supplier | outside_india (96)
 
 constraint invoice_one_per_cycle
   unique (store_id, kind, cycle_seq)      -- NULLs don't collide, so ai_credits is unaffected
@@ -513,6 +645,42 @@ constraint invoice_one_per_cycle
 **That unique constraint is the whole answer to §35.** Two renewal workers
 cannot both create an invoice, regardless of transaction isolation or worker
 coordination. `cycle_seq` — not a timestamp — is the idempotency key.
+
+**GST particulars (0266).** Every invoice is stamped from ONE tax reading
+(`readTaxSnapshot`, one statement with the settings row and the billing account
+locked `for share`; pure resolver `lib/billing/tax-snapshot.ts`): StoreMink's
+GSTIN and SAC code while GST is charged, the merchant's GSTIN when it is well
+formed, and the place of supply with its basis (never missing while GST is
+charged). There is no tax-off fallback: a reading
+that fails, or settings that charge GST without StoreMink's identity, leave the
+invoice unbuilt rather than issued on a guess.
+
+- `billing_invoices_sac_code_format`, `billing_invoices_place_of_supply_numeric`
+  and `billing_invoices_place_of_supply_basis` (96 only with `outside_india`,
+  a State code only with `recipient` or `supplier`).
+- **★★ The issuing trigger** `billing_invoices_tax_invoice_complete`
+  (`billing_invoices_guard_tax_invoice`, BEFORE INSERT OR UPDATE OF
+  `finalized_at`) refuses to issue an invoice charging GST without the supplier
+  GSTIN, the place of supply and its basis, the SAC code and a rate. It judges
+  only the transition to issued, so an older invoice can still be paid, voided
+  or refunded, and only once `platform_billing_settings.sac_code` is set, so a
+  revision that issued taxed invoices before this release keeps working during
+  the rollout.
+- `tax_inclusive` is frozen with the money once issued; the migration marked
+  existing invoices whose GST line reads "(included)" before the guard froze it.
+- The 0243 parties snapshot now records StoreMink's LLPIN and registered office,
+  and the customer's country and signup address.
+- **The document** (`/dashboard/plans/invoices/[id]`) is titled "Tax invoice"
+  while it charges GST, with the place of supply (`Outside India (96)` for 96),
+  reverse charge No, both GSTINs and States, a SAC column, "Amount (GST
+  included)" under inclusive prices, the GST split from `platformInvoiceGst`
+  (CGST and SGST in StoreMink's state, IGST elsewhere and for 96) and the LLP
+  line. A no-tax invoice is titled "Invoice" and prints no GST line.
+- **The monthly invoice list** (`lib/billing/invoice-list.ts`,
+  `buildInvoiceList`): every invoice and credit note issued in one India-time
+  month, credit notes as negative lines, every fact from the document itself,
+  at most `MAX_INVOICE_LIST_ROWS` (50,000) rows (never a cut file; above it
+  `too_many`). Downloaded by a superadmin from Billing & tax.
 
 ### `invoice_line_items`
 
@@ -600,8 +768,59 @@ ever guessed; ambiguity lands here.
 
 ### `billing_credits` — append-only ledger
 
-Mirrors `customer_credit_ledger` (§29), which already solves this shape. Needed
-for the post-downgrade rule in §7.
+Mirrors `customer_credit_ledger` (§29), which already solves this shape. It was
+planned for the post-downgrade rule in §7 and stays unused: money that arrives
+after a downgrade is refunded, not credited.
+
+### `billing_refunds`: money StoreMink returns, one row per refund
+
+Migration `20261028_0264_billing_refunds_and_credit_notes`. The obligation and
+its execution in one row, written BEFORE any gateway call with an idempotency
+key we mint (the `issue-refund.ts` pattern): `invoice_id`, `attempt_id`,
+`reason`, `status`, `method` (`razorpay` | `bank_transfer`), `amount_paise`,
+`idempotency_key`, the provider ids, `external_reference` (a UTR),
+`requested_by` (`system` for the refund pass, else the operator's email),
+`note`, `failure_reason`, `resolution_note`, `sent_at`, `resolved_at`,
+`notified_at`.
+
+- **Statuses:** `owed` (decided, not sent) moves to `pending` (sent, or its
+  answer was never read), `processed`, `failed` or `cancelled`; `pending` moves
+  to `processed` or `failed`; those three are final, and `recorded` is inserted
+  final for a refund made outside the tool (a bank transfer, or one made by
+  hand in the Razorpay dashboard). **Reasons:** `cycle_not_reached`,
+  `feature_removed`, `suspended_by_mistake`, `declined_terms`,
+  `duplicate_payment`, `goodwill`, `other`.
+- **A refund never exceeds the payment it reverses.** `billing_refunds_guard`
+  locks the attempt row and refuses a row that would take the payment's live
+  and finished refunds (every status but `failed` and `cancelled`) past its
+  amount, refuses an unissued invoice or a payment that was not captured,
+  freezes what a refund IS once written, and allows only those moves.
+  `billing_refunds_keep` refuses every DELETE. A Razorpay refund still to be
+  sent is at least ₹1 (100 paise).
+- **One automatic refund per payment, ever** (`billing_refunds_one_automatic`,
+  unique on `attempt_id` where `requested_by = 'system'`). A failed one is
+  retried by a person as a new row with the same reason.
+- `notified_at` is written once, when the merchant is told.
+
+### `billing_credit_notes`: StoreMink's own credit notes
+
+A gapless series per Indian financial year, `CN/2026-27/00001` (at most 16
+characters, the GST serial limit), allocated with
+`billing_next_credit_note_no` from `billing_credit_note_counters` by the
+`billing_credit_notes_issue` trigger, which also copies the tax rate, both
+GSTINs, the place of supply and the parties from the invoice. The code decides
+only the amounts (`taxable_paise`, `tax_paise`, `total_paise`; a partial note
+takes tax in proportion, rounded down, and the last takes what is left).
+`billing_credit_notes_guard` refuses an edit, a delete, and notes that would
+take an invoice past its total or its tax. One note per refund (`refund_id`
+unique), never for `duplicate_payment` (returning an excess reduces no supply),
+and one `invoice_cancelled` note, with no refund, for a closed unpaid invoice
+that charged GST.
+
+Neither table has a store column: a refund and a credit note belong to one
+invoice, and the invoice carries the store (SET NULL when the store is
+deleted), so store deletion never touches them. `app_service` may SELECT,
+INSERT and UPDATE refunds and SELECT and INSERT notes; nothing else.
 
 ---
 
@@ -632,28 +851,149 @@ re-deriving them:
 
 Per §2a: finalize at T-4d, collect, evaluate at T0.
 
-### Grace and downgrade — one conditional claim
+- **★★ ONE TAX READING PER RENEWAL INVOICE, AND NO GUESS.** Pass 1 reads the
+  tax at the moment it builds the invoice (`loadTaxSnapshot(storeId, now)`). A
+  read that fails (`reason` `read_failed`) or settings that charge GST without
+  StoreMink's GSTIN, state or SAC code (`settings_incomplete`) leave the renewal
+  for the next hourly run: nothing is written, the summary counts it in
+  `pendingReconcile`, the run answers 200, and `billing.renewal_tax_snapshot`
+  is logged at ERROR. No invoice means no grace, so a read that keeps failing
+  past the cycle end leaves the store on its plan, unbilled (review R1-09, no
+  code change): alert 23 in docs/monitoring.md watches that line.
+- **⚠ A renewal can be issued up to an hour after T-4d** (review R1-08,
+  documented, not changed). The run is hourly, so the invoice is built at the
+  run's `now`, while the screens' next-renewal figure (`quoteNextRenewal`,
+  `quoteLocationRenewal`) reads the terms at T-4d (`termsLater(...,
+collectionStartsAt(cycleStart))`). A scheduled GST start that falls inside
+  that hour gives the invoice the other terms from the ones quoted; the total
+  differs only under prices that exclude GST. Schedule a start well away from a
+  renewal's T-4d if a merchant's quote matters to the minute.
+- When the place of supply falls back to StoreMink's own state, or the
+  merchant is outside India, the issued renewal logs
+  `billing.renewal_place_of_supply_fallback` or `billing.renewal_outside_india`
+  (WARNING): each is a store to contact.
+
+### Issuing an invoice: the GST in force at issue
+
+Every issue goes through `issueInvoice` (`lib/billing/invoice-store.ts`;
+`finalizeInvoice`, `finalizeInvoiceClaimed` and `finalizePaidAiCreditsInvoice`
+wrap it). One transaction: lock the invoice; read the tax at the payment's
+instant for an invoice whose total is already fixed by a payment or an order
+(time of supply), else now; bring the draft up to that GST (`restamp`:
+`unchanged`, `rebuilt` for a draft no payment fixes, `carved` when only the
+split of a fixed total changes, `kept_draft` when the payment fixed a total
+the new GST would change); then claim it only while `status = 'draft'` and
+`finalized_at` is null, which fires the triggers that number it, record the
+parties and refuse an incomplete tax invoice. It never throws; a failure is
+logged and the repair pass below issues the draft later.
+
+- **★ `kept_draft` is still issued, with the draft's own figures,** because the
+  merchant has paid that total. It logs `billing.issue_kept_draft_tax`
+  (WARNING) and, after the commit, files one `state_conflict` reconciliation
+  item with the repair key `kept_draft:<invoice>` (`detail`: the draft's rate
+  and mode, the rate and mode in force, the total, the payment id and a note
+  saying a person decides on a credit note or a refund;
+  `billing.issue_kept_draft_filed`, or `billing.issue_kept_draft_file` at
+  ERROR when the item could not be filed). The reconciliation queue shows it as
+  "Invoice issued with the GST it was priced with".
+- An invoice is never collected while it is unissued (the renewal worker's
+  rule), and a `kept_draft` issue keeps that rule.
+- The browser confirms of a first payment, a plan change and a location
+  purchase issue at the payment's own time (best effort; the repair pass covers
+  a failure).
+
+### The closed tab: the purchase's own completion, then the repair pass
+
+Two passes in the hourly run make sure money taken always ends in a numbered,
+paid invoice and, where it still applies, the purchase the merchant paid for.
+
+1. **The completion** (RC-F1b, inside reconcile, from 15 minutes after the
+   attempt). A first payment, plan change or location purchase whose merchant
+   closed the tab before the browser confirmed is finished by its own
+   completion (`completeEnrolmentPurchase`, `completePlanChangePurchase`,
+   `completeLocationPurchase`, sharing `PurchaseCompletion` with
+   `lib/billing/collect.ts`): finalize the draft, settle the capture (one
+   receipt), check the invoice is paid, apply the plan or locations through a
+   conditional claim, then the welcome email and the audit row. Whoever arrives
+   second (the browser's confirm, another pass, a repeated start) changes
+   nothing and sends nothing. A purchase that no longer applies, or whose
+   captured amount or currency differs from the attempt's
+   (`verifyRecoveredCapture`), is filed for a person (`purchase_refused:` or
+   `purchase_unapplied:`); nothing is refunded or applied automatically.
+   Buying again finishes the earlier payment instead of charging twice.
+2. **The repair pass** (`issueCapturedDrafts`, `lib/billing/reconcile.ts`, the
+   GST release; after reconcile, before evaluate). A subscription or add-on
+   draft whose attempt was captured more than an hour ago
+   (`CAPTURED_DRAFT_WAIT_MINUTES`), or a credit pack whose purchase is paid, at
+   most 100 of each a pass. A subscription or add-on draft goes to its
+   completion first; when the completion declines (its guards, or a person
+   already holds the payment), the pass issues the invoice alone at the
+   capture time (`issueInvoice({ invoiceId, paidAt })`), settles the payment
+   with `notify: false` (no "Your plan is active" receipt for a purchase a
+   person is checking, review R1-04) and files one `captured_draft:<invoice>`
+   item, unless the payment is already held. It never applies a plan or a
+   location by itself. A credit pack's invoice is issued as paid. With a
+   `storeId` (`deleteStore`) it issues only, with no wait. The filed item also
+   keeps the refund pass's repair away from that payment while a person checks
+   it.
+   - A draft it could not issue logs `billing.captured_draft_unissued`, a
+     WARNING for the first six hours after the capture
+     (`UNISSUED_ALERT_AFTER_HOURS`, review R1-14) and an ERROR after, or at once
+     when the capture time is unknown; alert 24 watches the ERROR. It is not an
+     error of the run.
+   - **⚠ The invoice's `paid_at` and `finalized_at` are the pass's time**
+     (review R1-10). The GST is read at the capture time (`paidAt`), but the
+     settle stamps the moment it ran, up to an hour or more later. Read a
+     repaired invoice's "paid on" date as when it was recorded, not when the
+     merchant paid; the payment's own time is in the attempt and at Razorpay.
+   - **⚠ Staging only** (review R1-11): a taxed draft written before the
+     release on a database where GST was already on, with no SAC stamp, is
+     kept as drafted and then refused by the issuing trigger once `sac_code` is
+     set, so the pass logs `captured_draft_unissued` for it every run. Clear or
+     re-stamp such drafts once by hand on that database. Production never had
+     GST on (the 27 Oct checks), so it has none.
+
+### Grace and downgrade: one conditional claim
+
+`billing_claim_downgrade(p_store uuid, p_now timestamptz default now())`, as
+migration 0205 left it (SECURITY DEFINER):
 
 ```sql
-update subscriptions s
-   set plan = 'free', state = 'downgraded', downgraded_at = now(), billed_locations = 0
- where s.store_id = $1
-   and s.state = 'grace'
-   and s.grace_ends_at <= now()
-   and s.plan_source <> 'comp'
+update public.billing_subscriptions s
+   set state = 'downgraded', plan = 'free', billed_locations = 0,
+       scheduled_plan = null, scheduled_period = null, scheduled_locations = null,
+       grace_started_at = null, grace_ends_at = null,
+       downgraded_at = p_now, updated_at = p_now
+ where s.store_id = p_store
+   and s.state in ('past_due', 'grace')
+   and s.grace_ends_at is not null
+   and s.grace_ends_at < p_now          -- strictly past the 48 hours promised
    and not exists (
-     select 1 from invoices i
+     select 1 from public.billing_invoices i
       where i.store_id = s.store_id and i.kind = 'subscription'
-        and i.cycle_seq = s.current_cycle_seq and i.status = 'paid')
-returning store_id;
+        and i.cycle_seq = s.current_cycle_seq + 1      -- the cycle being entered
+        and i.status in ('paid', 'processing'))
+returning s.store_id, s.current_cycle_seq;
+-- then, when a row was claimed:
+update public.billing_invoices set status = 'uncollectible', updated_at = p_now
+ where store_id = <store> and kind = 'subscription'
+   and cycle_seq = <current_cycle_seq> + 1 and status = 'open';
 ```
 
-Zero rows means: already downgraded, or they paid, or they are comped. **§11,
-§37 and §39 all fall out of this single statement** — no lock, no second query,
-no read-then-write window. It is the codebase's established exactly-once pattern
-(`increment_coupon_usage`, the reserved→released stock claim, `pickup_warned_at`).
+It checks the invoice of the cycle being ENTERED: the cycle advances only once
+that invoice is paid, so the current cycle's own invoice is always settled and
+says nothing about grace (checking it, as the first version did, matched
+nothing and never downgraded anyone). Zero rows means already downgraded, paid,
+or a payment still processing. **§11, §37 and §39 all fall out of this single
+statement**: no lock, no second query, no read-then-write window. It is the
+codebase's established exactly-once pattern (`increment_coupon_usage`, the
+reserved to released stock claim, `pickup_warned_at`).
 
-The same transaction marks the unpaid invoice `uncollectible`.
+There is no comp exemption any more (migration 0078): a comp is an overlay on
+the store, and the plan underneath it is still collected. A cancelling
+subscription never reaches this claim at grace end: `downgradeExpired` ends it
+through `endSubscription` instead, and a non-cancelling one whose next invoice
+was paid in grace is advanced by the safety net (§4, CODEBASE.md §34).
 
 ### Payment after downgrade
 
@@ -663,11 +1003,29 @@ with its amount, attempts, failure reasons and grace timestamps — §8 is satis
 because the outcome is _stated_, not hidden. Re-subscribing creates a fresh
 invoice.
 
-If money arrives anyway (a late settlement, a race), it becomes an
-**`account_credit`** in `billing_credits`, applied to their next subscription
-invoice. The plan is **not** reactivated. This keeps the owner's "no phantom
-reactivation" rule while never collecting money for a service period that was
-not delivered.
+If money arrives anyway (a late settlement, a race), it is **refunded** in full
+to the payment it came from by the hourly refund pass, with a credit note, and
+not credited: `billing_credits` stays unused. The plan is **not** reactivated.
+This keeps the owner's "no phantom reactivation" rule while never keeping money
+for a service period that was not delivered. A capture recorded on an
+`uncollectible` invoice before `automatic_refunds_from` was kept by older code;
+the pass files it for a person (`kept_before_refunds:`) instead of refunding
+history by itself.
+
+### Cancellation: a flag, and no money kept for a cycle not reached
+
+Cancelling sets `cancel_at_period_end` and revokes the mandate; it is allowed at
+any time, including after T-4d with the renewal invoice issued, its payment
+under way or already paid. The plan runs to the end of the cycle (or of grace)
+and then ends: `endSubscription` closes every invoice above the last cycle
+reached as `void` in the same transaction (§4), and the refund pass, which runs
+last in the same hourly job, owes a refund (`cycle_not_reached`) for each
+captured payment on them, sends it through StoreMink's own Razorpay account,
+matches it back by the key it planted (never by amount), issues the credit note
+and tells the merchant once. Automatic sending ships off (`auto_refunds`): until
+an operator turns it on, those refunds wait on the console's Refunds page for
+Send. A failed refund is never retried by the pass; a person retries it, or pays
+by bank transfer and records it.
 
 ### Plan and location changes
 
@@ -683,6 +1041,111 @@ keep refunds out of the system entirely:
 
 No negative invoices, no partial refunds, no duplicate credits in the
 subscription path — which removes most of §20's worry list by construction.
+
+Refunds stay out of plan and location changes. The two exceptions are not
+changes: a renewal received for a cycle a cancelled or downgraded plan does not
+reach goes back automatically (above), and an operator may refund from the
+console, for a removed feature, a suspension made by mistake, declined terms
+(End the plan now, the unused part of the cycle), a duplicate payment, goodwill
+or another stated reason. Each is a `billing_refunds` row with its credit note,
+and none changes the invoice.
+
+### GST release: checks around the deploy
+
+What the owner runs or reads around the release that adds GST on StoreMink's
+fees (migrations 0266 to 0268). Every query is read-only; nothing here is run
+by the build.
+
+- **Before the merge to main, on staging and production** (Cloud SQL Studio,
+  the right database), count the rows that would leave one of 0266's checks NOT
+  VALID (review R3-04). A NOT VALID check still applies to every later write of
+  the breaking row, and an issued invoice cannot be repaired (its place of
+  supply is frozen), so every later status change of it would fail. Expect 0
+  in every column except `tax_on`, which is 1 only where GST is already on;
+  then the identity check stays NOT VALID until StoreMink's tax identity is
+  saved in the console, straight after the deploy. The columns named exist
+  before 0266.
+
+  ```sql
+  BEGIN READ ONLY;
+  select
+    (select count(*) from platform_billing_settings where tax_enabled) as tax_on,
+    (select count(*) from platform_billing_settings
+      where not (invoice_prefix ~ '^[A-Z0-9]{1,2}$')) as prefix_too_long,
+    (select count(*) from billing_accounts
+      where not (gstin is null
+                 or gstin ~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$'))
+      as account_gstin_malformed,
+    (select count(*) from billing_accounts
+      where not (gstin is null
+                 or (state_code is not null and left(gstin, 2) = state_code)))
+      as account_gstin_state_mismatch,
+    (select count(*) from billing_invoices
+      where not (place_of_supply is null or place_of_supply ~ '^[0-9]{2}$'))
+      as invoice_place_not_numeric,
+    (select count(*) from billing_invoices where place_of_supply = '96')
+      as invoice_place_96;
+  ROLLBACK;
+  ```
+
+  After the deploy, the same question by constraint (expect no rows where GST
+  was off):
+
+  ```sql
+  BEGIN READ ONLY;
+  select conrelid::regclass as tbl, conname from pg_constraint
+   where conname in (
+     'platform_billing_sac_code_format', 'platform_billing_llpin_format',
+     'platform_billing_invoice_prefix_length', 'platform_billing_next_tax_shape',
+     'platform_billing_tax_needs_invoice_identity',
+     'platform_billing_next_tax_needs_invoice_identity',
+     'billing_accounts_gstin_format', 'billing_accounts_gstin_matches_state',
+     'billing_invoices_sac_code_format',
+     'billing_invoices_place_of_supply_numeric',
+     'billing_invoices_place_of_supply_basis')
+     and not convalidated;
+  ROLLBACK;
+  ```
+
+  A settings row that breaks one is fixed by the next identity save in the
+  console; a billing account by the merchant's Billing details save; an issued
+  invoice only by a person (it cannot be edited).
+
+- **Before the merge, on staging and production:** the read-only quote probe of
+  the two Help migrations (each `replace()` quote of 0267 and 0268 must occur
+  exactly once in the guide it edits; a Help console edit since then makes the
+  migration's `applyVerify` fail the deploy). It was checked on the local
+  database only. `npm run help:audit:staging` and `:prod` read the same guides.
+- **Run the migrate away from the billing run's minute** (review R3-12). 0266
+  is one transaction whose ADD COLUMN and ADD CONSTRAINT take ACCESS EXCLUSIVE
+  locks on `platform_billing_settings`, `billing_accounts`,
+  `ai_credit_purchases` and `billing_invoices` (and SHARE ROW EXCLUSIVE on
+  `platform_announcements` for the notice key) until COMMIT. The tables are
+  small and the runner's 5-second `lock_timeout` turns a wait into a refused
+  build, not an outage, but the hourly billing run (minute 20 UTC) holds row
+  locks on `billing_invoices` while it works. Push away from roughly :15 to :30
+  past the hour; a refused migrate is retried by re-running the build.
+- **Only if GST was already on when 0266 ran** (review R3-11): the
+  migration marked invoices whose GST line reads "(included)" as
+  `tax_inclusive` before the guard froze the column, but an invoice the
+  replaced revision issues after that commit and before the new revision serves
+  is frozen with `tax_inclusive = false`. After the deploy, list them for a
+  person to note (they cannot be edited):
+
+  ```sql
+  BEGIN READ ONLY;
+  select i.id, i.invoice_no, i.finalized_at from billing_invoices i
+   where i.finalized_at is not null and i.tax_paise > 0
+     and i.tax_inclusive = false
+     and exists (select 1 from billing_invoice_items it
+                  where it.invoice_id = i.id and it.kind = 'tax'
+                    and it.description like '%(included)');
+  ROLLBACK;
+  ```
+
+  The migration is replay-safe only up to step 7 (the guard); the ledger never
+  replays an applied migration, so this matters only to someone re-running it
+  by hand.
 
 ### Comped and operator-granted plans
 
@@ -714,6 +1177,16 @@ does not roll back or disguise the plan payment.
   extension of a working design rather than a new one.
 - Subscription state is never consulted when granting, and credits are never
   revoked by a subscription downgrade.
+- **★ `ai_credit_purchases.amount_paise` is what the merchant is charged**
+  (0266, `ai_credit_purchases_amount_paise_check`: NULL or above 0). The pack's
+  invoice is built at checkout (`buildAiCreditsInvoice`, one tax reading) and
+  its total, GST included when prices exclude GST, is the Razorpay order amount
+  and this column; `amount_inr` stays the listed pack price. The confirm
+  verifies the captured payment against `amount_paise`, falling back to
+  `amount_inr * 100` for purchases made before it existed. The invoice is
+  issued as paid at the payment's time. While GST is charged, a merchant with
+  no state on record, or outside India, cannot start a pack payment
+  (`readTaxForPayment`, the rule every payment shares).
 - Purchases succeed while a subscription is in grace, and vice versa. There is
   no code path where one reads the other.
 
@@ -770,9 +1243,12 @@ webhook case, `mandateMaxPaise()`'s computed ceiling, `totalCyclesFor`,
 because the price lives in a provider-side plan id. `store_subscriptions`'
 Razorpay status CHECK goes with it — our own vocabulary replaces it.
 
-**Kept but rewritten:** `cancelSubscription` (no gateway subscription to cancel —
-it sets `cancel_at_period_end` and lets the cycle run out), and the plan-expiry
-cron, which must not double-fire with the new downgrade claim.
+**Kept but rewritten:** `cancelSubscription`, now `cancelAtPeriodEnd` in
+`lib/billing/cancel.ts` (no gateway subscription to cancel: it sets
+`cancel_at_period_end`, lets the cycle run out, and the plan's end closes and
+refunds any renewal already issued or paid for the cycle it does not reach,
+§7), and the plan-expiry cron, which must not double-fire with the new
+downgrade claim.
 
 ---
 

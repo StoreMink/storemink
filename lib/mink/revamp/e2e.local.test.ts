@@ -117,6 +117,17 @@ vi.mock("@/lib/storage/gcs", async (importOriginal) => {
     },
   };
 });
+// ★ A redesign's photographs go through the store's one writer (takedown
+//   design 5.7); here it writes into the same in-memory bucket. The gcs mock
+//   above keeps its own in-memory upload so nothing can reach the real one.
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(
+    async (path: string, bytes: Uint8Array, contentType: string) => {
+      memory.objects.set(path, { bytes: new Uint8Array(bytes), contentType });
+      return `https://storage.googleapis.com/${memory.bucket}/${path}`;
+    },
+  ),
+}));
 vi.mock("./trigger", () => ({ kickRevampRunner: memory.kick }));
 vi.mock("@/lib/notifications/record", () => ({
   emitEvent: memory.emit,

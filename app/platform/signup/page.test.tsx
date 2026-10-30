@@ -60,6 +60,7 @@ vi.mock("@/app/actions/subscribe-actions", () => ({
     periodEnd: "2026-11-09T00:00:00.000Z",
     autopay: true,
   })),
+  saveSignupBillingDetails: vi.fn(async () => ({ ok: true })),
 }));
 vi.mock("@/lib/payments/razorpay-client", () => ({
   openRazorpayModal: vi.fn(async () => true),
@@ -111,6 +112,7 @@ import { establishSession } from "@/lib/auth/firebase-client";
 import { verifySignupEmailOtp } from "@/app/actions/signup-email-otp";
 import {
   confirmSignupSubscribe,
+  saveSignupBillingDetails,
   startSignupSubscribe,
 } from "@/app/actions/subscribe-actions";
 import { openRazorpayModal } from "@/lib/payments/razorpay-client";
@@ -119,7 +121,13 @@ function price(monthlyInr: number, yearlyInr: number) {
   return { monthlyInr, yearlyInr, baseMonthlyInr: null, baseYearlyInr: null };
 }
 
-function quote(overrides: { basicMonthly?: number; paidCheckout?: boolean }) {
+// ★ No `tax` unless a test gives one: the answer an older API sends during a
+// rollout, which the step must still handle.
+function quote(overrides: {
+  basicMonthly?: number;
+  paidCheckout?: boolean;
+  tax?: unknown;
+}) {
   return {
     plans: {
       free: price(0, 0),
@@ -127,6 +135,7 @@ function quote(overrides: { basicMonthly?: number; paidCheckout?: boolean }) {
       pro: price(5000, 50000),
     },
     paidCheckout: overrides.paidCheckout ?? true,
+    ...(overrides.tax !== undefined ? { tax: overrides.tax } : {}),
   };
 }
 
@@ -163,12 +172,17 @@ beforeEach(() => {
 
 const DASHBOARD = "http://saffron-studio.localhost:3000/dashboard";
 
-async function reachPlanStep() {
+async function reachPlanStep(options: { country?: string } = {}) {
   render(<SignupPage />);
   await screen.findByRole("heading", { name: "About you and your store" });
   fireEvent.change(screen.getByLabelText("Store name"), {
     target: { value: "Saffron Studio" },
   });
+  if (options.country) {
+    fireEvent.change(screen.getByLabelText("Country you sell from"), {
+      target: { value: options.country },
+    });
+  }
   await waitFor(
     () =>
       expect(
@@ -585,5 +599,436 @@ describe("signup email code on a resumed tab", () => {
     expect(
       screen.getByRole("heading", { name: "Check your email" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("signup Plan step: an earlier payment (RC-F1b, RC-F1c)", () => {
+  beforeEach(() => {
+    vi.mocked(createStore).mockImplementation(async () => ({
+      slug: "saffron-studio",
+      storeId: "store-1",
+      phoneVerified: true,
+    }));
+  });
+
+  it("★★ an earlier payment finished instead opens the dashboard, as after a payment here", async () => {
+    vi.mocked(startSignupSubscribe).mockImplementation(async () => ({
+      ok: true,
+      completedEarlier: true,
+      message:
+        "Your earlier payment went through, and your plan is now active.",
+    }));
+    await reachPlanStep();
+    continueWithBasic();
+
+    await waitFor(() => expect(location.href).toBe(DASHBOARD));
+    // No second payment window, and nothing shown as an error.
+    expect(openRazorpayModal).not.toHaveBeenCalled();
+    expect(confirmSignupSubscribe).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("★ a payment that went through but switches shortly is a notice with no way to pay again", async () => {
+    const message =
+      "Your earlier payment went through, and we'll switch your plan on shortly. Please don't pay again. If it hasn't changed within a day, write to support@storemink.com.";
+    vi.mocked(startSignupSubscribe).mockImplementation(async () => ({
+      ok: false,
+      error: message,
+      waiting: true,
+    }));
+    await reachPlanStep();
+    continueWithBasic();
+
+    await screen.findByRole("heading", { name: "Your payment went through" });
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(openRazorpayModal).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: /Continue with/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Continue on Free/ }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open your dashboard" }),
+    );
+    expect(location.href).toBe(DASHBOARD);
+  });
+
+  it("★ a confirmed payment whose plan switches shortly gets the same notice, not the failure screen", async () => {
+    const message =
+      "Your payment went through, and we'll switch your plan on shortly. Please don't pay again. If it hasn't changed within a day, write to support@storemink.com.";
+    vi.mocked(openRazorpayModal).mockImplementation(async (params: any) => {
+      params.onSuccess({
+        razorpay_order_id: "order_1",
+        razorpay_payment_id: "pay_1",
+        razorpay_signature: "sig_1",
+      });
+      return true;
+    });
+    vi.mocked(confirmSignupSubscribe).mockImplementation(async () => ({
+      ok: false,
+      error: message,
+      waiting: true,
+    }));
+    await reachPlanStep();
+    continueWithBasic();
+
+    await screen.findByRole("heading", { name: "Your payment went through" });
+    expect(screen.getByText(message)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", {
+        name: "We couldn't confirm your payment",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Continue with/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("an ordinary start refusal stays an error on the Plan step", async () => {
+    vi.mocked(startSignupSubscribe).mockImplementation(async () => ({
+      ok: false,
+      error: "Couldn't start the payment.",
+    }));
+    await reachPlanStep();
+    continueWithBasic();
+
+    expect(
+      await screen.findByText("Couldn't start the payment."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Your payment went through" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Continue with Basic/ }),
+    ).toBeInTheDocument();
+  });
+});
+
+// ── GST on the Plan step (GST design 7.2, the amount guard of 7.4) ──────────
+
+const NO_GST = { active: false, inclusive: false, rateBps: 0, upcoming: null };
+const GST_INCLUDED = {
+  active: true,
+  inclusive: true,
+  rateBps: 1800,
+  upcoming: null,
+};
+const GST_ADDED = {
+  active: true,
+  inclusive: false,
+  rateBps: 1800,
+  upcoming: null,
+};
+/** GST off now; added on top at 18% from 1 Dec 2026, 00:00 IST. */
+const GST_SCHEDULED = {
+  active: false,
+  inclusive: false,
+  rateBps: 0,
+  upcoming: {
+    enabled: true,
+    inclusive: false,
+    rateBps: 1800,
+    startsAt: "2026-11-30T18:30:00.000Z",
+  },
+};
+
+function startAsking(amountPaise: number) {
+  vi.mocked(startSignupSubscribe).mockImplementation(async () => ({
+    ok: true,
+    invoiceId: "inv-1",
+    attemptId: "att-1",
+    providerOrderId: "order_1",
+    keyId: "rzp_test_key",
+    amountPaise,
+    suggestedMandateMaxPaise: 500000,
+    providerCustomerId: "cust_1",
+    mandateMethod: "upi",
+    autopay: true,
+  }));
+}
+
+const STATE_LABEL = "Your business's state";
+
+describe("signup Plan step: GST (design 7.2)", () => {
+  beforeEach(() => {
+    vi.mocked(createStore).mockImplementation(async () => ({
+      slug: "saffron-studio",
+      storeId: "store-1",
+      phoneVerified: true,
+    }));
+  });
+
+  it("OFF: list prices, the plain pay-now line, no state step", async () => {
+    quotes = [quote({ tax: NO_GST })];
+    await reachPlanStep();
+    expect(screen.getByText("You pay ₹1,500 now.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Continue with Basic · ₹1,500/month",
+      }),
+    ).toBeEnabled();
+    expect(screen.queryByLabelText(STATE_LABEL)).not.toBeInTheDocument();
+    expect(screen.queryByText("plus GST")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Yearly/ }));
+    expect(
+      screen.getAllByText("₹1,250 a month, billed yearly").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText("You pay ₹15,000 now for the first year."),
+    ).toBeInTheDocument();
+  });
+
+  it("★ an answer with no tax (an older API) promises the exact amount, asks no state, and pays the list price", async () => {
+    quotes = [quote({})];
+    await reachPlanStep();
+    expect(
+      screen.getByText("You'll see the exact amount before you pay."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(STATE_LABEL)).not.toBeInTheDocument();
+    continueWithBasic();
+    await waitFor(() => expect(openRazorpayModal).toHaveBeenCalledTimes(1));
+    expect(saveSignupBillingDetails).not.toHaveBeenCalled();
+    expect(vi.mocked(openRazorpayModal).mock.calls[0][0].amountPaise).toBe(
+      150000,
+    );
+  });
+
+  it("SCHEDULED: today's price now, the renewals warning, and the state step", async () => {
+    quotes = [quote({ tax: GST_SCHEDULED })];
+    await reachPlanStep();
+    expect(
+      screen.getByText(
+        "You pay ₹1,500 now. From 1 Dec 2026, GST at 18% is added to your renewals.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(STATE_LABEL)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Continue with Basic · ₹1,500/month",
+      }),
+    ).toBeDisabled();
+  });
+
+  it("ON-IN: the GST inside the price is named", async () => {
+    quotes = [quote({ tax: GST_INCLUDED })];
+    await reachPlanStep();
+    expect(
+      screen.getByText("You pay ₹1,500 now, including ₹228.81 GST."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Continue with Basic · ₹1,500/month",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Yearly/ }));
+    expect(
+      screen.getAllByText("₹1,250 a month, billed yearly, GST included").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("ON-EX: plus GST on the cards, the total in the line and the button", async () => {
+    quotes = [quote({ tax: GST_ADDED })];
+    await reachPlanStep();
+    expect(screen.getAllByText("plus GST").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("You pay ₹1,770 now: ₹1,500 plus ₹270 GST."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Continue with Basic · ₹1,770/month with GST",
+      }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Yearly/ }));
+    expect(
+      screen.getAllByText("₹1,475 a month with GST, billed yearly").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        "You pay ₹17,700 now for the first year: ₹15,000 plus ₹2,700 GST.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: "Continue with Basic · ₹17,700/year with GST",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("★ the state select lists every state but Other Territory, by name, with no default", async () => {
+    quotes = [quote({ tax: GST_ADDED })];
+    await reachPlanStep();
+    const select = screen.getByLabelText(STATE_LABEL) as HTMLSelectElement;
+    const options = Array.from(select.options);
+    expect(select.value).toBe("");
+    expect(options[0].value).toBe("");
+    expect(options[0].textContent).toBe("Choose your state");
+    const names = options.slice(1).map((o) => o.textContent ?? "");
+    expect(names).not.toContain("Other Territory");
+    expect(names).toHaveLength(36);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, "en")));
+    expect(
+      screen.getByText("It goes on your invoices, as the GST rules require."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("GSTIN (optional)")).toBeInTheDocument();
+  });
+
+  it("★★ saves the state, starts the subscription, then opens Razorpay for the amount shown", async () => {
+    quotes = [quote({ tax: GST_ADDED })];
+    startAsking(177000);
+    await reachPlanStep();
+    const cta = screen.getByRole("button", {
+      name: "Continue with Basic · ₹1,770/month with GST",
+    });
+    expect(cta).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(STATE_LABEL), {
+      target: { value: "29" },
+    });
+    expect(cta).toBeEnabled();
+    fireEvent.click(cta);
+
+    await waitFor(() => expect(openRazorpayModal).toHaveBeenCalledTimes(1));
+    expect(saveSignupBillingDetails).toHaveBeenCalledWith({
+      stateCode: "29",
+      gstin: "",
+    });
+    const saved = vi.mocked(saveSignupBillingDetails).mock
+      .invocationCallOrder[0];
+    const started = vi.mocked(startSignupSubscribe).mock.invocationCallOrder[0];
+    expect(saved).toBeLessThan(started);
+    expect(vi.mocked(openRazorpayModal).mock.calls[0][0].amountPaise).toBe(
+      177000,
+    );
+  });
+
+  it("★ a valid GSTIN decides the state; an invalid one says so and keeps Continue off", async () => {
+    quotes = [quote({ tax: GST_ADDED })];
+    startAsking(177000);
+    await reachPlanStep();
+    const cta = screen.getByRole("button", {
+      name: "Continue with Basic · ₹1,770/month with GST",
+    });
+    const gstin = screen.getByLabelText("GSTIN (optional)");
+
+    fireEvent.change(gstin, { target: { value: "27aapfu0939f1z" } });
+    fireEvent.blur(gstin);
+    expect(
+      screen.getByText("That doesn't look like a valid 15-character GSTIN."),
+    ).toBeInTheDocument();
+    expect(cta).toBeDisabled();
+
+    fireEvent.change(gstin, { target: { value: "27aapfu0939f1zv" } });
+    expect(
+      screen.queryByText("That doesn't look like a valid 15-character GSTIN."),
+    ).not.toBeInTheDocument();
+    const select = screen.getByLabelText(STATE_LABEL) as HTMLSelectElement;
+    expect(select.value).toBe("27");
+    expect(select).toBeDisabled();
+    expect(cta).toBeEnabled();
+
+    fireEvent.click(cta);
+    await waitFor(() => expect(openRazorpayModal).toHaveBeenCalledTimes(1));
+    expect(saveSignupBillingDetails).toHaveBeenCalledWith({
+      stateCode: "27",
+      gstin: "27AAPFU0939F1ZV",
+    });
+  });
+
+  it("★ a state that cannot be saved stops before the payment starts", async () => {
+    quotes = [quote({ tax: GST_SCHEDULED })];
+    vi.mocked(saveSignupBillingDetails).mockImplementation(async () => ({
+      ok: false,
+      error: "Couldn't save your state. Please try again.",
+    }));
+    await reachPlanStep();
+    fireEvent.change(screen.getByLabelText(STATE_LABEL), {
+      target: { value: "07" },
+    });
+    continueWithBasic();
+
+    expect(
+      await screen.findByText("Couldn't save your state. Please try again."),
+    ).toBeInTheDocument();
+    expect(startSignupSubscribe).not.toHaveBeenCalled();
+    expect(openRazorpayModal).not.toHaveBeenCalled();
+  });
+
+  it("★★ the amount guard: a different amount from the server never opens Razorpay, says the new amount and reads the prices again", async () => {
+    quotes = [quote({ tax: GST_ADDED })];
+    startAsking(180000);
+    await reachPlanStep();
+    fireEvent.change(screen.getByLabelText(STATE_LABEL), {
+      target: { value: "29" },
+    });
+    const readsBefore = fetchMock.mock.calls.length;
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Continue with Basic · ₹1,770/month with GST",
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "The amount to pay is now ₹1,800. Check it and press Continue again.",
+      ),
+    ).toBeInTheDocument();
+    expect(startSignupSubscribe).toHaveBeenCalledTimes(1);
+    expect(openRazorpayModal).not.toHaveBeenCalled();
+    // The continue press read the prices once; the guard reads them again.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.length).toBe(readsBefore + 2),
+    );
+  });
+
+  it("★ outside India while GST is charged: paid plans shown but not choosable, only Start on Free", async () => {
+    quotes = [quote({ tax: GST_ADDED })];
+    await reachPlanStep({ country: "US" });
+    expect(screen.getByRole("radio", { name: /^Basic/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Pro/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^Free/ })).toBeChecked();
+    expect(
+      screen.getByText(
+        "We can't take payments from businesses outside India yet. Start on Free, and write to support@storemink.com if you'd like a paid plan.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Continue with/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Skip, start on Free" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(STATE_LABEL)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start on Free" }));
+    await waitFor(() => expect(location.href).toBe(DASHBOARD));
+    expect(startSignupSubscribe).not.toHaveBeenCalled();
+  });
+
+  it("outside India with GST only scheduled can still subscribe, and no state is saved", async () => {
+    quotes = [quote({ tax: GST_SCHEDULED })];
+    await reachPlanStep({ country: "US" });
+    expect(screen.queryByLabelText(STATE_LABEL)).not.toBeInTheDocument();
+    continueWithBasic();
+    await waitFor(() => expect(openRazorpayModal).toHaveBeenCalledTimes(1));
+    expect(saveSignupBillingDetails).not.toHaveBeenCalled();
+    expect(startSignupSubscribe).toHaveBeenCalledWith(
+      "basic",
+      "monthly",
+      "upi",
+    );
+  });
+
+  it("GST that starts while the page is open stops the press and shows the new amount", async () => {
+    quotes = [quote({ tax: NO_GST }), quote({ tax: GST_ADDED })];
+    await reachPlanStep();
+    continueWithBasic();
+    expect(
+      await screen.findByText(
+        "The amount to pay is now ₹1,770. Check it and press Continue again.",
+      ),
+    ).toBeInTheDocument();
+    expect(createStore).not.toHaveBeenCalled();
+    expect(startSignupSubscribe).not.toHaveBeenCalled();
   });
 });

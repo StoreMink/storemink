@@ -29,6 +29,16 @@ import {
 import { getServerUser } from "@/lib/auth/server-user";
 import { revalidatePath } from "next/cache";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
+import { liveAuthorBlock } from "@/lib/moderation/author-blocks";
+import { SHOPPER } from "@/lib/moderation/copy";
+
+// The removed-comment pre-check (takedown design 7.4): the real sentences and
+// error mapping, with the read itself mocked (no block unless a test says so).
+vi.mock("@/lib/moderation/author-blocks", async (importOriginal) => {
+  const real =
+    await importOriginal<typeof import("@/lib/moderation/author-blocks")>();
+  return { ...real, liveAuthorBlock: vi.fn(async () => null) };
+});
 
 const DEMO =
   "This is a theme preview, so orders, accounts and forms are turned off.";
@@ -201,6 +211,38 @@ describe("blog-social", () => {
       });
       const result = await submitBlogComment(commentForm);
       expect(result.error).toBe("boom");
+    });
+
+    // A shopper whose comment StoreMink removed can't post another on the
+    // post: StoreMink's sentence, and nothing is read or written.
+    it("refuses with StoreMink's sentence when the shopper's comment was removed", async () => {
+      vi.mocked(liveAuthorBlock).mockResolvedValueOnce({ blockId: "block-1" });
+      const result = await submitBlogComment(commentForm);
+      expect(result).toEqual({ error: SHOPPER.commentRemoved });
+      expect(liveAuthorBlock).toHaveBeenCalledWith({
+        kind: "blog_comment",
+        storeId: "a0000000-0000-4000-8000-000000000001",
+        authorUserId: "user-1",
+        parentItemId: "b1",
+      });
+      expect(dbHolder.current.calls.select).toHaveLength(0);
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+    });
+
+    // A block that lands between the check and the write: the database
+    // guard's P0001 refusal reads as the same sentence, not as an error.
+    it("maps the guard's refusal to StoreMink's sentence", async () => {
+      const cause = Object.assign(
+        new Error("moderation: comment removed by StoreMink"),
+        { code: "P0001" },
+      );
+      dbHolder.current.db.insert = vi.fn(() => {
+        throw Object.assign(new Error("Failed query: insert into ..."), {
+          cause,
+        });
+      });
+      const result = await submitBlogComment(commentForm);
+      expect(result).toEqual({ error: SHOPPER.commentRemoved });
     });
 
     it("revalidates the blog page on success", async () => {

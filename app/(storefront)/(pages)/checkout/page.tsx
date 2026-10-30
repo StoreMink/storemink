@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import {
+  cartStockLines,
   lineKey,
   useCart,
 } from "@/app/(storefront)/components/cart/CartProvider";
@@ -530,11 +531,7 @@ export default function CheckoutPage() {
     if (stockChecked.current) return;
     if (!cart.hydrated || cart.items.length === 0) return;
     stockChecked.current = true;
-    const lines = cart.items.map((i) => ({
-      productId: i.productId,
-      variantId: i.variantId,
-    }));
-    getCartStock(lines)
+    getCartStock(cartStockLines(cart.items))
       .then((info) => {
         const { removed, reduced } = cart.reconcileStock(info);
         if (removed.length > 0) {

@@ -52,6 +52,7 @@ export async function getLivePolicies(
           slug: storePages.slug,
           status: storePages.status,
           publishedSections: storePages.publishedSections,
+          moderationBlockedAt: storePages.moderationBlockedAt,
         })
         .from(storePages)
         .where(
@@ -63,6 +64,10 @@ export async function getLivePolicies(
     return defs.flatMap((def) => {
       const row = bySlug.get(def.slug);
       if (!row || row.status !== "published") return [];
+      // ★ A policy page StoreMink has blocked is unpublished to the shopper
+      // (takedown design 5.7): service scope, so the read policy that hides
+      // it never runs, and a consent box must not name a page nobody can read.
+      if (row.moderationBlockedAt != null) return [];
       const html = policyBodyHtml(row.publishedSections);
       if (!policyHasContent(html)) return [];
       return [

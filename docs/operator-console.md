@@ -22,23 +22,29 @@ single scroll, under a metric row. Three consequences, all of them real:
 
 ## The information architecture
 
-| Group              | Entry          | Path                       | What it answers                                                                      |
-| ------------------ | -------------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| **OPERATIONS**     | Overview       | `/dashboard`               | What needs someone right now?                                                        |
-|                    | Stores         | `/dashboard/stores`        | The merchant estate (no demos/previews)                                              |
-|                    | ↳ store detail | `/dashboard/stores/[id]`   | Everything about ONE merchant                                                        |
-|                    | People         | `/dashboard/people`        | Who can sign in to which store                                                       |
-|                    | Announcements  | `/dashboard/announcements` | Tell merchants something _(phase 4)_                                                 |
-|                    | Logs           | `/dashboard/logs`          | What happened, what broke _(phase 3)_                                                |
-|                    | Mink AI        | `/dashboard/mink`          | Are agent runs reliable and affordable?                                              |
-| **ADMINISTRATION** | Help Centre    | `/dashboard/help`          | Platform docs                                                                        |
-|                    | Themes         | `/dashboard/themes`        | Catalog tab: the catalog + its live demo stores _(superadmin only)_                  |
-|                    | ↳ Theme Studio | `/dashboard/themes/studio` | Theme Studio tab: every Studio theme by what it needs, New theme _(superadmin only)_ |
-|                    | Pricing        | `/dashboard/pricing`       | What StoreMink charges                                                               |
-|                    | Analytics      | `/dashboard/analytics`     | Platform Analytics availability                                                      |
-|                    | Roles          | `/dashboard/roles`         | The staff roles every store picks from                                               |
-|                    | Operators      | `/dashboard/operators`     | Who runs the platform                                                                |
-|                    | Billing & tax  | `/dashboard/billing`       | StoreMink's own GST identity                                                         |
+| Group              | Entry          | Path                                     | What it answers                                                                                                                           |
+| ------------------ | -------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **OPERATIONS**     | Overview       | `/dashboard`                             | What needs someone right now?                                                                                                             |
+|                    | Stores         | `/dashboard/stores`                      | The merchant estate (no demos/previews)                                                                                                   |
+|                    | ↳ store detail | `/dashboard/stores/[id]`                 | Everything about ONE merchant                                                                                                             |
+|                    | People         | `/dashboard/people`                      | Who can sign in to which store                                                                                                            |
+|                    | Complaints     | `/dashboard/complaints`                  | Every complaint, order and data request with its deadlines, and every block and store hold                                                |
+|                    | ↳ log one      | `/dashboard/complaints/new`              | Log a complaint the moment it arrives                                                                                                     |
+|                    | ↳ complaint    | `/dashboard/complaints/[ref]`            | One complaint (`SM-000123`): deadlines, details, actions, its blocks, history                                                             |
+|                    | ↳ block        | `/dashboard/complaints/block`            | Find an item, a file or a whole store and block it                                                                                        |
+|                    | ↳ a block      | `/dashboard/complaints/blocks/[blockId]` | One block: the file's state, the archived copy, the conversation with the store, lifting                                                  |
+|                    | Announcements  | `/dashboard/announcements`               | Tell merchants something _(phase 4)_                                                                                                      |
+|                    | Logs           | `/dashboard/logs`                        | What happened, what broke _(phase 3)_                                                                                                     |
+|                    | Mink AI        | `/dashboard/mink`                        | Are agent runs reliable and affordable?                                                                                                   |
+| **ADMINISTRATION** | Help Centre    | `/dashboard/help`                        | Platform docs                                                                                                                             |
+|                    | Themes         | `/dashboard/themes`                      | Catalog tab: the catalog + its live demo stores _(superadmin only)_                                                                       |
+|                    | ↳ Theme Studio | `/dashboard/themes/studio`               | Theme Studio tab: every Studio theme by what it needs, New theme _(superadmin only)_                                                      |
+|                    | Pricing        | `/dashboard/pricing`                     | What StoreMink charges                                                                                                                    |
+|                    | Analytics      | `/dashboard/analytics`                   | Platform Analytics availability                                                                                                           |
+|                    | Roles          | `/dashboard/roles`                       | The staff roles every store picks from                                                                                                    |
+|                    | Operators      | `/dashboard/operators`                   | Who runs the platform                                                                                                                     |
+|                    | Billing & tax  | `/dashboard/billing`                     | Whether StoreMink charges GST, its tax identity, a scheduled change, the monthly invoice list, and whether refunds are sent automatically |
+|                    | ↳ Refunds      | `/dashboard/billing/refunds`             | What StoreMink owes merchants, what is on its way, and every credit note                                                                  |
 
 Themes appears in the sidebar and the search only for superadmins; the Overview
 shows superadmins a Theme Studio tile ("Theme Studio: 1 needs you, 2 ready to
@@ -102,8 +108,10 @@ delivering.
 
 ### ★ Zero is rendered, never hidden
 
-The overview's **Needs attention** block is six queues, each of which is zero on
-a good day and each of which stays on screen at zero, greyed out. A row that
+The overview's **Needs attention** block is ten queues (the four takedown queues
+first: Complaints due, Store replies, Files to finish, Holds to review), each of
+which is zero on a good day and each of which stays on screen at zero, greyed
+out. A row that
 disappears when clear teaches nobody what is being watched. Only a non-zero row
 takes colour and becomes a link. This is §22's sidebar-badge rule — a hardcoded
 "12" on Orders taught people to ignore the badges that moved.
@@ -114,6 +122,29 @@ takes colour and becomes a link. This is §22's sidebar-badge rule — a hardcod
 the screen someone opens when something is wrong, so a 500 is the worst
 available behaviour — but **rendering zeroes as though they were the answer is
 the second worst**, hence the banner.
+
+### ★ Archived copies are superadmin-only, and every opening is recorded
+
+What StoreMink kept when it blocked something (the item, its store, its files,
+and for a whole store its Mink AI chats) holds personal data and evidence. A
+member sees that a copy exists, its size and its dates, never its contents. A
+superadmin presses **Open the copy** and must say why ("For which complaint or
+authority?") before anything is read: the reason is recorded first
+(`archive_viewed`), and that record is a receipt good for 10 minutes. Every
+file view and download goes through `/api/platform/takedowns/<block>/files/<n>`
+or `/record` carrying that receipt, and each one records its own event with the
+same reason. A link older than ten minutes, or another operator's, answers 403
+and reads nothing. Pictures open blurred until **Show**.
+
+### ★ Suspend a store over its content only with Suspend on a complaint
+
+**Suspend on a complaint** keeps the evidence and tells the owners: StoreMink
+first copies everything on the store into the archive, then suspends it in the
+same transaction as the block, and only lifting the block reactivates it. The
+plain **Suspend** button asks why: "Because of a complaint, an order, or content
+that breaks our policies" sends the operator to Suspend on a complaint; "For
+another reason, for example the owner asked" needs a note. The order of work is
+in [`takedown-runbook.md`](takedown-runbook.md).
 
 ### ★ Mink traces are useful without exposing conversations
 
@@ -458,6 +489,380 @@ design-review benchmark has passed after the TS-1 release (plan step A2), nobody
 presses Publish or Check again on an existing production theme. Record:
 `docs/mink-ai-theme-studio-phase6.md`.
 
+### ★ Billing & tax: StoreMink's own GST
+
+`/dashboard/billing` decides what StoreMink's own invoices say (plans, extra
+locations and Mink credit packs) and whether they charge GST. It is StoreMink's
+tax identity, not a merchant's. **Every member reads the page; only a
+superadmin saves, schedules, cancels or downloads.** Actions:
+`app/actions/platform.ts` (`saveTaxIdentitySettings`, `scheduleGstChange`,
+`cancelGstChange`, `exportInvoiceList` for a superadmin; `getTaxSettings`,
+`getGstChangePreview`, `getGstChangeNotices` for any operator). Every sentence
+on these cards comes from `lib/billing/tax-copy.ts`. The release ships with GST
+**off**.
+
+The cards, top to bottom, under the reconciliation and refunds banners:
+
+1. **GST status** (`tax-status.tsx`). One sentence from the terms in force now
+   ("No GST is being charged. Invoices show no GST.", "GST is being charged at
+   18%, added to every price: plans, extra locations and Mink credit packs.",
+   or the same with "From {date, time IST}: ..." for a scheduled change).
+   Under it, whatever the state, while the LLPIN or the registered office is
+   blank: "Invoices don't show the LLP's particulars yet. The LLP Act asks for
+   the LLPIN and the registered office on every invoice. Add them under
+   StoreMink's tax identity." With a change scheduled, **Cancel this change**
+   asks "Cancel the change scheduled for {date}? If you sent merchants a notice,
+   tell them it won't happen." A change that started while the page was open is
+   refused and the card shows the started state; to stop charging after the
+   start, choose Don't charge GST under Charging GST.
+2. **StoreMink's tax identity** (`tax-identity-form.tsx`, **Save tax
+   identity**): registered legal name ("STOREMINK LLP"), GSTIN (its first two
+   digits must match the state), state, the address printed on invoices with a
+   6-digit PIN, the SAC code (6 digits, from the accountant), the LLPIN
+   (`AAA-0000`), the registered office (**Use the address above** copies the
+   address into it), and the invoice number prefix (1 or 2 letters or digits;
+   changing it does not renumber existing invoices). While GST is on or
+   scheduled, none of these can be cleared, and an LLPIN needs a legal name.
+3. **Charging GST** (`tax-change-form.tsx`): Don't charge GST or Charge GST,
+   the rate (18% for StoreMink's services), prices that include or exclude GST
+   (each with the live Basic monthly price worked out), and **Now** or **From a
+   date and time** (in IST). The button reads Switch GST on now, Schedule this
+   change or Save.
+   - **The notice rule.** A change that raises what merchants pay (switching GST
+     on with prices that exclude it, or a higher rate under them) cannot start
+     "Now". It needs the **Notice email** select: one option per Operational
+     announcement that has finished sending, newest first, with its delivered
+     and failed counts; one that does not count is listed but disabled, with
+     why in brackets (product news, not sent yet, nothing delivered, not by
+     email, only some store owners). A notice counts when it is Operational,
+     sent or partly sent with at least one email delivered, by email, to every
+     store owner with no plan, status, age or launch filter (demo stores may be
+     left out). The start must be at least **1 calendar month** after it went
+     out, in India time, at least 5 minutes ahead and at most 400 days ahead.
+     The server reads the notice itself, in the same transaction as the save.
+     ⚠ A notice that only partly sent still counts (the coordinator's decision,
+     the owner's to change): the owners whose email failed got none, so resend
+     to them before the start if it matters.
+   - **The impact panel** ("What this changes for merchants with a plan",
+     `lib/billing/gst-impact.ts`) appears for any change that switches GST on or
+     raises what merchants pay. It prices every renewing store's next renewal
+     today and after the change with the renewal run's own arithmetic, and
+     lists, each only when above 0: how many renewals cost more; how many of
+     those are charged automatically today and will need paying by hand (above
+     the merchant's autopay limit, or above ₹15,000, the most that can be
+     charged automatically); how many stores have no state on record (their
+     invoices would use StoreMink's state and name none for them); how many
+     have a state read from a typed address; and how many are outside India
+     (while GST is charged they cannot make new payments, and their renewals
+     are charged IGST). The table keeps at most 200 rows, those needing
+     attention first; a failed read says "Couldn't work out what this changes.
+     Please try again." and never shows an empty table. Before scheduling with
+     stores that have no state or are outside India, it asks again: Schedule
+     anyway or Go back. The preview is rate-limited to 30 a minute per operator.
+4. **Monthly invoice list** (`invoice-list-card.tsx`, a superadmin's alone: a
+   member sees no card). Every invoice and credit note StoreMink issued in one
+   India-time month, with GSTINs, place of supply, SAC and the GST split, for
+   the accountant's GST returns. **Download CSV** saves
+   `storemink-invoices-YYYY-MM.csv`; a month above 50,000 rows answers "This
+   month has more invoices than one download can hold. Ask an engineer to
+   export it in parts." rather than a cut file.
+5. **Refunds** (`refund-settings.tsx`): the **Send refunds automatically**
+   switch (below).
+
+**A settings read that fails is never drawn as "GST off".** The status card
+says "Couldn't read the billing and tax settings, so nothing on this page can
+be saved. Refresh the page to try again." and every save on the page is
+disabled until a read succeeds, because the cards would otherwise hold blank
+defaults and a save would write them over StoreMink's stored identity.
+
+The three saves bust the public pricing pages' cached GST terms after they
+commit (`platform-tax`, at most 5 minutes stale before), and the hourly billing
+run promotes a scheduled change when it starts (docs/cron-jobs.md).
+
+**The notice email** (Announcements, category **Operational notice**, which
+reaches every store owner whatever their marketing choice; channel email, SMS
+only in addition; audience Store owners with no plan, status, age or launch
+filter; demo stores excluded). Required, at least 1 calendar month before the
+start, for prices that exclude GST; recommended for prices that include them,
+because it asks merchants for their state. Fill in the start date and the live
+prices from Pricing, with GST at 18% (the figures below are the design's
+example: Basic ₹1,500, Pro ₹2,400 and an extra location ₹1,000 a month):
+
+> Subject: GST will be added to StoreMink prices from {1 December 2026}
+>
+> From {1 December 2026}, StoreMink will add GST at 18% to the prices of its
+> plans, extra locations and Mink credit packs, because STOREMINK LLP is
+> registered for GST. Your plan's features don't change.
+>
+> What you pay from then:
+>
+> - Basic: ₹1,500 plus ₹270 GST, ₹1,770 a month; or ₹15,000 plus ₹2,700 GST,
+>   ₹17,700 a year.
+> - Pro: ₹2,400 plus ₹432 GST, ₹2,832 a month; or ₹24,000 plus ₹4,320 GST,
+>   ₹28,320 a year.
+> - Each extra location: ₹1,000 plus ₹180 GST, ₹1,180 a month; or ₹10,000 plus
+>   ₹1,800 GST, ₹11,800 a year.
+> - Mink credit packs: the pack price plus 18% GST.
+>
+> The new amount applies from your first renewal invoiced on or after {1
+> December 2026}. Anything you have already paid for stays as it is.
+>
+> If you pay yearly for Basic, your renewal will be above ₹15,000, the most
+> that can be charged automatically, so we will email you an invoice to pay
+> instead. The same happens if your renewal goes above the autopay limit you
+> approved. Plans & Billing shows your next renewal and how it will be paid.
+>
+> Your invoices will show your state, as the GST rules require. Please check it
+> under Plans & Billing, Billing details, before your renewal. If your business
+> is registered for GST, add your GSTIN there too: it then appears on your
+> invoice and you can claim the GST as input tax credit. If your business is
+> outside India, choose your country there instead.
+>
+> If you would rather not continue, you can cancel your plan in Plans & Billing
+> before your renewal.
+
+CTA label: **Open Plans & Billing**. With prices that include GST, a shorter
+note: "From {date}, StoreMink's prices include GST at 18%, and your invoices
+show it. What you pay does not change. Your invoices will show your state, so
+please check it under Plans & Billing, Billing details, and add your GSTIN
+there to claim the GST as input tax credit." An email cannot be unsent: if the
+change is later cancelled, send a short follow-up.
+
+**Switching GST on** (the owner's production steps; none is run by the build):
+
+1. **Before the merge**, read production's GST state with the read-only checks
+   in `docs/billing-architecture.md` §7 ("GST release: checks around the
+   deploy"). Expected: GST off, prefix SM, no invoice charging GST.
+2. **Deploy** (dev, then main); check both ledgers show 0266, 0267 and 0268.
+   With GST off the migrate step prints no "left NOT VALID" notice. If GST was
+   already on, save the full identity in one save as soon as only the new
+   revision serves.
+3. **Enter the identity with GST still off**: legal name STOREMINK LLP, the
+   GSTIN, Punjab (03), the address and PIN as on the GST registration, the
+   accountant's SAC code, LLPIN ADC-5432, the registered office, prefix SM.
+   Check the status still says no GST is charged, the LLP warning is gone, and
+   the next invoice prints the LLP line.
+4. **Send the notice** above (required for prices that exclude GST, a month
+   ahead).
+5. **Schedule the change** after reading the impact panel: Charge GST, 18%,
+   the price mode, a date on or after the registration takes effect (or Now for
+   prices that include GST), and the notice. Contact the stores with no state
+   if there are many. Within 5 minutes the pricing page shows the GST line; a
+   test store's Plans & Billing shows the notice banner (prices that exclude
+   GST) or "including GST" (once started).
+6. **After the start**, check one of each end to end in a test store: a credit
+   pack (the amount shown, the amount Razorpay asks and the invoice total
+   agree) and the first renewal invoice issued after the start (a Tax invoice
+   with the GSTIN, SAC, place of supply and reverse charge line). The counts of
+   `billing.renewal_place_of_supply_fallback` and `billing.renewal_outside_india`
+   in the logs should match what the impact panel listed (each is a store to
+   contact); no `billing.issue_kept_draft_tax` or `billing.renewal_tax_snapshot`
+   should appear. At the month's end, download the monthly invoice list and
+   check one line against its invoice.
+7. **Apply the two GST alerts** (docs/monitoring.md, 23 and 24).
+
+Switching GST off after the start is possible but must agree with the
+registration: ask the accountant first.
+
+### ★ Refunds, credit notes and a store's billing tools
+
+StoreMink refunds a merchant's renewal when the plan ends before the cycle it
+paid for (they cancelled, or a downgrade closed the invoice and a payment landed
+anyway), and an operator refunds for the reasons the Terms promise. The pass
+that owes, sends and settles those refunds runs in the hourly billing job
+(`docs/cron-jobs.md`, `lib/billing/refunds.ts`); these screens are where a
+person takes over. Actions: `app/actions/platform-billing.ts`. **Every member
+reads every screen; only a superadmin sends, cancels, retries, records, issues
+a refund, or cancels or ends a plan**, and all of those but Send ask for a
+note.
+
+**Refunds** (`/dashboard/billing/refunds`, from Billing & tax) has four tabs:
+
+- **Needs a person**: a failed refund with no later refund of that payment, a
+  refund owed or sent more than a day ago, or one held while automatic sending
+  is off. The tab's count is the Billing & tax banner's, 0 included.
+- **In progress**: every owed or sent refund. **Done**: processed, recorded and
+  cancelled refunds.
+- **Credit notes**: every store's notes, newest first, each with a Print link to
+  `/dashboard/billing/credit-notes/[id]`. That page calls `requireOperator()`
+  before it reads, because its reader has no store predicate (it prints a
+  deleted store's note too).
+
+On an **owed** refund: **Send** (sends it now through StoreMink's Razorpay
+account), **Cancel** (says why; nothing is sent and the merchant is not
+emailed, so write to them), and **Record a refund made outside StoreMink**. On a
+**failed** refund: **Try again** (a new refund with the same reason; the
+automatic one is never retried by the pass) and **Record**. Record takes the
+method (bank transfer with its UTR, or a Razorpay refund made in the Razorpay
+dashboard with its refund id), the amount and a note, and issues the credit
+note and the merchant's email like any finished refund. Record a refund made by
+hand in Razorpay the same day, so the records and credit notes match. A row
+whose store was deleted says "Deleted store"; its email goes to the billing
+email recorded on the invoice. ⚠ An empty tab and a list that failed to load
+look the same; the count above the tabs says when it could not be read.
+
+**Billing & tax** shows "**{n} refunds** need a look." with Review when any
+wait, a quiet "Refunds and credit notes" link at zero, and the link with a
+sentence when the count could not be read, never a zero. Its **Send refunds
+automatically** switch is its own Refunds card (`refund-settings.tsx`) below
+the GST cards, saves on change and is a superadmin's (a member sees it
+disabled; it is disabled for everyone while the settings could not be read).
+A save that meets an incomplete tax identity (possible only while GST is on)
+says to save StoreMink's tax identity first. It ships **off**: refunds the billing job owes wait as owed until someone
+presses Send. Turning it on lets the job send them itself; refunds an operator
+issues are always sent at once.
+
+**The store page** (`/dashboard/stores/[id]`) shows, to everyone, a cancelling
+line (who asked: the merchant, or the operator's email), the next invoice and
+its status, and the store's recent refunds and credit notes. A superadmin also
+gets four tools:
+
+- **Cancel at the end of the cycle**, only on the merchant's written request:
+  they keep the plan until the cycle ends, autopay stops at once, and a renewal
+  already paid for the next cycle is owed back when the plan ends (sent by the
+  billing job while automatic sending is on, otherwise by your Send). The
+  merchant is told "after your plan ends, usually within 5 working days".
+- **Undo cancellation**: their plan continues; autopay stays off until they set
+  it up again.
+- **End the plan now** (declined terms, a removed feature, or another reason):
+  ends the plan at once, revokes autopay, closes any open POS shift and closes
+  the invoices for cycles the plan will not reach. With **refund the unused
+  part** ticked it refunds the rest of the current cycle from the date given
+  (required for a removed feature: the day it was removed), showing the
+  server's own figure before you confirm. A part under ₹1 is skipped and named;
+  a refund that fails never undoes the end.
+- **Issue a refund**: one refund of one payment of an issued invoice, with a
+  reason and an amount (at least ₹1, at most what is left on that payment).
+  "Plan ended before this cycle" fits only an invoice for a cycle the plan did
+  not reach. `?refund=<invoiceId>` opens it for that invoice.
+
+**Set plan cannot lower a plan a merchant pays for by subscription**: it refuses
+anything below the live subscription's plan and points to Cancel at the end of
+the cycle or End the plan now. Equal or higher, or any plan once the
+subscription has ended, still works.
+
+**The reconciliation queue** (`/dashboard/billing/reconciliation`) holds the
+money questions the billing job leaves for a person, each filed once, ever
+(known by `detail.repair_key`):
+
+| Item                                                                 | What to do                                                                                                                                                                                                  |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Renewal paid for a cycle the plan did not reach                      | Issue a refund (reason: Plan ended before this cycle), then close the item with what you did.                                                                                                               |
+| Payment kept after the plan ended, before automatic refunds          | Look in the Razorpay dashboard for a refund already made by hand. If there is one, record it; if not, issue the refund. Close it.                                                                           |
+| An automatic refund was refused                                      | The reason is on the item. Fix the cause, or refund another way and record it, then close it.                                                                                                               |
+| A paid purchase was not applied (`purchase_refused:`)                | A closed-tab purchase the hourly check could not finish; nothing was applied or refunded. Apply it by hand as the note says, or refund in the Razorpay dashboard. Close it with what you did.               |
+| A paid purchase was invoiced but not applied (`purchase_unapplied:`) | The invoice is issued and the merchant was told not to pay again. Apply the purchase by hand, or issue a refund. Close it.                                                                                  |
+| Payment captured before its invoice was issued (`captured_draft:`)   | The repair pass issued and settled the invoice (no receipt went out). Check the plan, plan change or location was applied, then close it. If the store was deleted, refund the payment.                     |
+| Invoice issued with the GST it was priced with (`kept_draft:`)       | A payment had fixed the total before the GST in force changed; the note gives both. If the merchant paid more than they owe, refund the difference with Issue a refund (its credit note follows). Close it. |
+
+A superadmin opens Issue a refund or Record from the item where one applies (a
+live store's renewal links to its store page; a purchase, captured-draft or
+kept-draft item has **Open the store**); a member sees the item and why it
+waits.
+Closing an item still moves no money. When the failed-refund alert or the daily
+"refunds waiting more than a day" alert arrives (`docs/monitoring.md`), act
+within 2 working days: try again, or pay by bank transfer and record it, and
+write to the merchant.
+
+### ★ Complaints, blocks and holds (takedown)
+
+Every complaint, court or government order and data request that reaches
+StoreMink is logged here, with its legal deadlines, and every block of a
+product, page, blog post, collection, review, blog comment, file or whole store
+starts here. The order of work for each kind, the 2-hour path at night and the
+by-hand steps are in [`takedown-runbook.md`](takedown-runbook.md); the design is
+CODEBASE.md §5 convention 45. Every page calls `requireOperator()`, reads
+through `lib/moderation/console-read.ts` and writes only through
+`app/actions/takedown-actions.ts`, whose actions check the role again. Times are
+India time, and every screen works at phone width (the on-call operator may be
+on a phone at night).
+
+**Who sees what.** Every operator (member or superadmin) sees complaints,
+blocks, holds and the record; logs, acknowledges, resolves and reopens
+complaints; blocks items (a store's own request included); replies to stores;
+retries a file; marks a theme file removed by hand. Only a superadmin keeps a
+block from the store, tells the store later, suspends a whole store, lifts any
+block, opens or downloads an archived copy, keeps one longer or releases its
+hold, and puts a store on hold or releases it. A member never sees those
+buttons (Tell the store now, Lift block, Open the copy, Keep longer, Release
+hold, whole-store suspension), and on the block form sees **Tell the store**
+ticked and unavailable with "Only a superadmin can keep a block from the store,
+and only for a court or government order that says so." under it.
+
+**The list** (`/dashboard/complaints`): **Log a complaint** and **Block an
+item**, and the tabs Open, Due soon, Overdue, Store replies, Blocks, Files,
+Holds and Resolved, each with its count (`?view=`). `?store=<store id>` shows
+one store's complaints, blocks and holds ("Only one store's complaints, blocks
+and holds are shown.", with Show every store; the tab counts hide while
+filtered, since they count every store). 50 rows a page (`?page=`); Holds reads
+up to 200 active holds. Complaint rows carry no complainant details. A read
+that fails says so; it is never shown as zeroes or an empty list.
+
+**Log a complaint** (`/dashboard/complaints/new`): when it reached us (India
+time; the deadlines count from it), how, what it is (each kind with its
+deadlines), the complainant and how to reach them, who they act for, the order
+or reference, the store (searched), up to 50 web addresses and a summary. The
+line under the form shows the deadlines live. "Our complaint form" is never
+offered as a channel (decision D11: the public form is next release).
+
+**The complaint page** (`/dashboard/complaints/SM-000123`): the Deadlines card
+(only the stages that kind has), the Details card (erased 3 years after it was
+resolved), then **Send acknowledgement** (to an email contact) or **Mark as
+acknowledged**, **Change kind** (a deadline only ever moves earlier), **Block an
+item** (the block form with this complaint chosen), **No removal needed** (or
+**Information provided**, **Request answered**), **Resolve** (a note for Not
+removed and Partly removed; "Email the outcome" ticked when there is an email)
+and **Reopen**; then its blocks and its history.
+
+**Block an item** (`/dashboard/complaints/block`, `?complaint=SM-000123` from a
+complaint, `?store=<id>&kind=store` from a store page): find it by address (a
+store page, an image, an optimizer or share-image address, a `/themes/` file),
+by store and search, or as a whole store (superadmin); confirm what was found
+(where it appears, its reviews or comments to block one by one, its images to
+tick, the warnings: homepage, theme image, built-in theme file, a file
+StoreMink does not store, already blocked); then why (the reason, the legal
+basis for an order, the complaint, the message to the store prefilled by
+reason, **Tell the store**). A Theme Studio preview store is refused; a theme
+demo store can be blocked but is never used for tests.
+
+**A block's page** (`/dashboard/complaints/blocks/[blockId]`): its facts (store,
+address, who blocked it and when, reason, legal basis, complaint, whether and
+when the store was told, whether it opened the notice); a file's state with
+**Retry now** or **Mark as removed** where they apply; for a whole store, the
+store copy's progress ("Copying files: 412 of 1,200", then "Complete: 1,200
+files, 3 missing"); **Tell the store now**; the archived copy (above: the
+reason first, the 10-minute receipt, **Download record**, **Download** per
+file, **Keep longer** to a date or until released with who asked, **Release
+hold** with a note, its fingerprint after the purge); the conversation with the
+store (**Send**, **Add the store's emailed reply**; a block kept from the store
+has no one to reply to yet); **Lift block** (why, shown to the store; tell the
+store by email; also lift its image blocks), refused while the file is being
+replaced; and the history.
+
+**The four Overview queues**, first in Needs attention: **Complaints due**
+(next deadline within 6 hours or passed), **Store replies** (stores waiting for
+an answer about a block), **Files to finish** (a blocked file still in storage,
+or to be removed by hand) and **Holds to review** (a hold whose review date has
+come). They come from `moderationQueueSql()` inside the one summary statement
+of `lib/platform/overview.ts`, so the Overview now needs migration 0269.
+
+**The store page** (`/dashboard/stores/[storeId]`): a **Complaints and holds**
+card (blocked items, open complaints, "Suspended by a block since ..." when it
+is, and the hold state, each a link into Complaints filtered to the store),
+with **Suspend on a complaint** and **Put on hold** for a superadmin. While the
+store is held, a banner above its heading names who held it, when and why, with
+**Release hold** (a note is required). The plain **Suspend** asks why (above)
+and records `store_suspended` with the note; **Activate** is off, with the
+reason under it, while a whole-store block suspends the store ("This store is
+suspended by a block on a complaint. Lift the block in Complaints."), and the
+server refuses it anyway. **Delete store** is off, with the reason under it,
+while the store is held ("This store is on hold for an investigation. Release
+the hold first."), while one of its archives is still being copied ("StoreMink
+is still keeping a copy of something blocked on this store. Try again in a few
+minutes."), or when that check itself could not be read; `deleteStore` refuses
+the same cases before it touches anything. The stores list shares the same
+Suspend dialog.
+
 ## Phases
 
 - **Phase 1 — IA, stores, themes, pricing ✅**
@@ -565,6 +970,10 @@ presses Publish or Check again on an existing production theme. Record:
   metadata and distinct tool names. Store detail pages also control invited
   beta membership. The pricing schedule is stored on each usage row so a future
   model price change does not rewrite historical estimates.
+- **Phase 6, complaints and takedowns ✅** (Release 2, migrations 0269 and 0270)
+  The Complaints entry, its five pages, the two archive routes, the four
+  Overview queues, the store page's Complaints and holds card, hold banner and
+  Suspend dialog: "Complaints, blocks and holds" above.
 
 ## ⚠ Announcement SMS cannot send yet, and that is not a code problem
 

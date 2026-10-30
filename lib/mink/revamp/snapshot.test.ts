@@ -47,12 +47,37 @@ vi.mock("./ownership", async (importOriginal) => {
   };
 });
 
+// ★ The takedown's blocked-file list, read once per snapshot.
+const blocks = vi.hoisted(() => ({ paths: [] as string[] }));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  return {
+    ...actual,
+    blockedMedia: vi.fn(async () =>
+      actual.buildBlockedMediaSet(
+        blocks.paths.map((path, i) => ({
+          id: `00000000-0000-4000-8000-00000000000${i}`,
+          objectPath: path,
+          fileSource: "bucket",
+          storeId: STORE,
+          objectMd5: null,
+          tellStore: i % 2 === 0,
+        })),
+        { bucket: gcs.bucket, loadedAt: 1 },
+      ),
+    ),
+  };
+});
+
+import { PgDialect } from "drizzle-orm/pg-core";
 import {
   makeDbMock,
   sqlParamValues,
   sqlText,
 } from "@/app/actions/_test-helpers";
 import { withService } from "@/lib/db/client";
+import { blockedMedia } from "@/lib/moderation/blocked-objects";
 import { sanitizeChromeForSave } from "@/lib/chrome/types";
 import {
   validateSections,
@@ -296,6 +321,8 @@ function fullDb(
     billing?: any[];
     /** What the lookup of the request's own product names returns. */
     named?: any[];
+    /** The store's pages, when a test needs other rows. */
+    pages?: any[];
   } = {},
 ) {
   const chromeRow = {
@@ -314,7 +341,7 @@ function fullDb(
   return makeDbMock({
     selectByTable: {
       stores: [options.store === null ? [] : [storeRow(options.store ?? {})]],
-      store_pages: [pageRows()],
+      store_pages: [options.pages ?? pageRows()],
       store_chrome: [options.chrome === false ? [] : [chromeRow]],
       categories: [categoryRows()],
       products: [productRows(), ...(options.named ? [options.named] : [])],
@@ -400,6 +427,7 @@ function staff(permissions: Record<string, string[]>): MinkActorContext {
 }
 
 beforeEach(() => {
+  blocks.paths = [];
   registry.definition = BASKET;
   dbHolder.current = fullDb();
   ownershipMock.digests.mockResolvedValue(
@@ -1323,5 +1351,129 @@ describe("readRevampContextForActor", () => {
     expect((summary.categories?.length ?? 0) + summary.moreCategories).toBe(60);
     expect(summary.products?.yours.live).toBe(666);
     expect(summary.products?.yours.drafts).toBe(334);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The takedown: nothing StoreMink blocked reaches a redesign
+// ---------------------------------------------------------------------------
+
+describe("takedown: what StoreMink blocked stays out of a redesign", () => {
+  const compile = (where: unknown) =>
+    new PgDialect().sqlToQuery(where as never).sql;
+  const BLOCKED_PRODUCT = '"products"."moderation_blocked_at" is null';
+
+  it("★★ a product StoreMink blocked is never read, in either product query", async () => {
+    dbHolder.current = fullDb({ named: [] });
+    await readRevampSnapshot(context(), {
+      ...request,
+      products: [
+        {
+          key: "p1",
+          name: "Mustard oil",
+          description: "",
+          sizes: [{ label: "", price: 100, mrp: null }],
+          photoUrl: null,
+          categorySlug: null,
+        },
+      ],
+    });
+    const wheres = (dbHolder.current.calls.where as unknown[]).map(compile);
+    // The main read and the lookup of the request's own product names.
+    const productReads = wheres.filter((text) =>
+      text.includes(BLOCKED_PRODUCT),
+    );
+    expect(productReads).toHaveLength(2);
+    expect(productReads[1]).toContain("regexp_replace");
+    // ★ A blocked collection is not read either (the shared reader).
+    expect(
+      wheres.some((text) =>
+        text.includes('"categories"."moderation_blocked_at" is null'),
+      ),
+    ).toBe(true);
+  });
+
+  it("★★ a page StoreMink blocked stays in the list unread and never written, and out of the summary", async () => {
+    const pages = pageRows().map((row) =>
+      row.id === "page-story"
+        ? { ...row, blockedAt: "2026-10-20 09:00:00+00" }
+        : { ...row, blockedAt: null },
+    );
+    dbHolder.current = fullDb({ pages });
+    const snapshot = await readRevampSnapshot(context(), request);
+    const story = snapshot.pages.find((page) => page.slug === "our-story")!;
+    expect(story).toMatchObject({
+      id: "page-story",
+      version: "2026-10-02 09:00:00.654321+00",
+      sections: [],
+      owners: {},
+      skipped: "policy",
+      sectionsDigest: revampSectionsDigest([]),
+      seoTitle: null,
+      seoDescription: null,
+    });
+    // Its picture is never checked or counted: the page is not read.
+    expect(ownershipMock.broken.mock.calls[0][0]).not.toContain(BROKEN);
+    expect(snapshot.photos.broken).toEqual([]);
+    // The page read asks for the block, and the other pages are untouched.
+    const projections = dbHolder.current.calls.select as Array<
+      Record<string, unknown> | undefined
+    >;
+    expect(projections.some((p) => p && "blockedAt" in p)).toBe(true);
+    expect(snapshot.pages.find((page) => page.slug === "")!.skipped).toBe(null);
+
+    dbHolder.current = fullDb({ pages });
+    const summary = await readRevampContextForActor(actor());
+    expect(summary.pages.map((page) => page.slug)).toEqual(["home"]);
+    // ★ Left out altogether: never named, not even as never changed.
+    expect(summary.neverChanged.map((page) => page.slug)).toEqual([
+      "terms",
+      "broken",
+    ]);
+    expect(JSON.stringify(summary)).not.toMatch(/our story|our-story/i);
+  });
+
+  it("★★ a picture StoreMink blocked is a broken one: never checked, replaced, never a product photo", async () => {
+    blocks.paths = [
+      `stores/${STORE}/uploads/mill.webp`,
+      `stores/${STORE}/products/oil.webp`,
+    ];
+    const snapshot = await readRevampSnapshot(context(), request);
+    // ★ Read once the transaction has committed, never inside it.
+    expect(vi.mocked(blockedMedia)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(blockedMedia).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(withService).mock.invocationCallOrder[0],
+    );
+    // Not fetched to check it: it is broken for shoppers already.
+    expect(ownershipMock.broken.mock.calls[0][0]).toEqual([BROKEN, MENU, OILS]);
+    expect(snapshot.photos.broken).toEqual([MILL, BROKEN]);
+    expect(snapshot.photos.replaceable).toContain(MILL);
+    // ★ The product keeps its row but not the photo, which is never read.
+    const oil = snapshot.products.find((product) => product.id === "prod-oil");
+    expect(oil?.imageUrl).toBeNull();
+    expect(snapshot.photos.readable).not.toContain(
+      `${BUCKET}/stores/${STORE}/products/oil.webp`,
+    );
+  });
+
+  it("★ a blocked picture the merchant attached is never a product photo the shoot reads", async () => {
+    const attached = `${BUCKET}/stores/${STORE}/media/chat-oil.jpg`;
+    blocks.paths = [`stores/${STORE}/media/chat-oil.jpg`];
+    const snapshot = await readRevampSnapshot(context(), {
+      ...request,
+      products: [
+        {
+          key: "p1",
+          name: "Oil 1",
+          description: "",
+          sizes: [{ label: "", price: 100, mrp: null }],
+          photoUrl: attached,
+          categorySlug: null,
+        },
+      ],
+    });
+    expect(snapshot.photos.readable).toEqual([
+      `${BUCKET}/stores/${STORE}/products/oil.webp`,
+    ]);
   });
 });

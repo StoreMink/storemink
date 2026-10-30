@@ -1,12 +1,27 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
-import { DashboardSidebar, resolveActiveSection } from "./dashboard-sidebar";
+import { act, render, screen, within } from "@testing-library/react";
+import { useEffect } from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  DashboardSidebar,
+  resolveActiveSection,
+  withStoreNoticesBadge,
+} from "./dashboard-sidebar";
+import {
+  UnreadCountsProvider,
+  useReportUnreadCounts,
+} from "./components/unread-counts-context";
+
+const path = vi.hoisted(() => ({ current: "/dashboard/locations/fulfilment" }));
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/dashboard/locations/fulfilment",
+  usePathname: () => path.current,
   useSearchParams: () => new URLSearchParams(),
 }));
+
+beforeEach(() => {
+  path.current = "/dashboard/locations/fulfilment";
+});
 
 // ---------------------------------------------------------------------------
 // The sub-nav panel is chosen by this function, so getting it wrong swaps the
@@ -162,5 +177,145 @@ describe("DashboardSidebar child labels", () => {
     expect(link).toHaveClass("items-start");
     expect(label).toHaveClass("whitespace-normal", "break-words");
     expect(label).not.toHaveClass("truncate");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Notices from StoreMink badge (takedown design 7.1, plan A14): the
+// StoreMink count the bell already polls, handed over by the provider. The
+// sidebar reads nothing of its own.
+// ---------------------------------------------------------------------------
+
+const NOTICES_HREF = "/dashboard/settings/notices";
+
+const SETTINGS_NAV = [
+  {
+    group: "Workspace",
+    items: [{ href: "/dashboard", label: "Home", icon: "dashboard" as const }],
+  },
+  {
+    group: "Settings",
+    items: [
+      {
+        href: "/dashboard/settings",
+        label: "Settings",
+        icon: "settings" as const,
+        children: [
+          {
+            href: "/dashboard/settings/account",
+            label: "Account",
+            icon: "settings" as const,
+          },
+          {
+            href: NOTICES_HREF,
+            label: "Notices from StoreMink",
+            icon: "mail" as const,
+          },
+        ],
+      },
+    ],
+  },
+];
+
+function Report({ storemink }: { storemink: number }) {
+  const report = useReportUnreadCounts();
+  useEffect(() => {
+    report({ total: storemink + 1, storemink });
+  }, [report, storemink]);
+  return null;
+}
+
+describe("withStoreNoticesBadge", () => {
+  it("returns the nav untouched when nothing from StoreMink is unread", () => {
+    expect(withStoreNoticesBadge(SETTINGS_NAV, 0)).toBe(SETTINGS_NAV);
+  });
+
+  it("badges the Notices child and bubbles to Settings, without touching the shared nav", () => {
+    const before = JSON.stringify(SETTINGS_NAV);
+    const out = withStoreNoticesBadge(SETTINGS_NAV, 2);
+
+    const settings = out[1].items[0];
+    expect(settings.badge).toBe("2");
+    expect(settings.badgeTone).toBe("amber");
+    const notices = settings.children?.find((c) => c.href === NOTICES_HREF);
+    expect(notices?.badge).toBe("2");
+    expect(notices?.badgeTone).toBe("amber");
+    expect(
+      settings.children?.find((c) => c.href.endsWith("/account"))?.badge,
+    ).toBeUndefined();
+    // Unrelated groups keep their identity; the input is never mutated.
+    expect(out[0]).toBe(SETTINGS_NAV[0]);
+    expect(JSON.stringify(SETTINGS_NAV)).toBe(before);
+  });
+
+  it("keeps a parent's own badge and caps the count like the bell", () => {
+    const nav = [
+      {
+        group: "Settings",
+        items: [
+          {
+            ...SETTINGS_NAV[1].items[0],
+            badge: "Pro",
+            badgeTone: "accent" as const,
+          },
+        ],
+      },
+    ];
+    const settings = withStoreNoticesBadge(nav, 120)[0].items[0];
+    expect(settings.badge).toBe("Pro");
+    expect(settings.badgeTone).toBe("accent");
+    expect(settings.children?.find((c) => c.href === NOTICES_HREF)?.badge).toBe(
+      "99+",
+    );
+  });
+
+  it("does nothing for a nav without the Notices page (a role without Settings)", () => {
+    const nav = [SETTINGS_NAV[0]];
+    expect(withStoreNoticesBadge(nav, 3)).toEqual(nav);
+  });
+});
+
+describe("DashboardSidebar Notices badge", () => {
+  it("shows no badge without a provider (the operator console)", () => {
+    path.current = "/dashboard/settings";
+    render(<DashboardSidebar groups={SETTINGS_NAV} />);
+    const link = screen.getByRole("link", { name: /Notices from StoreMink/ });
+    expect(link).toHaveTextContent(/^Notices from StoreMink$/);
+  });
+
+  it("shows the StoreMink count on Settings in the root nav", () => {
+    path.current = "/dashboard";
+    render(
+      <UnreadCountsProvider>
+        <Report storemink={2} />
+        <DashboardSidebar groups={SETTINGS_NAV} />
+      </UnreadCountsProvider>,
+    );
+    const link = screen.getByRole("link", { name: /Settings/ });
+    expect(within(link).getByText("2")).toHaveClass("dash-nav-badge", "amber");
+  });
+
+  it("shows it on the Notices child inside Settings, and drops it once read", () => {
+    path.current = "/dashboard/settings";
+    const { rerender } = render(
+      <UnreadCountsProvider>
+        <Report storemink={1} />
+        <DashboardSidebar groups={SETTINGS_NAV} />
+      </UnreadCountsProvider>,
+    );
+    const link = screen.getByRole("link", { name: /Notices from StoreMink/ });
+    expect(within(link).getByText("1")).toHaveClass("dash-nav-badge", "amber");
+
+    act(() => {
+      rerender(
+        <UnreadCountsProvider>
+          <Report storemink={0} />
+          <DashboardSidebar groups={SETTINGS_NAV} />
+        </UnreadCountsProvider>,
+      );
+    });
+    expect(
+      screen.getByRole("link", { name: /Notices from StoreMink/ }),
+    ).toHaveTextContent(/^Notices from StoreMink$/);
   });
 });

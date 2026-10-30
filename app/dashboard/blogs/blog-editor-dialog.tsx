@@ -50,6 +50,7 @@ import type { Blog } from "./page";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import type { MinkBlogPrefill } from "@/lib/mink/form-prefill";
 import { minkPrefillBodyToHtml } from "@/lib/mink/prefill-html";
+import { ITEM, itemBlockedBanner } from "@/lib/moderation/copy";
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -132,6 +133,15 @@ type Props = {
   mediaUrlPrefix: string;
   /** Fields Mink filled in for a NEW post; ignored while editing one. */
   prefill?: MinkBlogPrefill | null;
+  /**
+   * The block id when StoreMink blocked this post and told the store, else
+   * null (takedown design 7.3). Editing and saving stay open; the status
+   * switch is replaced by "Blocked by StoreMink", since a blocked post is
+   * hidden whatever its own status says.
+   */
+  blockedByStoreMink?: string | null;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 };
 
 // ── Component ─────────────────────────────────────────────────
@@ -184,8 +194,12 @@ export function BlogEditorDialog({
   tagOptions,
   mediaUrlPrefix,
   prefill = null,
+  blockedByStoreMink = null,
+  canSeeNotices = false,
 }: Props) {
   const isEditing = !!blog;
+  // Only an existing post can be blocked; a new one has no id yet.
+  const blockId = isEditing ? blockedByStoreMink : null;
   const [isPending, startTransition] = useTransition();
   const [mobilePanel, setMobilePanel] = useState<"content" | "settings">(
     "content",
@@ -506,6 +520,27 @@ export function BlogEditorDialog({
               </button>
             </div>
           </div>
+
+          {blockId ? (
+            <div
+              role="status"
+              data-testid="blog-blocked-banner"
+              className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-[var(--dash-red)]/30 bg-[var(--dash-red-soft)] px-5 py-2.5"
+            >
+              <p className="min-w-0 flex-1 basis-56 text-[13px] text-[var(--dash-text)]">
+                <span className="font-semibold">{ITEM.blocked}.</span>{" "}
+                {itemBlockedBanner("blog_post")}
+              </p>
+              {canSeeNotices ? (
+                <NextLink
+                  href={`/dashboard/settings/notices/${blockId}`}
+                  className="dash-btn dash-btn-ghost dash-btn-sm shrink-0 pointer-coarse:min-h-11"
+                >
+                  {ITEM.seeWhy}
+                </NextLink>
+              ) : null}
+            </div>
+          ) : null}
 
           {!isEditing && prefill && (
             <p
@@ -1061,76 +1096,84 @@ export function BlogEditorDialog({
                   >
                     Status
                   </label>
-                  <div
-                    style={{
-                      flex: 1,
-                      display: "flex",
-                      gap: 4,
-                      background: "rgba(0,0,0,0.06)",
-                      padding: 4,
-                      borderRadius: 8,
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStatus("draft");
-                        setHasUnsaved(true);
-                      }}
+                  {blockId ? (
+                    // The post keeps the status it was saved with; changing
+                    // it would show nothing while StoreMink's block stands.
+                    <span className="dash-badge dash-badge-storemink">
+                      {ITEM.blocked}
+                    </span>
+                  ) : (
+                    <div
                       style={{
                         flex: 1,
-                        fontSize: 11,
-                        padding: "6px 12px",
-                        border: "none",
-                        borderRadius: 6,
-                        background:
-                          status === "draft" ? "#ffffff" : "transparent",
-                        color:
-                          status === "draft" ? "#000000" : "rgba(0,0,0,0.6)",
-                        fontWeight: status === "draft" ? 600 : 500,
-                        boxShadow:
-                          status === "draft"
-                            ? "0 1px 3px rgba(0,0,0,0.1)"
-                            : "none",
-                        cursor: "pointer",
-                        transition: "all 0.2s",
+                        display: "flex",
+                        gap: 4,
+                        background: "rgba(0,0,0,0.06)",
+                        padding: 4,
+                        borderRadius: 8,
                       }}
                     >
-                      Draft
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStatus("published");
-                        setHasUnsaved(true);
-                      }}
-                      style={{
-                        flex: 1,
-                        fontSize: 11,
-                        padding: "6px 12px",
-                        border: "none",
-                        borderRadius: 6,
-                        background:
-                          status === "published" ? "#ffffff" : "transparent",
-                        color:
-                          status === "published"
-                            ? "#000000"
-                            : "rgba(0,0,0,0.6)",
-                        fontWeight: status === "published" ? 600 : 500,
-                        boxShadow:
-                          status === "published"
-                            ? "0 1px 3px rgba(0,0,0,0.1)"
-                            : "none",
-                        cursor: "pointer",
-                        transition: "all 0.2s",
-                      }}
-                    >
-                      Published
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStatus("draft");
+                          setHasUnsaved(true);
+                        }}
+                        style={{
+                          flex: 1,
+                          fontSize: 11,
+                          padding: "6px 12px",
+                          border: "none",
+                          borderRadius: 6,
+                          background:
+                            status === "draft" ? "#ffffff" : "transparent",
+                          color:
+                            status === "draft" ? "#000000" : "rgba(0,0,0,0.6)",
+                          fontWeight: status === "draft" ? 600 : 500,
+                          boxShadow:
+                            status === "draft"
+                              ? "0 1px 3px rgba(0,0,0,0.1)"
+                              : "none",
+                          cursor: "pointer",
+                          transition: "all 0.2s",
+                        }}
+                      >
+                        Draft
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStatus("published");
+                          setHasUnsaved(true);
+                        }}
+                        style={{
+                          flex: 1,
+                          fontSize: 11,
+                          padding: "6px 12px",
+                          border: "none",
+                          borderRadius: 6,
+                          background:
+                            status === "published" ? "#ffffff" : "transparent",
+                          color:
+                            status === "published"
+                              ? "#000000"
+                              : "rgba(0,0,0,0.6)",
+                          fontWeight: status === "published" ? 600 : 500,
+                          boxShadow:
+                            status === "published"
+                              ? "0 1px 3px rgba(0,0,0,0.1)"
+                              : "none",
+                          cursor: "pointer",
+                          transition: "all 0.2s",
+                        }}
+                      >
+                        Published
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {blog?.status === "pending_review" && (
+                {blog?.status === "pending_review" && !blockId && (
                   <div
                     style={{
                       fontSize: 11,

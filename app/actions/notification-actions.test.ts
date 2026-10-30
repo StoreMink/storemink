@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock, sqlParamValues } from "./_test-helpers";
 
 const headerHolder = vi.hoisted(() => ({
@@ -288,14 +289,78 @@ describe("notification inbox actions", () => {
     );
   });
 
-  it("returns the unread count and degrades to zero on failure", async () => {
-    dbHolder.current = makeDbMock({ selectQueue: [[{ n: 7 }]] });
-    expect(await getUnreadNotificationCount()).toBe(7);
+  it("returns both unread counts and degrades to zero on failure", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ total: 7, storemink: 2 }]],
+    });
+    expect(await getUnreadNotificationCount()).toEqual({
+      total: 7,
+      storemink: 2,
+    });
 
     dbHolder.current.db.select = vi.fn(() => {
       throw new Error("offline");
     });
-    expect(await getUnreadNotificationCount()).toBe(0);
+    expect(await getUnreadNotificationCount()).toEqual({
+      total: 0,
+      storemink: 0,
+    });
+  });
+
+  it("answers zero for both counts when signed out, without a query", async () => {
+    vi.mocked(getServerUser).mockResolvedValueOnce(null);
+    expect(await getUnreadNotificationCount()).toEqual({
+      total: 0,
+      storemink: 0,
+    });
+    expect(dbHolder.current.calls.select).toHaveLength(0);
+  });
+
+  it("reads bigint text as numbers and never lets the StoreMink count pass the total", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ total: "3", storemink: "9" }],
+        [{ total: null, storemink: -4 }],
+      ],
+    });
+    expect(await getUnreadNotificationCount()).toEqual({
+      total: 3,
+      storemink: 3,
+    });
+    expect(await getUnreadNotificationCount()).toEqual({
+      total: 0,
+      storemink: 0,
+    });
+  });
+
+  it("★ counts StoreMink notices from the SAME unread query, filtered to a new block and StoreMink's reply", async () => {
+    // Design 5.7 / plan A14: the Notices badge is a FILTER on the bell's own
+    // unread rows, so no page load pays a read for it. Counting every unread
+    // notification here would put the bell's whole number on the Settings
+    // badge (an order, a low-stock alert), which is the mutation this pins.
+    dbHolder.current = makeDbMock({
+      selectQueue: [[{ total: 5, storemink: 1 }]],
+    });
+
+    await getUnreadNotificationCount();
+
+    expect(dbHolder.current.db.select).toHaveBeenCalledTimes(1);
+    const projection = dbHolder.current.calls.select[0];
+    expect(Object.keys(projection).sort()).toEqual(["storemink", "total"]);
+    const compiled = new PgDialect().sqlToQuery(projection.storemink);
+    expect(compiled.sql.replace(/\s+/g, " ")).toMatch(
+      /^count\(\*\) filter \(where "notifications"\."type" in \(\$1, \$2\)\)$/,
+    );
+    expect(compiled.params).toEqual([
+      "store.content_blocked",
+      "store.content_block_reply",
+    ]);
+    // The lift is news, not something to act on: it rings the bell only.
+    expect(compiled.params).not.toContain("store.content_block_lifted");
+    // The unread, live, viewer-and-store-scoped rows: the bell's own filter.
+    expect(sqlParamValues(dbHolder.current.calls.where[0])).toEqual(
+      expect.arrayContaining(["admin-1", "owner@acme.test", "store-1"]),
+    );
   });
 
   it("marks only the caller's unread notification as read", async () => {

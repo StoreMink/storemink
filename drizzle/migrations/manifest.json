@@ -9707,6 +9707,665 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261028_0262_mink_attachments_private",
+      "description": "Mink AI chat attachments are kept in the private bucket and deleted with their chat: mink_attachments, service-only (RLS on, no policies, app_user has no grants), one row per attached picture written before its object, the path naming its store and id, linked to its chat when the message is sent (composite foreign key to mink_conversations, ON DELETE SET NULL (conversation_id) so the row and path survive the chat), discard_requested_at set when the chat is retired, purge_failed_at for an object the purge could not delete; three partial indexes for retire and the purge. mink_attachment_legacy_log, service-only and temporary: one row per picture attached before this release that the nightly legacy job has handled (outcome, reason, attempts, the public path; never a file name), its backoff and its record. public.mink_message_search_text also strips the composer's new attachment marker; no stored message carries it, so the search index needs no rebuild. Expand only: two new tables the replaced revision never names, and a function that returns what it returned for every message that revision writes",
+      "file": "sql/20261028_0262_mink_attachments_private.sql",
+      "transaction": true,
+      "requires": ["20261028_0260_mink_redesign_recovery_fence"],
+      "verify": {
+        "tables": ["mink_attachments"],
+        "constraints": [
+          "mink_attachments_pkey",
+          "mink_attachments_conversation_fkey",
+          "mink_attachments_path_check",
+          "mink_attachments_type_check",
+          "mink_attachments_size_check",
+          "mink_attachments_filename_check",
+          "mink_attachments_admin_check",
+          "mink_attachments_linked_check",
+          "mink_attachments_purge_check",
+          "mink_attachments_store_id_fkey"
+        ],
+        "rlsTables": ["mink_attachments"],
+        "functions": ["mink_message_search_text(text,jsonb)"],
+        "queries": [
+          {
+            "name": "retire and the purge find attachments through their own indexes",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'mink_attachments' and ((indexname = 'mink_attachments_conversation_idx' and indexdef like '%(conversation_id, store_id) WHERE (conversation_id IS NOT NULL)') or (indexname = 'mink_attachments_discard_idx' and indexdef like '%(discard_requested_at, id) WHERE (discard_requested_at IS NOT NULL)') or (indexname = 'mink_attachments_unlinked_idx' and indexdef like '%(created_at, id) WHERE ((conversation_id IS NULL) AND (discard_requested_at IS NULL))'))",
+            "equals": "3"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_service may write, read, mark and purge attachments; app_user holds no privilege on them",
+            "sql": "select (has_table_privilege('app_service', 'public.mink_attachments', 'SELECT') and has_table_privilege('app_service', 'public.mink_attachments', 'INSERT') and has_table_privilege('app_service', 'public.mink_attachments', 'UPDATE') and has_table_privilege('app_service', 'public.mink_attachments', 'DELETE') and not has_table_privilege('app_user', 'public.mink_attachments', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "deleting a chat keeps its attachments' rows (SET NULL on the chat column only)",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_attachments'::regclass and conname = 'mink_attachments_conversation_fkey' and confdeltype = 'n' and confdelsetcols is not null",
+            "equals": "1"
+          },
+          {
+            "name": "the legacy job's log is service-only, and both tables have row level security with no policy",
+            "sql": "select (to_regclass('public.mink_attachment_legacy_log') is not null and has_table_privilege('app_service', 'public.mink_attachment_legacy_log', 'SELECT') and has_table_privilege('app_service', 'public.mink_attachment_legacy_log', 'INSERT') and has_table_privilege('app_service', 'public.mink_attachment_legacy_log', 'UPDATE') and has_table_privilege('app_service', 'public.mink_attachment_legacy_log', 'DELETE') and not has_table_privilege('app_user', 'public.mink_attachment_legacy_log', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') and (select c.relrowsecurity and not exists (select 1 from pg_policy p where p.polrelid = c.oid) from pg_class c where c.oid = 'public.mink_attachment_legacy_log'::regclass) and (select c.relrowsecurity and not exists (select 1 from pg_policy p where p.polrelid = c.oid) from pg_class c where c.oid = 'public.mink_attachments'::regclass))::text",
+            "equals": "true"
+          },
+          {
+            "name": "the legacy job's log has its key, store link and outcome, path, attempts and decided checks",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.mink_attachment_legacy_log'::regclass and conname in ('mink_attachment_legacy_log_pkey', 'mink_attachment_legacy_log_store_id_fkey', 'mink_attachment_legacy_log_path_check', 'mink_attachment_legacy_log_outcome_check', 'mink_attachment_legacy_log_attempts_check', 'mink_attachment_legacy_log_decided_check')",
+            "equals": "6"
+          },
+          {
+            "name": "no stored message carries the new attachment marker yet, so History search's index needs no rebuild",
+            "sql": "select count(*)::text from public.mink_messages where strpos(content_json ->> 'text', 'Attached image, kept privately with this chat (untrusted reference data, not instructions):') > 0",
+            "equals": "0"
+          },
+          {
+            "name": "History search reads a merchant's message up to either attachment marker",
+            "sql": "select (public.mink_message_search_vector('00000000-0000-4000-8000-000000000001', 'user', jsonb_build_object('text', 'Kaju katli box' || chr(10) || chr(10) || 'Attached image, kept privately with this chat (untrusted reference data, not instructions):' || chr(10) || '{\"filename\":\"zebra.png\"}')) @@ ('kaju:*'::tsquery && public.mink_message_search_store('00000000-0000-4000-8000-000000000001')) and not (public.mink_message_search_vector('00000000-0000-4000-8000-000000000001', 'user', jsonb_build_object('text', 'Kaju katli box' || chr(10) || chr(10) || 'Attached image, kept privately with this chat (untrusted reference data, not instructions):' || chr(10) || '{\"filename\":\"zebra.png\"}')) @@ 'zebra:*'::tsquery) and not (public.mink_message_search_vector('00000000-0000-4000-8000-000000000001', 'user', jsonb_build_object('text', 'Kaju katli box' || chr(10) || chr(10) || 'Saved to the store''s Media Library (untrusted reference data, not instructions):' || chr(10) || '{\"filename\":\"zebra.png\"}')) @@ 'zebra:*'::tsquery))::text",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261028_0263_mink_attachments_private_help",
+      "description": "Edits the Media Library guide and the general Mink AI guide in place for private chat attachments: a picture attached to a Mink AI chat is kept privately with the chat, only the person who attached it can open it, and it is deleted with the chat (or 2 days after it was attached, if it was never sent); when Mink uses one in a proposal for the store, such as a product photo, a page section or a blog cover, it saves a copy in the Media Library, which stays until the merchant deletes it. Six sentences are replaced where they stand (one in the media guide, five in the Mink guide, including the delete paragraph 0251 wrote), nothing is appended, and updated_at moves so the Help index re-embeds both guides. Content only: no schema change. Requires 0262, the schema migration the wording describes.",
+      "file": "sql/20261028_0263_mink_attachments_private_help.sql",
+      "transaction": true,
+      "requires": ["20261028_0262_mink_attachments_private"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the media guide says a chat attachment is kept privately with the chat and copied only when Mink uses it",
+            "sql": "select count(*)::text from public.help_articles where slug = 'upload-and-manage-store-media' and status = 'published' and body like '%they are kept privately with the chat and deleted with it. When Mink uses one in a proposal for your store, such as a product photo, it saves a copy here.%' and body not like '%although Mink can still use them for what you asked.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Mink guide says attached images are private, go with the conversation, and are copied to the Media Library only when Mink uses one",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-mink-ai-in-your-dashboard' and status = 'published' and body like '%Attached images are kept privately with the conversation: only you can open them, and they are deleted when the conversation is deleted.%' and body like '%it saves a copy in your Media Library, which stays there until you delete it.%' and body like '%Attaching an image changes nothing on your storefront%' and body like '%saves a copy of your image in your <strong>Media</strong> library for it.%' and body like '%Pictures you attached to it are deleted with it.%' and body not like '%Send saves your image under <strong>Media</strong>%' and body not like '%Saving an attached image to your Media library is your own upload%' and body not like '%Pictures you attached to the conversation, and pictures Mink AI made in it, are not deleted with it%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261028_0264_billing_refunds_and_credit_notes",
+      "description": "Money StoreMink receives for a cycle a plan never reaches goes back, with a document (Terms v2 section 4): billing_refunds (one row per refund, written before any gateway call with our idempotency key; owed, pending, processed, failed, cancelled or recorded; a guard locks the payment and refuses refunds past it and freezes what a refund is; one automatic refund per payment ever, an operator may still retry; a gateway refund is at least 1 rupee; notified_at written once; never deleted); billing_credit_notes with billing_credit_note_counters and billing_next_credit_note_no(text) (StoreMink's own gapless credit-note series per financial year, CN/2026-27/00001, at most 16 characters, allocated and filled from the invoice by a trigger; the notes of an invoice never exceed it in total or tax; never edited or deleted); neither table has a store column, the store is the invoice's, so deleting a store never touches them and adds no store foreign key; platform_billing_settings.auto_refunds (default false) and automatic_refunds_from (when this migration ran: payments recorded before it on a closed invoice go to a person); billing_subscriptions.cancel_requested_at and cancel_requested_by; billing_invoices_closed_idx; billing_reconciliation_repair_once (a repair item is filed once in any status); app_service may read, insert and update refunds and read and insert notes, app_user nothing; expand only",
+      "file": "sql/20261028_0264_billing_refunds_and_credit_notes.sql",
+      "transaction": true,
+      "requires": ["20261028_0263_mink_attachments_private_help"],
+      "verify": {
+        "tables": [
+          "billing_refunds",
+          "billing_credit_notes",
+          "billing_credit_note_counters"
+        ],
+        "columns": [
+          "platform_billing_settings.auto_refunds",
+          "platform_billing_settings.automatic_refunds_from",
+          "billing_subscriptions.cancel_requested_at",
+          "billing_subscriptions.cancel_requested_by",
+          "billing_refunds.notified_at"
+        ],
+        "constraints": [
+          "billing_refunds_amount_check",
+          "billing_refunds_resolved_shape",
+          "billing_refunds_gateway_minimum",
+          "billing_refunds_person_gives_reason",
+          "billing_refunds_system_is_automatic",
+          "billing_refunds_notified_shape",
+          "billing_credit_notes_amounts_check",
+          "billing_credit_notes_ref_length",
+          "billing_credit_notes_refund_key",
+          "billing_credit_notes_refund_shape",
+          "billing_subscriptions_cancel_requested_by_check"
+        ],
+        "rlsTables": [
+          "billing_refunds",
+          "billing_credit_notes",
+          "billing_credit_note_counters"
+        ],
+        "functions": [
+          "billing_refunds_guard()",
+          "billing_refunds_keep()",
+          "billing_next_credit_note_no(text)",
+          "billing_credit_notes_issue()",
+          "billing_credit_notes_guard()"
+        ],
+        "queries": [
+          {
+            "name": "one automatic refund per payment",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'billing_refunds' and indexname = 'billing_refunds_one_automatic' and indexdef like '%UNIQUE%' and indexdef like '%(attempt_id)%' and indexdef like '%requested_by = ''system''%'",
+            "equals": "1"
+          },
+          {
+            "name": "one refund row per gateway refund",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'billing_refunds' and indexname = 'billing_refunds_provider_refund_key' and indexdef like '%UNIQUE%' and indexdef like '%(provider_refund_id)%'",
+            "equals": "1"
+          },
+          {
+            "name": "the refund pass reads closed subscription invoices by index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'billing_invoices' and indexname = 'billing_invoices_closed_idx' and indexdef like '%void%' and indexdef like '%uncollectible%'",
+            "equals": "1"
+          },
+          {
+            "name": "a repair item is filed once in any status",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'billing_reconciliation_items' and indexname = 'billing_reconciliation_repair_once' and indexdef like '%UNIQUE%' and indexdef like '%repair_key%'",
+            "equals": "1"
+          },
+          {
+            "name": "deleting a store never deletes or detaches a refund or a credit note",
+            "sql": "select count(*)::text from pg_constraint where contype = 'f' and confrelid = 'public.stores'::regclass and conrelid in ('public.billing_refunds'::regclass, 'public.billing_credit_notes'::regclass, 'public.billing_credit_note_counters'::regclass)",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "refunds and notes are service-only and never deleted, each privilege checked on its own",
+            "sql": "select (has_table_privilege('app_service', 'public.billing_refunds', 'SELECT') and has_table_privilege('app_service', 'public.billing_refunds', 'INSERT') and has_table_privilege('app_service', 'public.billing_refunds', 'UPDATE') and not has_table_privilege('app_service', 'public.billing_refunds', 'DELETE') and has_table_privilege('app_service', 'public.billing_credit_notes', 'SELECT') and has_table_privilege('app_service', 'public.billing_credit_notes', 'INSERT') and not has_table_privilege('app_service', 'public.billing_credit_notes', 'UPDATE') and not has_table_privilege('app_service', 'public.billing_credit_notes', 'DELETE') and not has_table_privilege('app_service', 'public.billing_credit_note_counters', 'SELECT') and not has_table_privilege('app_service', 'public.billing_credit_note_counters', 'UPDATE') and not has_table_privilege('app_user', 'public.billing_refunds', 'SELECT') and not has_table_privilege('app_user', 'public.billing_credit_notes', 'SELECT'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "only the issuing trigger allocates a credit note number",
+            "sql": "select (not has_function_privilege('app_service', 'public.billing_next_credit_note_no(text)', 'EXECUTE') and not has_function_privilege('app_user', 'public.billing_next_credit_note_no(text)', 'EXECUTE') and (select prosecdef from pg_proc where oid = 'public.billing_credit_notes_issue()'::regprocedure))::text",
+            "equals": "true"
+          },
+          {
+            "name": "automatic refunds start switched off",
+            "sql": "select column_default from information_schema.columns where table_schema = 'public' and table_name = 'platform_billing_settings' and column_name = 'auto_refunds'",
+            "equals": "false"
+          },
+          {
+            "name": "the settings row records when automatic refunds were installed",
+            "sql": "select count(*)::text from public.platform_billing_settings where automatic_refunds_from is null or automatic_refunds_from > now()",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261028_0265_cancel_and_refund_help",
+      "description": "Edits the plan guide and the invoices guide in place for cancelling near a renewal (renewal-cancel): a merchant can cancel at any time with Cancel subscription on Plans & Billing, which first shows the date the plan ends and what happens to the next renewal; an issued renewal they pay themselves is not charged; a renewal payment already taken, or under way and then taken, is refunded after the plan ends, usually within 5 working days, shown under Refunds on Plans & Billing with a credit note under View invoices; Keep my plan works until the plan ends, an overdue renewal included, and autopay stays off; the invoices guide names the statuses the page shows (Due, Processing, Paid, Unpaid, Cancelled), the refund line under them and the Credit notes table, says the next renewal cannot be paid while a cancellation stands, and no longer says a store moved to Free waits for a payment that would restore the plan; the plan guide's five dash entities are rewritten without a dash (decision D8). One statement per sentence or list item, each moving updated_at so the Help index re-embeds the guide; nothing is appended as a new section. Content only: no schema change. Requires 0264, the schema the wording describes.",
+      "file": "sql/20261028_0265_cancel_and_refund_help.sql",
+      "transaction": true,
+      "requires": ["20261028_0264_billing_refunds_and_credit_notes"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the plan guide says where to cancel and what the page shows first",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Before you confirm, the page tells you the date your plan ends and what happens to your next renewal. You keep your plan until that date, usually the end of the cycle you''re in, then your store moves to Free.%'",
+            "equals": "1"
+          },
+          {
+            "name": "an issued renewal paid by hand is not charged after cancelling",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%If you pay renewals yourself and your renewal invoice is already issued, it won''t be charged.%'",
+            "equals": "1"
+          },
+          {
+            "name": "a renewal already taken is refunded after the plan ends, usually within 5 working days",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%StoreMink refunds it after your plan ends, usually within 5 working days, to the account or card you paid with.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide points to the Refunds section and the credit note",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%and once it is refunded you can open its credit note from <strong>View invoices</strong>.%'",
+            "equals": "1"
+          },
+          {
+            "name": "Keep my plan works until the plan ends, an overdue renewal included",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%choose <strong>Keep my plan</strong> to undo the cancellation, even if a renewal is overdue.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old Keep my plan item is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Before a scheduled cancellation takes effect%'",
+            "equals": "0"
+          },
+          {
+            "name": "card renewals line has no dash",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%<strong>Card</strong>: renewals%'",
+            "equals": "1"
+          },
+          {
+            "name": "UPI Autopay renewals line has no dash",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%<strong>UPI Autopay</strong>: renewals%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old window sentence has no dash",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%already been tried in the old window, in which case%'",
+            "equals": "1"
+          },
+          {
+            "name": "the abandoned payment sentence has no dash",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%A payment you started and abandoned, for example a UPI request you never approved, does not hold you up%'",
+            "equals": "1"
+          },
+          {
+            "name": "no long dash entity is left in the plan guide",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%&mdash%'",
+            "equals": "0"
+          },
+          {
+            "name": "the invoices guide names the page's Due label",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%<li><strong>Due</strong> means payment is due.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide no longer says Open means payment is due",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%<strong>Open</strong> means payment is due.%'",
+            "equals": "0"
+          },
+          {
+            "name": "the invoices guide explains an Unpaid invoice",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%<strong>Unpaid</strong> means your plan ended before the invoice was paid. It can no longer be paid%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide explains a Cancelled invoice and when its refund comes",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%<strong>Cancelled</strong> means your plan ended before the period the invoice covers, so it won''t be charged. If a payment for it was taken, StoreMink refunds it, usually within 5 working days.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide names the refund lines the page shows",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%A line under the status shows a refund: <strong>Refund on its way</strong>, <strong>Refunded in full</strong>, <strong>Refunded</strong> with the amount, or <strong>Refund delayed</strong> while our team sorts it out.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says where credit notes are listed",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%Each completed refund has a credit note, listed under <strong>Credit notes</strong> below your invoices and on the invoice it belongs to. A returned extra payment has no credit note.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says the next renewal cannot be paid while cancelling",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%If you''ve cancelled your plan, your next renewal invoice can''t be paid. To keep your plan, choose <strong>Keep my plan</strong> on <strong>Plans%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says to subscribe again after a move to Free",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%the store can move to the Free plan. To return to a paid plan after that, subscribe again.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide no longer says the store waits on Free until payment is settled",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%until payment is settled%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261029_0266_gst_on_storemink_fees",
+      "description": "GST on StoreMink's own fees (owner-actions (c)4): platform_billing_settings gains one scheduled change (next_tax_enabled, next_tax_inclusive, next_tax_rate_bps, next_tax_starts_at, next_tax_notice_id with a foreign key to platform_announcements, ON DELETE SET NULL), sac_code, llpin and registered_office, with CHECKs for the SAC and LLPIN shapes, a 1 to 2 character invoice prefix, a scheduled change that is all set or all empty, and a SAC code, state, legal name, LLPIN, registered office, address and PIN before tax is on or scheduled on; billing_accounts gains CHECKs for the GSTIN shape and for the GSTIN agreeing with the state; ai_credit_purchases gains amount_paise; billing_invoices gains sac_code, tax_inclusive (backfilled from included GST lines) and place_of_supply_basis (recipient, supplier or outside_india, with place of supply 96 only outside India), all frozen once issued, a numeric place of supply CHECK and the billing_invoices_tax_invoice_complete trigger (once StoreMink's SAC code is set, an invoice charging GST is issued only with the supplier GSTIN, place of supply and its basis, SAC code and rate); billing_invoice_parties records the LLPIN, registered office and a customer outside India's country and falls back to the signup business address; billing_invoices_snapshot_parties records the merchant's State only when the place of supply came from their records. Constraints on existing tables are added NOT VALID and validated where the data allows. Requires 0265.",
+      "file": "sql/20261029_0266_gst_on_storemink_fees.sql",
+      "transaction": true,
+      "requires": ["20261028_0265_cancel_and_refund_help"],
+      "verify": {
+        "columns": [
+          "platform_billing_settings.next_tax_enabled",
+          "platform_billing_settings.next_tax_inclusive",
+          "platform_billing_settings.next_tax_rate_bps",
+          "platform_billing_settings.next_tax_starts_at",
+          "platform_billing_settings.next_tax_notice_id",
+          "platform_billing_settings.sac_code",
+          "platform_billing_settings.llpin",
+          "platform_billing_settings.registered_office",
+          "ai_credit_purchases.amount_paise",
+          "billing_invoices.sac_code",
+          "billing_invoices.tax_inclusive",
+          "billing_invoices.place_of_supply_basis"
+        ],
+        "constraints": [
+          "platform_billing_settings_next_tax_notice_fkey",
+          "platform_billing_sac_code_format",
+          "platform_billing_llpin_format",
+          "platform_billing_invoice_prefix_length",
+          "platform_billing_next_tax_shape",
+          "platform_billing_tax_needs_invoice_identity",
+          "platform_billing_next_tax_needs_invoice_identity",
+          "billing_accounts_gstin_format",
+          "billing_accounts_gstin_matches_state",
+          "ai_credit_purchases_amount_paise_check",
+          "billing_invoices_sac_code_format",
+          "billing_invoices_place_of_supply_numeric",
+          "billing_invoices_place_of_supply_basis"
+        ],
+        "functions": [
+          "billing_invoices_guard_tax_invoice()",
+          "billing_invoices_guard_immutable()",
+          "billing_invoice_parties(uuid,text,text,text)",
+          "billing_invoices_snapshot_parties()"
+        ],
+        "queries": [
+          {
+            "name": "an invoice charging GST is checked when it is issued",
+            "sql": "select count(*)::text from pg_trigger where tgrelid = 'public.billing_invoices'::regclass and tgname = 'billing_invoices_tax_invoice_complete' and tgfoid = 'public.billing_invoices_guard_tax_invoice()'::regprocedure and not tgisinternal and tgenabled = 'O'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the issue check fires before insert or update of finalized_at, row level, on that column only",
+            "sql": "select count(*)::text from pg_trigger t where t.tgrelid = 'public.billing_invoices'::regclass and t.tgname = 'billing_invoices_tax_invoice_complete' and t.tgfoid = 'public.billing_invoices_guard_tax_invoice()'::regprocedure and not t.tgisinternal and t.tgenabled = 'O' and t.tgtype = 23 and t.tgattr::text = (select a.attnum::text from pg_attribute a where a.attrelid = 'public.billing_invoices'::regclass and a.attname = 'finalized_at')",
+            "equals": "1"
+          },
+          {
+            "name": "the issue check waits for StoreMink's SAC code, needs the basis, runs as its owner and is closed to app_user",
+            "sql": "select (position('p.sac_code is not null' in p.prosrc) > 0 and position('new.place_of_supply_basis is null' in p.prosrc) > 0 and position('new.sac_code is null' in p.prosrc) > 0 and p.prosecdef and not has_function_privilege('app_user', p.oid, 'EXECUTE'))::text from pg_proc p where p.oid = 'public.billing_invoices_guard_tax_invoice()'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "the issue check is closed to app_service too, because a trigger function fires whatever the caller's grant",
+            "sql": "select has_function_privilege('app_service', 'public.billing_invoices_guard_tax_invoice()', 'EXECUTE')::text",
+            "equals": "false"
+          },
+          {
+            "name": "the guard freezes the SAC code, the price basis and the basis of the place of supply, and keeps every earlier rule",
+            "sql": "select (p.prosrc ~ 'new\\.sac_code\\s+is distinct from old\\.sac_code' and p.prosrc ~ 'new\\.tax_inclusive\\s+is distinct from old\\.tax_inclusive' and p.prosrc ~ 'new\\.place_of_supply_basis\\s+is distinct from old\\.place_of_supply_basis' and p.prosrc ~ 'new\\.finalized_at\\s+is distinct from old\\.finalized_at' and p.prosrc ~ 'new\\.fy_label\\s+is distinct from old\\.fy_label' and p.prosrc ~ 'new\\.supplier_gstin\\s+is distinct from old\\.supplier_gstin' and p.prosrc ~ 'new\\.customer_gstin\\s+is distinct from old\\.customer_gstin' and p.prosrc ~ 'new\\.place_of_supply\\s+is distinct from old\\.place_of_supply' and p.prosrc ~ 'new\\.subtotal_paise\\s+is distinct from old\\.subtotal_paise' and p.prosrc ~ 'new\\.total_paise\\s+is distinct from old\\.total_paise' and p.prosrc ~ 'new\\.invoice_no\\s+is distinct from old\\.invoice_no' and p.prosrc ~ 'new\\.invoice_ref\\s+is distinct from old\\.invoice_ref' and p.prosrc ~ 'new\\.kind\\s+is distinct from old\\.kind' and position('new.store_id is not null' in p.prosrc) > 0 and position('exists (select 1 from public.stores where id = old.store_id)' in p.prosrc) > 0 and position('old.parties is not null and new.parties is distinct from old.parties' in p.prosrc) > 0 and position('issue an adjustment instead of editing it' in p.prosrc) > 0)::text from pg_proc p where p.oid = 'public.billing_invoices_guard_immutable()'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "the parties record carries the LLPIN, the registered office and the country",
+            "sql": "select (position('''llpin''' in p.prosrc) > 0 and position('''registeredOffice''' in p.prosrc) > 0 and position('''country''' in p.prosrc) > 0 and position('addressLine1' in p.prosrc) > 0 and not has_function_privilege('app_user', p.oid, 'EXECUTE') and has_function_privilege('app_service', p.oid, 'EXECUTE'))::text from pg_proc p where p.oid = 'public.billing_invoice_parties(uuid,text,text,text)'::regprocedure",
+            "equals": "true"
+          },
+          {
+            "name": "the snapshot records the merchant's State only from their own records",
+            "sql": "select (position('new.place_of_supply_basis = ''recipient''' in p.prosrc) > 0 and position('tg_op = ''INSERT'' or old.finalized_at is null' in p.prosrc) > 0 and p.prosecdef and not has_function_privilege('app_user', p.oid, 'EXECUTE'))::text from pg_proc p where p.oid = 'public.billing_invoices_snapshot_parties()'::regprocedure",
+            "equals": "true"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261029_0267_gst_billing_details_help",
+      "description": "Edits the plan guide and the signup guide in place for GST on StoreMink's fees: when StoreMink charges GST a merchant sees the total with GST before paying and the payment window asks for exactly that amount; invoices must show the merchant's state, read from their GSTIN or the details they already gave, and signup and the payment step ask for it when none is on record; Billing details on Plans & Billing holds the GSTIN, business name, address and state, or a country outside India, and applies to invoices issued after saving; while GST is charged a business outside India cannot start a new payment; the signup guide's step for choosing Basic or Pro asks for the business's state, or a GSTIN that gives it, before Continue when StoreMink charges GST. Three statements, each moving updated_at so the Help index re-embeds the guide: two list items and one new section before Choose how renewals are charged in the plan guide, and one sentence of the signup guide rewritten where it stands. Content only: no schema change. Requires 0266, the schema the wording describes.",
+      "file": "sql/20261029_0267_gst_billing_details_help.sql",
+      "transaction": true,
+      "requires": ["20261029_0266_gst_on_storemink_fees"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the plan guide says invoices must show the merchant's state",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%your invoices must show your state%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide says a business outside India cannot start a new payment while GST is charged",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%a business outside India can%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide has the GST and billing details section",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%GST and your billing details%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide says where an extra location's total with GST is shown",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%on the <strong>Locations</strong> page for an extra location%'",
+            "equals": "1"
+          },
+          {
+            "name": "the GST section appears once, directly before Choose how renewals are charged",
+            "sql": "select ((length(body) - length(replace(body, 'add your GSTIN before you pay.</p><h2>Choose how renewals are charged</h2>', ''))) / length('add your GSTIN before you pay.</p><h2>Choose how renewals are charged</h2>'))::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published'",
+            "equals": "1"
+          },
+          {
+            "name": "the signup guide says a paid plan asks for the business's state when StoreMink charges GST",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-your-storemink-store' and status = 'published' and body like '%or enter your GSTIN and the state is taken from it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the signup guide no longer has the old sentence for choosing Basic or Pro",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-your-storemink-store' and status = 'published' and body like '%choose monthly or yearly billing, select the plan, then select%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261029_0268_plans_and_billing_name_help",
+      "description": "Renames the billing page to Plans & Billing in six guides (owner decision 11, the GST release): understand AI usage and credits, view and pay StoreMink invoices (three mentions), create and share customer invoices, the plan guide's intro, create and manage coupons, and create your StoreMink store. The page's heading, the sidebar label and the published Terms already use the name. One statement per mention, each moving updated_at so the Help index re-embeds the guide. Content only: no schema change. Requires 0267.",
+      "file": "sql/20261029_0268_plans_and_billing_name_help.sql",
+      "transaction": true,
+      "requires": ["20261029_0267_gst_billing_details_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the AI usage guide opens Plans & Billing to find Mink credits",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-ai-usage-and-credits' and status = 'published' and body like '% Billing</strong>.</li><li>Find <strong>Mink credits %'",
+            "equals": "1"
+          },
+          {
+            "name": "the AI usage guide no longer names Plan & billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-ai-usage-and-credits' and status = 'published' and body like '%Plan &amp%'",
+            "equals": "0"
+          },
+          {
+            "name": "the invoices guide says StoreMink invoices are under Plans & Billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '% Billing</strong>. An amount you currently owe%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide opens Plans & Billing to view invoices",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '% Billing</strong>.</li><li>Select <strong>View invoices</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide returns to Plans & Billing to pay",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '% Billing</strong>.</li><li>Find the amber message%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide no longer names Plan & billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'view-and-pay-storemink-invoices' and status = 'published' and body like '%Plan &amp%'",
+            "equals": "0"
+          },
+          {
+            "name": "the customer invoices guide says StoreMink invoices are under Plans & Billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-share-customer-invoices' and status = 'published' and body like '% Billing</strong>. They use separate numbering%'",
+            "equals": "1"
+          },
+          {
+            "name": "the customer invoices guide no longer names Plan & billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-share-customer-invoices' and status = 'published' and body like '%Plan &amp%'",
+            "equals": "0"
+          },
+          {
+            "name": "the plan guide's intro opens Plans & Billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '% Billing</strong> to see the effective plan%'",
+            "equals": "1"
+          },
+          {
+            "name": "the plan guide no longer names Plan & billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-storemink-plan-and-subscription' and status = 'published' and body like '%Plan &amp%'",
+            "equals": "0"
+          },
+          {
+            "name": "the coupons guide opens Plans & Billing for the allowance",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-manage-coupons' and status = 'published' and body like '% Billing</strong> for the current allowance%'",
+            "equals": "1"
+          },
+          {
+            "name": "the coupons guide no longer names Plan & billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-and-manage-coupons' and status = 'published' and body like '%Plan & billing%'",
+            "equals": "0"
+          },
+          {
+            "name": "the signup guide chooses a plan from Plans & Billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-your-storemink-store' and status = 'published' and body like '% Billing</strong>.</li></ul>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the signup guide no longer names Plans & billing",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-your-storemink-store' and status = 'published' and body like '% billing</strong>.</li></ul>%'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261030_0269_content_takedown",
+      "description": "Operator takedown of one item or a whole store, with a 180-day archive (IT Rules 3(1)(d), 3(1)(g), 3(1)(j), 3(2)): grievance_complaints (the complaints log; its deadlines CHECKed against the limits by kind), content_blocks (one blocked product, page, blog post, collection, review, blog comment, file or whole store; one live block per item; a record that is never edited; a lift must cancel or restore its file), content_block_messages, content_block_archives (write-once; kept at least 180 days; purged only when due and not held; never deleted), store_legal_holds, and on stores stores_keep_for_investigation (no delete while held or while an archive is unfinished) and stores_keep_moderation_suspension (a store suspended by a block stays suspended until the lift); moderation_events (append-only for app_service; moderation_prune_events keeps at least a year); moderation_blocked_at on products, store_pages, blogs, categories, product_reviews and blog_comments, set and cleared only by content_blocks_apply_flag, with the public read policies of those tables also hiding a row while it is set; moderation_author_guard on product_reviews and blog_comments. Expand only: the replaced revision never sets the new column or writes a block, so every read and write it makes behaves as before. Requires 0268.",
+      "file": "sql/20261030_0269_content_takedown.sql",
+      "transaction": true,
+      "requires": ["20261029_0268_plans_and_billing_name_help"],
+      "supersedesVerifyQueries": [
+        {
+          "migrationId": "20261025_0243_keep_invoices_after_store_deletion",
+          "queryName": "every other direct store foreign key cascades on deletion"
+        }
+      ],
+      "verify": {
+        "tables": [
+          "grievance_complaints",
+          "content_blocks",
+          "content_block_messages",
+          "content_block_archives",
+          "store_legal_holds",
+          "moderation_events"
+        ],
+        "columns": [
+          "products.moderation_blocked_at",
+          "store_pages.moderation_blocked_at",
+          "blogs.moderation_blocked_at",
+          "categories.moderation_blocked_at",
+          "product_reviews.moderation_blocked_at",
+          "blog_comments.moderation_blocked_at"
+        ],
+        "constraints": [
+          "grievance_complaints_due_check",
+          "grievance_complaints_erased_check",
+          "grievance_complaints_resolve_triple",
+          "content_blocks_target_check",
+          "content_blocks_storage_kind_check",
+          "content_blocks_storage_lift_check",
+          "content_blocks_tell_check",
+          "content_blocks_store_request_check",
+          "content_blocks_erased_check",
+          "content_blocks_lift_check",
+          "content_block_archives_keep_check",
+          "content_block_archives_purge_check",
+          "content_block_archives_hold_check",
+          "store_legal_holds_active_store",
+          "moderation_events_action_check"
+        ],
+        "rlsTables": [
+          "grievance_complaints",
+          "content_blocks",
+          "content_block_messages",
+          "content_block_archives",
+          "store_legal_holds",
+          "moderation_events"
+        ],
+        "functions": [
+          "moderation_prune_events(timestamp with time zone,integer)",
+          "content_blocks_apply()",
+          "moderation_flag_guard()",
+          "moderation_author_guard()",
+          "stores_guard_delete()",
+          "stores_guard_moderation_status()",
+          "content_blocks_guard_update()",
+          "content_block_archives_guard()"
+        ],
+        "queries": [
+          {
+            "name": "app_user can read none of the moderation tables",
+            "sql": "select count(*)::text from unnest(array['grievance_complaints','content_blocks','content_block_messages','content_block_archives','store_legal_holds','moderation_events']) t where has_table_privilege('app_user', 'public.' || t, 'SELECT')",
+            "equals": "0"
+          },
+          {
+            "name": "app_service can never delete the record or an archive",
+            "sql": "select (has_table_privilege('app_service', 'public.moderation_events', 'DELETE') or has_table_privilege('app_service', 'public.moderation_events', 'UPDATE') or has_table_privilege('app_service', 'public.content_block_archives', 'DELETE'))::text",
+            "equals": "false"
+          },
+          {
+            "name": "every flag has both guard triggers, both authored tables their author guard, and the block, archive and store triggers exist",
+            "sql": "select count(*)::text from pg_trigger where not tgisinternal and tgenabled = 'O' and (tgname like '%_moderation_insert_guard' or tgname like '%_moderation_update_guard' or tgname like '%_moderation_author_guard' or tgname in ('content_blocks_apply_flag', 'content_blocks_keep_record', 'content_block_archives_write_once', 'stores_keep_for_investigation', 'stores_keep_moderation_suspension'))",
+            "equals": "19"
+          },
+          {
+            "name": "one live block per item and per object, one active hold per store, and the author and purge indexes, exactly as created",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and ((indexname = 'content_blocks_active_item_key' and indexdef = 'CREATE UNIQUE INDEX content_blocks_active_item_key ON public.content_blocks USING btree (item_kind, item_id) WHERE ((lifted_at IS NULL) AND (item_id IS NOT NULL))') or (indexname = 'content_blocks_active_file_key' and indexdef = 'CREATE UNIQUE INDEX content_blocks_active_file_key ON public.content_blocks USING btree (object_path) WHERE ((lifted_at IS NULL) AND (object_path IS NOT NULL))') or (indexname = 'store_legal_holds_one_active_key' and indexdef = 'CREATE UNIQUE INDEX store_legal_holds_one_active_key ON public.store_legal_holds USING btree (store_id) WHERE (released_at IS NULL)') or (indexname = 'content_blocks_author_idx' and indexdef = 'CREATE INDEX content_blocks_author_idx ON public.content_blocks USING btree (author_user_id, parent_item_id) WHERE ((lifted_at IS NULL) AND (author_user_id IS NOT NULL))') or (indexname = 'content_block_archives_due_idx' and indexdef = 'CREATE INDEX content_block_archives_due_idx ON public.content_block_archives USING btree (keep_until) WHERE ((purged_at IS NULL) AND (NOT legal_hold))'))",
+            "equals": "5"
+          },
+          {
+            "name": "deleting a store keeps its complaints, blocks, archives and holds and blanks their store",
+            "sql": "select count(*)::text from pg_constraint where contype = 'f' and confrelid = 'public.stores'::regclass and confdeltype = 'n' and ((conrelid = 'public.grievance_complaints'::regclass and conname = 'grievance_complaints_store_id_fkey') or (conrelid = 'public.content_blocks'::regclass and conname = 'content_blocks_store_id_fkey') or (conrelid = 'public.content_block_archives'::regclass and conname = 'content_block_archives_store_id_fkey') or (conrelid = 'public.store_legal_holds'::regclass and conname = 'store_legal_holds_store_id_fkey'))",
+            "equals": "4"
+          },
+          {
+            "name": "every direct store foreign key other than the kept invoices, payment attempts and moderation records cascades on deletion",
+            "sql": "select count(*)::text from pg_constraint where contype = 'f' and confrelid = 'public.stores'::regclass and confdeltype <> 'c' and not ((conrelid = 'public.billing_invoices'::regclass and conname = 'billing_invoices_store_id_fkey') or (conrelid = 'public.billing_payment_attempts'::regclass and conname = 'billing_payment_attempts_store_id_fkey') or (conrelid = 'public.grievance_complaints'::regclass and conname = 'grievance_complaints_store_id_fkey') or (conrelid = 'public.content_blocks'::regclass and conname = 'content_blocks_store_id_fkey') or (conrelid = 'public.content_block_archives'::regclass and conname = 'content_block_archives_store_id_fkey') or (conrelid = 'public.store_legal_holds'::regclass and conname = 'store_legal_holds_store_id_fkey'))",
+            "equals": "0"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "every public read policy of the six tables names moderation_blocked_at",
+            "sql": "select count(*)::text from pg_policies where schemaname = 'public' and cmd = 'SELECT' and policyname in ('Read products', 'Public read published store_pages', 'Read blogs', 'Read categories', 'Anyone can read reviews', 'Anyone can read blog comments') and qual like '%moderation_blocked_at IS NULL%'",
+            "equals": "6"
+          },
+          {
+            "name": "no row is blocked yet",
+            "sql": "select ((select count(*) from public.products where moderation_blocked_at is not null) + (select count(*) from public.content_blocks))::text",
+            "equals": "0"
+          },
+          {
+            "name": "the trigger functions are closed to app_service and app_user, because a trigger fires whatever the caller's grant",
+            "sql": "select (has_function_privilege('app_service', 'public.content_blocks_apply()', 'EXECUTE') or has_function_privilege('app_user', 'public.moderation_author_guard()', 'EXECUTE'))::text",
+            "equals": "false"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261030_0270_content_takedown_help",
+      "description": "Help Centre for the operator takedown tool: a new guide (if-storemink-blocks-something-on-your-store) on what a block or a store suspension means, what shoppers see, what the merchant can do, the 180-day copy and how to disagree; the reviews guide's contact-support step replaced in place now that StoreMink can remove a single review or comment at the store's request. Requires 0269, the schema the wording describes.",
+      "file": "sql/20261030_0270_content_takedown_help.sql",
+      "transaction": true,
+      "requires": ["20261030_0269_content_takedown"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the new guide is published",
+            "sql": "select count(*)::text from public.help_articles where slug = 'if-storemink-blocks-something-on-your-store' and status = 'published' and body like '%You can''t make a blocked item visible again yourself%'",
+            "equals": "1"
+          },
+          {
+            "name": "the new guide says a suspended store's dashboard and POS do not open",
+            "sql": "select count(*)::text from public.help_articles where slug = 'if-storemink-blocks-something-on-your-store' and status = 'published' and body like '%can''t open its dashboard or POS%'",
+            "equals": "1"
+          },
+          {
+            "name": "the reviews guide says StoreMink can remove one review or comment",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-blog-comments-reactions-and-product-reviews' and status = 'published' and body like '%StoreMink can remove a single review or comment for you%'",
+            "equals": "1"
+          },
+          {
+            "name": "the contact-support step is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-blog-comments-reactions-and-product-reviews' and status = 'published' and body like '%Contact StoreMink support with the store domain%'",
+            "equals": "0"
+          }
+        ]
+      }
     }
   ]
 }

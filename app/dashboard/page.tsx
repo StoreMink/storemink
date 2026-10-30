@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import {
   Package,
@@ -14,6 +15,7 @@ import { AskAnything } from "./ask-anything";
 import { MinkSuggestions } from "./components/mink-suggestions";
 import { LaunchChecklistCard } from "./launch-checklist";
 import { PlanTag } from "./plan-tag";
+import { StoreNoticeBanner } from "./store-notice-banner";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { effectivePlan } from "@/lib/plans";
 import { isStoreLaunched } from "@/lib/store/launch-state";
@@ -145,6 +147,19 @@ export default async function DashboardHomePage() {
         </h1>
         <PlanTag plan={plan} />
       </div>
+
+      {/* A notice from StoreMink nobody here has opened yet (takedown design
+          7.3), above everything else. Read by this page alone, never an
+          error; shown to those who can open Settings, where See why leads.
+          ★ Its own Suspense boundary with an empty fallback: the rest of
+          Home streams at once and never waits for the banner's one query
+          (takedown fix pass). The store-wide seen mark it follows is
+          unchanged. */}
+      {can("settings") && (
+        <Suspense fallback={null}>
+          <StoreNoticeBanner storeId={store.id} />
+        </Suspense>
+      )}
 
       {/* While the store is closed, the ONE thing on this page is opening it:
           the password that keeps it private, Go live, and the tasks in the

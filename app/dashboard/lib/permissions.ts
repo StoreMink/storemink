@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import type { NavIconKey } from "../nav-icons";
+import { NOTICES } from "@/lib/moderation/copy";
 
 export type PermissionAction = "view" | "manage";
 
@@ -468,6 +469,14 @@ export const SECTIONS: DashboardSection[] = [
         href: "/dashboard/settings/analytics",
         icon: "analytics",
       },
+      {
+        // What StoreMink blocked on the store and the conversation about it
+        // (takedown design 7.1). Readable with Settings view; replying needs
+        // Settings manage, which the page and its action check.
+        label: NOTICES.navLabel,
+        href: "/dashboard/settings/notices",
+        icon: "mail",
+      },
     ],
   },
   {
@@ -495,10 +504,12 @@ export const SECTIONS: DashboardSection[] = [
     parent: "settings",
   },
   {
-    // Was "Plans & Billing". Key stays `ai` for role compatibility — renaming a
+    // "Plans & Billing", the page's own heading and the name in the published
+    // Terms (owner decision 11, the GST release: one name everywhere, the
+    // sidebar included). Key stays `ai` for role compatibility: renaming a
     // permission key would silently revoke it for every existing role.
     key: "ai",
-    label: "Plan & billing",
+    label: "Plans & Billing",
     href: "/dashboard/plans",
     icon: "plans",
     group: "Settings",

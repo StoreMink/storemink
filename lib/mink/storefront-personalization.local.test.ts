@@ -55,9 +55,12 @@ vi.mock("@/lib/db/client", () => ({
     }
   },
 }));
+// ★ Photos go through the store's one writer (takedown design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(async (path: string) => `${BUCKET}/${path}`),
+}));
 vi.mock("@/lib/storage/gcs", () => ({
   gcsConfigured: true,
-  gcsUploadObject: vi.fn(async (path: string) => `${BUCKET}/${path}`),
   gcsDeletePaths: vi.fn(async () => []),
   gcsPublicUrl: (path: string) => `${BUCKET}/${path}`,
   gcsPathFromUrl: (url: string) =>

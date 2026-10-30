@@ -17,12 +17,17 @@ vi.mock("@/lib/db/client", () => ({
   ),
 }));
 
-vi.mock("@/lib/storage/gcs", () => ({
-  gcsConfigured: true,
-  gcsUploadObject: vi.fn(
+// ★ A redesign's photographs go through the store's one writer (takedown
+//   design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(
     async (path: string) =>
       `https://storage.googleapis.com/test-bucket/${path}`,
   ),
+}));
+
+vi.mock("@/lib/storage/gcs", () => ({
+  gcsConfigured: true,
   gcsDownloadObject: vi.fn(async () => new Uint8Array()),
   gcsDeletePaths: vi.fn(async () => []),
   gcsPathFromUrl: vi.fn((url: string) =>
@@ -44,11 +49,9 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 
 import { logWarn } from "@/lib/observability/logger";
-import {
-  gcsDeletePaths,
-  gcsDownloadObject,
-  gcsUploadObject,
-} from "@/lib/storage/gcs";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
+import { gcsDeletePaths, gcsDownloadObject } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { claimSpendLimits, releaseSpendLimits } from "../spend-limits";
 import type { RevampStoredImage } from "./contract";
 import {
@@ -237,13 +240,15 @@ describe("storeRevampImage", () => {
       input({ bytes, problems: [" off_style ", "", 4 as unknown as string] }),
     );
 
-    expect(gcsUploadObject).toHaveBeenCalledTimes(1);
-    expect(gcsUploadObject).toHaveBeenCalledWith(
-      path,
-      bytes,
-      "image/webp",
-      "public, max-age=31536000, immutable",
-    );
+    expect(writeStoreObject).toHaveBeenCalledTimes(1);
+    // ★ Owner decision D4: the store-wide 60-second cache, never "immutable",
+    //   so a takedown's placeholder reaches shoppers within a minute.
+    expect(writeStoreObject).toHaveBeenCalledWith(path, bytes, "image/webp", {
+      storeId: STORE,
+      cacheControl: "public, max-age=60",
+      via: "mink_revamp",
+      actor: "admin-7",
+    });
     expect(db.calls.insert[0]).toBe(minkRevampImages);
     expect(db.calls.values[0]).toMatchObject({
       revampId: REVAMP,
@@ -342,7 +347,7 @@ describe("storeRevampImage", () => {
       },
     });
     const stored = await storeRevampImage(input());
-    expect(gcsUploadObject).not.toHaveBeenCalled();
+    expect(writeStoreObject).not.toHaveBeenCalled();
     expect(db.calls.insert).toHaveLength(0);
     expect(stored.review).toBe("flagged");
     expect(stored.path).toBe(existing.path);
@@ -418,12 +423,33 @@ describe("storeRevampImage", () => {
     expect(db.calls.insert).toEqual([minkRevampImages]);
   });
 
+  it("★★ a photograph StoreMink has blocked records nothing and says why", async () => {
+    const db = setDb({
+      selectByTable: {
+        mink_revamps: [[{ adminId: "admin-7" }]],
+        mink_revamp_images: [[]],
+      },
+    });
+    vi.mocked(writeStoreObject).mockRejectedValueOnce(
+      new BlockedUploadError({
+        told: false,
+        kindWord: "image",
+        blockId: "55555555-5555-4555-8555-555555555555",
+      }),
+    );
+    await expect(storeRevampImage(input())).rejects.toBeInstanceOf(
+      BlockedUploadError,
+    );
+    expect(db.calls.insert).toEqual([]);
+    expect(gcsDeletePaths).not.toHaveBeenCalled();
+  });
+
   it("refuses a revamp of another store before uploading anything", async () => {
     setDb({ selectByTable: { mink_revamps: [[]] } });
     await expect(storeRevampImage(input())).rejects.toThrow(
       "This revamp does not belong to the store.",
     );
-    expect(gcsUploadObject).not.toHaveBeenCalled();
+    expect(writeStoreObject).not.toHaveBeenCalled();
   });
 
   it("throws when the row cannot be read back after a lost insert", async () => {
@@ -460,7 +486,7 @@ describe("storeRevampImage", () => {
     const db = setDb({});
     await expect(storeRevampImage(input(overrides))).rejects.toThrow();
     expect(db.calls.select).toHaveLength(0);
-    expect(gcsUploadObject).not.toHaveBeenCalled();
+    expect(writeStoreObject).not.toHaveBeenCalled();
   });
 
   it("keeps at most 20 problems of at most 200 characters", async () => {
@@ -522,7 +548,7 @@ describe("adoptRevampImage", () => {
       storeId: STORE,
       image,
     });
-    expect(gcsUploadObject).not.toHaveBeenCalled();
+    expect(writeStoreObject).not.toHaveBeenCalled();
     expect(db.calls.insert).toEqual([minkRevampImages]);
     expect(db.calls.values[0]).toMatchObject({
       revampId: REVAMP,
@@ -573,7 +599,7 @@ describe("adoptRevampImage", () => {
         ...Array.from({ length: 30 }, (_, i) => `p${i}`),
       ],
     });
-    expect(gcsUploadObject).not.toHaveBeenCalled();
+    expect(writeStoreObject).not.toHaveBeenCalled();
     expect(db.calls.insert).toEqual([minkRevampImages]);
     const problems = (db.calls.values[0] as { problems: string[] }).problems;
     expect(problems[0]).toBe("unchecked");

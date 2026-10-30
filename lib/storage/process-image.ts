@@ -2,8 +2,18 @@
 // Validates type/size, then optimizes to WebP with sharp (small stored files,
 // EXIF-rotated, metadata stripped). SVG is rasterized, never stored raw (a
 // crafted SVG can carry <script> that runs on the storage origin). Server-only.
+//
+// ★★ STRICT MODE IS FOR PRIVATE PICTURES THAT MAY LATER BE PUBLISHED (review
+// S3; today only Mink chat attachments, lib/mink/attachments.ts). The default
+// keeps two allowances that are right for an ordinary upload and wrong there:
+// a GIF or AVIF is stored as sent (metadata included), and a picture sharp
+// cannot decode is stored as sent under its declared type. With `strict` the
+// bytes must start like the declared type (magic bytes), a picture sharp
+// cannot decode is refused, a missing sharp refuses every type, and a GIF
+// (animation kept) or AVIF is re-encoded so its metadata goes. Every other
+// caller passes nothing and behaves exactly as before.
 
-import type { Sharp } from "sharp";
+import type { Sharp, SharpOptions } from "sharp";
 import { logError } from "@/lib/observability/logger";
 
 /**
@@ -25,7 +35,7 @@ import { logError } from "@/lib/observability/logger";
  * Dockerfile and next.config.ts; this makes the failure legible if it ever
  * recurs on a host nobody has thought about.
  */
-type SharpFactory = (input: Uint8Array) => Sharp;
+type SharpFactory = (input: Uint8Array, options?: SharpOptions) => Sharp;
 
 let sharpFactory: SharpFactory | null = null;
 let sharpUnavailable: unknown = null;
@@ -70,10 +80,74 @@ export type ProcessImageResult =
   | { ok: true; data: ProcessedImage }
   | { ok: false; error: string; status: number };
 
-/** Validate + optimize an uploaded image. Never throws — returns a typed result. */
+export interface ProcessImageOptions {
+  /** The strict mode the header describes; off unless asked for. */
+  strict?: boolean;
+}
+
+/** The strict mode's refusal for bytes that are not the image they claim to be. */
+export const NOT_A_VALID_IMAGE =
+  "This file isn't a valid image. Please upload a PNG, JPG, WebP, GIF or AVIF image.";
+
+const SVG_MARKER = /<svg[\s>]/i;
+
+function startsWith(bytes: Uint8Array, prefix: readonly number[], at = 0) {
+  if (bytes.length < at + prefix.length) return false;
+  return prefix.every((byte, index) => bytes[at + index] === byte);
+}
+
+function asciiAt(bytes: Uint8Array, at: number, length: number): string {
+  return String.fromCharCode(...bytes.subarray(at, at + length));
+}
+
+/**
+ * Do the bytes start like the declared type? JPEG `FF D8 FF`, PNG's eight-byte
+ * signature, WebP `RIFF....WEBP`, GIF `GIF87a`/`GIF89a`, AVIF an ISO `ftyp`
+ * box naming `avif` or `avis`, SVG an `<svg` element in its first 4 KB.
+ */
+export function bytesMatchImageType(
+  bytes: Uint8Array,
+  contentType: string,
+): boolean {
+  switch (contentType) {
+    case "image/jpeg":
+      return startsWith(bytes, [0xff, 0xd8, 0xff]);
+    case "image/png":
+      return startsWith(
+        bytes,
+        [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      );
+    case "image/webp":
+      return asciiAt(bytes, 0, 4) === "RIFF" && asciiAt(bytes, 8, 4) === "WEBP";
+    case "image/gif": {
+      const head = asciiAt(bytes, 0, 6);
+      return head === "GIF87a" || head === "GIF89a";
+    }
+    case "image/avif": {
+      if (asciiAt(bytes, 4, 4) !== "ftyp") return false;
+      const boxSize =
+        ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>>
+        0;
+      const end = Math.min(bytes.length, Math.max(16, Math.min(boxSize, 256)));
+      for (let at = 8; at + 4 <= end; at += 4) {
+        const brand = asciiAt(bytes, at, 4);
+        if (brand === "avif" || brand === "avis") return true;
+      }
+      return false;
+    }
+    case "image/svg+xml":
+      return SVG_MARKER.test(new TextDecoder().decode(bytes.subarray(0, 4096)));
+    default:
+      return false;
+  }
+}
+
+/** Validate + optimize an uploaded image. Never throws: returns a typed result. */
 export async function processImageUpload(
   file: File,
+  options: ProcessImageOptions = {},
 ): Promise<ProcessImageResult> {
+  const strict = options.strict === true;
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
     return {
       ok: false,
@@ -90,6 +164,9 @@ export async function processImageUpload(
   }
 
   const original = new Uint8Array(await file.arrayBuffer());
+  if (strict && !bytesMatchImageType(original, file.type)) {
+    return { ok: false, error: NOT_A_VALID_IMAGE, status: 400 };
+  }
 
   let bytes: Uint8Array = original;
   let contentType = file.type;
@@ -100,7 +177,7 @@ export async function processImageUpload(
       ?.toLowerCase()
       .replace(/[^a-z0-9]/g, "") || "bin";
 
-  if (!PASS_THROUGH_TYPES.includes(file.type)) {
+  if (strict || !PASS_THROUGH_TYPES.includes(file.type)) {
     const sharpLib = await loadSharp();
     // ★★ A MISSING IMAGE PROCESSOR FAILS CLOSED, and is NOT the same failure as
     // "this one image would not optimize" below. That fallback stores the
@@ -121,14 +198,33 @@ export async function processImageUpload(
       };
     }
     try {
-      const optimized = await sharpLib(original)
-        .rotate() // honor EXIF orientation before stripping metadata
-        .resize(MAX_WIDTH, undefined, { withoutEnlargement: true })
-        .webp({ quality: WEBP_QUALITY })
-        .toBuffer();
-      bytes = new Uint8Array(optimized);
-      contentType = "image/webp";
-      ext = "webp";
+      if (strict && file.type === "image/gif") {
+        // The animation is kept; sharp writes no metadata it was not asked to.
+        const reencoded = await sharpLib(original, { animated: true })
+          .gif()
+          .toBuffer();
+        bytes = new Uint8Array(reencoded);
+        contentType = "image/gif";
+        ext = "gif";
+      } else if (strict && file.type === "image/avif") {
+        const reencoded = await sharpLib(original)
+          .rotate() // honor EXIF orientation before stripping metadata
+          .resize(MAX_WIDTH, undefined, { withoutEnlargement: true })
+          .avif()
+          .toBuffer();
+        bytes = new Uint8Array(reencoded);
+        contentType = "image/avif";
+        ext = "avif";
+      } else {
+        const optimized = await sharpLib(original)
+          .rotate() // honor EXIF orientation before stripping metadata
+          .resize(MAX_WIDTH, undefined, { withoutEnlargement: true })
+          .webp({ quality: WEBP_QUALITY })
+          .toBuffer();
+        bytes = new Uint8Array(optimized);
+        contentType = "image/webp";
+        ext = "webp";
+      }
     } catch (e) {
       // An SVG sharp couldn't rasterize must NEVER be stored raw — that's the
       // payload we're guarding against.
@@ -138,6 +234,13 @@ export async function processImageUpload(
           error: "Could not process this SVG. Please upload a PNG or JPG.",
           status: 400,
         };
+      }
+      // ★ Strict: bytes sharp cannot decode are never stored as sent.
+      if (strict) {
+        logError("image processing refused an undecodable upload", e, {
+          type: file.type,
+        });
+        return { ok: false, error: NOT_A_VALID_IMAGE, status: 400 };
       }
       // One awkward file, not a broken install: keep the upload working and
       // say so loudly enough to be found in Error Reporting.

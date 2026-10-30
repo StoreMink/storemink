@@ -19,8 +19,16 @@ export const POS_FEATURES = [
   "Browser-based operation with no proprietary terminal required",
 ] as const;
 
+/**
+ * ★ `vatIncluded` is the GST flag the price box beside it states
+ * (`valueAddedTaxIncluded` in tax-copy.ts): true while GST is included, false
+ * while it is added on top, and absent while GST is off, scheduled or its
+ * read failed, the homepage's rule. Without it a search result could show the
+ * bare price as all-in while GST is added to it (R2-05).
+ */
 export function buildPosStructuredData(input: {
   proMonthlyEquivalentInr: number;
+  vatIncluded?: boolean;
 }): Record<string, unknown> {
   const publisher = { "@id": `${PLATFORM_URL}/#organization` };
 
@@ -79,6 +87,9 @@ export function buildPosStructuredData(input: {
               value: 1,
               unitCode: "MON",
             },
+            ...(input.vatIncluded === undefined
+              ? {}
+              : { valueAddedTaxIncluded: input.vatIncluded }),
           },
         },
       },

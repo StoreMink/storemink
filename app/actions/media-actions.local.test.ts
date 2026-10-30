@@ -47,9 +47,11 @@ vi.mock("@/app/dashboard/lib/access", () => ({
 }));
 vi.mock("@/lib/storage/gcs", () => ({
   gcsConfigured: true,
-  gcsUploadObject: vi.fn(async () => ""),
   gcsPathFromUrl: vi.fn((url: string) => url.split("/bkt/")[1] ?? null),
   gcsDeletePaths: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(async () => ""),
 }));
 vi.mock("@/lib/storage/process-image", () => ({
   processImageUpload: vi.fn(async () => ({ ok: false, error: "unused" })),

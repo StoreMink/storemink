@@ -1,7 +1,9 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useId, useState, useTransition } from "react";
+import Link from "next/link";
+import { ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -17,6 +19,8 @@ import { ImageRefineScope } from "@/components/ui/image-refine-context";
 import { NumberField } from "@/components/ui/number-field";
 import { slugify } from "@/lib/slug";
 import type { MinkCategoryPrefill } from "@/lib/mink/form-prefill";
+import { ITEM, itemBlockedBanner } from "@/lib/moderation/copy";
+import { STORE_NOTICES_HREF } from "@/app/dashboard/components/unread-counts-context";
 import {
   createCategory,
   updateCategory,
@@ -31,6 +35,14 @@ type Props = {
   onSaved: () => void;
   /** Fields Mink filled in for a NEW category; ignored while editing one. */
   prefill?: MinkCategoryPrefill | null;
+  /**
+   * The notice of a block StoreMink placed on this collection and told the
+   * store about, or null (takedown design 7.3). A block kept from the store is
+   * never passed (D21), so it shows nothing. Ignored for a new category.
+   */
+  blockedByStoreMink?: string | null;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 };
 
 const EMPTY: CategoryFormData = {
@@ -65,12 +77,20 @@ export function CategoryEditorDialog({
   onClose,
   onSaved,
   prefill = null,
+  blockedByStoreMink = null,
+  canSeeNotices = false,
 }: Props) {
   const [form, setForm] = useState<CategoryFormData>(EMPTY);
   const [isPending, startTransition] = useTransition();
   // Once the user edits the slug by hand we stop auto-deriving it from the name.
   const [slugTouched, setSlugTouched] = useState(false);
   const isEditing = !!category;
+  // While StoreMink's block stands the collection keeps the status it was
+  // saved with: the Status select is disabled with the reason under it, as
+  // the product editor's is (takedown fix pass). Every other field stays open.
+  const blockId = isEditing ? blockedByStoreMink : null;
+  const statusId = useId();
+  const statusReasonId = `${statusId}-blocked`;
 
   useEffect(() => {
     if (!open) return;
@@ -139,6 +159,30 @@ export function CategoryEditorDialog({
         </DialogHeader>
 
         <div className="space-y-4 py-2">
+          {blockId ? (
+            <div
+              role="status"
+              data-testid="category-editor-blocked-banner"
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--dash-radius)] border border-[var(--dash-red)]/30 bg-[var(--dash-red-soft)] px-4 py-3"
+            >
+              <ShieldAlert
+                className="h-5 w-5 shrink-0 text-[var(--dash-red)]"
+                aria-hidden="true"
+              />
+              <p className="min-w-0 flex-1 basis-56 text-[13px] text-[var(--dash-text)]">
+                <span className="font-semibold">{ITEM.blocked}.</span>{" "}
+                {itemBlockedBanner("collection")}
+              </p>
+              {canSeeNotices ? (
+                <Link
+                  href={`${STORE_NOTICES_HREF}/${blockId}`}
+                  className="dash-btn dash-btn-ghost dash-btn-sm shrink-0 pointer-coarse:min-h-11"
+                >
+                  {ITEM.seeWhy}
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
           {!isEditing && prefill && (
             <p
               role="status"
@@ -209,10 +253,15 @@ export function CategoryEditorDialog({
               />
             </div>
             <div>
-              <label className={labelClass}>Status</label>
+              <label className={labelClass} htmlFor={statusId}>
+                Status
+              </label>
               <select
-                className={fieldClass}
+                id={statusId}
+                className={`${fieldClass} disabled:cursor-not-allowed disabled:bg-[var(--dash-surface-2)]`}
                 value={form.status}
+                disabled={!!blockId}
+                aria-describedby={blockId ? statusReasonId : undefined}
                 onChange={(e) =>
                   set("status", e.target.value as "active" | "hidden")
                 }
@@ -220,6 +269,14 @@ export function CategoryEditorDialog({
                 <option value="active">Active</option>
                 <option value="hidden">Hidden</option>
               </select>
+              {blockId ? (
+                <p
+                  id={statusReasonId}
+                  className="mt-1 text-[12px] font-medium text-[var(--dash-text-2)]"
+                >
+                  {ITEM.blocked}
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

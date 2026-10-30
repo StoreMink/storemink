@@ -24,6 +24,9 @@ vi.mock("@/lib/whatsapp/inbound", () => ({ drainInboundEvents: vi.fn() }));
 vi.mock("@/lib/announcements/worker", () => ({
   processAnnouncements: vi.fn(),
 }));
+vi.mock("@/lib/moderation/follow-ups", () => ({
+  runModerationFollowUps: vi.fn(),
+}));
 
 import { GET, POST } from "./route";
 import { processEmailQueue } from "@/lib/email/campaign-worker";
@@ -33,6 +36,27 @@ import { runWhatsAppWorker } from "@/lib/whatsapp/worker";
 import { drainInboundEvents } from "@/lib/whatsapp/inbound";
 import { processAnnouncements } from "@/lib/announcements/worker";
 import { triggerEmailWorker } from "@/lib/email/trigger-worker";
+import { runModerationFollowUps } from "@/lib/moderation/follow-ups";
+
+const FOLLOW_UPS = {
+  alertsSent: 0,
+  alertsWaiting: 0,
+  archivesCopied: 0,
+  archivesFailed: 0,
+  filesSettled: 0,
+  filesRetrying: 0,
+  replaced: 0,
+  replaceFailed: 0,
+  replaceRetrying: 0,
+  restored: 0,
+  notRestored: 0,
+  restoreRetrying: 0,
+  noticesSent: 0,
+  noticesFailed: 0,
+  failedSteps: [],
+  outOfTime: false,
+  ms: 3,
+};
 
 function req(auth?: string): Request {
   return new Request("https://storemink.com/api/cron/send-emails", {
@@ -79,6 +103,7 @@ describe("/api/cron/send-emails", () => {
       failed: 0,
       remaining: 0,
     });
+    vi.mocked(runModerationFollowUps).mockResolvedValue(FOLLOW_UPS as any);
     vi.clearAllMocks();
     afterCalls.fns = [];
     process.env.CRON_SECRET = "s3cret";
@@ -170,7 +195,76 @@ describe("/api/cron/send-emails", () => {
       },
       // Announcements ride it too, for the same reason.
       announcements: { processed: 0, sent: 0, failed: 0, remaining: 0 },
+      // And the content takedown follow-ups, last (design 8.1).
+      moderation: FOLLOW_UPS,
     });
+  });
+
+  it("★ runs the takedown follow-ups last, ending 52 seconds into the route at the latest", async () => {
+    const routeStart = Date.now();
+    await GET(req("Bearer s3cret"));
+    const others = [
+      processEmailQueue,
+      processNotificationEmails,
+      drainInboundEvents,
+      runWhatsAppWorker,
+      runSmsWorker,
+      processAnnouncements,
+    ].map((f) => vi.mocked(f as any).mock.invocationCallOrder[0] as number);
+    const followUps = vi.mocked(runModerationFollowUps).mock
+      .invocationCallOrder[0];
+    expect(followUps).toBeGreaterThan(Math.max(...others));
+    expect(runModerationFollowUps).toHaveBeenCalledTimes(1);
+    const { deadline } = vi.mocked(runModerationFollowUps).mock.calls[0][0]!;
+    // min(start + 40 s, routeStart + 52 s): both bounds hold.
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 40_000);
+    expect(deadline).toBeLessThanOrEqual(routeStart + 52_000 + 50);
+    expect(deadline).toBeGreaterThan(routeStart + 39_000);
+  });
+
+  it("★ a slow email step shortens the follow-ups to the route's 52 seconds", async () => {
+    const spy = vi.spyOn(Date, "now");
+    try {
+      // The route starts at 0 and the email queues take 30 seconds.
+      let now = 0;
+      spy.mockImplementation(() => now);
+      vi.mocked(processEmailQueue).mockImplementation(async () => {
+        now = 30_000;
+        return { sent: 0, remaining: 0 } as any;
+      });
+      await GET(req("Bearer s3cret"));
+      expect(vi.mocked(runModerationFollowUps).mock.calls[0][0]!.deadline).toBe(
+        52_000,
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("★ a failing follow-up reads as null and fails nothing else", async () => {
+    vi.mocked(runModerationFollowUps).mockRejectedValue(new Error("clock"));
+    const res = await GET(req("Bearer s3cret"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.moderation).toBeNull();
+    expect(body.campaigns).toEqual({ sent: 0, remaining: 0 });
+  });
+
+  it("★ a throwing email queue still runs the follow-ups, and still fails the request", async () => {
+    vi.mocked(processNotificationEmails).mockRejectedValue(
+      new Error("resend down"),
+    );
+    await expect(GET(req("Bearer s3cret"))).rejects.toThrow("resend down");
+    expect(runModerationFollowUps).toHaveBeenCalledTimes(1);
+  });
+
+  it("never chains another run for the follow-ups", async () => {
+    vi.mocked(runModerationFollowUps).mockResolvedValue({
+      ...FOLLOW_UPS,
+      outOfTime: true,
+    } as any);
+    await GET(req("Bearer s3cret"));
+    expect(afterCalls.fns).toHaveLength(0);
   });
 
   // ★ Same rule for announcements: a broadcast is the LEAST urgent thing in

@@ -27,6 +27,7 @@ import {
   deleteUploadedImage,
 } from "@/app/actions/blog-actions";
 import { updateCustomerProfile } from "@/app/actions/customer-profile";
+import { SHOPPER } from "@/lib/moderation/copy";
 import {
   Heading1,
   Heading2,
@@ -73,6 +74,8 @@ interface Submission {
   updated_at: string;
   submitted_by: string | null;
   is_customer_submission: boolean;
+  /** StoreMink has removed this post from the store (takedown). */
+  blocked_by_storemink?: boolean;
 }
 
 export default function WriteBlogEditor({
@@ -641,20 +644,26 @@ export default function WriteBlogEditor({
                         <ImageIcon size={28} />
                       </div>
                     )}
+                    {/* A post StoreMink removed shows that in place of its
+                        status: whatever its status, nobody else can see it. */}
                     <span
                       className={`write-blog-status-badge ${
-                        blog.status === "published"
-                          ? "published"
-                          : blog.status === "draft"
-                            ? "draft"
-                            : "pending"
+                        blog.blocked_by_storemink
+                          ? "draft"
+                          : blog.status === "published"
+                            ? "published"
+                            : blog.status === "draft"
+                              ? "draft"
+                              : "pending"
                       }`}
                     >
-                      {blog.status === "published"
-                        ? "Published"
-                        : blog.status === "draft"
-                          ? "Draft"
-                          : "Pending Review"}
+                      {blog.blocked_by_storemink
+                        ? SHOPPER.submissionRemoved
+                        : blog.status === "published"
+                          ? "Published"
+                          : blog.status === "draft"
+                            ? "Draft"
+                            : "Pending Review"}
                     </span>
 
                     {(blog.status === "draft" ||

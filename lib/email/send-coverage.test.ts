@@ -43,7 +43,10 @@ function filesCalling(pattern: string): string[] {
     .filter((f) => !TRANSPORT_FILES.includes(f));
 }
 
-describe("email send coverage", () => {
+// Each case runs grep over app and lib: well under a second alone, but past
+// vitest's 5s default under the full suite's load (28 Oct 2026). The same limit
+// as the other source-scanning guards.
+describe("email send coverage", { timeout: 30_000 }, () => {
   it("nothing sends email outside the choke point", () => {
     // `.emails.send(` and `.batch.send(` are the only ways out through the SDK.
     const rogue = filesCalling("\\.(emails|batch)\\.send\\(");

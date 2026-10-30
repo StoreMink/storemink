@@ -28,11 +28,14 @@ vi.mock("@/lib/media/library", async (importOriginal) => ({
 }));
 vi.mock("@/lib/storage/gcs", () => ({
   gcsConfigured: true,
-  gcsUploadObject: vi.fn(
-    async (path: string) => `https://storage.googleapis.com/bucket/${path}`,
-  ),
   gcsPathFromUrl: vi.fn((url: string) => url.split("/bucket/")[1] ?? null),
   gcsDeletePaths: vi.fn(async () => {}),
+}));
+// Every store write goes through the re-upload guard (takedown design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(
+    async (path: string) => `https://storage.googleapis.com/bucket/${path}`,
+  ),
 }));
 vi.mock("@/lib/storage/process-image", () => ({
   processImageUpload: vi.fn(async () => ({
@@ -67,7 +70,9 @@ import {
 } from "@/lib/media/product-images";
 import { listLibraryAssets } from "@/lib/media/library";
 import { storefrontImageUsage } from "@/lib/media/image-usage";
-import { gcsUploadObject, gcsDeletePaths } from "@/lib/storage/gcs";
+import { gcsDeletePaths } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
 import { mediaAssets } from "@/drizzle/schema";
 
 const STORE = "a0000000-0000-4000-8000-000000000001";
@@ -94,16 +99,24 @@ describe("media-actions", () => {
       vi.mocked(getManagerUserId).mockResolvedValue(null);
       const res = await uploadMediaAsset(withFile());
       expect(res.error).toBeTruthy();
-      expect(vi.mocked(gcsUploadObject)).not.toHaveBeenCalled();
+      expect(vi.mocked(writeStoreObject)).not.toHaveBeenCalled();
     });
 
     it("uploads under a store-scoped path and records a media_assets row", async () => {
       const res = await uploadMediaAsset(withFile());
       expect(res.error).toBeUndefined();
       expect(res.asset?.id).toBe("m1");
-      // GCS object path is scoped to the acting store.
-      const path = vi.mocked(gcsUploadObject).mock.calls[0][0];
+      // GCS object path is scoped to the acting store, and the write goes
+      // through the re-upload guard with that store.
+      const [path, , contentType, options] =
+        vi.mocked(writeStoreObject).mock.calls[0];
       expect(path).toContain(`stores/${STORE}/media/`);
+      expect(contentType).toBe("image/webp");
+      expect(options).toEqual({
+        storeId: STORE,
+        via: "media_library",
+        actor: "user-1",
+      });
       // A row was inserted into media_assets.
       expect(dbHolder.current.calls.insert[0]).toBe(mediaAssets);
     });
@@ -145,10 +158,52 @@ describe("media-actions", () => {
       const res = await uploadMediaAsset(withFile());
       expect(res.error).toBeTruthy();
       // The object we just uploaded is cleaned up (no orphan left in the bucket).
-      const uploadedPath = vi.mocked(gcsUploadObject).mock.results[0]
+      const uploadedPath = vi.mocked(writeStoreObject).mock.results[0]
         .value as Promise<string>;
       await expect(uploadedPath).resolves.toContain(`stores/${STORE}/media/`);
       expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledTimes(1);
+    });
+
+    // Takedown design 7.4: bytes StoreMink has blocked come back with the
+    // named sentence, and nothing is stored, recorded or cleaned up.
+    it("refuses an image StoreMink has blocked with the named sentence", async () => {
+      vi.mocked(writeStoreObject).mockRejectedValueOnce(
+        new BlockedUploadError({
+          told: true,
+          kindWord: "image",
+          blockId: "b0000000-0000-4000-8000-000000000001",
+        }),
+      );
+      const res = await uploadMediaAsset(withFile());
+      expect(res).toEqual({
+        error:
+          "StoreMink has blocked this image, so it can't be uploaded again. See Settings, Notices from StoreMink.",
+      });
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+      expect(vi.mocked(gcsDeletePaths)).not.toHaveBeenCalled();
+      expect(revalidatePath).not.toHaveBeenCalled();
+    });
+
+    it("names nothing for a block kept from the store", async () => {
+      vi.mocked(writeStoreObject).mockRejectedValueOnce(
+        new BlockedUploadError({
+          told: false,
+          kindWord: "image",
+          blockId: "b0000000-0000-4000-8000-000000000001",
+        }),
+      );
+      const res = await uploadMediaAsset(withFile());
+      expect(res.error).toBe(
+        "This file can't be uploaded. If you need help, write to support@storemink.com.",
+      );
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+    });
+
+    it("keeps the plain failure for any other storage error", async () => {
+      vi.mocked(writeStoreObject).mockRejectedValueOnce(new Error("GCS down"));
+      const res = await uploadMediaAsset(withFile());
+      expect(res.error).toBe("Upload failed. Please try again.");
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
     });
   });
 

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import {
   categories,
@@ -220,7 +220,14 @@ export async function readPages(
       updatedAt: storePages.updatedAt,
     })
     .from(storePages)
-    .where(eq(storePages.storeId, storeId))
+    // ★ A page StoreMink blocked is left out, told or not (takedown design
+    //   5.7): never offered, never written, never named.
+    .where(
+      and(
+        eq(storePages.storeId, storeId),
+        isNull(storePages.moderationBlockedAt),
+      ),
+    )
     .orderBy(asc(storePages.createdAt))
     .limit(60);
   const pages = rows.map((row): PersonalizationTargetPage => {
@@ -394,10 +401,18 @@ export async function readCategories(
         select count(*)::int from ${products}
         where ${products.storeId} = ${storeId}
           and ${products.categoryId} = ${categories.id}
+          and ${products.moderationBlockedAt} is null
       )`,
     })
     .from(categories)
-    .where(eq(categories.storeId, storeId))
+    // ★ A collection StoreMink blocked is left out, told or not, here and in
+    //   the redesign snapshot that shares this read.
+    .where(
+      and(
+        eq(categories.storeId, storeId),
+        isNull(categories.moderationBlockedAt),
+      ),
+    )
     .orderBy(asc(categories.sortOrder), asc(categories.name))
     .limit(MAX_CATEGORIES);
   return rows.map((row) => ({
@@ -438,6 +453,7 @@ async function readSampleProducts(
       and(
         eq(products.storeId, storeId),
         sql`${products.name} like ${SAMPLE_MARK}`,
+        isNull(products.moderationBlockedAt),
       ),
     )
     .orderBy(asc(products.name))

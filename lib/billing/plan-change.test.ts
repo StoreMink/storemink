@@ -12,7 +12,11 @@
 // Both fall out of comparing AMOUNTS, which is why decidePlanChange takes them.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
+import { logError, logWarn } from "@/lib/observability/logger";
+import { resolveTaxSnapshot, type SnapshotRow } from "./tax-snapshot";
+import { PAYMENT_REFUSAL } from "./tax-copy";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -30,27 +34,56 @@ vi.mock("@/lib/payments/provider", () => provider);
 
 const rzp = vi.hoisted(() => ({
   rzpCreateOrder: vi.fn(),
+  // The verified payment, read back for its time (R1-07).
+  rzpFetchPayment: vi.fn(),
   verifyCapturedCheckoutPayment: vi.fn(),
   verifyCheckoutSignature: vi.fn(),
 }));
 vi.mock("@/lib/payments/razorpay", () => rzp);
 
 const store = vi.hoisted(() => ({
-  loadTaxContext: vi.fn(),
-  loadInvoiceParties: vi.fn(),
+  loadTaxSnapshot: vi.fn(),
   createAddonInvoice: vi.fn(),
   finalizeInvoice: vi.fn(),
   amountDueForInvoice: vi.fn(),
+  // Read after the settle: the plan moves only once the invoice is paid.
+  getInvoice: vi.fn(async () => ({ id: "inv-1", status: "paid" })),
 }));
 vi.mock("./invoice-store", () => store);
 
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // RC-F1b: no earlier captured purchase unless a test says so.
+  capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
+  fileRecoveredPurchase: vi.fn(async () => true),
+  verifyRecoveredCapture: vi.fn(
+    async (): Promise<unknown> => ({ status: "ok", paymentId: "pay_old" }),
+  ),
+  // The plan and period the ORDER was created for.
+  readAddonOrderTarget: vi.fn(
+    async (): Promise<unknown> => ({
+      kind: "plan_change",
+      plan: "pro",
+      period: "monthly",
+    }),
+  ),
 }));
 vi.mock("./collect", () => collect);
 
-import { confirmPlanChange, startPlanChange } from "./plan-change";
+import {
+  PLAN_CHANGE_RECOVERY_WAITING_MESSAGE,
+  completePlanChangePurchase,
+  confirmPlanChange,
+  planChangeTerms,
+  startPlanChange,
+} from "./plan-change";
+
+/** A Drizzle condition, as Postgres would receive it. */
+function render(query: unknown) {
+  const q = new PgDialect().sqlToQuery(query as any);
+  return { sql: q.sql.replace(/\s+/g, " ").trim(), params: q.params };
+}
 
 const STORE = "store-1";
 const NOW = new Date("2026-09-01T00:00:00.000Z");
@@ -84,6 +117,37 @@ function seed(rows: any[][]) {
   dbHolder.current = makeDbMock({ selectQueue: rows });
 }
 
+/** GST off, StoreMink's identity complete, a merchant with no records; read
+ *  through the REAL `resolveTaxSnapshot`. */
+const SNAPSHOT_ROW: SnapshotRow = {
+  taxEnabled: false,
+  taxInclusive: false,
+  taxRateBps: 1800,
+  nextTaxEnabled: null,
+  nextTaxInclusive: null,
+  nextTaxRateBps: null,
+  nextTaxStartsAt: null,
+  supplierGstin: "03ABCDE1234F1Z5",
+  supplierStateCode: "03",
+  sacCode: "998314",
+  accountGstin: null,
+  accountStateCode: null,
+  accountCountry: null,
+  taxIdGstin: null,
+  storeTaxStateCode: null,
+  locationGstin: null,
+  locationStateCode: null,
+  taxAddress: null,
+  signupStateName: null,
+  signupCountry: null,
+};
+
+function readingFor(row: SnapshotRow) {
+  store.loadTaxSnapshot.mockImplementation(async (_store: string, at: Date) =>
+    resolveTaxSnapshot(row, at),
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   provider.getPlatformRazorpayCreds.mockReturnValue({
@@ -96,25 +160,19 @@ beforeEach(() => {
     ok: true,
     gatewayRead: true,
   });
-  store.loadTaxContext.mockResolvedValue({
-    enabled: false,
-    rateBps: 0,
-    inclusive: false,
-    supplierStateCode: null,
-    placeOfSupply: null,
-  });
-  store.loadInvoiceParties.mockResolvedValue({
-    supplierGstin: null,
-    customerGstin: null,
-    placeOfSupply: null,
-  });
+  rzp.rzpFetchPayment.mockResolvedValue({ ok: true, data: { id: "pay_1" } });
+  readingFor(SNAPSHOT_ROW);
   store.createAddonInvoice.mockResolvedValue({
     id: "inv-1",
     status: "draft",
     finalizedAt: null,
     invoiceRef: null,
   });
-  store.finalizeInvoice.mockResolvedValue({ id: "inv-1", status: "open" });
+  store.finalizeInvoice.mockResolvedValue({
+    id: "inv-1",
+    status: "open",
+    finalizedAt: NOW.toISOString(),
+  });
   store.amountDueForInvoice.mockResolvedValue(175_000);
   collect.beginAttempt.mockResolvedValue({
     attemptId: "att-1",
@@ -374,15 +432,56 @@ describe("confirmPlanChange", () => {
     now: NOW,
   };
 
-  /** invoice (with its location count), attempt, store row, then writes. */
+  /**
+   * The confirm's own reads (invoice count, attempt), then the completion's
+   * facts (invoice, attempt, store, subscription), then the claim's store read.
+   */
   function seedConfirm(over: Record<string, unknown> = {}) {
-    seed([
-      [{ locations: 0 }],
-      [{ id: "att-1", providerOrderId: "order_1" }],
-      [{ plan: "basic", planSource: "paid", ...over }],
-      [],
-    ]);
+    seedComplete({ storeRow: { plan: "basic", planSource: "paid", ...over } });
   }
+
+  it("★★ R1-07: issues at the payment's own time, from the gateway's record", async () => {
+    const CAPTURED_SECONDS = Math.floor(NOW.getTime() / 1000) - 600;
+    rzp.rzpFetchPayment.mockResolvedValue({
+      ok: true,
+      data: { id: "pay_1", created_at: CAPTURED_SECONDS },
+    });
+    seedConfirm();
+    const res = await confirmPlanChange(args);
+    expect(res.ok).toBe(true);
+    expect(rzp.rzpFetchPayment).toHaveBeenCalledWith(
+      expect.anything(),
+      "pay_1",
+    );
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(
+      "inv-1",
+      NOW,
+      new Date(CAPTURED_SECONDS * 1000),
+    );
+  });
+
+  it("★ R1-07: an unreadable payment time issues at the confirm, and the purchase still applies", async () => {
+    rzp.rzpFetchPayment.mockRejectedValue(new Error("socket hang up"));
+    seedConfirm();
+    const res = await confirmPlanChange(args);
+    expect(res.ok).toBe(true);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
+    expect(logWarn).toHaveBeenCalledWith("billing.plan_change.payment_time", {
+      paymentId: "pay_1",
+      reason: "socket hang up",
+    });
+  });
+
+  it("★ R1-07: verified by signature alone (gateway unreadable), no time is taken from the gateway", async () => {
+    rzp.verifyCapturedCheckoutPayment.mockResolvedValue({
+      ok: true,
+      gatewayRead: false,
+    });
+    seedConfirm();
+    await confirmPlanChange(args);
+    expect(rzp.rzpFetchPayment).not.toHaveBeenCalled();
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
+  });
 
   it("★★ FINALIZES BEFORE SETTLING — settling a DRAFT leaves a paid invoice unpaid", async () => {
     // Same regression as confirmEnrolment, same cause, same cost. See the note
@@ -407,6 +506,51 @@ describe("confirmPlanChange", () => {
     expect(set.period).toBe("monthly");
   });
 
+  it("★★ applies what the ORDER bought, never what the browser names", async () => {
+    // The request says Pro yearly; the order the server created says Pro
+    // monthly. Monthly is applied, and the mismatch is logged.
+    seedConfirm();
+    const res = await confirmPlanChange({ ...args, targetPeriod: "yearly" });
+    expect(res).toEqual({ ok: true, data: { plan: "pro", period: "monthly" } });
+    expect(dbHolder.current.calls.set[0].period).toBe("monthly");
+    expect(logWarn).toHaveBeenCalledWith(
+      "billing.plan_change.client_target_ignored",
+      expect.anything(),
+    );
+  });
+
+  it("★★ the apply is a CLAIM: live, same cycle, not already on the target", async () => {
+    seedConfirm();
+    await confirmPlanChange(args);
+    const where = dbHolder.current.calls.where
+      .map((w: unknown) => render(w))
+      .find((w: { sql: string }) =>
+        w.sql.includes('"billing_subscriptions"."current_cycle_seq" ='),
+      );
+    expect(where).toBeDefined();
+    if (!where) return;
+    expect(where.sql).toContain('"billing_subscriptions"."state" in');
+    expect(where.sql).toContain("not (");
+    expect(where.params).toEqual(expect.arrayContaining([STORE, 3, "pro"]));
+  });
+
+  it("★★ a confirm after the purchase was finished changes nothing", async () => {
+    seedComplete({
+      invoiceStatus: "paid",
+      attemptState: "captured",
+      claimed: false,
+      after: subRow({ plan: "pro" }),
+    });
+    collect.settleAttempt.mockResolvedValue(null);
+    const res = await confirmPlanChange(args);
+    expect(res).toEqual({ ok: true, data: { plan: "pro", period: "monthly" } });
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    // Only the refused claim was attempted; stores.plan was never written.
+    expect(
+      dbHolder.current.calls.set.some((s: any) => s.planSource === "paid"),
+    ).toBe(false);
+  });
+
   it("★★ REFUSES an unverified signature and applies nothing", async () => {
     rzp.verifyCheckoutSignature.mockReturnValue(false);
     seedConfirm();
@@ -419,13 +563,21 @@ describe("confirmPlanChange", () => {
   it("★ issues the document once it is really paid", async () => {
     seedConfirm();
     await confirmPlanChange(args);
-    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
   });
 
   it("★★ THE COMP FLOOR HOLDS — billing never lowers an operator grant", async () => {
     // The defect that cost a real merchant their Pro plan (§15): only
     // billing_subscriptions moves, and stores.plan keeps the better grant.
-    seedConfirm({ plan: "pro", planSource: "comp" });
+    collect.readAddonOrderTarget.mockResolvedValue({
+      kind: "plan_change",
+      plan: "basic",
+      period: "monthly",
+    });
+    seedComplete({
+      sub: { plan: "pro" },
+      storeRow: { plan: "pro", planSource: "comp" },
+    });
     const res = await confirmPlanChange({ ...args, targetPlan: "basic" });
     expect(res.ok).toBe(true);
     // Two updates would mean stores.plan was written; only the subscription one
@@ -476,7 +628,7 @@ describe("confirmPlanChange", () => {
   });
 
   it("★★ money IN but the plan not moved is never a bare failure", async () => {
-    seed([[{ locations: 0 }], [{ id: "att-1", providerOrderId: "order_1" }]]);
+    seedConfirm();
     dbHolder.current.db.update = () => {
       throw new Error("db down");
     };
@@ -484,5 +636,486 @@ describe("confirmPlanChange", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toMatch(/don't pay again/i);
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ repairKey: "purchase_unapplied:att-1" }),
+    );
+  });
+});
+
+/**
+ * The completion's reads, by table: (unless `recovery`) the confirm's own
+ * invoice-count and attempt reads, then invoice, attempt, store and
+ * subscription, then the claim's store read and the loser's re-read.
+ */
+function seedComplete(
+  opts: {
+    recovery?: boolean;
+    invoiceStatus?: string;
+    attemptState?: string;
+    sub?: Record<string, unknown>;
+    storeRow?: Record<string, unknown>;
+    claimed?: boolean;
+    after?: Record<string, unknown>;
+    invoiceCreatedAt?: string;
+    storeExists?: boolean;
+  } = {},
+) {
+  const attempt = {
+    id: "att-1",
+    invoiceId: "inv-1",
+    storeId: STORE,
+    state: opts.attemptState ?? "processing",
+    amountPaise: 175_000,
+    currency: "INR",
+    providerOrderId: "order_1",
+    providerPaymentId: null,
+  };
+  dbHolder.current = makeDbMock({
+    selectByTable: {
+      billing_invoices: [
+        ...(opts.recovery ? [] : [[{ locations: 0 }]]),
+        [
+          {
+            storeId: STORE,
+            kind: "addon",
+            status: opts.invoiceStatus ?? "draft",
+            addonTargetCount: 0,
+            createdAt: opts.invoiceCreatedAt ?? "2026-08-31T00:00:00.000Z",
+          },
+        ],
+      ],
+      billing_payment_attempts: [
+        ...(opts.recovery
+          ? []
+          : [
+              [
+                {
+                  id: "att-1",
+                  providerOrderId: "order_1",
+                  amountPaise: 175_000,
+                },
+              ],
+            ]),
+        [attempt],
+      ],
+      stores: [
+        opts.storeExists === false ? [] : [{ id: STORE }],
+        [opts.storeRow ?? { plan: "basic", planSource: "paid" }],
+      ],
+      billing_subscriptions: [
+        [
+          {
+            state: "active",
+            plan: "basic",
+            period: "monthly",
+            currentCycleSeq: 3,
+            currentPeriodStart: "2026-08-17T00:00:00.000Z",
+            ...opts.sub,
+          },
+        ],
+        opts.after ? [opts.after] : [],
+      ],
+    },
+    returningQueue: [opts.claimed === false ? [] : [{ storeId: STORE }]],
+  });
+}
+
+describe("completePlanChangePurchase (recovery, RC-F1b)", () => {
+  const recovery = {
+    storeId: STORE,
+    invoiceId: "inv-1",
+    attemptId: "att-1",
+    providerPaymentId: null,
+    source: "recovery" as const,
+    verifyCapture: true,
+    now: NOW,
+  };
+
+  it("★★ finishes a closed-tab upgrade: issues, settles, applies the order's plan", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    const res = await completePlanChangePurchase(recovery);
+    expect(res).toEqual({
+      status: "completed",
+      data: { plan: "pro", period: "monthly" },
+    });
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, undefined);
+    expect(collect.settleAttempt).toHaveBeenCalledWith(
+      "att-1",
+      "captured",
+      expect.objectContaining({ providerPaymentId: "pay_old" }),
+    );
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      plan: "pro",
+      period: "monthly",
+    });
+  });
+
+  it("★ issues the draft at the capture time it is given (GST paidAt)", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    const paidAt = new Date(NOW.getTime() - 2 * 3_600_000);
+    const res = await completePlanChangePurchase({ ...recovery, paidAt });
+    expect(res.status).toBe("completed");
+    expect(store.finalizeInvoice).toHaveBeenCalledWith("inv-1", NOW, paidAt);
+  });
+
+  it("★★ an unreadable order changes nothing", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    collect.readAddonOrderTarget.mockResolvedValue(null);
+    const res = await completePlanChangePurchase(recovery);
+    expect(res.status).toBe("not_ready");
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+  });
+
+  it("★★ a captured amount that differs is filed, never applied", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    collect.verifyRecoveredCapture.mockResolvedValue({
+      status: "mismatch",
+      reason: "the captured amount or currency differs from the attempt",
+      paymentId: "pay_old",
+      observedPaise: 1_00,
+    });
+    const res = await completePlanChangePurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "amount_mismatch",
+        repairKey: "purchase_refused:att-1",
+        purchase: "plan_change",
+      }),
+    );
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+
+  it("★★ a change bought in an earlier cycle is filed, not applied", async () => {
+    seedComplete({
+      recovery: true,
+      attemptState: "captured",
+      invoiceCreatedAt: "2026-08-01T00:00:00.000Z",
+    });
+    const res = await completePlanChangePurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        note: expect.stringMatching(/cycle that has since ended/),
+      }),
+    );
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+
+  it("★ a draft whose subscription already reached the target is filed", async () => {
+    seedComplete({
+      recovery: true,
+      attemptState: "captured",
+      sub: { plan: "pro", period: "monthly" },
+    });
+    const res = await completePlanChangePurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        note: expect.stringMatching(/already on Pro/),
+      }),
+    );
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("★ a subscription that is no longer live is filed", async () => {
+    seedComplete({
+      recovery: true,
+      attemptState: "captured",
+      sub: { state: "free" },
+    });
+    expect((await completePlanChangePurchase(recovery)).status).toBe("refused");
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+});
+
+describe("startPlanChange finishes an earlier paid change (RC-F1b)", () => {
+  const earlier = {
+    attemptId: "att-1",
+    invoiceId: "inv-1",
+    storeId: STORE,
+    kind: "addon",
+    providerOrderId: "order_1",
+    providerPaymentId: "pay_old",
+    amountPaise: 175_000,
+    currency: "INR",
+    createdAt: NOW.toISOString(),
+  };
+
+  it("★★ completes it instead of opening a second order", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    seedComplete({ recovery: true, attemptState: "captured" });
+    const res = await startPlanChange({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res).toEqual({
+      ok: true,
+      data: {
+        scheduled: false,
+        effectiveAt: null,
+        plan: "pro",
+        period: "monthly",
+        recovered: true,
+      },
+    });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(store.createAddonInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+
+  it("★★ when it cannot be finished, says the payment went through and opens nothing", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    seedComplete({ recovery: true, attemptState: "captured" });
+    collect.verifyRecoveredCapture.mockResolvedValue({ status: "unreadable" });
+    const res = await startPlanChange({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res).toEqual({
+      ok: false,
+      error: PLAN_CHANGE_RECOVERY_WAITING_MESSAGE,
+    });
+    expect(PLAN_CHANGE_RECOVERY_WAITING_MESSAGE).toMatch(/don't pay again/);
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ fails CLOSED when the earlier purchases can't be read", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue(null);
+    const res = await startPlanChange({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res).toEqual({
+      ok: false,
+      error: "Couldn't check your subscription. Try again.",
+    });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ fails CLOSED when the earlier order can't be read", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    collect.readAddonOrderTarget.mockResolvedValue(null);
+    const res = await startPlanChange({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res.ok).toBe(false);
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ an earlier LOCATION purchase is not this flow's to finish", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    collect.readAddonOrderTarget.mockResolvedValue({
+      kind: "locations",
+      count: 3,
+    });
+    seed([[subRow()], []]);
+    const res = await startPlanChange({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.data.payment?.providerOrderId).toBe("order_1");
+  });
+});
+
+describe("planChangeTerms: one decision for the quote and the payment", () => {
+  it("★ decides a dearer change without writing anything", async () => {
+    seed([[subRow()]]);
+    const res = await planChangeTerms({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res).toEqual({
+      ok: true,
+      data: {
+        kind: "immediate",
+        plan: "pro",
+        period: "monthly",
+        // (5,000 − 1,500) × 15/30, before GST.
+        prorationPaise: 175_000,
+        targetLocations: 0,
+        description: expect.stringMatching(/^Pro plan · part period to /),
+        currentPeriodEnd: PERIOD_END,
+      },
+    });
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    // The decision needs no tax reading: GST is the payment's business.
+    expect(store.loadTaxSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("decides a cheaper change is scheduled for the cycle end", async () => {
+    seed([[subRow({ plan: "pro" })], []]);
+    const res = await planChangeTerms({
+      ...base,
+      targetPlan: "basic",
+      targetPeriod: "monthly",
+    });
+    expect(res).toEqual({
+      ok: true,
+      data: {
+        kind: "scheduled",
+        plan: "basic",
+        period: "monthly",
+        effectiveAt: PERIOD_END,
+      },
+    });
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+
+  it("refuses what the payment refuses, in the same words", async () => {
+    seed([[subRow({ plan: "pro" })], [{ id: "inv-next" }]]);
+    const res = await planChangeTerms({
+      ...base,
+      targetPlan: "basic",
+      targetPeriod: "monthly",
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/already been issued/i);
+  });
+
+  it("keeps billed locations only for a plan with POS", async () => {
+    seed([[subRow({ plan: "pro", billedLocations: 2 })]]);
+    const res = await planChangeTerms({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "yearly",
+    });
+    expect(
+      res.ok && res.data.kind === "immediate" && res.data.targetLocations,
+    ).toBe(2);
+  });
+});
+
+describe("startPlanChange reads the tax once (GST Stage 7)", () => {
+  const upgrade = {
+    ...base,
+    targetPlan: "pro" as const,
+    targetPeriod: "monthly" as const,
+  };
+
+  function expectNothingWritten() {
+    expect(store.createAddonInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  }
+
+  it("★ builds the part period with the reading's GST and stamps it", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, accountStateCode: "29" });
+    seed([[subRow()], []]);
+    const res = await startPlanChange(upgrade);
+    expect(res.ok).toBe(true);
+    const arg = store.createAddonInvoice.mock.calls[0][0];
+    // ₹1,750 + 18% exclusive.
+    expect(arg.built).toMatchObject({ taxPaise: 31_500, totalPaise: 206_500 });
+    expect(arg.stamp).toEqual({
+      supplierGstin: "03ABCDE1234F1Z5",
+      customerGstin: null,
+      placeOfSupply: "29",
+      placeOfSupplyBasis: "recipient",
+      sacCode: "998314",
+    });
+    expect(arg).not.toHaveProperty("supplierGstin");
+    expect(store.loadTaxSnapshot).toHaveBeenCalledWith(STORE, NOW);
+  });
+
+  it("a reading that fails", async () => {
+    store.loadTaxSnapshot.mockRejectedValue(new Error("connection reset"));
+    seed([[subRow()], []]);
+    const res = await startPlanChange(upgrade);
+    expect(res).toEqual({ ok: false, error: PAYMENT_REFUSAL.invoiceFailed });
+    expectNothingWritten();
+    expect(logError).toHaveBeenCalledWith(
+      "billing.plan_change.tax_snapshot",
+      expect.any(Error),
+      { storeId: STORE },
+    );
+  });
+
+  it("GST on without StoreMink's full tax identity", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, sacCode: null });
+    seed([[subRow()], []]);
+    expect(await startPlanChange(upgrade)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.settingsIncomplete,
+    });
+    expectNothingWritten();
+  });
+
+  it("★ GST on and no state of the merchant anywhere", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true });
+    seed([[subRow()], []]);
+    expect(await startPlanChange(upgrade)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.needsState,
+    });
+    expectNothingWritten();
+  });
+
+  it("★ GST on and a business outside India", async () => {
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, accountCountry: "US" });
+    seed([[subRow()], []]);
+    expect(await startPlanChange(upgrade)).toEqual({
+      ok: false,
+      error: PAYMENT_REFUSAL.outsideIndia,
+    });
+    expectNothingWritten();
+  });
+
+  it("★ a change that moves no money needs no reading", async () => {
+    // A downgrade is booked for the cycle end and a ₹0 part period is applied
+    // free: neither has an invoice, so neither may be refused for its GST.
+    readingFor({ ...SNAPSHOT_ROW, taxEnabled: true }); // would refuse
+    seed([[subRow({ plan: "pro" })], [], []]);
+    const booked = await startPlanChange({
+      ...base,
+      targetPlan: "basic",
+      targetPeriod: "monthly",
+    });
+    expect(booked.ok && booked.data.scheduled).toBe(true);
+
+    seed([[subRow({ currentPeriodEnd: NOW.toISOString() })], [], []]);
+    const free = await startPlanChange(upgrade);
+    expect(free.ok).toBe(true);
+    expect(store.loadTaxSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+describe("completePlanChangePurchase: a failed issue (GST Stage 7)", () => {
+  it("★ is logged, and nothing is settled or applied", async () => {
+    seedComplete({ recovery: true, attemptState: "captured" });
+    store.finalizeInvoice.mockResolvedValue(null);
+    const res = await completePlanChangePurchase({
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+      providerPaymentId: null,
+      source: "recovery",
+      verifyCapture: true,
+      now: NOW,
+    });
+    expect(res.status).toBe("not_ready");
+    expect(logWarn).toHaveBeenCalledWith("billing.confirm_issue_failed", {
+      purchase: "plan_change",
+      source: "recovery",
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+    });
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(0);
   });
 });

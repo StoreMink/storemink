@@ -86,9 +86,9 @@ En dashes and dashes written as HTML entities (`&mdash;`, `&ndash;`,
 `&#8212;`, `&#8211;`) count too: write "to" in a range ("10 to 30
 minutes"). `help:lint` fails any Help migration after `20261026_0254` that
 publishes one (quoting one in `$old$` to remove it is fine), and `help:audit`
-reports them in served rows. The plan guide
-(`manage-your-storemink-plan-and-subscription`) still holds five `&mdash;`
-from 0079 and 0080 until the Help edit that rewrites its billing paragraphs.
+reports them in served rows. `20261028_0265_cancel_and_refund_help` rewrote
+the last five, the plan guide's (`manage-your-storemink-plan-and-subscription`,
+from 0079 and 0080), so no served guide holds one.
 
 ### POS, never register or till
 

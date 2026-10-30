@@ -36,10 +36,14 @@ vi.mock("@/lib/db/client", () => {
 });
 vi.mock("@/lib/storage/gcs", () => ({
   gcsConfigured: true,
-  gcsUploadObject: vi.fn(
+  gcsDeletePaths: vi.fn(async () => []),
+}));
+// ★ The store's one writer (takedown design 5.7) is the seam: the upload
+//   guard behind it reads the database, so it is mocked whole here.
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(
     async (path: string) => `https://storage.googleapis.com/bucket/${path}`,
   ),
-  gcsDeletePaths: vi.fn(async () => []),
 }));
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -108,7 +112,9 @@ import {
 } from "./errors";
 import type { MinkToolContext } from "./tools/registry";
 import { createMinkDraftProposal } from "./drafts";
-import { gcsDeletePaths, gcsUploadObject } from "@/lib/storage/gcs";
+import { gcsDeletePaths } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
 import { withService } from "@/lib/db/client";
 import { resolveMinkMediaReferenceImages } from "./media-reference-images";
 import type { MinkActorContext } from "./types";
@@ -219,16 +225,20 @@ describe("createMinkMediaImageProposal", () => {
         source: "category",
       },
     ]);
-    await expect(
-      createMinkMediaImageProposal({
-        actor,
-        ...ask,
-        purpose: "product",
-        referenceImageUrls: [
-          "https://storage.googleapis.com/bucket/category.webp",
-        ],
-      }),
-    ).rejects.toThrow(/real photo of the item/);
+    const refused = createMinkMediaImageProposal({
+      actor,
+      ...ask,
+      purpose: "product",
+      referenceImageUrls: [
+        "https://storage.googleapis.com/bucket/category.webp",
+      ],
+    });
+    await expect(refused).rejects.toThrow(/real photo of the item/);
+    // The model reads this back: an attached photo is named by its address,
+    // never as a Media URL (an attachment is not in the Media Library).
+    await expect(refused).rejects.toThrow(
+      "the exact address of a photo the merchant attached",
+    );
     expect(reserveMinkImageGeneration).not.toHaveBeenCalled();
     expect(generateMinkMediaImage).not.toHaveBeenCalled();
     expect(dbState.inserts).toEqual([]);
@@ -318,6 +328,49 @@ describe("createMinkMediaImageProposal", () => {
     ]);
   });
 
+  it("★★ A PRODUCT PHOTO WHOSE ONLY REAL REFERENCE IS A PICTURE ATTACHED IN THIS CHAT GOES AHEAD", async () => {
+    // The attachment is read privately (source `attachment`, inline bytes);
+    // the draft keeps its address exactly as given, since the card never
+    // renders references and the address is readable only by its owner.
+    const address =
+      "/api/mink/attachments/0f3a9c42-7b1d-4e6a-9c2b-1d5e8f7a6b3c";
+    const attached = {
+      url: address,
+      inlineData: { mimeType: "image/png" as const, data: "AAAA" },
+      mimeType: "image/png" as const,
+      source: "attachment" as const,
+    };
+    vi.mocked(resolveMinkMediaReferenceImages).mockResolvedValueOnce([
+      attached,
+    ]);
+
+    const proposal = await createMinkMediaImageProposal({
+      actor,
+      ...ask,
+      purpose: "product",
+      referenceImageUrls: [address],
+    });
+
+    expect(proposal.purpose).toBe("product");
+    expect(proposal.referenceImageCount).toBe(1);
+    expect(vi.mocked(resolveMinkMediaReferenceImages)).toHaveBeenCalledWith(
+      actor,
+      [address],
+    );
+    expect(vi.mocked(generateMinkMediaImage).mock.calls[0][2]).toEqual([
+      attached,
+    ]);
+    expect(vi.mocked(createMinkDraftProposal).mock.calls[0][0]).toMatchObject({
+      kind: "media_image",
+      content: { reference_image_urls: JSON.stringify([address]) },
+    });
+    // No public copy of the attachment was made on the way.
+    expect(writeStoreObject).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(writeStoreObject).mock.calls[0][0]).toMatch(
+      /mink-generated\/product-photos\//,
+    );
+  });
+
   it("keeps campaign art at the kind's own price", async () => {
     await createMinkMediaImageProposal({ actor, ...ask });
     expect(
@@ -360,7 +413,7 @@ describe("createMinkMediaImageProposal", () => {
     await expect(
       createMinkMediaImageProposal({ actor, ...ask }),
     ).rejects.toThrow(/no credits/);
-    const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
+    const uploaded = vi.mocked(writeStoreObject).mock.calls[0][0];
     expect(dbState.deletes).toBe(1);
     expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
     // ★ The write tidies up after itself, once; nothing deletes it again.
@@ -374,9 +427,61 @@ describe("createMinkMediaImageProposal", () => {
       createMinkMediaImageProposal({ actor, ...ask }),
     ).rejects.toThrow(/could not be saved to Media/);
     expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
-    const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
+    const uploaded = vi.mocked(writeStoreObject).mock.calls[0][0];
     expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
     expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ stores the picture through the store's one writer, for this store", async () => {
+    await createMinkMediaImageProposal({ actor, ...ask });
+    expect(vi.mocked(writeStoreObject)).toHaveBeenCalledTimes(1);
+    const [path, bytes, contentType, options] =
+      vi.mocked(writeStoreObject).mock.calls[0];
+    expect(path).toMatch(new RegExp(`^stores/${STORE}/mink-generated/`));
+    expect(Buffer.from(bytes).toString()).toBe("img");
+    expect(contentType).toBe("image/jpeg");
+    expect(options).toEqual({
+      storeId: STORE,
+      via: "mink_media_image",
+      actor: "admin-1",
+    });
+  });
+
+  it("★★ a picture StoreMink has blocked is refused in the design's words, and nothing is saved or charged", async () => {
+    vi.mocked(writeStoreObject).mockRejectedValueOnce(
+      new BlockedUploadError({
+        told: true,
+        kindWord: "image",
+        blockId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    const refused = createMinkMediaImageProposal({ actor, ...ask });
+    await expect(refused).rejects.toBeInstanceOf(MinkRequestError);
+    await expect(refused).rejects.toThrow(
+      "StoreMink has blocked this image, so it can't be uploaded again. See Settings, Notices from StoreMink.",
+    );
+    expect(dbState.inserts).toEqual([]);
+    expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
+    // Nothing was written, so there is nothing to remove.
+    expect(vi.mocked(gcsDeletePaths)).not.toHaveBeenCalled();
+    // The picture was drawn (Google may have billed it): the allowance stays spent.
+    expect(allowance.giveBack).not.toHaveBeenCalled();
+  });
+
+  it("★ a block kept from the store refuses the picture without naming it", async () => {
+    vi.mocked(writeStoreObject).mockRejectedValueOnce(
+      new BlockedUploadError({
+        told: false,
+        kindWord: "image",
+        blockId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    const refused = createMinkMediaImageProposal({ actor, ...ask });
+    await expect(refused).rejects.toThrow(
+      "This file can't be uploaded. If you need help, write to support@storemink.com.",
+    );
+    await expect(refused).rejects.not.toThrow(/StoreMink has blocked/);
+    expect(dbState.inserts).toEqual([]);
   });
 });
 
@@ -436,7 +541,7 @@ describe("★★ a chat image under the tool's deadline (B6, B10)", () => {
       ).rejects.toBe(unbilled);
       expect(allowance.giveBack).toHaveBeenCalledTimes(1);
     }
-    expect(vi.mocked(gcsUploadObject)).not.toHaveBeenCalled();
+    expect(vi.mocked(writeStoreObject)).not.toHaveBeenCalled();
     expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
   });
 
@@ -467,7 +572,7 @@ describe("★★ a chat image under the tool's deadline (B6, B10)", () => {
     await expect(
       createMinkMediaImageProposal({ actor, ...ask, context }),
     ).rejects.toBeInstanceOf(MinkToolTimeoutError);
-    expect(vi.mocked(gcsUploadObject)).not.toHaveBeenCalled();
+    expect(vi.mocked(writeStoreObject)).not.toHaveBeenCalled();
     expect(dbState.inserts).toEqual([]);
     expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
     // The draw may have been billed: the allowance stays spent.
@@ -476,14 +581,14 @@ describe("★★ a chat image under the tool's deadline (B6, B10)", () => {
 
   it("★★ a write refused at the deadline removes the picture already stored", async () => {
     const context = toolContext();
-    vi.mocked(gcsUploadObject).mockImplementationOnce(async (path: string) => {
+    vi.mocked(writeStoreObject).mockImplementationOnce(async (path: string) => {
       context.stop.abort(new MinkToolTimeoutError());
       return `https://storage.googleapis.com/bucket/${path}`;
     });
     await expect(
       createMinkMediaImageProposal({ actor, ...ask, context }),
     ).rejects.toBeInstanceOf(MinkToolTimeoutError);
-    const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
+    const uploaded = vi.mocked(writeStoreObject).mock.calls[0][0];
     expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
     expect(dbState.inserts).toEqual([]);
     expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
@@ -499,7 +604,7 @@ describe("★★ a chat image under the tool's deadline (B6, B10)", () => {
       await expect(
         createMinkMediaImageProposal({ actor, ...ask }),
       ).rejects.toBeInstanceOf(MinkToolTimeoutError);
-      const uploaded = vi.mocked(gcsUploadObject).mock.calls[0][0];
+      const uploaded = vi.mocked(writeStoreObject).mock.calls[0][0];
       expect(vi.mocked(gcsDeletePaths)).toHaveBeenCalledWith([uploaded]);
       expect(dbState.inserts).toEqual([]);
       expect(vi.mocked(createMinkDraftProposal)).not.toHaveBeenCalled();
