@@ -106,9 +106,8 @@ export function GroupsManagementView({
       {planLocked ? (
         <div className="dash-card mb-3.5 flex items-center justify-between gap-3 px-4 py-3.5 text-[13px]">
           <span>
-            Customer groups are available on Basic and Pro. Your existing
-            groups, members and coupon links are retained and remain editable;
-            creating another group requires an upgrade.
+            Customer groups are on Basic and Pro. Your existing groups stay
+            editable; upgrade to create another.
           </span>
           <Link
             href="/dashboard/plans"
@@ -125,7 +124,8 @@ export function GroupsManagementView({
             <Search className="h-4 w-4 shrink-0 opacity-50" />
             <input
               type="text"
-              placeholder="Search groups..."
+              aria-label="Search groups"
+              placeholder="Search groups"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -261,10 +261,9 @@ export function GroupsManagementView({
           <DialogHeader>
             <DialogTitle>Delete group</DialogTitle>
             <DialogDescription>
-              Delete &ldquo;{deleteTarget?.name}&rdquo;? Members aren&rsquo;t
-              deleted, but any coupons restricted to this group will revert to
-              their remaining groups (or become public if none are left). This
-              can&rsquo;t be undone.
+              Delete &ldquo;{deleteTarget?.name}&rdquo;? Members are kept, and a
+              coupon limited only to this group becomes public. This can&rsquo;t
+              be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

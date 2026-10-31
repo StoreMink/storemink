@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { uploadImage } from "@/lib/storage/uploads";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { ImageRefineScope } from "@/components/ui/image-refine-context";
 import { releaseImageRefines } from "@/components/ui/image-refine-registry";
@@ -251,6 +252,33 @@ const fieldClass =
   "w-full rounded-lg border border-[#d1d5db] bg-white px-3 py-2 text-sm text-[#1f2937] outline-none transition placeholder:text-[#9ca3af] focus:border-[#4f46e5] focus:ring-2 focus:ring-[#4f46e5]/15";
 const labelClass = "mb-1.5 block text-[13px] font-medium text-[#374151]";
 const hintClass = "mt-1 text-[11px] leading-relaxed text-[#9ca3af]";
+
+// A field label with an "i" button beside it (never inside it, or the tip's
+// name would join the field's accessible name). Guidance a merchant needs now
+// and then lives in the tip instead of a paragraph under the field.
+function TipLabel({
+  children,
+  tip,
+  tipLabel,
+  htmlFor,
+}: {
+  children: React.ReactNode;
+  tip: React.ReactNode;
+  tipLabel: string;
+  htmlFor?: string;
+}) {
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5">
+      <label
+        className="block text-[13px] font-medium text-[#374151]"
+        htmlFor={htmlFor}
+      >
+        {children}
+      </label>
+      <InfoTip label={tipLabel}>{tip}</InfoTip>
+    </div>
+  );
+}
 const aiButtonClass =
   "flex shrink-0 items-center gap-1 rounded-md border border-indigo-200 bg-gradient-to-r from-indigo-50 to-violet-50 px-2.5 py-1 text-xs font-medium text-[#4f46e5] hover:from-indigo-100 hover:to-violet-100 disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -880,20 +908,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
         <div className="mx-auto max-w-3xl py-2">
           <div className={tab === "basics" ? "space-y-4" : "hidden"}>
             {/* Product details */}
-            <Section
-              title="Product details"
-              description="The name, description, and storefront link your customers see."
-              icon={Package}
-              tint="indigo"
-            >
+            <Section title="Product details" icon={Package} tint="indigo">
               <div className="space-y-4">
                 <div>
                   <label className={labelClass}>Name *</label>
                   <input
                     className={fieldClass}
+                    aria-label="Name"
                     value={form.name}
                     onChange={(e) => handleNameChange(e.target.value)}
-                    placeholder="e.g. Almond Milk 500ml"
                   />
                 </div>
 
@@ -902,9 +925,9 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                     <label className={labelClass}>URL handle (slug)</label>
                     <input
                       className={fieldClass}
+                      aria-label="URL handle (slug)"
                       value={form.slug}
                       onChange={(e) => handleSlugChange(e.target.value)}
-                      placeholder="auto from name"
                     />
                     <p className={hintClass}>
                       Lives at{" "}
@@ -934,9 +957,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                 </div>
 
                 <div>
-                  <label className={labelClass}>Tax class</label>
+                  <TipLabel
+                    tipLabel="About tax class"
+                    tip="Charged at checkout when tax is turned on in Invoices & Billing."
+                  >
+                    Tax class
+                  </TipLabel>
                   <select
                     className={fieldClass}
+                    aria-label="Tax class"
                     value={form.tax_class_id ?? ""}
                     onChange={(e) =>
                       set("tax_class_id", e.target.value || null)
@@ -949,10 +978,6 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                       </option>
                     ))}
                   </select>
-                  <p className={hintClass}>
-                    Products without a tax class use the store default. Applies
-                    at checkout when tax is enabled (Invoices &amp; Billing).
-                  </p>
                 </div>
 
                 {/* Returns. Per-product because a setting can't address one
@@ -978,13 +1003,19 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                     </span>
                   </label>
                   {form.returnable !== false && (
-                    <div className="mt-2">
+                    <div className="mt-3">
+                      <label
+                        className={labelClass}
+                        htmlFor={`${statusId}-return-window`}
+                      >
+                        Return window (days)
+                      </label>
                       <input
+                        id={`${statusId}-return-window`}
                         type="number"
                         min={0}
                         max={365}
                         className={fieldClass}
-                        placeholder="Use store default"
                         value={form.return_window_days ?? ""}
                         onChange={(e) =>
                           set(
@@ -996,9 +1027,8 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                         }
                       />
                       <p className={hintClass}>
-                        Days after delivery this product can be returned. Leave
-                        blank to follow the store&apos;s window (Orders →
-                        Settings). 0 means same day only.
+                        Blank uses the store&apos;s window. 0 means same day
+                        only.
                       </p>
                     </div>
                   )}
@@ -1006,9 +1036,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
 
                 <div>
                   <div className="mb-1.5 flex items-center justify-between gap-2">
-                    <label className={`${labelClass} mb-0`}>
-                      Description *
-                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <label className={`${labelClass} mb-0`}>
+                        Description *
+                      </label>
+                      <InfoTip label="About description">
+                        Type rough notes, then use Generate with AI to write it
+                        in your brand voice.
+                      </InfoTip>
+                    </div>
                     <button
                       type="button"
                       onClick={handleGenerate}
@@ -1023,16 +1059,13 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   <textarea
                     ref={setDescriptionRef}
                     className={`${fieldClass} min-h-[96px] resize-none overflow-hidden`}
+                    aria-label="Description"
                     value={form.description}
                     onChange={(e) => {
                       set("description", e.target.value);
                       autosize(e.target);
                     }}
-                    placeholder="Describe the product… or type rough notes and click Generate with AI"
                   />
-                  <p className={hintClass}>
-                    Written in your brand voice. Shown on the product page.
-                  </p>
                 </div>
               </div>
             </Section>
@@ -1042,7 +1075,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             {/* Media */}
             <Section
               title="Media"
-              description="Add photos so customers can see what they are buying. The primary image is the storefront thumbnail."
+              description="The primary image is the storefront thumbnail."
               icon={ImageIcon}
               tint="violet"
             >
@@ -1132,15 +1165,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             {/* Pricing */}
             <Section
               title="Pricing"
-              description="Set the list price (MRP) and what customers actually pay."
+              description="The list price (MRP) and what customers pay."
               icon={Tag}
               tint="emerald"
             >
               {form.variants.length > 0 && (
                 <p className="mb-4 text-sm text-dim">
                   {form.variants.length === 1
-                    ? "Price changes here also update your single variant. A variant special price overrides its selling price."
-                    : "Each variant has its own price. These defaults apply to new variants; edit existing selling and special prices in Variants."}
+                    ? "Changes here also update your single variant."
+                    : "Each variant has its own price. These apply to new variants."}
                   <button
                     type="button"
                     className="ml-2 font-medium text-[var(--dash-accent)] underline"
@@ -1161,18 +1194,20 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                 </div>
                 {canUseGrossMargin ? (
                   <div>
-                    <label className={labelClass}>Cost per unit ₹</label>
+                    <TipLabel
+                      tipLabel="About cost per unit"
+                      tip="What this item costs you. The first value also fills older sales with no cost; later edits apply to new sales."
+                    >
+                      Cost per unit ₹
+                    </TipLabel>
                     <NumberField
                       className={fieldClass}
+                      aria-label="Cost per unit"
                       value={form.cost_price ?? 0}
                       onValueChange={(n, raw) =>
                         set("cost_price", raw === "" ? null : n)
                       }
                     />
-                    <p className={hintClass}>
-                      What this item costs you. The first value safely fills
-                      older sales with no cost; later edits affect new sales.
-                    </p>
                   </div>
                 ) : null}
                 <div>
@@ -1196,7 +1231,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
 
             <Section
               title="Shipping"
-              description="Physical measurements used for courier serviceability and labels. Final packed dimensions can still be corrected when booking."
+              description="Used for courier rates and labels."
               icon={Truck}
               tint="teal"
             >
@@ -1255,21 +1290,20 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                       <label className={labelClass}>HSN</label>
                       <input
                         className={fieldClass}
+                        aria-label="HSN"
                         value={form.hsn_code ?? ""}
                         onChange={(event) =>
                           set("hsn_code", event.target.value || null)
                         }
                         inputMode="numeric"
                         maxLength={20}
-                        placeholder="e.g. 2202"
                       />
                     </div>
                   </div>
                 )}
                 <p className={hintClass}>
-                  Shiprocket requires a positive packed weight and dimensions.
-                  Variants inherit these values unless an import supplies an
-                  override.
+                  Shiprocket needs a weight and dimensions above 0. Variants
+                  inherit them.
                 </p>
               </div>
             </Section>
@@ -1278,7 +1312,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
           <div className={tab === "inventory" ? "space-y-4" : "hidden"}>
             <Section
               title="Inventory"
-              description="Choose whether to track this item here, then manage physical quantities by location."
+              description="Stock is counted per location in Inventory."
               icon={Boxes}
               tint="amber"
             >
@@ -1293,10 +1327,6 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                         <div className="mt-1 text-2xl font-semibold text-[#111827]">
                           {totalStock} units
                         </div>
-                        <p className="mt-1 text-xs text-[#6b7280]">
-                          Open Inventory to see and change each location&apos;s
-                          shelf separately.
-                        </p>
                       </div>
                       <Link
                         href={`/dashboard/inventory?q=${encodeURIComponent(product.name)}`}
@@ -1311,8 +1341,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                         Create the product before stocking a location
                       </div>
                       <p className="mt-1 text-xs text-[#6b7280]">
-                        Save this product, then Inventory will let you add the
-                        counted quantity to the right shop or warehouse.
+                        Save it, then add stock in Inventory.
                       </p>
                     </div>
                   )}
@@ -1329,25 +1358,23 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                           readOnly
                           title="SKUs are generated automatically and cannot be edited"
                         />
-                        <p className={hintClass}>
-                          Auto-generated &amp; locked.
-                        </p>
                       </div>
                       <div>
-                        <label className={labelClass}>Barcode</label>
+                        <TipLabel
+                          tipLabel="About barcode"
+                          tip="The supplier barcode on the packaging. Scan it to add the item in POS."
+                        >
+                          Barcode
+                        </TipLabel>
                         <input
                           className={`${fieldClass} font-mono`}
+                          aria-label="Barcode"
                           value={form.barcode ?? ""}
-                          placeholder="Scan or type the barcode"
                           onChange={(e) => set("barcode", e.target.value)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") e.preventDefault();
                           }}
                         />
-                        <p className={hintClass}>
-                          The supplier barcode on the packaging - what you scan
-                          in POS.
-                        </p>
                       </div>
                     </div>
 
@@ -1387,20 +1414,15 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                               set("low_stock_threshold", n > 0 ? n : null)
                             }
                           />
-                          <p className={hintClass}>
-                            Warn when stock drops to this level. Leave 0 to use
-                            the store default.
-                          </p>
+                          <p className={hintClass}>0 uses the store default.</p>
                         </div>
                       </div>
                     )}
                   </>
                 ) : (
                   <div className="rounded-lg border border-dashed border-amber-200 bg-amber-50/50 px-4 py-3 text-sm text-[#78350f]">
-                    Each variant is a separate stock item. Add names, prices,
-                    barcodes, and opening stock under <strong>Variants</strong>;
-                    after saving, change quantities in Inventory at the correct
-                    location.
+                    Each variant has its own stock. Set opening stock under{" "}
+                    <strong>Variants</strong>.
                   </div>
                 )}
               </div>
@@ -1411,7 +1433,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             {/* Options */}
             <Section
               title="Options"
-              description="Name the choices a shopper makes, like Size and Colour. Every combination becomes a variant below, and the storefront shows one picker per option."
+              description="Choices like size and colour. Each combination becomes a variant."
               icon={Layers}
               tint="sky"
             >
@@ -1427,8 +1449,8 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
               title="Variants"
               description={
                 hasOptions
-                  ? "One row per combination of your options - each with its own price, stock, and auto-generated SKU."
-                  : "Options like size or flavour - each with its own price, stock, and auto-generated SKU. Leave empty for a single-price product."
+                  ? "One row per combination, each with its own price and stock."
+                  : "Each variant has its own price and stock."
               }
               icon={Layers}
               tint="sky"
@@ -1446,16 +1468,14 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             >
               {form.variants.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-[#d1d5db] bg-[#f9fafb] px-4 py-6 text-center text-xs text-[#9ca3af]">
-                  No variants yet. This is a single-price product - add variants
-                  only if it comes in multiple options.
+                  No variants. This product has a single price.
                 </p>
               ) : (
                 <div className="overflow-x-auto sm:overflow-visible">
                   {product && (
                     <div className="mb-3 flex flex-col gap-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 text-xs text-indigo-900 sm:flex-row sm:items-center sm:justify-between">
                       <span>
-                        Existing stock is shown as a store-wide total here and
-                        cannot be edited in the product form.
+                        Existing stock is shown as a store-wide total.
                       </span>
                       <Link
                         href={`/dashboard/inventory?q=${encodeURIComponent(product.name)}`}
@@ -1499,7 +1519,6 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                               onChange={(e) =>
                                 updateVariant(i, "name", e.target.value)
                               }
-                              placeholder="500ml"
                             />
                           )}
                           <span className="dash-variant-label">Base price</span>
@@ -1559,7 +1578,6 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                             className={`${fieldClass} font-mono text-[11px]`}
                             aria-label="Supplier barcode"
                             value={v.barcode ?? ""}
-                            placeholder="Scan"
                             title="Supplier barcode - scan the item to fill"
                             onChange={(e) =>
                               updateVariant(i, "barcode", e.target.value)
@@ -1625,7 +1643,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                               }
                             />
                             <span className="text-[11px] text-[#9ca3af]">
-                              ₹ - leave blank to inherit the product cost.
+                              ₹. Blank uses the product cost.
                             </span>
                           </div>
                         ) : null}
@@ -1648,16 +1666,14 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                             }
                           />
                           <span className="text-[11px] text-[#9ca3af]">
-                            ₹ - leave 0 for no sale. Shows a yellow tag on the
-                            variant chip when set.
+                            ₹. 0 means no sale.
                           </span>
                         </div>
                       </div>
                     ))}
                     <p className={hintClass}>
-                      The top variant is selected by default on the product page
-                      - use the arrows to reorder. Stock entered for a new
-                      variant is opening stock at the main location.
+                      The top variant is the default. New variant stock goes to
+                      the main location.
                     </p>
                   </div>
                 </div>
@@ -1667,12 +1683,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
 
           <div className={tab === "visibility" ? "space-y-4" : "hidden"}>
             {/* Organization & visibility */}
-            <Section
-              title="Organization & visibility"
-              description="Publishing state, storefront placement, and card styling."
-              icon={Eye}
-              tint="slate"
-            >
+            <Section title="Organization & visibility" icon={Eye} tint="slate">
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
@@ -1734,7 +1745,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
             {/* Search engine listing (SEO) */}
             <Section
               title="Search engine listing"
-              description="Control how this product appears in Google and when shared."
+              description="How this product appears in Google and when shared."
               icon={Search}
               tint="teal"
               aside={
@@ -1770,7 +1781,7 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   </div>
                   <div className="mt-1 line-clamp-2 text-[13px] leading-snug text-[#4d5156]">
                     {form.seo_description ||
-                      "Your meta description appears here - a compelling summary encourages clicks from search results."}
+                      "Your meta description appears here."}
                   </div>
                 </div>
 
@@ -1778,24 +1789,21 @@ export const ProductEditorForm = forwardRef<ProductEditorFormHandle, Props>(
                   <label className={labelClass}>SEO title *</label>
                   <input
                     className={fieldClass}
+                    aria-label="SEO title"
                     value={form.seo_title}
                     onChange={(e) => set("seo_title", e.target.value)}
-                    placeholder={form.name || "Product title | Store"}
                   />
                   <p className={hintClass}>
-                    {form.seo_title.length}/60 characters ·{" "}
-                    {form.description.trim()
-                      ? "Tip: lead with the product name."
-                      : "Fill in the description above to generate this with AI."}
+                    {form.seo_title.length}/60 characters
                   </p>
                 </div>
                 <div>
                   <label className={labelClass}>SEO description *</label>
                   <textarea
                     className={`${fieldClass} min-h-[64px] resize-y`}
+                    aria-label="SEO description"
                     value={form.seo_description}
                     onChange={(e) => set("seo_description", e.target.value)}
-                    placeholder="One or two calm sentences describing the product."
                   />
                   <p className={hintClass}>
                     {form.seo_description.length}/160 characters

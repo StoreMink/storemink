@@ -19,14 +19,23 @@ import {
   normalizePlan,
   type Plan,
 } from "@/lib/plans";
+import { Search, ArrowUpCircle, Coins, History } from "lucide-react";
 import {
-  Search,
-  AlertTriangle,
-  ArrowUpCircle,
-  Coins,
-  History,
-} from "lucide-react";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SuspendStoreDialog } from "./stores/[storeId]/suspend-store-dialog";
+
+const PRIMARY = "dash-btn dash-btn-primary pointer-coarse:min-h-11";
+const GHOST = "dash-btn dash-btn-ghost pointer-coarse:min-h-11";
+const DANGER =
+  "inline-flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11";
+const LABEL = "mb-1 block text-sm font-medium text-[var(--dash-text)]";
+const ERROR = "text-sm text-[var(--dash-red)]";
 
 // Badge styling per plan — free is neutral, paid tiers get colour.
 const PLAN_BADGE: Record<Plan, string> = {
@@ -270,7 +279,9 @@ export function StoresConsole({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <input
             className="flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 pl-9 text-sm outline-none placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-100 transition-all shadow-sm"
-            placeholder="Search stores by name or address…"
+            type="search"
+            aria-label="Search stores"
+            placeholder="Search stores"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -348,7 +359,7 @@ export function StoresConsole({
                           </div>
                         ) : (
                           <div className="mt-1 text-xs text-gray-400">
-                            till {formatDate(s.plan_expires_at)}
+                            until {formatDate(s.plan_expires_at)}
                           </div>
                         ))}
                     </td>
@@ -464,126 +475,116 @@ export function StoresConsole({
       </div>
 
       {toPlanChange && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !savingPlan && setToPlanChange(null)}
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next && !savingPlan) setToPlanChange(null);
+          }}
         >
-          <div
-            className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-indigo-600">
-                  <ArrowUpCircle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">
-                    Change plan for {toPlanChange.name}
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Currently on{" "}
-                    <span className="font-medium">
-                      {PLAN_META[normalizePlan(toPlanChange.plan)].name}
-                    </span>
-                    {toPlanChange.plan_expires_at
-                      ? ` (till ${formatDate(toPlanChange.plan_expires_at)})`
-                      : ""}
-                    . Changes apply immediately; downgrades never delete data.
-                  </p>
-                </div>
-              </div>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Change plan for {toPlanChange.name}</DialogTitle>
+              <DialogDescription>
+                Currently on {PLAN_META[normalizePlan(toPlanChange.plan)].name}
+                {toPlanChange.plan_expires_at
+                  ? ` (until ${formatDate(toPlanChange.plan_expires_at)})`
+                  : ""}
+                . Changes apply at once; downgrades never delete data.
+              </DialogDescription>
+            </DialogHeader>
 
-              <div className="mt-5 space-y-2">
-                {PLAN_IDS.map((p) => {
-                  const meta = PLAN_META[p];
-                  const active = targetPlan === p;
-                  const isCurrent = normalizePlan(toPlanChange.plan) === p;
-                  return (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setTargetPlan(p)}
-                      className={`w-full rounded-lg border p-3 text-left transition-colors ${
-                        active
-                          ? "border-indigo-500 ring-2 ring-indigo-100 bg-indigo-50/40"
-                          : "border-gray-200 hover:border-gray-300"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-gray-900">
-                          {meta.name}
-                          {isCurrent && (
-                            <span className="ml-2 text-xs font-medium text-gray-400">
-                              current
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-sm text-gray-600">
-                          ₹{meta.monthlyInr.toLocaleString("en-IN")}/mo
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-xs text-gray-500">
-                        {meta.tagline}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {targetPlan !== "free" && (
-                <div className="mt-5">
-                  <label className="text-sm font-medium text-gray-700">
-                    Duration
-                  </label>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {PLAN_DURATIONS.map((d) => (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => setDuration(d.id)}
-                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                          duration === d.id
-                            ? "bg-indigo-600 text-white"
-                            : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                        }`}
-                      >
-                        {d.label}
-                      </button>
-                    ))}
-                  </div>
-                  {duration === "custom" && (
-                    <input
-                      type="date"
-                      className="mt-3 h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
-                      value={customDate}
-                      onChange={(e) => setCustomDate(e.target.value)}
-                    />
-                  )}
-                  {(() => {
-                    const preview = expiryPreview();
-                    return preview ? (
-                      <p className="mt-2 text-xs text-gray-500">{preview}</p>
-                    ) : null;
-                  })()}
-                </div>
-              )}
-
-              {planError && (
-                <p className="mt-3 text-sm text-red-600">{planError}</p>
-              )}
+            <div className="space-y-2">
+              {PLAN_IDS.map((p) => {
+                const meta = PLAN_META[p];
+                const active = targetPlan === p;
+                const isCurrent = normalizePlan(toPlanChange.plan) === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => setTargetPlan(p)}
+                    className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                      active
+                        ? "border-indigo-500 ring-2 ring-indigo-100 bg-indigo-50/40"
+                        : "border-gray-200 hover:border-gray-300"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-gray-900">
+                        {meta.name}
+                        {isCurrent && (
+                          <span className="ml-2 text-xs font-medium text-gray-400">
+                            current
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-sm text-gray-600">
+                        ₹{meta.monthlyInr.toLocaleString("en-IN")}/mo
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      {meta.tagline}
+                    </p>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4">
+            {targetPlan !== "free" && (
+              <div>
+                <p className={LABEL}>Duration</p>
+                <div className="flex flex-wrap gap-2">
+                  {PLAN_DURATIONS.map((d) => (
+                    <button
+                      key={d.id}
+                      type="button"
+                      aria-pressed={duration === d.id}
+                      onClick={() => setDuration(d.id)}
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                        duration === d.id
+                          ? "bg-indigo-600 text-white"
+                          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                      }`}
+                    >
+                      {d.label}
+                    </button>
+                  ))}
+                </div>
+                {duration === "custom" && (
+                  <input
+                    type="date"
+                    aria-label="Expiry date"
+                    className="dash-input mt-3 w-full"
+                    value={customDate}
+                    onChange={(e) => setCustomDate(e.target.value)}
+                  />
+                )}
+                {(() => {
+                  const preview = expiryPreview();
+                  return preview ? (
+                    <p className="mt-2 text-xs text-[var(--dash-text-2)]">
+                      {preview}
+                    </p>
+                  ) : null;
+                })()}
+              </div>
+            )}
+
+            {planError && <p className={ERROR}>{planError}</p>}
+
+            <DialogFooter>
               <button
-                className="px-4 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+                type="button"
+                className={GHOST}
                 onClick={() => setToPlanChange(null)}
                 disabled={savingPlan}
               >
                 Cancel
               </button>
               <button
-                className="px-4 py-2 rounded-md text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                className={PRIMARY}
                 disabled={savingPlan}
                 onClick={confirmPlanChange}
               >
@@ -591,9 +592,9 @@ export function StoresConsole({
                   ? "Saving…"
                   : `Set to ${PLAN_META[targetPlan].name}`}
               </button>
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {toSuspend && (
@@ -609,159 +610,131 @@ export function StoresConsole({
       )}
 
       {toDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !deleting && setToDelete(null)}
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next && !deleting) setToDelete(null);
+          }}
         >
-          <div
-            className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
-                  <AlertTriangle className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">
-                    Permanently delete {toDelete.name}?
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    This erases the store and <strong>all of its data</strong> -
-                    products, categories, blogs, pages, menus, coupons and
-                    uploaded media - plus every login for it (owner
-                    {toDelete.owner_email ? ` ${toDelete.owner_email}` : ""},
-                    staff and customers). This <strong>cannot be undone</strong>
-                    .
-                  </p>
-                </div>
-              </div>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Permanently delete {toDelete.name}?</DialogTitle>
+              <DialogDescription>
+                This erases the store, all its data and every login for it
+                {toDelete.owner_email
+                  ? `, including ${toDelete.owner_email}`
+                  : ""}
+                . It cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
 
-              <div className="mt-5">
-                <label className="text-sm font-medium text-gray-700">
-                  Type{" "}
-                  <span className="font-mono font-semibold text-gray-900">
-                    {toDelete.slug}
-                  </span>{" "}
-                  to confirm
-                </label>
-                <input
-                  autoFocus
-                  className="mt-2 h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-red-400 focus:ring-4 focus:ring-red-50"
-                  value={confirmText}
-                  onChange={(e) => setConfirmText(e.target.value)}
-                  placeholder={toDelete.slug}
-                  disabled={deleting}
-                />
-                {deleteError && (
-                  <p className="mt-2 text-sm text-red-600">{deleteError}</p>
-                )}
-              </div>
+            <div>
+              <label htmlFor="delete-store-confirm" className={LABEL}>
+                Type{" "}
+                <span className="font-mono font-semibold">{toDelete.slug}</span>{" "}
+                to confirm
+              </label>
+              <input
+                id="delete-store-confirm"
+                className="dash-input w-full"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                autoComplete="off"
+                disabled={deleting}
+              />
             </div>
+            {deleteError && <p className={ERROR}>{deleteError}</p>}
 
-            <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4">
+            <DialogFooter>
               <button
-                className="px-4 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+                type="button"
+                className={GHOST}
                 onClick={() => setToDelete(null)}
                 disabled={deleting}
               >
                 Cancel
               </button>
               <button
-                className="px-4 py-2 rounded-md text-sm font-semibold text-white bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                className={DANGER}
                 disabled={deleting || confirmText.trim() !== toDelete.slug}
                 onClick={confirmDelete}
               >
                 {deleting ? "Deleting…" : "Delete forever"}
               </button>
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
       {toGrant && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !granting && setToGrant(null)}
+        <Dialog
+          open
+          onOpenChange={(next) => {
+            if (!next && !granting) setToGrant(null);
+          }}
         >
-          <div
-            className="w-full max-w-md rounded-xl bg-white shadow-xl border border-gray-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-6">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-50 text-amber-600">
-                  <Coins className="h-5 w-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900">
-                    Grant Mink credits to {toGrant.name}
-                  </h2>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Free of cost, never expire, recorded in the credit ledger
-                    with your email. Current balance:{" "}
-                    <span className="font-medium">
-                      {toGrant.credit_balance}
-                    </span>
-                    .
-                  </p>
-                </div>
-              </div>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Grant Mink credits to {toGrant.name}</DialogTitle>
+              <DialogDescription>
+                Free credits that never expire, recorded under your email.
+                Current balance: {toGrant.credit_balance}.
+              </DialogDescription>
+            </DialogHeader>
 
-              <div className="mt-5 space-y-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700">
-                    Credits
-                  </label>
-                  <input
-                    autoFocus
-                    type="number"
-                    min={1}
-                    step={1}
-                    className="mt-2 h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-50"
-                    value={grantAmount}
-                    onChange={(e) => setGrantAmount(e.target.value)}
-                    placeholder="e.g. 50"
-                    disabled={granting}
-                  />
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-700">
-                    Note (optional)
-                  </label>
-                  <input
-                    className="mt-2 h-10 w-full rounded-md border border-gray-300 px-3 text-sm outline-none focus:border-amber-400 focus:ring-4 focus:ring-amber-50"
-                    value={grantNote}
-                    onChange={(e) => setGrantNote(e.target.value)}
-                    placeholder="e.g. onboarding goodwill"
-                    maxLength={200}
-                    disabled={granting}
-                  />
-                </div>
-                {grantError && (
-                  <p className="text-sm text-red-600">{grantError}</p>
-                )}
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="grant-credits-amount" className={LABEL}>
+                  Credits
+                </label>
+                <input
+                  id="grant-credits-amount"
+                  type="number"
+                  min={1}
+                  step={1}
+                  className="dash-input w-full"
+                  value={grantAmount}
+                  onChange={(e) => setGrantAmount(e.target.value)}
+                  disabled={granting}
+                />
               </div>
+              <div>
+                <label htmlFor="grant-credits-note" className={LABEL}>
+                  Note (optional)
+                </label>
+                <input
+                  id="grant-credits-note"
+                  className="dash-input w-full"
+                  value={grantNote}
+                  onChange={(e) => setGrantNote(e.target.value)}
+                  maxLength={200}
+                  disabled={granting}
+                />
+              </div>
+              {grantError && <p className={ERROR}>{grantError}</p>}
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4">
+            <DialogFooter>
               <button
-                className="px-4 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100"
+                type="button"
+                className={GHOST}
                 onClick={() => setToGrant(null)}
                 disabled={granting}
               >
                 Cancel
               </button>
               <button
-                className="px-4 py-2 rounded-md text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                type="button"
+                className={PRIMARY}
                 disabled={granting || !grantAmount.trim()}
                 onClick={confirmGrant}
               >
                 {granting ? "Granting…" : "Grant credits"}
               </button>
-            </div>
-          </div>
-        </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </div>
   );

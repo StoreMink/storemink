@@ -86,10 +86,9 @@ export function DeleteThemeDialog({
         <DialogHeader>
           <DialogTitle>Delete {name} for good?</DialogTitle>
           <DialogDescription>
-            This removes the theme, its chat, screenshots, designs, previews,
-            checks and its published release. It can&apos;t be undone. A theme a
-            store uses can&apos;t be deleted. Published pictures are kept,
-            because stores may still show them.
+            This erases the theme, its chat, designs, checks and release. It
+            can&apos;t be undone. A theme a store uses can&apos;t be deleted.
+            Published pictures are kept.
           </DialogDescription>
         </DialogHeader>
         <label
@@ -121,8 +120,7 @@ export function DeleteThemeDialog({
         </label>
         {confirmation && confirmation !== themeId ? (
           <p id="delete-theme-mismatch" className="studio-reason">
-            That doesn&apos;t match yet: type {themeId} exactly, with the same
-            letters, to delete the theme.
+            That doesn&apos;t match yet: type {themeId} exactly.
           </p>
         ) : null}
         {error ? (

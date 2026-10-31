@@ -6,8 +6,8 @@ export default function MinkWatchesPage() {
       <header>
         <h1 className="text-2xl font-semibold">Mink watches</h1>
         <p className="mt-2 text-muted-foreground">
-          Private daily or weekly checks, enabled by you. No automatic changes
-          to your business.
+          Private daily or weekly checks. Mink never changes your business on
+          its own.
         </p>
       </header>
       <MinkWatchManager />

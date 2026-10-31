@@ -406,7 +406,7 @@ export function BlogsManagementView({
           <Search className="h-4 w-4 shrink-0 opacity-50" />
           <input
             type="text"
-            placeholder="Search title, tags, categories..."
+            placeholder="Search blog posts"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />

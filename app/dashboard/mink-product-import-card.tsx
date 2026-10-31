@@ -94,10 +94,9 @@ export function MinkProductImportCard({
         errors · {current.warningCount} warnings
       </p>
       <p className="mt-2 text-[#666]">
-        Imports new products only. Existing product handles are skipped. Status,
-        prices, categories, variants and other supplied fields follow the
-        product CSV importer, including publication when Status is published.
-        Closing chat does not stop a queued import.
+        Imports new products only; existing handles are skipped. Rows with
+        Status published go live. Closing chat doesn&apos;t stop a queued
+        import.
       </p>
       {current.changes.length > 0 && (
         <details className="mt-2">

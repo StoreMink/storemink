@@ -39,7 +39,9 @@ export function PeopleSearch({
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
       <input
         className="h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 pl-9 text-sm shadow-sm outline-none transition-all placeholder:text-slate-400 focus:border-slate-300 focus:ring-4 focus:ring-slate-100"
-        placeholder="Search by name, email or store…"
+        type="search"
+        aria-label="Search people"
+        placeholder="Search people"
         value={value}
         onChange={(e) => setValue(e.target.value)}
       />

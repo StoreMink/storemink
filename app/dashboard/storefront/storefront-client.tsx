@@ -16,7 +16,6 @@ import { switchStoreTheme } from "@/app/actions/theme-actions";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -165,7 +164,7 @@ export function StorefrontClient({
       // "In place", not "live": a first theme usually lands on a store that
       // has not opened yet, so nobody but the owner sees it so far.
       toast.warning(
-        "Your new theme is in place, but some of its starting content couldn't be added. You can add it in the Website Builder.",
+        "Your new theme is in place, but some starting content couldn't be added.",
       );
     }
     router.refresh();
@@ -177,8 +176,8 @@ export function StorefrontClient({
         <h1>Storefront</h1>
         <p>
           {pending
-            ? "Choose how your store looks to customers. You choose your theme once; your products, pages and settings stay yours."
-            : "How your store looks to customers. Customise it with Mink AI, or edit any page in the Website Builder."}
+            ? "Choose how your store looks to customers. You choose your theme once."
+            : "How your store looks to customers."}
         </p>
       </header>
 
@@ -220,10 +219,10 @@ export function StorefrontClient({
                 </p>
                 <p className="mt-1 text-sm leading-6 text-[#5b6472]">
                   Until you do, your storefront shows a &ldquo;store in
-                  progress&rdquo; page instead of your shop.{" "}
+                  progress&rdquo; page.{" "}
                   {canManage
-                    ? "Choose a theme from the library below. You choose it once: after that you change how your store looks with Customise storefront and the Website Builder."
-                    : "Someone who manages your storefront can choose one from the library below."}
+                    ? "Choose one below. You choose it once."
+                    : "Someone who manages your storefront can choose one below."}
                 </p>
               </div>
             </div>
@@ -451,7 +450,6 @@ export function StorefrontClient({
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>Use {target?.name}?</DialogTitle>
-            <DialogDescription>Here is what happens.</DialogDescription>
           </DialogHeader>
           <ul className="space-y-2 text-sm leading-6 text-[#374151]">
             {lines.map((line) => (

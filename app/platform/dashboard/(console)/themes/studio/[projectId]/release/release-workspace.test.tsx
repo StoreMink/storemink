@@ -126,7 +126,7 @@ describe("Publish", () => {
       within(dialog).getByText("Publish Design 2 (made 11:40)?"),
     ).toBeTruthy();
     expect(dialog.textContent).toContain(
-      `It appears in ${PUBLISH_REACH}, with a live demo store. Stores that install it keep this exact version. You can stop offering it at any time.`,
+      `It appears in ${PUBLISH_REACH}, with a live demo store. Stores that install it keep this exact version.`,
     );
     expect(
       within(dialog).getByText("2 warnings go live with it:"),
@@ -274,7 +274,7 @@ describe("Publish", () => {
       within(dialog).getByText("Re-check Design 2 before publishing?"),
     ).toBeTruthy();
     expect(dialog.textContent).toContain(
-      "StoreMink was updated since these checks. Design 2 is re-checked on today's build first, about 3 to 5 minutes; you can leave this page, and we'll tell you when it's ready to publish. Nothing is redrawn.",
+      "StoreMink was updated since these checks. Design 2 is re-checked on today's build first, about 3 to 5 minutes. Nothing is redrawn, and we'll tell you when it's ready to publish.",
     );
     // The warnings wait for the re-check.
     expect(within(dialog).queryByText(/go live with it/)).toBeNull();

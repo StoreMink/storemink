@@ -42,8 +42,8 @@ export default async function PlatformMinkRunsPage({
           Mink AI runs
         </h1>
         <p className="mt-1 max-w-4xl text-sm text-slate-500">
-          Redacted operational telemetry across stores. Prompts, answers, tool
-          arguments, tool results, and model reasoning are never shown here.
+          Redacted telemetry across stores. Prompts, answers, tool data and
+          model reasoning are never shown.
         </p>
       </header>
 
@@ -73,7 +73,6 @@ export default async function PlatformMinkRunsPage({
             name="actor"
             defaultValue={filters.actor}
             maxLength={128}
-            placeholder="Exact signed-in admin"
             className="mt-1 block h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-900 outline-none focus:border-slate-400"
           />
         </label>
@@ -323,8 +322,7 @@ export default async function PlatformMinkRunsPage({
         </div>
         {data.runs.length === 100 ? (
           <p className="border-t border-slate-100 px-4 py-3 text-xs text-slate-400">
-            Showing the 100 most recent matching runs. Narrow the filters for a
-            smaller operational slice.
+            Showing the 100 most recent matching runs.
           </p>
         ) : null}
       </section>

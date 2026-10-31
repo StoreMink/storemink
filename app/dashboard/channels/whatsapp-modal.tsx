@@ -11,8 +11,17 @@ import {
   RefreshCw,
   ShieldCheck,
   Unplug,
-  X,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   connectWhatsApp,
   disconnectWhatsApp,
@@ -148,7 +157,7 @@ export function WhatsAppModal({
   async function handleDisconnect() {
     if (
       !window.confirm(
-        "Disconnect WhatsApp? Order updates and the inbox stop for this number. Your Meta account and number are untouched - you can reconnect any time.",
+        "Disconnect WhatsApp? Order updates and the inbox stop for this number. Your Meta account and number are untouched; you can reconnect any time.",
       )
     )
       return;
@@ -175,17 +184,16 @@ export function WhatsAppModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <div
-        className="w-full max-w-xl rounded-xl bg-white shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-[rgba(17,24,39,0.08)] p-5">
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-[7.5rem] items-center justify-center">
+            <span className="flex h-10 w-[7.5rem] shrink-0 items-center justify-center">
               {/* The logo the card shows, sized like the Shiprocket and Twilio
                   dialogs' (24px tall). An SVG must skip the optimizer
                   (ChannelLogo explains why). */}
@@ -197,103 +205,91 @@ export function WhatsAppModal({
                 unoptimized
               />
             </span>
-            <div>
-              <h2 className="text-base font-semibold text-[#111827]">
-                WhatsApp
-              </h2>
-              <p className="text-xs text-[#5b6472]">
+            <div className="grid gap-1">
+              <DialogTitle>WhatsApp</DialogTitle>
+              <DialogDescription>
                 Your own number, connected through Meta
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#6b7280] hover:bg-[#f3f4f6]"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="space-y-4 p-5">
-          {state.connected ? (
-            <>
-              <ConnectedView
-                state={state}
-                canManage={canManage}
-                busy={busy}
-                onSetupTemplates={handleSetupTemplates}
-              />
-              {/* The one setting that belongs to this channel. Rendered by
-                  the shared registry card so the select, its plan lock and
-                  its save all behave exactly as on every other settings
-                  page — and so the Help guide's "Channels → WhatsApp →
-                  Settings" names a control that exists. */}
-              {settings && settings.settings.length > 0 && (
-                <FeatureToggles
-                  title="Settings"
-                  subtitle="Applies to the next message sent."
-                  successMessage="WhatsApp settings saved."
-                  plan={settings.plan}
-                  initialSettings={settings.settings}
-                  canManage={canManage}
-                />
-              )}
-            </>
-          ) : (
-            <ConnectView
+        {state.connected ? (
+          <>
+            <ConnectedView
               state={state}
-              coexistence={coexistence}
-              onCoexistence={setCoexistence}
+              canManage={canManage}
+              busy={busy}
+              onSetupTemplates={handleSetupTemplates}
             />
-          )}
+            {/* The one setting that belongs to this channel. Rendered by
+                the shared registry card so the select, its plan lock and
+                its save all behave exactly as on every other settings
+                page, and so the Help guide's "Channels → WhatsApp →
+                Settings" names a control that exists. */}
+            {settings && settings.settings.length > 0 && (
+              <FeatureToggles
+                title="Settings"
+                subtitle="Applies to the next message sent."
+                successMessage="WhatsApp settings saved."
+                plan={settings.plan}
+                initialSettings={settings.settings}
+                canManage={canManage}
+              />
+            )}
+          </>
+        ) : (
+          <ConnectView
+            state={state}
+            coexistence={coexistence}
+            onCoexistence={setCoexistence}
+          />
+        )}
 
-          {canManage && (
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[rgba(17,24,39,0.08)] pt-4">
-              {state.connected ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleDisconnect}
-                    disabled={busy}
-                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  >
-                    <Unplug className="h-4 w-4" /> Disconnect
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleRefresh}
-                    disabled={busy}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-[rgba(17,24,39,0.16)] px-3 py-2 text-sm font-medium text-[#111827] hover:bg-[#f9fafb] disabled:opacity-50"
-                  >
-                    <RefreshCw className="h-4 w-4" /> Refresh from Meta
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleToggle}
-                    disabled={busy || state.status === "needs_reauth"}
-                    className="rounded-md bg-[#111827] px-3 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-50"
-                  >
-                    {state.enabled ? "Pause" : "Resume"}
-                  </button>
-                </>
-              ) : (
-                <button
+        {canManage && (
+          <DialogFooter>
+            {state.connected ? (
+              <>
+                <Button
                   type="button"
-                  onClick={handleConnect}
-                  disabled={busy || !canConnect}
-                  className="inline-flex items-center gap-2 rounded-md bg-[#25D366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1fb857] disabled:opacity-50"
+                  variant="ghost"
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700 sm:mr-auto"
+                  onClick={handleDisconnect}
+                  disabled={busy}
                 >
-                  <MessageCircle className="h-4 w-4" />
-                  {busy ? "Waiting for Meta…" : "Connect with Meta"}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+                  <Unplug /> Disconnect
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleRefresh}
+                  disabled={busy}
+                >
+                  <RefreshCw /> Refresh from Meta
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleToggle}
+                  disabled={busy || state.status === "needs_reauth"}
+                >
+                  {state.enabled ? "Pause" : "Resume"}
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="button"
+                onClick={handleConnect}
+                disabled={busy || !canConnect}
+                className="bg-[#25D366] text-white hover:bg-[#1fb857]"
+              >
+                <MessageCircle />
+                {busy ? "Waiting for Meta…" : "Connect with Meta"}
+              </Button>
+            )}
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -386,9 +382,15 @@ function ConnectedView({
       <div className="rounded-lg border border-[rgba(17,24,39,0.08)] p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-[#111827]">
-              Order update templates
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-semibold text-[#111827]">
+                Order update templates
+              </p>
+              <InfoTip label="About order update templates">
+                Meta usually answers within a day. Choose which message goes to
+                whom under Settings → Notifications.
+              </InfoTip>
+            </div>
             <p className="mt-1 text-xs text-[#5b6472]">
               {state.templates.approved} of {state.templates.total} approved by
               Meta
@@ -398,16 +400,13 @@ function ConnectedView({
               {state.templates.unsubmitted > 0
                 ? ` · ${state.templates.unsubmitted} still to submit`
                 : ""}
-              . Meta usually answers within a day; each message sends only once
-              its template is approved. Which message goes to whom is under
-              Settings → Notifications.{" "}
+              . Each message sends once Meta approves its template.{" "}
               <Link
                 href="/dashboard/channels/whatsapp/templates"
                 className="font-medium text-[#111827] underline"
               >
                 Manage templates
-              </Link>{" "}
-              to see every one, with Meta&apos;s answer, and to add your own.
+              </Link>
             </p>
           </div>
           {/* ★ Offered whenever Meta holds nothing for a template: never
@@ -436,22 +435,26 @@ function ConnectedView({
             Chat link and QR code
           </p>
           <p className="mb-3 mt-1 text-xs text-[#5b6472]">
-            Print the code for your counter or packaging, or share the link.
-            Scanning it opens a chat with your number; replies arrive in Inbox.
+            Print it for your counter or packaging, or share the link. Replies
+            arrive in Inbox.
           </p>
           <WhatsAppQr href={state.chatLink} />
         </div>
       )}
 
       <div className="rounded-lg border border-[rgba(17,24,39,0.08)] p-4">
-        <p className="text-sm font-semibold text-[#111827]">
-          One thing Meta needs from you
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-sm font-semibold text-[#111827]">
+            One thing Meta needs from you
+          </p>
+          <InfoTip label="About WhatsApp billing">
+            Add it in WhatsApp Manager under Billing &amp; payments. Replies to
+            customers who message you first are free.
+          </InfoTip>
+        </div>
         <p className="mt-1 text-xs text-[#5b6472]">
-          Meta bills order updates and offers to <em>your</em> account, not to
-          StoreMink. Add a payment method in WhatsApp Manager (Billing &amp;
-          payments) or nothing is sent. Replies to customers who message you
-          first are free.
+          Meta bills order updates and offers to <em>your</em> account. Add a
+          payment method in WhatsApp Manager, or nothing is sent.
         </p>
       </div>
     </>
@@ -470,9 +473,8 @@ function ConnectView({
   return (
     <>
       <p className="text-sm text-[#5b6472]">
-        Connect the WhatsApp number customers message you on. Meta&apos;s window
-        asks you to log in with Facebook, pick your business, enter the number
-        and confirm it with a code. StoreMink never sees your Facebook password.
+        You&apos;ll log in with Facebook in Meta&apos;s window and confirm the
+        number with a code. StoreMink never sees your password.
       </p>
 
       {!state.planAllows && (
@@ -508,8 +510,8 @@ function ConnectView({
               Yes - I use the app on my phone
             </span>
             <span className="mt-0.5 block text-xs text-[#5b6472]">
-              Keep replying from your phone; StoreMink sends updates and shows
-              the same chats in your dashboard. Group chats aren&apos;t synced.
+              Keep replying from your phone; the same chats show in your
+              dashboard. Group chats aren&apos;t synced.
             </span>
           </span>
         </label>
@@ -526,8 +528,8 @@ function ConnectView({
               No - it&apos;s a new number, or not on WhatsApp
             </span>
             <span className="mt-0.5 block text-xs text-[#5b6472]">
-              The number is used through StoreMink only. A number already on the
-              normal WhatsApp app has to be removed from it first.
+              The number works through StoreMink only. Remove it from the normal
+              WhatsApp app first.
             </span>
           </span>
         </label>

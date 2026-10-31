@@ -49,9 +49,8 @@ export function AnalyticsSettingsPanel({
         <div>
           <h2 className="text-lg font-bold">Analytics modules</h2>
           <p className="mt-1 max-w-2xl text-sm text-[var(--stq-muted)]">
-            Turning off a shipped module removes its merchant entry points.
-            Planned modules can be prepared here, but do nothing until their
-            storefront or dashboard implementation is deployed.
+            Turning off a module removes it for merchants. Planned modules do
+            nothing until they ship.
           </p>
         </div>
         {!canManage ? (

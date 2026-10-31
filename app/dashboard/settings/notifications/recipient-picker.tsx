@@ -390,9 +390,8 @@ export function RecipientPicker({
                   ))}
                   {rule.scope === "event_location" && (
                     <p className="px-2 pb-1 pt-1 text-[11.5px] leading-snug text-[var(--dash-text-3)]">
-                      Staff assigned to a location hear only about theirs.
-                      Anyone not assigned to a location still hears everything,
-                      and an event with no location reaches everyone.
+                      Location staff hear only about their location. Others, and
+                      events with no location, reach everyone.
                     </p>
                   )}
                 </div>
@@ -401,8 +400,8 @@ export function RecipientPicker({
               <p className="mt-1.5 flex items-start gap-1.5 border-t border-[var(--dash-border)] px-2 pb-1 pt-2 text-[11.5px] leading-snug text-[var(--dash-text-3)]">
                 <Info className="mt-0.5 h-3 w-3 shrink-0" />
                 <span>
-                  Only people who can view {sectionLabel} can be notified about
-                  it. Pick nobody and everyone eligible gets it.
+                  Only people who can view {sectionLabel} are notified. Pick
+                  nobody to notify everyone eligible.
                 </span>
               </p>
             </div>

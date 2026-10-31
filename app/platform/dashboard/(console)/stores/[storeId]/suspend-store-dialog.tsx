@@ -39,10 +39,8 @@ export const SUSPEND_DIALOG_TEXT = {
   useBlock:
     "Use Suspend on a complaint instead, so that StoreMink keeps a copy of the store and tells its owners.",
   goToBlock: "Suspend on a complaint",
-  /** Added: the note's label and hint (design 6.7 says only "needs a note"). */
+  /** Added: the note's label (design 6.7 says only "needs a note"). */
   noteLabel: "Note",
-  notePlaceholder:
-    "For example: the owner asked us to close the store for now.",
   /** The same sentence `setStoreStatus` answers an empty note with. */
   noteMissing: "Write why you are suspending this store.",
   confirm: "Suspend store",
@@ -169,7 +167,6 @@ export function SuspendStoreDialog({
               className="dash-input w-full"
               rows={3}
               value={note}
-              placeholder={SUSPEND_DIALOG_TEXT.notePlaceholder}
               onChange={(e) => setNote(e.target.value)}
               disabled={pending}
             />

@@ -439,9 +439,8 @@ export default async function StoreDetailPage({
                 </>
               ) : (
                 <p role="status" className="text-sm text-[var(--dash-text-2)]">
-                  This store&apos;s billing couldn&apos;t be read just now, so
-                  its refunds and billing tools aren&apos;t shown. Refresh the
-                  page to try again.
+                  This store&apos;s billing couldn&apos;t be read just now.
+                  Refresh the page to try again.
                 </p>
               )}
             </div>

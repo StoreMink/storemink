@@ -491,7 +491,7 @@ function Badge({ children }: { children: ReactNode }) {
 }
 
 const UNKNOWN_OUTCOME =
-  "We could not confirm whether your storefront was changed. Check Website Builder, or retry here; the same apply cannot happen twice.";
+  "We could not confirm whether your storefront changed. Check Website Builder, or retry; it can't apply twice.";
 
 class ActionRequestError extends Error {
   constructor(

@@ -588,10 +588,14 @@ export function OrderDetailDrawer({
                       ["pending", "processing"].includes(detail.status) ? (
                         editingPhone ? (
                           <div className="mt-2 rounded-md bg-muted/40 p-2">
-                            <label className="text-xs font-medium text-muted-foreground">
+                            <label
+                              htmlFor="order-delivery-phone"
+                              className="text-xs font-medium text-muted-foreground"
+                            >
                               Delivery phone
                             </label>
                             <input
+                              id="order-delivery-phone"
                               type="tel"
                               inputMode="tel"
                               autoFocus
@@ -599,7 +603,6 @@ export function OrderDetailDrawer({
                               onChange={(event) =>
                                 setPhoneDraft(event.target.value)
                               }
-                              placeholder="98765 43210"
                               className="mt-1 h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
                             />
                             <div className="mt-2 flex gap-2">

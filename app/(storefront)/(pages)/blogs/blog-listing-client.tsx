@@ -277,7 +277,8 @@ export default function BlogListingClient({
               id="blog-search-input"
               type="text"
               className="blog-search-input"
-              placeholder="Search articles..."
+              placeholder="Search articles"
+              aria-label="Search articles"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />

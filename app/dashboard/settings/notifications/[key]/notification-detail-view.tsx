@@ -361,7 +361,7 @@ export function NotificationDetailView({
             hint={
               notification.configurable
                 ? "Turn off to stop notifying. It's still recorded in Activity."
-                : "This one can't be switched off - you'd be blind to a change you need to see."
+                : "This one can't be switched off."
             }
           >
             <div className="flex items-center gap-2.5 pt-1">
@@ -476,8 +476,7 @@ export function NotificationDetailView({
 
           {current.key === "customer" && (
             <p className="text-[12.5px] text-[var(--dash-text-3)]">
-              Goes to the shopper this happened to - there&apos;s no recipient
-              list to choose.
+              Sent to the shopper this is about.
             </p>
           )}
 
@@ -571,6 +570,7 @@ export function NotificationDetailView({
                   <>
                     <Field label="Cc" hint="Optional. Comma-separated.">
                       <input
+                        aria-label="Cc"
                         value={template.cc ?? ""}
                         readOnly={readOnly}
                         onChange={(e) =>
@@ -581,6 +581,7 @@ export function NotificationDetailView({
                     </Field>
                     <Field label="Bcc" hint="Optional. Comma-separated.">
                       <input
+                        aria-label="Bcc"
                         value={template.bcc ?? ""}
                         readOnly={readOnly}
                         onChange={(e) =>
@@ -596,14 +597,14 @@ export function NotificationDetailView({
                   label={activeChannel === "email" ? "Subject" : "Title"}
                   hint={
                     wordingLocked
-                      ? "StoreMink writes this email, so its wording is fixed. You can still choose who receives it."
+                      ? "StoreMink writes this email, so its wording is fixed."
                       : "Clear it to fall back to the built-in wording."
                   }
                 >
                   <input
                     value={template.subject ?? ""}
+                    aria-label={activeChannel === "email" ? "Subject" : "Title"}
                     readOnly={readOnly || wordingLocked}
-                    placeholder={defaults?.subject}
                     onChange={(e) =>
                       setTemplate(activeChannel, { subject: e.target.value })
                     }
@@ -638,14 +639,14 @@ export function NotificationDetailView({
                   label="Message"
                   hint={
                     activeChannel === "email"
-                      ? "HTML. Use <p>, <ul>/<li> and <strong> - the email styles them for you."
+                      ? "HTML: use <p>, <ul>, <li> and <strong>."
                       : "Clear it to fall back to the built-in wording."
                   }
                 >
                   <textarea
                     value={template.body ?? ""}
+                    aria-label="Message"
                     readOnly={readOnly || wordingLocked}
-                    placeholder={defaults?.body}
                     rows={activeChannel === "email" ? 12 : 3}
                     onChange={(e) =>
                       setTemplate(activeChannel, { body: e.target.value })

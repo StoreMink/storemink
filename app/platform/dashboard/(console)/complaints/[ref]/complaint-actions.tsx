@@ -30,7 +30,7 @@ import {
   OUTCOME_LABEL,
   actionedWords,
   blockItemHref,
-  kindHelpParts,
+  KindRadioRow,
 } from "../complaints-console";
 
 // ---------------------------------------------------------------------------
@@ -219,31 +219,15 @@ function KindDialog({
     >
       <fieldset className="grid gap-2">
         <legend className="sr-only">What is it?</legend>
-        {COMPLAINT_KINDS.map((value) => {
-          const { head, rest } = kindHelpParts(value);
-          return (
-            <label
-              key={value}
-              className={`flex cursor-pointer items-start gap-2 rounded-[var(--dash-radius-sm)] border px-3 py-2 text-sm pointer-coarse:min-h-11 ${
-                kind === value
-                  ? "border-[var(--dash-accent)] bg-[var(--dash-accent-soft)]"
-                  : "border-[var(--dash-border-strong)]"
-              }`}
-            >
-              <input
-                type="radio"
-                name="change-kind"
-                value={value}
-                checked={kind === value}
-                onChange={() => setKind(value)}
-                className="mt-1"
-              />
-              <span className="text-[var(--dash-text)]">
-                <span className="font-medium">{head}:</span> {rest}
-              </span>
-            </label>
-          );
-        })}
+        {COMPLAINT_KINDS.map((value) => (
+          <KindRadioRow
+            key={value}
+            kind={value}
+            name="change-kind"
+            checked={kind === value}
+            onSelect={() => setKind(value)}
+          />
+        ))}
       </fieldset>
     </ActionDialog>
   );
@@ -431,7 +415,7 @@ export function ComplaintActions(props: ComplaintActionsProps) {
       {open === "send" && props.email !== null ? (
         <ActionDialog
           title="Send acknowledgement"
-          description={`Send the acknowledgement to ${props.email}? It confirms we received the complaint, gives the reference ${props.reference} with a copy of the complaint as we recorded it, and says when we will resolve it.`}
+          description={`Email ${props.email} the reference ${props.reference}, a copy of the complaint as we recorded it, and when we will resolve it.`}
           confirmLabel="Send"
           onClose={close}
           onSubmit={() =>

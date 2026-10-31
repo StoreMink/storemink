@@ -205,7 +205,7 @@ describe("AuthModal phone sends", () => {
     await flush();
     await enterCode("123456");
     expect(confirm).toHaveBeenCalledWith("123456");
-    expect(screen.getByText("Almost there!")).toBeTruthy();
+    expect(screen.getByText("Almost there")).toBeTruthy();
   });
 
   it("does not resume a code whose wrong-attempt cap is spent", async () => {

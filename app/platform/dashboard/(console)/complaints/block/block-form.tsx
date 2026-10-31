@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2, Search, X } from "lucide-react";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   blockItemAction,
   resolveTargetAction,
@@ -77,15 +78,15 @@ export const STORE_SUPERADMIN_ONLY =
 
 /** Under the unavailable "Tell the store" tick of a member (design 6.5). */
 export const TELL_MEMBER_NOTE =
-  "Only a superadmin can keep a block from the store, and only for a court or government order that says so.";
+  "Only a superadmin can keep a block from the store, when a court or government order says so.";
 
 /** What a superadmin who unticks "Tell the store" reads (design 6.5). */
 export const UNTOLD_WARNING =
-  "Nothing will tell the store: no email, no notice, no label on the item. Use this only when the order says the store must not be told yet. You can tell the store later from the block's page.";
+  "The store gets no email, notice or label on the item. Use this only when an order says so; you can tell it later from the block's page.";
 
 /** A whole store, before it is suspended (design 6.5 with A9: POS). */
 export const STORE_SUSPENSION_TEXT =
-  "Suspending the store closes its storefront, its dashboard and its POS on every address. StoreMink first keeps a copy of everything on it, its Mink AI chats included. Its files stay at their storage addresses: block any image that must stop loading at once as its own item.";
+  "This closes its storefront, its dashboard and its POS on every address, after StoreMink keeps a copy of everything. Its files stay online: block any image that must stop loading as its own item.";
 
 /** The warnings of design 6.5 (the old-storage one is gone, A2). */
 export const WARNING_TEXT: Record<
@@ -97,13 +98,13 @@ export const WARNING_TEXT: Record<
   theme_release:
     "This image belongs to a theme and appears on every store that uses it.",
   bundled:
-    "This image is built into a StoreMink theme and appears on every store that uses it. Every store will show the placeholder. Removing the file itself needs a code change (see the runbook).",
+    "This image is built into a StoreMink theme, so every store using it will show the placeholder. Removing the file needs a code change (see the runbook).",
   external:
     "StoreMink does not store this file. Pages on this store will stop showing it, but it stays at its own address.",
 };
 
 const MESSAGE_HINT =
-  "The store sees this in its dashboard and by email. Do not include the complainant's name or contact details unless they agreed.";
+  "The store sees this. Leave out the complainant's name and contact unless they agreed.";
 const LEGAL_BASIS_HINT = "Order number, date and the law it names";
 const IMAGES_TICK =
   "Also block these images (they stop loading everywhere they are used)";
@@ -609,15 +610,23 @@ export function BlockForm({
           }}
           className="space-y-2"
         >
-          <label htmlFor={addressId} className={LABEL}>
-            Address
-          </label>
+          <div className="mb-1 flex items-center gap-1.5">
+            <label
+              htmlFor={addressId}
+              className="text-sm font-medium text-[var(--dash-text)]"
+            >
+              Address
+            </label>
+            <InfoTip label="About the address">
+              Paste the address of a store page or an image.
+            </InfoTip>
+          </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               id={addressId}
               className={INPUT}
               value={address}
-              placeholder="Paste a store address or an image address"
+              placeholder="https://"
               onChange={(e) => setAddress(e.target.value)}
               disabled={busy}
               autoComplete="off"

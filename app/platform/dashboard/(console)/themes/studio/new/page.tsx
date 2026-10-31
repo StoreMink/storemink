@@ -227,8 +227,8 @@ async function NewTheme({ from }: { from: string | string[] | undefined }) {
       <header className="dash-page-header">
         <h1>New theme</h1>
         <p>
-          Describe the store this theme is for. Theme Studio designs it, draws
-          the pictures and checks every page. {buildTimeWords(range)}
+          Theme Studio designs the theme, draws its pictures and checks every
+          page. {buildTimeWords(range)}
         </p>
       </header>
       {source ? (

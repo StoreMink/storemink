@@ -783,8 +783,18 @@
   padding: 0 10px;
   font-size: 14px;
 }
-.hca-cat-add input:nth-child(3) {
+.hca-cat-add > :nth-child(3) {
   grid-column: 1 / -1;
+}
+.hca-cat-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--a-soft);
+}
+.hca-cat-add > button {
+  align-self: end;
 }
 .hca-cat-list {
   list-style: none;

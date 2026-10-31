@@ -11,9 +11,6 @@ export default async function InventorySettingsPage() {
     <div className="dash-page-enter">
       <header className="dash-page-header">
         <h1>Inventory Settings</h1>
-        <p>
-          Configure how inventory tracking and display behaves on your store
-        </p>
       </header>
 
       <div className="max-w-2xl mt-6">

@@ -21,9 +21,7 @@ export function ChooseThemeFirst({ canChoose }: { canChoose: boolean }) {
             </div>
             <h2 className="dash-empty-title">Choose a theme first</h2>
             <p className="dash-empty-text">
-              The Website Builder edits the pages your theme gives your store,
-              so it opens once you&rsquo;ve chosen one. Until then your
-              storefront shows a store-in-progress page.
+              The Website Builder opens once your store has a theme.
             </p>
             {canChoose ? (
               <Link

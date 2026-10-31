@@ -191,7 +191,7 @@ export function MediaLibraryPicker({
           ) : loaded && loaded.items.length === 0 ? (
             <p className="flex h-60 items-center justify-center px-4 text-center text-sm text-[var(--dash-text-3)]">
               {tab === "library"
-                ? "Your Media Library is empty. Upload images under Media, or upload one here instead."
+                ? "Your Media Library is empty. Upload images under Media."
                 : "No product photos yet."}
             </p>
           ) : (

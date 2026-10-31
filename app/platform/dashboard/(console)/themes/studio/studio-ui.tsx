@@ -231,8 +231,8 @@ export function SuperadminOnly() {
           Theme Studio is limited to superadmins
         </h2>
         <p className={`mx-auto mt-1 max-w-md text-sm ${STUDIO_TONE.muted}`}>
-          Studio prompts, reference images and generated drafts are superadmin
-          data. Ask a superadmin if you need a project opened.
+          Theme Studio data is for superadmins. Ask one if you need a theme
+          opened.
         </p>
       </div>
     </div>
@@ -402,17 +402,17 @@ export function isCheckingWork(work: StudioWork | null): boolean {
   );
 }
 
-const AWAY = "This takes about 3 to 5 minutes, and you can leave this page.";
+const AWAY = "About 3 to 5 minutes; you can leave this page.";
 
 const WORK_TEXT: Record<StudioWork, string> = {
-  publish_recheck: `Re-checking on today's StoreMink build before publishing: the pages and the design review are measured again, nothing is redrawn. ${AWAY} Publish again once it is ready.`,
-  check_again: `Checking this design again on today's StoreMink build: the pages and the design review are measured again, nothing is redrawn. ${AWAY}`,
-  checking_version: `Checking the version you made current on today's StoreMink build, with fresh catalogue pictures and the design review. ${AWAY}`,
-  checking_pictures: `Checking your new pictures: one capture of the storefront, then the design review. ${AWAY}`,
+  publish_recheck: `Re-checking on today's StoreMink build before publishing. ${AWAY}`,
+  check_again: `Checking this design again on today's StoreMink build. ${AWAY}`,
+  checking_version: `Checking the design you made current on today's StoreMink build. ${AWAY}`,
+  checking_pictures: `Checking your new pictures. ${AWAY}`,
   capturing:
-    "Capturing the catalogue pictures and checking the theme. You can leave this page and come back.",
+    "Capturing the catalogue pictures and checking the theme. You can leave this page.",
   building:
-    "Building your theme: designing it, drawing missing pictures, checking every page and the design, and fixing what it can by itself. You can leave this page and come back.",
+    "Building your theme: designing, drawing pictures and checking every page. You can leave this page.",
 };
 
 export function workingText(work: StudioWork | null): string {

@@ -75,22 +75,26 @@ export function GroupForm({ group }: Props) {
       <div className="dash-card max-w-[560px] p-6">
         <div className="space-y-4">
           <div>
-            <label className={labelClass}>Name *</label>
+            <label htmlFor="group-name" className={labelClass}>
+              Name *
+            </label>
             <input
+              id="group-name"
               className={fieldClass}
               value={form.name}
               onChange={(e) => set("name", e.target.value)}
-              placeholder="e.g. VIP shoppers"
             />
           </div>
 
           <div>
-            <label className={labelClass}>Description</label>
+            <label htmlFor="group-description" className={labelClass}>
+              Description (optional)
+            </label>
             <input
+              id="group-description"
               className={fieldClass}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="Optional - what this group is for"
             />
           </div>
 

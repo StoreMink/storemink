@@ -12,6 +12,7 @@ import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
 import Placeholder from "@tiptap/extension-placeholder";
 import { TableKit } from "@tiptap/extension-table";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   Heading2,
   Heading3,
@@ -100,7 +101,7 @@ export function ArticleEditor({ articleId, categories }: Props) {
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       TableKit.configure({ table: { resizable: true } }),
       Placeholder.configure({
-        placeholder: "Write the article, or ask AI below to draft it…",
+        placeholder: "Write the article",
       }),
     ],
     editorProps: { attributes: { class: "hca-prose" } },
@@ -305,9 +306,7 @@ export function ArticleEditor({ articleId, categories }: Props) {
             <div className="hca-ai-log">
               {messages.length === 0 ? (
                 <div className="hca-ai-empty">
-                  Ask me to write or edit this article. Try “Write a guide on
-                  connecting a custom domain”, “make it shorter”, or “add a
-                  table of DNS records”.
+                  Ask AI to draft this article or change it.
                 </div>
               ) : (
                 messages.map((m, i) => (
@@ -323,7 +322,8 @@ export function ArticleEditor({ articleId, categories }: Props) {
                 onChange={(e) => setAiPrompt(e.target.value)}
                 disabled={aiBusy}
                 rows={3}
-                placeholder="Ask AI to write or change this article…"
+                aria-label="Ask AI"
+                placeholder="Ask AI to write or edit this article"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) askAi(e);
                 }}
@@ -527,7 +527,6 @@ export function ArticleEditor({ articleId, categories }: Props) {
               <input
                 value={title}
                 onChange={(e) => onTitleChange(e.target.value)}
-                placeholder="How to connect a custom domain"
               />
             </label>
             <label className="hca-field">
@@ -538,7 +537,6 @@ export function ArticleEditor({ articleId, categories }: Props) {
                   setSlugTouched(true);
                   setSlug(slugify(e.target.value));
                 }}
-                placeholder="connect-custom-domain"
               />
             </label>
             <label className="hca-field">
@@ -555,15 +553,21 @@ export function ArticleEditor({ articleId, categories }: Props) {
                 ))}
               </select>
             </label>
-            <label className="hca-field">
-              <span>Excerpt</span>
+            <div className="hca-field">
+              <span className="flex items-center gap-1.5">
+                <label htmlFor="hca-excerpt">Excerpt</label>
+                <InfoTip label="About the excerpt">
+                  A one-line summary, shown in article lists and as the meta
+                  description.
+                </InfoTip>
+              </span>
               <textarea
+                id="hca-excerpt"
                 rows={2}
                 value={excerpt}
                 onChange={(e) => setExcerpt(e.target.value)}
-                placeholder="One-line summary (shown in lists + meta description)."
               />
-            </label>
+            </div>
             <label className="hca-field">
               <span>Status</span>
               <select
@@ -575,13 +579,18 @@ export function ArticleEditor({ articleId, categories }: Props) {
               </select>
             </label>
             <div className="hca-field-group">
-              <div className="hca-group-label">SEO</div>
+              <div className="hca-group-label flex items-center gap-1.5">
+                SEO
+                <InfoTip label="About SEO fields">
+                  Left blank, the SEO title uses the article title and the meta
+                  description uses the excerpt.
+                </InfoTip>
+              </div>
               <label className="hca-field">
                 <span>SEO title</span>
                 <input
                   value={seoTitle}
                   onChange={(e) => setSeoTitle(e.target.value)}
-                  placeholder={title || "Defaults to the title"}
                 />
               </label>
               <label className="hca-field">
@@ -590,7 +599,6 @@ export function ArticleEditor({ articleId, categories }: Props) {
                   rows={2}
                   value={seoDescription}
                   onChange={(e) => setSeoDescription(e.target.value)}
-                  placeholder="Defaults to the excerpt."
                 />
               </label>
             </div>

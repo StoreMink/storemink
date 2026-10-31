@@ -451,13 +451,9 @@ export function CancelRunButton({
           <DialogHeader>
             <DialogTitle>Cancel this step?</DialogTitle>
             <DialogDescription>
-              A waiting step is cancelled at once; a running one stops within a
-              few seconds.{" "}
-              {pictures
-                ? "Pictures already drawn are kept: press Retry on this step to use them. "
-                : ""}
-              If it is part of the automatic checks, they stop with it and the
-              design it was building is shown, with its checks stopped.
+              A waiting step stops at once; a running one within seconds.{" "}
+              {pictures ? "Drawn pictures are kept for Retry. " : ""}
+              Automatic checks stop with it.
             </DialogDescription>
           </DialogHeader>
           {error ? (
@@ -557,12 +553,10 @@ function StopDialog({
         <DialogHeader>
           <DialogTitle>Stop work on {name}?</DialogTitle>
           <DialogDescription>
-            A capture or a design review stops at once; a build step stops
-            within a few seconds. Pictures already drawn are saved, and Continue
-            building reuses them.{" "}
+            Pictures already drawn are saved, and Continue building reuses them.{" "}
             {hasVersion
-              ? "The theme goes back to its last design, so you can change it, check it again or remove it from the list."
-              : "A design it was still checking is shown, with its checks stopped; with none yet, the theme shows as Stopped and Continue building starts it again."}
+              ? "The theme goes back to its last design."
+              : "Any design it was checking is shown; with none, the theme shows as Stopped."}
           </DialogDescription>
         </DialogHeader>
         {error ? (
@@ -719,11 +713,9 @@ function StopAndCheckDialog({
             Stop the stuck work on {name} and check again?
           </DialogTitle>
           <DialogDescription>
-            Nothing new has happened for a while, and the stuck work holds the
-            theme, so a check can&apos;t start beside it. This stops it (a
-            capture or a design review at once, a build step within a few
-            seconds; pictures already drawn are saved), then checks the current
-            design again on today&apos;s StoreMink build, about 3 to 5 minutes.
+            The stuck work holds the theme. This stops it, keeping drawn
+            pictures, then checks the current design again, about 3 to 5
+            minutes.
           </DialogDescription>
         </DialogHeader>
         {phase === "waiting" || (pending && phase !== "confirm") ? (
@@ -734,15 +726,14 @@ function StopAndCheckDialog({
         ) : null}
         {phase === "cancelling" ? (
           <p role="status" className="text-sm">
-            A build step is still finishing its stop. It stops within a few
-            seconds; the theme then shows Stopped, and you can check it again
-            from there.
+            A build step is still finishing its stop. Then the theme shows
+            Stopped and you can check it again.
           </p>
         ) : null}
         {phase === "late" && !error ? (
           <p role="status" className="text-sm">
-            Stopped, but this page hasn&apos;t shown it yet. Reload the page,
-            then check the theme again from the top of the page.
+            Stopped, but this page hasn&apos;t shown it yet. Reload, then check
+            the theme again.
           </p>
         ) : null}
         {error ? (
@@ -836,9 +827,8 @@ function RemoveFromListDialog({
         <DialogHeader>
           <DialogTitle>Remove {name} from the list?</DialogTitle>
           <DialogDescription>
-            It moves to Archived in the Theme Studio list and can&apos;t be
-            changed or published again. Its designs, checks and history are
-            kept; Delete erases them.
+            It moves to Archived and can&apos;t be changed or published again.
+            Its designs, checks and history are kept; Delete erases them.
           </DialogDescription>
         </DialogHeader>
         {error ? (
@@ -1186,9 +1176,8 @@ function PreviewPane({
     return (
       <>
         <p className="studio-notice mb-3" data-tone="info" role="status">
-          Draft layout. Pictures appear when all of them are drawn; until then
-          you see colour blocks where they will go. A draft can&apos;t be
-          changed or published.
+          Draft layout: colour blocks stand in for pictures until they are
+          drawn. A draft can&apos;t be changed or published.
           {viewed?.hasPackage ? (
             <>
               {" "}
@@ -1238,7 +1227,7 @@ function PreviewPane({
   return (
     <p className="studio-notice" data-tone={working ? "info" : undefined}>
       {layoutPassed
-        ? "The layout passed its check. Pictures are being drawn now; the preview opens here when they are done."
+        ? "The layout passed its check. The preview opens here once the pictures are drawn."
         : working
           ? "The preview opens here when the first design is ready."
           : viewed
@@ -1780,7 +1769,7 @@ export function ProjectWorkspace({
   const lockedReason = facts.switches.buildingOff
     ? "Building is switched off on this deployment, so messages can't be sent now."
     : facts.switches.modelOff
-      ? "This theme's model is switched off on this deployment, so messages can't be sent until it is switched on again."
+      ? "This theme's model is switched off on this deployment, so messages can't be sent now."
       : status.row === 2
         ? "Publishing now. You can send changes after it finishes."
         : WORKING_ROWS.has(status.row)
@@ -2115,15 +2104,13 @@ export function ProjectWorkspace({
             {facts.switches.buildingOff ? (
               <p className="studio-notice" data-tone="warning">
                 Building is switched off on this deployment. You can look at
-                designs, check them and publish; anything that builds or draws
-                pictures waits until it is switched on again.
+                designs, check them and publish.
               </p>
             ) : null}
             {facts.switches.modelOff ? (
               <p className="studio-notice" data-tone="warning">
                 This theme&apos;s model is switched off on this deployment, so
-                it can&apos;t build or change the design until it is switched on
-                again.
+                it can&apos;t build or change the design.
               </p>
             ) : null}
             {facts.switches.checksOff ? (
@@ -2135,8 +2122,7 @@ export function ProjectWorkspace({
             {testProvider ? (
               <p className="studio-notice" data-tone="info">
                 This deployment uses the offline test provider: builds make no
-                model call and produce a placeholder design, so every step can
-                be checked end to end.
+                model call and produce a placeholder design.
               </p>
             ) : null}
           </div>

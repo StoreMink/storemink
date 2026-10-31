@@ -140,8 +140,7 @@ export function OpenInvoices({
               : `You have ${invoices.length} invoices to pay`}
           </h2>
           <p className="mt-0.5 text-sm text-amber-800">
-            Pay to keep your plan running. If a subscription invoice stays
-            unpaid past its due date your store moves to the Free plan.
+            Unpaid by the due date, your store moves to the Free plan.
           </p>
 
           <ul className="mt-4 space-y-2">

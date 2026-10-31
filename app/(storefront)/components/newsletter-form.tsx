@@ -57,7 +57,7 @@ export function NewsletterForm({
           autoComplete="email"
           maxLength={320}
           required
-          placeholder="your@email.com"
+          placeholder="Email address"
           className={classes.input}
         />
         <button type="submit" disabled={pending} className={classes.button}>

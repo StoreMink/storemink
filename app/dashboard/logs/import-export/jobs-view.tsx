@@ -107,9 +107,8 @@ export function JobsView({
         <div>
           <h1>Imports &amp; exports</h1>
           <p>
-            Every CSV this store has imported or exported, and what happened to
-            each row. Open a job to see the rows it couldn&apos;t import and
-            why.
+            Every CSV imported or exported. Open a job to see rows that failed
+            and why.
           </p>
         </div>
       </header>
@@ -180,7 +179,7 @@ export function JobsView({
               <p className="dash-empty-text">
                 {hasFilters
                   ? "Try clearing the filters."
-                  : "Import or export a CSV from your Products, Categories, Inventory, Orders or Coupons page and it will show up here."}
+                  : "Imports and exports from your list pages appear here."}
               </p>
             </div>
           ) : (

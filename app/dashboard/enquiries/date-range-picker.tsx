@@ -106,7 +106,7 @@ export function DateRangePicker({
   const label = !value.from
     ? "Any date"
     : value.to
-      ? `${prettyShort(value.from)} – ${prettyShort(value.to)}`
+      ? `${prettyShort(value.from)} to ${prettyShort(value.to)}`
       : prettyShort(value.from);
 
   return (

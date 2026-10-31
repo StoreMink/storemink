@@ -429,14 +429,17 @@ export function ReturnsQueueView({
                     and the server refuses an empty one. */}
                 {rejecting === r.id && (
                   <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3">
-                    <label className="text-xs font-medium text-muted-foreground">
+                    <label
+                      htmlFor={`decline-note-${r.id}`}
+                      className="text-xs font-medium text-muted-foreground"
+                    >
                       Why are you declining? The customer sees this.
                     </label>
                     <textarea
+                      id={`decline-note-${r.id}`}
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       rows={2}
-                      placeholder="e.g. This item is past its 7-day return window."
                       className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                     />
                     <div className="mt-2 flex justify-end gap-2">

@@ -102,9 +102,7 @@ describe("Storefront page", () => {
       screen.getByRole("heading", { level: 1, name: "Storefront" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "How your store looks to customers. Customise it with Mink AI, or edit any page in the Website Builder.",
-      ),
+      screen.getByText("How your store looks to customers."),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "Your theme" }),
@@ -217,9 +215,7 @@ describe("Storefront page", () => {
         screen.getByText("You haven't chosen a theme yet"),
       ).toBeInTheDocument();
       expect(screen.getByText(/store in progress/)).toBeInTheDocument();
-      expect(
-        screen.getByText(/You choose it once: after that/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/You choose it once\./)).toBeInTheDocument();
       expect(
         screen.getByRole("heading", { level: 2, name: "Theme library" }),
       ).toBeInTheDocument();

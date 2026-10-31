@@ -129,6 +129,8 @@ describe("dashboard Orders page POS entitlement", () => {
     expect(
       screen.queryByRole("button", { name: /All orders/i }),
     ).not.toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Search orders…")).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: "Search orders" }),
+    ).toBeVisible();
   });
 });

@@ -79,6 +79,7 @@ export default function CouponField() {
           className={styles.input}
           type="text"
           placeholder="Coupon code"
+          aria-label="Coupon code"
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           onKeyDown={(e) => e.key === "Enter" && handleApply()}

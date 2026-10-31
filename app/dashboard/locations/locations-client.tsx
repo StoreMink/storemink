@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { MapPin, Plus, Pencil, Trash2, Loader2, X, Boxes } from "lucide-react";
+import { MapPin, Plus, Pencil, Trash2, Loader2, Boxes } from "lucide-react";
 import {
   createLocation,
   updateLocation,
@@ -20,6 +20,14 @@ import {
 } from "@/lib/locations/capabilities";
 import type { Plan } from "@/lib/plans";
 import type { LocationBillingState } from "@/lib/billing/invoice-types";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { LocationBillingCard } from "./location-billing-card";
 
 interface FormState {
@@ -113,10 +121,7 @@ export function LocationsClient({
       <header className="dash-page-header flex items-start justify-between gap-4">
         <div>
           <h1>Locations</h1>
-          <p>
-            Set up the places that hold stock. Open a location&apos;s inventory
-            to count or adjust what is physically there.
-          </p>
+          <p>The shops and warehouses that hold your stock.</p>
         </div>
         {canManage && (
           <button
@@ -247,28 +252,19 @@ export function LocationsClient({
       </div>
 
       {/* Add / edit form */}
-      {form && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-          onClick={() => !pending && setForm(null)}
-        >
-          <div
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-base font-bold text-[#111827]">
+      <Dialog
+        open={form !== null}
+        onOpenChange={(open) => {
+          if (!open && !pending) setForm(null);
+        }}
+      >
+        {form && (
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
                 {form.id ? "Edit location" : "Add location"}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setForm(null)}
-                className="rounded-md p-1.5 text-[#5b6472] hover:bg-[#f2f3f5]"
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+              </DialogTitle>
+            </DialogHeader>
 
             <div className="space-y-3">
               <Field label="Name">
@@ -276,7 +272,6 @@ export function LocationsClient({
                   className={INPUT_CLS}
                   value={form.name}
                   maxLength={80}
-                  placeholder="e.g. Delhi - Connaught Place"
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
               </Field>
@@ -301,12 +296,11 @@ export function LocationsClient({
               </Field>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="GSTIN">
+                <Field label="GSTIN (optional)">
                   <input
                     className={INPUT_CLS}
                     value={form.gstin}
                     maxLength={20}
-                    placeholder="Optional"
                     onChange={(e) =>
                       setForm({ ...form, gstin: e.target.value })
                     }
@@ -317,7 +311,6 @@ export function LocationsClient({
                     className={INPUT_CLS}
                     value={form.stateCode}
                     maxLength={2}
-                    placeholder="e.g. 07"
                     onChange={(e) =>
                       setForm({ ...form, stateCode: e.target.value })
                     }
@@ -330,7 +323,6 @@ export function LocationsClient({
                   className={INPUT_CLS}
                   value={form.receiptPrefix}
                   maxLength={8}
-                  placeholder="e.g. DEL"
                   onChange={(e) =>
                     setForm({ ...form, receiptPrefix: e.target.value })
                   }
@@ -338,28 +330,22 @@ export function LocationsClient({
               </Field>
             </div>
 
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
+            <DialogFooter>
+              <Button
+                variant="outline"
                 onClick={() => setForm(null)}
                 disabled={pending}
-                className="rounded-lg px-3.5 py-2 text-sm font-medium text-[#5b6472] hover:bg-[#f2f3f5] disabled:opacity-50"
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                onClick={save}
-                disabled={pending || !form.name.trim()}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#111827] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
+              </Button>
+              <Button onClick={save} disabled={pending || !form.name.trim()}>
                 {pending && <Loader2 className="h-4 w-4 animate-spin" />}
                 {form.id ? "Save" : "Add location"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        )}
+      </Dialog>
     </div>
   );
 }

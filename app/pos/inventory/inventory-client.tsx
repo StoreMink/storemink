@@ -125,7 +125,8 @@ export function InventoryClient({
             value={query}
             autoFocus
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Scan or search…"
+            placeholder="Search or scan"
+            aria-label="Search or scan products"
             className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] py-2.5 pl-9 pr-3 text-sm outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)]"
           />
           {loading && (
@@ -409,9 +410,6 @@ function Row({
               <input
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                placeholder={
-                  mode === "count" ? "e.g. weekly stocktake" : "e.g. damaged"
-                }
                 className="w-full rounded-lg border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2 outline-none focus:border-[var(--pos-border-strong)]"
               />
             </label>

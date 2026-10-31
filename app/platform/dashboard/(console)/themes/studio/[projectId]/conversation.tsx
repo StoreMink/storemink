@@ -11,6 +11,7 @@ import {
 import { useRouter } from "next/navigation";
 import { ImagePlus, Loader2, Send, Sparkles, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   queueThemeStudioGenerationAction,
   reviseThemeStudioVersionAction,
@@ -506,10 +507,10 @@ export function ThemeConversation({
   const placeholder = working
     ? "You can send changes when it finishes."
     : answering
-      ? "Reply to the questions above. You can attach screenshots too."
+      ? "Reply to the questions above."
       : creating
-        ? "Describe what to build. Paste or drop screenshots here."
-        : "Describe a change. Small requests change only that; say “start over” to rebuild from scratch. Paste or drop screenshots here.";
+        ? "Describe what to build"
+        : "Describe a change";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -523,9 +524,8 @@ export function ThemeConversation({
           timeline.map((entry) => <div key={entry.id}>{entry.content}</div>)
         ) : (
           <div className="studio-bubble" data-from="studio">
-            Tell me what you want to build. You can attach screenshots of stores
-            you like now, then send screenshots of anything you want changed
-            after the first design.
+            Tell me what you want to build, and attach screenshots of stores you
+            like.
           </div>
         )}
         {progressCard}
@@ -568,23 +568,31 @@ export function ThemeConversation({
         }}
       >
         {canRevise && target ? (
-          <label className="studio-muted flex flex-wrap items-center gap-2 text-xs">
-            Changing
-            <select
-              aria-label="Design to change"
-              value={target.id}
-              disabled={disabled}
-              onChange={(event) => onSelectVersion(event.target.value)}
-            >
-              {packaged.map((version) => (
-                <option key={version.id} value={version.id}>
-                  {designLabel(version.versionNumber)}
-                  {version.id === project.currentVersionId ? " (current)" : ""}
-                </option>
-              ))}
-            </select>
+          <div className="studio-muted flex flex-wrap items-center gap-2 text-xs">
+            <label className="flex items-center gap-2">
+              Changing
+              <select
+                aria-label="Design to change"
+                value={target.id}
+                disabled={disabled}
+                onChange={(event) => onSelectVersion(event.target.value)}
+              >
+                {packaged.map((version) => (
+                  <option key={version.id} value={version.id}>
+                    {designLabel(version.versionNumber)}
+                    {version.id === project.currentVersionId
+                      ? " (current)"
+                      : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
             <span>Each message makes a new design.</span>
-          </label>
+            <InfoTip label="About changes">
+              Small requests change only that. Say “start over” to rebuild from
+              scratch.
+            </InfoTip>
+          </div>
         ) : null}
         <textarea
           ref={composer}
@@ -694,9 +702,9 @@ export function ThemeConversation({
                   screenshots
                 </button>
                 <p className="studio-muted text-xs">
-                  {selected.length} of {referenceLimit} attached to this
-                  message. JPEG, PNG, WebP or AVIF, up to 10 MB each and 40 MB
-                  per message. You can also paste or drop them on the message.
+                  {selected.length} of {referenceLimit} attached. JPEG, PNG,
+                  WebP or AVIF, up to 10 MB each and 40 MB per message. You can
+                  also paste or drop them.
                 </p>
                 {library.length ? (
                   <>
@@ -755,8 +763,7 @@ export function ThemeConversation({
                       })}
                     </ul>
                     <p className="studio-muted text-xs">
-                      A screenshot a message used stays with the chat; one no
-                      message used yet can be deleted.
+                      Only screenshots no message has used can be deleted.
                     </p>
                   </>
                 ) : (

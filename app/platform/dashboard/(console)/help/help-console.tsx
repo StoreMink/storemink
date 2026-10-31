@@ -106,7 +106,9 @@ export function HelpConsole({
 
       <div className="hca-filters">
         <input
-          placeholder="Search articles…"
+          type="search"
+          aria-label="Search articles"
+          placeholder="Search articles"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -285,23 +287,27 @@ function CategoryManager({
         </div>
         <div className="hca-cat-body">
           <div className="hca-cat-add">
-            <input
-              placeholder="New category title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-            <select value={icon} onChange={(e) => setIcon(e.target.value)}>
-              {HELP_ICON_NAMES.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-            <input
-              placeholder="Description (optional)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
+            <label className="hca-cat-field">
+              <span>New category title</span>
+              <input value={title} onChange={(e) => setTitle(e.target.value)} />
+            </label>
+            <label className="hca-cat-field">
+              <span>Icon</span>
+              <select value={icon} onChange={(e) => setIcon(e.target.value)}>
+                {HELP_ICON_NAMES.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="hca-cat-field">
+              <span>Description (optional)</span>
+              <input
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+            </label>
             <button
               className="hca-btn primary"
               disabled={pending}

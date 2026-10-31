@@ -913,8 +913,8 @@ export function BlogEditorDialog({
                 <input
                   type="text"
                   value={title}
+                  aria-label="Title"
                   onChange={(e) => handleTitleChange(e.target.value)}
-                  placeholder="Blog post title"
                   style={inputStyle}
                 />
               </FieldGroup>
@@ -923,11 +923,11 @@ export function BlogEditorDialog({
                 <input
                   type="text"
                   value={slug}
+                  aria-label="Slug"
                   onChange={(e) => {
                     setSlug(e.target.value);
                     setHasUnsaved(true);
                   }}
-                  placeholder="url-friendly-slug"
                   style={{
                     ...inputStyle,
                     fontFamily: "var(--font-dash-mono), monospace",
@@ -939,11 +939,11 @@ export function BlogEditorDialog({
               <FieldGroup label="Excerpt">
                 <textarea
                   value={excerpt}
+                  aria-label="Excerpt"
                   onChange={(e) => {
                     setExcerpt(e.target.value);
                     setHasUnsaved(true);
                   }}
-                  placeholder="Brief summary of the blog post…"
                   rows={3}
                   style={{ ...inputStyle, resize: "vertical" }}
                 />
@@ -953,11 +953,11 @@ export function BlogEditorDialog({
                 <input
                   type="text"
                   value={author}
+                  aria-label="Author"
                   onChange={(e) => {
                     setAuthor(e.target.value);
                     setHasUnsaved(true);
                   }}
-                  placeholder="Author name"
                   style={inputStyle}
                 />
               </FieldGroup>
@@ -1279,11 +1279,11 @@ export function BlogEditorDialog({
                   <input
                     type="text"
                     value={seoTitle}
+                    aria-label="SEO title"
                     onChange={(e) => {
                       setSeoTitle(e.target.value);
                       setHasUnsaved(true);
                     }}
-                    placeholder="SEO-optimized title"
                     style={inputStyle}
                   />
                   <CharCount current={seoTitle.length} max={60} />
@@ -1292,11 +1292,11 @@ export function BlogEditorDialog({
                 <FieldGroup label="SEO Description">
                   <textarea
                     value={seoDescription}
+                    aria-label="SEO description"
                     onChange={(e) => {
                       setSeoDescription(e.target.value);
                       setHasUnsaved(true);
                     }}
-                    placeholder="Meta description for search engines"
                     rows={3}
                     style={{ ...inputStyle, resize: "vertical" }}
                   />

@@ -174,12 +174,7 @@ export function NotificationConsole({
             </span>
           </h1>
           <p>
-            Choose what your store notifies about, who receives it, and what it
-            says. Everything is recorded in{" "}
-            <Link href="/dashboard/logs" className="underline">
-              Activity
-            </Link>{" "}
-            whether or not it notifies anyone.
+            Choose what your store notifies about, who gets it and what it says.
           </p>
         </div>
         <Link
@@ -248,7 +243,8 @@ export function NotificationConsole({
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name"
+              placeholder="Search notifications"
+              aria-label="Search notifications"
               className="w-full border-none bg-transparent text-[13.5px] text-[var(--dash-text)] outline-none placeholder:text-[var(--dash-text-3)]"
             />
           </div>
@@ -343,8 +339,7 @@ export function NotificationConsole({
 
       {!canManage && (
         <p className="text-[12.5px] text-[var(--dash-text-3)]">
-          You can view these settings but not change them. Ask an owner for
-          “manage” on Notifications in Roles &amp; Permissions.
+          You can view these settings but not change them.
         </p>
       )}
     </div>

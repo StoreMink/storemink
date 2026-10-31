@@ -22,8 +22,7 @@ export default function StorefrontNotFound() {
 
       <h1 className="sf404-title">We can&rsquo;t find that page</h1>
       <p className="sf404-lede">
-        The link may be broken, or the page may have been moved or removed.
-        Search for what you were after, or pick up where you left off below.
+        The link may be broken, or the page may have moved.
       </p>
 
       {/* Plain GET form — /shop reads ?q= and filters the grid, so search works
@@ -45,7 +44,7 @@ export default function StorefrontNotFound() {
         <input
           type="search"
           name="q"
-          placeholder="Search for a product…"
+          placeholder="Search products"
           aria-label="Search products"
         />
         <button type="submit">Search</button>

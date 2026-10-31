@@ -235,9 +235,7 @@ describe("Sell cart", () => {
       ));
     });
 
-    const search = screen.getByPlaceholderText(
-      "Scan a barcode or search products…",
-    );
+    const search = screen.getByPlaceholderText("Search or scan");
     expect(search).toHaveClass("min-w-0", "text-base", "sm:text-sm");
     expect(search.parentElement).toHaveClass("min-w-0");
     expect(container.querySelectorAll(".pos-scroll-area")).toHaveLength(2);
@@ -636,7 +634,7 @@ describe("Sell catalogue: parent products, then variants", () => {
     // to one of the two fastest paths in the shop.
     catalog.search.mockReturnValue([SHIRT_M]);
     render(<SellClient config={CONFIG} initialItems={[]} />);
-    fireEvent.change(screen.getByPlaceholderText(/scan a barcode/i), {
+    fireEvent.change(screen.getByPlaceholderText("Search or scan"), {
       target: { value: "black m" },
     });
     expect(screen.getByText("Black / M")).toBeVisible();

@@ -27,9 +27,8 @@ export default async function WhatsAppTemplatesPage() {
           </Link>
           <h1>WhatsApp templates</h1>
           <p>
-            Messages Meta has approved for this number. Order updates are
-            StoreMink&apos;s; you can add your own to send from the inbox once
-            24 hours have passed since a customer last wrote.
+            Messages Meta approved for this number. Your own can be sent from
+            the inbox after a chat&apos;s 24-hour window.
           </p>
         </div>
       </header>

@@ -5,7 +5,6 @@ import {
   ArrowLeft,
   Banknote,
   CreditCard,
-  Link2,
   Loader2,
   QrCode,
   ShieldCheck,
@@ -27,6 +26,7 @@ import {
   phoneCountry,
   phoneLengthHint,
 } from "@/lib/phone";
+import { InfoTip } from "@/components/ui/info-tip";
 
 // The panel follows the same three decisions a cashier makes in the real world:
 // who is buying, how they are paying, and (only for cash or a split) how much.
@@ -534,7 +534,8 @@ export function TenderPanel({
               type="password"
               inputMode="numeric"
               autoFocus
-              placeholder="Manager's 8-digit PIN"
+              aria-label="Manager's PIN"
+              placeholder="8-digit PIN"
               onChange={(event) =>
                 setPin(event.target.value.replace(/\D/g, "").slice(0, 8))
               }
@@ -656,8 +657,12 @@ export function TenderPanel({
                         <Sparkles className="h-5 w-5" strokeWidth={2} />
                       </span>
                       <span className="min-w-0">
-                        <span className="block text-sm font-semibold text-[var(--pos-ok)]">
+                        <span className="flex items-center gap-1.5 text-sm font-semibold text-[var(--pos-ok)]">
                           New customer
+                          <InfoTip label="About new customers">
+                            If they sign up online with this number later, the
+                            account joins this record.
+                          </InfoTip>
                         </span>
                         {/* ⚠ NOT TRUNCATED. This read "add their name so you
                             can gree…" on a till screen: the sentence that
@@ -683,7 +688,6 @@ export function TenderPanel({
                           autoFocus
                           aria-label="Customer first name"
                           value={newFirst}
-                          placeholder="Rohan"
                           autoComplete="off"
                           autoCapitalize="words"
                           onChange={(event) => {
@@ -703,7 +707,6 @@ export function TenderPanel({
                         <input
                           aria-label="Customer last name"
                           value={newLast}
-                          placeholder="Sharma"
                           autoComplete="off"
                           autoCapitalize="words"
                           onChange={(event) => {
@@ -724,7 +727,6 @@ export function TenderPanel({
                       <input
                         aria-label="Customer email"
                         value={newEmail}
-                        placeholder="rohan@example.com"
                         inputMode="email"
                         autoCapitalize="off"
                         autoCorrect="off"
@@ -747,17 +749,6 @@ export function TenderPanel({
                     {busy && <Loader2 className="h-4 w-4 animate-spin" />}
                     Save and continue
                   </button>
-
-                  <p className="mt-3 flex items-start gap-2 rounded-xl bg-[var(--pos-surface-2)] p-3 text-[11px] leading-snug text-[var(--pos-ink-2)]">
-                    <Link2
-                      className="mt-px h-3.5 w-3.5 shrink-0"
-                      strokeWidth={2}
-                    />
-                    <span>
-                      If they create an account online with this number later,
-                      it joins this record instead of starting a new one.
-                    </span>
-                  </p>
                 </form>
               ) : (
                 <form
@@ -823,8 +814,7 @@ export function TenderPanel({
                     </button>
                   </div>
                   <p className="mt-1.5 text-xs text-[var(--pos-ink-3)]">
-                    We check only after OK. A number we already have brings up
-                    that customer.
+                    A number we already have brings up that customer.
                   </p>
                 </form>
               )}
@@ -919,7 +909,6 @@ export function TenderPanel({
                             autoCapitalize="off"
                             autoCorrect="off"
                             spellCheck={false}
-                            placeholder="name@example.com"
                             onChange={(event) =>
                               onReceiptEmail(event.target.value.slice(0, 160))
                             }
@@ -939,7 +928,6 @@ export function TenderPanel({
                           <input
                             value={gstin ?? ""}
                             autoCapitalize="characters"
-                            placeholder="22AAAAA0000A1Z5"
                             onChange={(event) =>
                               onGstin(
                                 event.target.value.toUpperCase().slice(0, 15),
@@ -1138,14 +1126,18 @@ export function TenderPanel({
                 {method !== "cash" &&
                   method !== "razorpay" &&
                   method !== "store_credit" && (
-                    <input
-                      value={reference}
-                      placeholder="Reference code (optional)"
-                      onChange={(event) =>
-                        setReference(event.target.value.slice(0, 60))
-                      }
-                      className="mb-3 w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--pos-border-strong)]"
-                    />
+                    <label className="mb-3 block">
+                      <span className="mb-1 block text-xs font-medium text-[var(--pos-ink-2)]">
+                        Reference code (optional)
+                      </span>
+                      <input
+                        value={reference}
+                        onChange={(event) =>
+                          setReference(event.target.value.slice(0, 60))
+                        }
+                        className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--pos-border-strong)]"
+                      />
+                    </label>
                   )}
 
                 <button

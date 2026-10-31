@@ -98,8 +98,8 @@ export function FulfilmentClient({
           Online fulfilment &amp; pickup
         </h1>
         <p className="mt-1 text-sm text-[#5b6472]">
-          Which locations ship website orders, which is tried first, and whether
-          shoppers can collect in store.
+          Which locations ship website orders, and whether shoppers can collect
+          in store.
         </p>
       </header>
 
@@ -117,8 +117,7 @@ export function FulfilmentClient({
                 Website order routing
               </h2>
               <p className="mt-0.5 text-sm text-[#5b6472]">
-                Choose how StoreMink selects a location and which one it tries
-                first.
+                How a location is chosen for each website order.
               </p>
             </div>
           </div>
@@ -167,9 +166,6 @@ export function FulfilmentClient({
                   );
                 })}
               </div>
-              <p className="mt-3 text-xs leading-5 text-[#9aa1ab]">
-                Additional routing methods will appear here when available.
-              </p>
             </div>
 
             <div className="p-5 sm:p-6">

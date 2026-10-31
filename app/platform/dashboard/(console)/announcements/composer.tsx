@@ -28,6 +28,16 @@ import {
 } from "@/lib/announcements/audience";
 import type { AudiencePreview } from "@/lib/announcements/resolve";
 import type { SmsAvailability } from "@/lib/announcements/sms-availability";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { InfoTip } from "@/components/ui/info-tip";
 
 // ---------------------------------------------------------------------------
 // The composer.
@@ -48,17 +58,25 @@ const STATUSES = ["active", "suspended"];
 function Field({
   label,
   hint,
+  info,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Guidance behind the label's "i" button, not under the field. */
+  info?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-slate-700">
-        {label}
-      </label>
+      <div className="flex items-center gap-1.5">
+        <label className="block text-sm font-medium text-slate-700">
+          {label}
+        </label>
+        {info ? (
+          <InfoTip label={`About ${label.toLowerCase()}`}>{info}</InfoTip>
+        ) : null}
+      </div>
       {hint ? <p className="mt-0.5 text-xs text-slate-500">{hint}</p> : null}
       <div className="mt-1.5">{children}</div>
     </div>
@@ -253,10 +271,7 @@ export function AnnouncementComposer({
         {locked ? (
           <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             <Check className="mt-0.5 h-4 w-4 shrink-0" />
-            <span>
-              This announcement has been sent, so its copy is locked. What
-              people received has to stay what the record says they received.
-            </span>
+            <span>This announcement has been sent, so its copy is locked.</span>
           </div>
         ) : null}
 
@@ -267,7 +282,6 @@ export function AnnouncementComposer({
               value={title}
               disabled={locked}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="August feature round-up"
             />
           </Field>
 
@@ -307,7 +321,6 @@ export function AnnouncementComposer({
               value={subject}
               disabled={locked}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="Pick up in store is now live"
             />
           </Field>
           <Field
@@ -319,7 +332,6 @@ export function AnnouncementComposer({
               value={body}
               disabled={locked}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="<p>Hello,</p><p>We've just shipped…</p>"
             />
           </Field>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -329,7 +341,6 @@ export function AnnouncementComposer({
                 value={ctaLabel}
                 disabled={locked}
                 onChange={(e) => setCtaLabel(e.target.value)}
-                placeholder="See what's new"
               />
             </Field>
             <Field label="Button link">
@@ -338,7 +349,7 @@ export function AnnouncementComposer({
                 value={ctaUrl}
                 disabled={locked}
                 onChange={(e) => setCtaUrl(e.target.value)}
-                placeholder="https://help.storemink.com/…"
+                placeholder="https://"
               />
             </Field>
           </div>
@@ -381,7 +392,8 @@ export function AnnouncementComposer({
 
           <Field
             label="Message"
-            hint="Must match a registered DLT template exactly, apart from its variables. A body that does not match is dropped at the carrier with no bounce."
+            hint="Must match a registered DLT template exactly."
+            info="Only its variables may differ. A body that does not match is dropped by the carrier, with no bounce."
           >
             <textarea
               className={`${INPUT} min-h-[80px]`}
@@ -622,7 +634,7 @@ export function AnnouncementComposer({
               </button>
             ) : (
               <p className="pt-1 text-xs text-slate-400">
-                Sending is restricted to a platform superadmin.
+                Only a superadmin can send.
               </p>
             )}
             {id ? (
@@ -639,48 +651,39 @@ export function AnnouncementComposer({
         ) : null}
       </aside>
 
-      {confirming ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => setConfirming(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-lg font-semibold text-slate-900">
+      <Dialog
+        open={confirming}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
               Send to {reach.toLocaleString("en-IN")}{" "}
               {reach === 1 ? "person" : "people"}?
-            </h2>
-            <p className="mt-2 text-sm text-slate-600">
-              This can&apos;t be recalled. Every recipient is recorded, and the
-              copy is locked once sending starts.
+            </DialogTitle>
+            <DialogDescription>
+              This can&apos;t be recalled, and the copy is locked once sending
+              starts.
+            </DialogDescription>
+          </DialogHeader>
+          {category === "operational" ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Operational notices also reach people who opted out of product
+              updates. Send only if it affects their account.
             </p>
-            {category === "operational" ? (
-              <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                This is marked an operational notice, so it also goes to people
-                who opted out of product updates. Only send it if it genuinely
-                affects their account.
-              </p>
-            ) : null}
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                className="rounded-md px-3.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-                onClick={() => setConfirming(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="rounded-md bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                disabled={busy}
-                onClick={onSend}
-              >
-                {busy ? "Sending…" : "Send now"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button disabled={busy} onClick={onSend}>
+              {busy ? "Sending…" : "Send now"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

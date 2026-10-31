@@ -78,7 +78,7 @@ function sendCodeFor(number: string) {
 }
 
 async function typeCode(code: string) {
-  const input = await screen.findByPlaceholderText("6-digit code");
+  const input = await screen.findByLabelText(/enter the code sent to/i);
   fireEvent.change(input, { target: { value: code } });
 }
 
@@ -104,7 +104,7 @@ describe("VerifyPhoneForm", () => {
     render(<VerifyPhoneForm onVerified={onVerified} />);
     sendCodeFor("+919876543210");
 
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText(/enter the code sent to/i);
     expect(signInWithPhoneNumber).toHaveBeenCalledWith(
       fb.secondaryAuth,
       "+919876543210",
@@ -177,18 +177,19 @@ describe("VerifyPhoneForm", () => {
     );
     expect(confirmVerifiedPhone).not.toHaveBeenCalled();
     expect(
-      (screen.getByPlaceholderText("6-digit code") as HTMLInputElement).value,
+      (screen.getByLabelText(/enter the code sent to/i) as HTMLInputElement)
+        .value,
     ).toBe("");
   });
 
   it("uses a fresh reCAPTCHA verifier for every send", async () => {
     render(<VerifyPhoneForm onVerified={vi.fn()} />);
     sendCodeFor("+919876543210");
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText(/enter the code sent to/i);
 
     fireEvent.click(screen.getByRole("button", { name: "Change number" }));
     sendCodeFor("+919812345678");
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText(/enter the code sent to/i);
 
     expect(fb.state.verifiers).toHaveLength(2);
     expect(fb.state.verifiers[0].clear).toHaveBeenCalled();
@@ -220,7 +221,7 @@ describe("VerifyPhoneForm", () => {
 
       await waitFor(() => expect(signInWithPhoneNumber).toHaveBeenCalled());
       await act(async () => answer(fb.confirmation));
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
       expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
       expect(fb.state.verifiers).toHaveLength(1);
     });
@@ -248,12 +249,12 @@ describe("VerifyPhoneForm", () => {
       const onVerified = vi.fn();
       render(<VerifyPhoneForm onVerified={onVerified} />);
       sendCodeFor("+919876543210");
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
 
       fireEvent.click(screen.getByRole("button", { name: "Change number" }));
       sendCodeFor("+919876543210");
 
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
       expect(screen.queryByRole("alert")).toBeNull();
       expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
       // Resend waits for the guard's cooldown, not a fresh 30 seconds.
@@ -273,11 +274,11 @@ describe("VerifyPhoneForm", () => {
     it("★ a code is resumed only for the number it was sent to", async () => {
       render(<VerifyPhoneForm onVerified={vi.fn()} />);
       sendCodeFor("+919876543210");
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
 
       fireEvent.click(screen.getByRole("button", { name: "Change number" }));
       sendCodeFor("+919812345678");
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
 
       // The second number's code replaced the first: going back to the first
       // number inside its cooldown must not show a code step that would
@@ -285,20 +286,20 @@ describe("VerifyPhoneForm", () => {
       fireEvent.click(screen.getByRole("button", { name: "Change number" }));
       sendCodeFor("+919876543210");
       expect(screen.getByRole("alert").textContent).toMatch(/just sent/i);
-      expect(screen.queryByPlaceholderText("6-digit code")).toBeNull();
+      expect(screen.queryByLabelText(/enter the code sent to/i)).toBeNull();
       expect(signInWithPhoneNumber).toHaveBeenCalledTimes(2);
     });
 
     it("a remount inside the cooldown does not text the same number again", async () => {
       const first = render(<VerifyPhoneForm onVerified={vi.fn()} />);
       sendCodeFor("+919876543210");
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
       first.unmount();
 
       render(<VerifyPhoneForm onVerified={vi.fn()} />);
       sendCodeFor("+919876543210");
       expect(screen.getByRole("alert").textContent).toMatch(/just sent/i);
-      expect(screen.queryByPlaceholderText("6-digit code")).toBeNull();
+      expect(screen.queryByLabelText(/enter the code sent to/i)).toBeNull();
       expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
     });
 
@@ -314,7 +315,7 @@ describe("VerifyPhoneForm", () => {
       fireEvent.click(screen.getByRole("button", { name: "Change number" }));
       sendCodeFor("+919876543210");
       expect(screen.getByRole("alert").textContent).toMatch(/just sent/i);
-      expect(screen.queryByPlaceholderText("6-digit code")).toBeNull();
+      expect(screen.queryByLabelText(/enter the code sent to/i)).toBeNull();
       expect(signInWithPhoneNumber).toHaveBeenCalledTimes(1);
     });
 
@@ -329,7 +330,7 @@ describe("VerifyPhoneForm", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: "Send code" }));
-      await screen.findByPlaceholderText("6-digit code");
+      await screen.findByLabelText(/enter the code sent to/i);
       expect(signInWithPhoneNumber).toHaveBeenCalledTimes(2);
     });
   });

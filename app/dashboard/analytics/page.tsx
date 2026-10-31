@@ -312,7 +312,7 @@ async function SalesBreakdownWidget({
     <AnalyticsCard
       title="Total sales breakdown"
       definition={definition("sales_breakdown")}
-      footer="Returns are refunds settled in this range. Gross sales leave out the tax already inside tax-inclusive prices."
+      footer="Returns are refunds settled in this range. Gross sales exclude included tax."
     >
       <MetricRows
         rows={[
@@ -778,7 +778,7 @@ async function ReturnsWidget({
     <AnalyticsCard
       title="Returns and refunds"
       definition={definition("returns_refunds")}
-      footer="Returns count on the day they complete and refunds on the day they settle, so the two are never added together."
+      footer="Returns count when completed; refunds count when settled."
     >
       <MetricRows
         rows={[
@@ -1044,7 +1044,7 @@ async function StorefrontFunnel({
     <AnalyticsCard
       title="Storefront conversion funnel"
       definition={definition("traffic_funnel")}
-      footer="Visitors who decline analytics and automated traffic are not counted. Updated every hour."
+      footer="Excludes visitors who decline analytics, and bots. Updated hourly."
     >
       <FunnelBars
         emptyText="No storefront sessions in this date range"
@@ -1094,7 +1094,7 @@ async function GrossMarginWidget({
     <AnalyticsCard
       title="Gross margin"
       definition={definition("gross_margin_overview")}
-      footer="Before returns and refunds. Products without a cost are left out rather than counted as free. Add costs in Products to raise coverage."
+      footer="Before returns and refunds. Products without a cost are left out."
     >
       <MetricRows
         rows={[

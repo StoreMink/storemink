@@ -246,7 +246,6 @@ export function ProductsManagementView({
       <header className="dash-page-header row">
         <div>
           <h1>Products</h1>
-          <p>Add and manage products across your categories</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* Exports carry the list's own filters, so "export what I'm
@@ -284,9 +283,7 @@ export function ProductsManagementView({
       {canManage && !canCreateProduct && productLimit !== null ? (
         <div className="dash-card mb-3.5 flex items-center justify-between gap-3 px-4 py-3.5 text-[13px]">
           <span>
-            Your plan includes {productLimit} products. All {counts.all}{" "}
-            existing products remain visible and editable; upgrade to add
-            another.
+            Your plan includes {productLimit} products. Upgrade to add another.
           </span>
           <Link
             href="/dashboard/plans"
@@ -301,14 +298,14 @@ export function ProductsManagementView({
         <div className="dash-card mb-3.5 flex items-center gap-2 px-4 py-3.5 text-[13px]">
           <Lightbulb className="h-4 w-4 shrink-0 text-[var(--dash-amber)]" />
           <span>
-            You have no categories yet. Products work without one, but{" "}
+            No categories yet. To group products on the storefront,{" "}
             <Link
               href="/dashboard/categories"
               className="font-semibold text-[var(--dash-accent)]"
             >
               create a category
-            </Link>{" "}
-            to group them on the storefront.
+            </Link>
+            .
           </span>
         </div>
       )}
@@ -317,9 +314,9 @@ export function ProductsManagementView({
         <div className="dash-card mb-3.5 flex items-center gap-2 px-4 py-3.5 text-[13px]">
           <Lightbulb className="h-4 w-4 shrink-0 text-[var(--dash-amber)]" />
           <span>
-            Add a cost in each product&apos;s <strong>Pricing</strong> tab to
-            complete gross-margin reporting. {missingCostCount} product
-            {missingCostCount === 1 ? "" : "s"} still need a default cost.
+            {missingCostCount}{" "}
+            {missingCostCount === 1 ? "product needs" : "products need"} a cost
+            in the <strong>Pricing</strong> tab for gross-margin reporting.
           </span>
         </div>
       ) : null}
@@ -361,7 +358,8 @@ export function ProductsManagementView({
               <Search className="h-4 w-4 shrink-0 opacity-50" />
               <input
                 type="text"
-                placeholder="Search products..."
+                placeholder="Search products"
+                aria-label="Search products"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -730,9 +728,7 @@ export function ProductsManagementView({
               {selection.count === 1 ? "" : "s"}
             </DialogTitle>
             <DialogDescription>
-              This permanently deletes the selected product
-              {selection.count === 1 ? "" : "s"}, their variants and images.
-              This action cannot be undone. Products that have orders are kept -
+              This can&rsquo;t be undone. Products with orders are kept;
               unpublish those instead.
             </DialogDescription>
           </DialogHeader>
@@ -769,10 +765,9 @@ export function ProductsManagementView({
           <DialogHeader>
             <DialogTitle>Delete product</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete &ldquo;{deleteTarget?.name}
-              &rdquo;? This also removes its variants and cannot be undone. A
-              product that has orders can&rsquo;t be deleted - unpublish it
-              instead.
+              &ldquo;{deleteTarget?.name}&rdquo; and its variants will be
+              deleted for good. A product with orders can&rsquo;t be deleted;
+              unpublish it instead.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

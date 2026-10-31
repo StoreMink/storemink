@@ -1071,7 +1071,8 @@ export function SellClient({
                         void runScan(query.trim());
                       }
                     }}
-                    placeholder="Scan a barcode or search products…"
+                    placeholder="Search or scan"
+                    aria-label="Search or scan products"
                     className="min-w-0 w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] py-3 pl-9 pr-3 text-base outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)] sm:text-sm"
                   />
                   {searching && (

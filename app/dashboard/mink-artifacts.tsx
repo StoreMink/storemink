@@ -529,8 +529,8 @@ function CatalogArtifact({
             </div>
             {artifact.locationsTruncated ? (
               <div className="mt-2 text-[10px] leading-4 text-[#7b7f86]">
-                Showing the first 20 accessible locations. Name another exact
-                dashboard location to inspect it.
+                Showing the first 20 locations you can open. Name another to
+                inspect it.
               </div>
             ) : null}
           </div>
@@ -628,8 +628,8 @@ function CatalogArtifact({
             </div>
             {artifact.truncated ? (
               <div className="mt-2 text-[10px] leading-4 text-[#7b7f86]">
-                Showing the first bounded set, with stock exceptions first. Open
-                Products or Inventory for the full catalogue.
+                Showing the first items, stock exceptions first. Open Products
+                or Inventory for the full list.
               </div>
             ) : null}
           </>

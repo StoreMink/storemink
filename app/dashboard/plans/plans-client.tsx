@@ -22,6 +22,8 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
@@ -731,9 +733,7 @@ export function PlansBillingClient({
           Mink credits &amp; usage
         </h2>
         <p className="mt-1 text-sm text-[#5b6472]">
-          Mink conversations and supported AI tasks use your plan&apos;s
-          included credits first, then your top-up credits. Top-up credits never
-          expire.
+          Your plan&apos;s included credits are used first, then top-up credits.
         </p>
 
         <div className="mt-5 grid gap-6 sm:grid-cols-2">
@@ -1569,16 +1569,14 @@ function UpgradeModal({
     <Dialog open onOpenChange={(open) => !open && !working && leave()}>
       <DialogContent
         showCloseButton={!working}
-        className="max-h-[calc(100dvh-1rem)] gap-0 overflow-hidden p-0 sm:max-w-5xl"
+        className="max-h-[calc(100dvh-1rem)] grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-0 overflow-hidden [--dialog-pad:0px] sm:max-w-5xl"
       >
-        <div className="border-b border-[#e5e7eb] bg-[#111827] px-6 py-5 text-white">
-          <DialogTitle className="text-xl font-semibold text-white">
-            Purchase subscription
-          </DialogTitle>
-          <DialogDescription className="mt-1 text-sm text-white/70">
-            Review every recurring and one-time charge before opening Razorpay.
+        <DialogHeader className="border-b border-[#e5e7eb] px-6 py-5">
+          <DialogTitle>Purchase subscription</DialogTitle>
+          <DialogDescription>
+            Review every charge before you pay.
           </DialogDescription>
-        </div>
+        </DialogHeader>
 
         <ol className="grid grid-cols-3 border-b border-[#e5e7eb] bg-white px-4 py-4 sm:px-7">
           {steps.map((label, index) => {
@@ -1699,9 +1697,8 @@ function UpgradeModal({
                   Optional Mink credits
                 </h3>
                 <p className="mt-1 text-sm text-[#5b6472]">
-                  Mink credits are a one-time purchase, never renew, and never
-                  expire. They use a separate payment and invoice from your
-                  plan.
+                  A one-time purchase that never expires, paid and invoiced
+                  separately from your plan.
                 </p>
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <button
@@ -1796,8 +1793,8 @@ function UpgradeModal({
                       Renewals are charged by UPI Autopay
                     </p>
                     <p className="mt-1 text-xs leading-5 text-[#5b6472]">
-                      You approve a mandate once in your UPI app; no card
-                      details are stored. The first payment is taken now.
+                      Approve a mandate once in your UPI app. The first payment
+                      is taken now.
                     </p>
                     {/* ★ The escape hatch. Checkout shows only the rail on the
                         order, so a merchant with no UPI app would otherwise be
@@ -1827,19 +1824,15 @@ function UpgradeModal({
                       Renewals for this plan are invoiced
                     </p>
                     <p className="mt-1 text-xs leading-5 text-amber-900">
-                      Indian rules cap automatic debits at ₹15,000 per charge on
-                      both cards and UPI, and this plan is above that. You pay
-                      today&rsquo;s amount now; before each renewal we email you
-                      an invoice with a payment link. Nothing is auto-debited,
-                      so nothing lapses without you deciding.
+                      Automatic debits are capped at ₹15,000 in India. You pay
+                      now, and we email an invoice before each renewal.
                     </p>
                   </div>
                 )}
                 {selectedPack && (
                   <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50 p-4 text-sm text-indigo-900">
-                    Two secure payment windows will open: the subscription
-                    first, then the optional one-time credit top-up. Cancelling
-                    the second does not undo the plan purchase.
+                    Two payment windows open: the plan first, then the credits.
+                    Cancelling the credits doesn&rsquo;t undo the plan.
                   </div>
                 )}
               </div>
@@ -1960,99 +1953,97 @@ function UpgradeModal({
               </div>
             ) : (
               <p className="mt-3 text-xs leading-5 text-[#5b6472]">
-                StoreMink calculates the exact prorated amount, account credit
-                and configured tax on the server. Razorpay shows that final
-                amount before you authorise payment.
+                Razorpay shows the final amount, with any proration and tax,
+                before you pay.
               </p>
             )}
             <div className="mt-4 rounded-lg bg-green-50 p-3 text-xs leading-5 text-green-800">
               <Lock className="mr-1 inline h-3.5 w-3.5" />
               {isNewSubscription
-                ? "Autopay is offered when the mandate and billing contact are eligible; otherwise renewal stays manual."
+                ? "Autopay is set up when your payment method allows it; otherwise renewals are invoiced."
                 : hasAutopay
-                  ? "Your authorised mandate remains attached. Charges outside its limits require manual approval."
-                  : "This subscription currently renews manually. This change does not pretend autopay is active."}
-            </div>
-
-            <div className="mt-6 space-y-2">
-              {planDone ? (
-                <button
-                  type="button"
-                  onClick={buySelectedCredits}
-                  disabled={working}
-                  className="dash-btn dash-btn-primary w-full justify-center"
-                >
-                  {working ? "Opening secure payment…" : "Continue to payment"}
-                </button>
-              ) : stage < 3 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = (stage + 1) as 2 | 3;
-                    setStage(next);
-                    if (next === 3) {
-                      // A new plan, period or pack: what an earlier start
-                      // asked for no longer applies.
-                      setAskedPlanPaise(null);
-                      setAskedPackPaise(null);
-                      requote();
-                    }
-                  }}
-                  disabled={stage === 1 && selectedPlan === currentPlan}
-                  className="dash-btn dash-btn-primary w-full justify-center"
-                >
-                  {stage === 1 ? "Continue to Mink credits" : "Review purchase"}
-                </button>
-              ) : isNewSubscription ? (
-                <button
-                  type="button"
-                  onClick={subscribe}
-                  disabled={working || !payReady}
-                  className="dash-btn dash-btn-primary w-full justify-center"
-                >
-                  {working ? "Opening secure payment…" : "Continue to payment"}
-                </button>
-              ) : isPlanChange ? (
-                <button
-                  type="button"
-                  onClick={doChange}
-                  disabled={working || !payReady}
-                  className="dash-btn dash-btn-primary w-full justify-center"
-                >
-                  {working
-                    ? "Preparing…"
-                    : changeNow
-                      ? "Pay prorated change"
-                      : "Schedule at renewal"}
-                </button>
-              ) : (
-                <a
-                  href="mailto:support@storemink.com?subject=Change%20my%20plan"
-                  className="dash-btn dash-btn-primary w-full justify-center"
-                >
-                  Contact support
-                </a>
-              )}
-              {stage > 1 && !working && !planDone && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (stage === 3) {
-                      // Forget the quote: its answer, if one is still on its
-                      // way, is for a choice that may now change.
-                      quoteSeq.current += 1;
-                      setQuote({ status: "idle" });
-                    }
-                    setStage((stage - 1) as 1 | 2);
-                  }}
-                  className="dash-btn w-full justify-center"
-                >
-                  Back
-                </button>
-              )}
+                  ? "Your autopay mandate stays. Charges above its limit need your approval."
+                  : "This subscription renews manually."}
             </div>
           </aside>
         </div>
+        <DialogFooter className="px-6">
+          {stage > 1 && !working && !planDone && (
+            <button
+              type="button"
+              onClick={() => {
+                if (stage === 3) {
+                  // Forget the quote: its answer, if one is still on its
+                  // way, is for a choice that may now change.
+                  quoteSeq.current += 1;
+                  setQuote({ status: "idle" });
+                }
+                setStage((stage - 1) as 1 | 2);
+              }}
+              className="dash-btn justify-center"
+            >
+              Back
+            </button>
+          )}
+          {planDone ? (
+            <button
+              type="button"
+              onClick={buySelectedCredits}
+              disabled={working}
+              className="dash-btn dash-btn-primary justify-center"
+            >
+              {working ? "Opening secure payment…" : "Continue to payment"}
+            </button>
+          ) : stage < 3 ? (
+            <button
+              type="button"
+              onClick={() => {
+                const next = (stage + 1) as 2 | 3;
+                setStage(next);
+                if (next === 3) {
+                  // A new plan, period or pack: what an earlier start
+                  // asked for no longer applies.
+                  setAskedPlanPaise(null);
+                  setAskedPackPaise(null);
+                  requote();
+                }
+              }}
+              disabled={stage === 1 && selectedPlan === currentPlan}
+              className="dash-btn dash-btn-primary justify-center"
+            >
+              {stage === 1 ? "Continue to Mink credits" : "Review purchase"}
+            </button>
+          ) : isNewSubscription ? (
+            <button
+              type="button"
+              onClick={subscribe}
+              disabled={working || !payReady}
+              className="dash-btn dash-btn-primary justify-center"
+            >
+              {working ? "Opening secure payment…" : "Continue to payment"}
+            </button>
+          ) : isPlanChange ? (
+            <button
+              type="button"
+              onClick={doChange}
+              disabled={working || !payReady}
+              className="dash-btn dash-btn-primary justify-center"
+            >
+              {working
+                ? "Preparing…"
+                : changeNow
+                  ? "Pay prorated change"
+                  : "Schedule at renewal"}
+            </button>
+          ) : (
+            <a
+              href="mailto:support@storemink.com?subject=Change%20my%20plan"
+              className="dash-btn dash-btn-primary justify-center"
+            >
+              Contact support
+            </a>
+          )}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

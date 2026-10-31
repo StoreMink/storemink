@@ -40,9 +40,8 @@ export default async function PricingPage() {
           Pricing
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Plan prices, the extra-location add-on, included Mink credits and
-          top-up packs. Existing subscribers keep the plan price they
-          authorised; an allowance change reaches every store on that plan.
+          Existing subscribers keep the price they authorised. An allowance
+          change reaches every store on that plan.
         </p>
       </header>
 

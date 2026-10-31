@@ -45,9 +45,9 @@ vi.mock("next/navigation", () => ({
 }));
 // A plain input in place of the phone library keeps these tests about sending.
 vi.mock("react-phone-number-input", () => ({
-  default: ({ value, onChange, placeholder }: any) => (
+  default: ({ value, onChange, numberInputProps }: any) => (
     <input
-      placeholder={placeholder}
+      {...numberInputProps}
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}
     />
@@ -74,18 +74,18 @@ function renderClient() {
 }
 
 async function reachPhoneStep() {
-  fireEvent.change(screen.getByPlaceholderText("Create a password (min 8)"), {
+  fireEvent.change(screen.getByLabelText("Password"), {
     target: { value: "password1" },
   });
-  fireEvent.change(screen.getByPlaceholderText("Confirm password"), {
+  fireEvent.change(screen.getByLabelText("Confirm password"), {
     target: { value: "password1" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
-  await screen.findByPlaceholderText("Phone number");
+  await screen.findByLabelText("Mobile number");
 }
 
 function sendTo(number: string) {
-  fireEvent.change(screen.getByPlaceholderText("Phone number"), {
+  fireEvent.change(screen.getByLabelText("Mobile number"), {
     target: { value: number },
   });
   fireEvent.click(screen.getByRole("button", { name: "Send code" }));
@@ -103,7 +103,7 @@ describe("RegisterClient phone code sends", () => {
     );
     renderClient();
     await reachPhoneStep();
-    fireEvent.change(screen.getByPlaceholderText("Phone number"), {
+    fireEvent.change(screen.getByLabelText("Mobile number"), {
       target: { value: A },
     });
 
@@ -115,7 +115,7 @@ describe("RegisterClient phone code sends", () => {
     });
     await act(async () => resolveSend("vid-1"));
 
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText("6-digit code");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(1);
   });
 
@@ -139,21 +139,21 @@ describe("RegisterClient phone code sends", () => {
     renderClient();
     await reachPhoneStep();
     sendTo(A);
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText("6-digit code");
 
     fireEvent.click(
       screen.getByRole("button", { name: "Use a different number" }),
     );
     sendTo(A);
 
-    const code = await screen.findByPlaceholderText("6-digit code");
+    const code = await screen.findByLabelText("6-digit code");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/code was just sent/i)).toBeNull();
 
     // The code already on the phone still verifies.
     fireEvent.change(code, { target: { value: "123456" } });
     fireEvent.click(screen.getByRole("button", { name: "Verify phone" }));
-    await screen.findByPlaceholderText("Set an 8-digit PIN");
+    await screen.findByLabelText("8-digit PIN");
     expect((PhoneAuthProvider as any).credential).toHaveBeenCalledWith(
       "vid-1",
       "123456",
@@ -168,12 +168,12 @@ describe("RegisterClient phone code sends", () => {
     renderClient();
     await reachPhoneStep();
     sendTo(A);
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText("6-digit code");
     fireEvent.click(
       screen.getByRole("button", { name: "Use a different number" }),
     );
     sendTo(B);
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText("6-digit code");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(2);
     expect(fb.verifyPhoneNumber.mock.calls[1][0]).toBe(B);
 
@@ -185,14 +185,14 @@ describe("RegisterClient phone code sends", () => {
     sendTo(A);
     expect(await screen.findByText(/code was just sent/i)).toBeTruthy();
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(2);
-    expect(screen.queryByPlaceholderText("6-digit code")).toBeNull();
+    expect(screen.queryByLabelText("6-digit code")).toBeNull();
   });
 
   it("a remount inside the cooldown does not text the same number again", async () => {
     const first = renderClient();
     await reachPhoneStep();
     sendTo(A);
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText("6-digit code");
     first.unmount();
 
     renderClient();
@@ -214,7 +214,7 @@ describe("RegisterClient phone code sends", () => {
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Send code" }));
-    await screen.findByPlaceholderText("6-digit code");
+    await screen.findByLabelText("6-digit code");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(2);
   });
 });

@@ -92,8 +92,7 @@ export default async function DashboardLayout({
             Couldn&apos;t reach the database
           </h1>
           <p className="text-sm text-[#5b6472]">
-            Your dashboard is fine - we just can&apos;t load it right now. This
-            is usually temporary, so try again in a moment.
+            Your dashboard is fine. Try again in a moment.
           </p>
           <form>
             <button
@@ -131,8 +130,8 @@ export default async function DashboardLayout({
             <p className="text-sm text-[#5b6472]">
               You&apos;re signed in as{" "}
               <span className="font-medium text-[#111827]">{userEmail}</span>,
-              but this account isn&apos;t a staff member of this store. If this
-              is your store, sign in with the account you used to create it.
+              but this account isn&apos;t staff on this store. If it&apos;s your
+              store, sign in with the account that created it.
             </p>
           )}
           <SwitchAccountButton />

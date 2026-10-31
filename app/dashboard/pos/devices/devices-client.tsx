@@ -148,11 +148,8 @@ export function DevicesClient({
       <header className="dash-page-header">
         <h1>POS Devices</h1>
         <p>
-          Staff can only sign in to POS on a device you&apos;ve authorized -
-          their personal phones won&apos;t work. The easiest way is to open /pos
-          on the shop&apos;s device while signed in as the owner and tap
-          &ldquo;Authorize this device&rdquo;; use a code below to set one up
-          remotely.
+          Staff sign in to POS only on authorized devices. Open /pos on the
+          device as the owner to authorize it.
         </p>
       </header>
 
@@ -336,7 +333,7 @@ export function DevicesClient({
           </h2>
           {recentEvents.length === 0 ? (
             <p className="rounded-xl border border-dashed border-[#e5e5e5] bg-white p-6 text-center text-sm text-[#9aa1ab]">
-              Nothing yet. Device authorizations and staff sign-ins appear here.
+              Nothing yet. Authorizations and sign-ins appear here.
             </p>
           ) : (
             <div className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white">

@@ -88,7 +88,7 @@ const PROBLEM_TEXT: Record<Problem, string> = {
 };
 
 const UNKNOWN_APPLY =
-  "We could not confirm whether your storefront was changed. Check Website Builder, or retry here; the same apply cannot happen twice.";
+  "We could not confirm whether your storefront changed. Check Website Builder, or retry; it can't apply twice.";
 
 const RUPEES = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -355,8 +355,7 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
             {view?.waiting && !view.cancelRequested ? (
               <Notice tone="neutral">
                 The redesign is waiting to continue. Your progress is saved and
-                Mink will retry automatically. You can leave this chat and
-                return later.
+                Mink will retry automatically.
               </Notice>
             ) : null}
             <Progress
@@ -372,8 +371,7 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
               <div className="space-y-2">
                 <p className="text-[10px] text-[#5f5969]">
                   Your layout, words and colours are ready to preview.
-                  Photographs are still being checked. You can leave this chat
-                  and return later.
+                  Photographs are still being checked.
                 </p>
                 <button
                   ref={previewButton}
@@ -869,11 +867,9 @@ function Review({
           ) : null}
           {published ? null : (
             <p className="max-w-lg">
-              Publishing puts the whole Website Builder draft of each page this
-              redesign changed, and of your header and footer, on your store,
-              including any other unpublished edits in them. The new page titles
-              and search text go live then too, except any you change yourself
-              first.
+              Publishing puts the whole draft of each changed page, header and
+              footer live, including other unpublished edits and the new titles
+              and search text.
             </p>
           )}
           {confirmingUndo ? (
@@ -1004,10 +1000,9 @@ function UndoConfirm({
     >
       <p className="font-semibold">Undo this redesign?</p>
       <p>
-        Undo puts your store back the way it was before this redesign: your
-        pages, header, footer and look, your tagline and footer description, and
+        Undo puts your store back the way it was before this redesign, including
         the categories and products it changed. Anything you have edited since
-        is left as you made it.
+        stays as you made it.
       </p>
       <div className="flex flex-wrap gap-2">
         <button
@@ -1090,9 +1085,9 @@ function undoSentence(answer: RevampUndoResult | null): string {
     return "Your store is back the way it was before it.";
   }
   if (answer) {
-    return "Undo put back everything that was still the redesign's. What you changed yourself after it was left as you made it.";
+    return "Undo put back what was still the redesign's. Your own later changes were kept.";
   }
-  return "Undo put back everything that was still the redesign's, and left anything you changed yourself after it as you made it.";
+  return "Undo put back what was still the redesign's and kept your own later changes.";
 }
 
 function pageChanges(page: RevampReviewPage): string {

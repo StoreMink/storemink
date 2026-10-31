@@ -60,8 +60,8 @@ export function CancellationQueueView({
       <header className="dash-page-header">
         <h1>Cancellation requests</h1>
         <p>
-          Customers who have asked to cancel. Approving cancels the whole order;
-          declining leaves it active and tells them why.
+          Approving cancels the whole order. Declining keeps it and tells the
+          customer why.
         </p>
       </header>
 
@@ -248,7 +248,6 @@ function RequestCard({
               maxLength={500}
               value={staffNote}
               onChange={(e) => setStaffNote(e.target.value)}
-              placeholder="Only your team sees this."
             />
           </Field>
 
@@ -270,9 +269,11 @@ function RequestCard({
               maxLength={300}
               value={declineReason}
               onChange={(e) => setDeclineReason(e.target.value)}
-              placeholder="The customer reads this exactly as written."
             />
           </Field>
+          <p className="-mt-2 text-xs text-[#6b7280]">
+            The customer reads this exactly as written.
+          </p>
           {/* Required, and the server refuses without it — a silent no is the
               most complained-about thing a request flow does. */}
           <Actions

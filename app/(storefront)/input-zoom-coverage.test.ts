@@ -1125,7 +1125,7 @@ const ALLOW_LIST: Allowed[] = [
 const MARKUP_ALLOW_LIST: { file: string; marker: string; reason: string }[] = [
   {
     file: "app/(storefront)/(pages)/blogs/write/write-blog-editor.tsx",
-    marker: 'placeholder="you@example.com"',
+    marker: 'aria-label="Email"',
     reason:
       "The Write a blog editor's Add your email box, an inline 15px at every width.",
   },

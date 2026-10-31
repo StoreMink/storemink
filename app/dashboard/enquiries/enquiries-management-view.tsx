@@ -256,7 +256,8 @@ export function EnquiriesManagementView({
           <Search className="h-4 w-4" />
           <input
             type="text"
-            placeholder="Search name, email, message..."
+            aria-label="Search enquiries"
+            placeholder="Search enquiries"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
@@ -323,7 +324,7 @@ export function EnquiriesManagementView({
             <div className="dash-card-sub">
               {total === 0
                 ? "No messages"
-                : `Showing ${rangeFrom}–${rangeTo} of ${total}`}
+                : `Showing ${rangeFrom}-${rangeTo} of ${total}`}
               {navigating ? " · updating…" : ""}
             </div>
           </div>
@@ -482,7 +483,7 @@ export function EnquiriesManagementView({
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
       >
-        <DialogContent className="enquiry-confirm-dialog sm:max-w-[425px]">
+        <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Delete enquiry</DialogTitle>
             <DialogDescription>

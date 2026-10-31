@@ -104,7 +104,7 @@ export function MediaPickerDialog({
                       applyMediaUrl();
                     }
                   }}
-                  placeholder="https://storage.googleapis.com/…"
+                  placeholder="https://"
                   className="min-w-0 flex-1 rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <button

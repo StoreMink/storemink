@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import { Toggle } from "../../components/feature-toggles";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import {
@@ -291,9 +292,6 @@ function MenuEditor({
                   className="dash-input w-full"
                   rows={2}
                   aria-label={`Menu button ${n} message`}
-                  placeholder={
-                    b.action === "person" ? DEFAULT_PERSON_TEXT : undefined
-                  }
                   value={b.text}
                   maxLength={AUTO_REPLY_MAX_CHARS}
                   disabled={disabled}
@@ -301,7 +299,7 @@ function MenuEditor({
                 />
                 {b.action === "person" ? (
                   <p className="mt-1 text-[12px] text-[var(--dash-text-3)]">
-                    Optional. Leave it blank to send the message shown.
+                    Optional. Blank sends &ldquo;{DEFAULT_PERSON_TEXT}&rdquo;
                   </p>
                 ) : null}
               </div>
@@ -334,12 +332,12 @@ const MINK_CHOICES: { mode: Exclude<MinkMode, "off">; detail: string }[] = [
   {
     mode: "helps",
     detail:
-      "Mink replies on its own when the answer is in your store's facts: the customer's own orders, products and prices, stock, delivery to their PIN, offers, your policies and hours. Anything else, and every complaint, refund, cancellation or request for a person, waits for you in Needs reply with Mink's draft attached.",
+      "Replies on its own when the answer is in your store's facts. Anything else, like a complaint or refund, waits for you with a draft.",
   },
   {
     mode: "drafts",
     detail:
-      "Mink never sends anything. Every message waits for you in Needs reply with Mink's suggested reply above the message box; send it, change it, or ignore it.",
+      "Never sends anything. Every message waits for you with a suggested reply.",
   },
 ];
 
@@ -355,7 +353,8 @@ function MinkCard({
   return (
     <Card
       title="Mink AI answers"
-      description="Mink answers customers' questions from your store's own facts, or drafts a reply for you. Replies that are sent use Mink credits; a draft nobody sends does not."
+      description="Mink answers from your store's facts, or drafts a reply for you. Replies that are sent use Mink credits."
+      info="It replies in the customer's language. Your Mink credits are under Plans & Billing."
       on={mode !== "off"}
       disabled={disabled}
       onToggle={(on) => onChange(on ? "helps" : "off")}
@@ -390,10 +389,7 @@ function MinkCard({
           </label>
         ))}
         <p className="text-[12px] leading-relaxed text-[var(--dash-text-3)]">
-          Mink never cancels, refunds, changes a price or an address, or applies
-          a code: it only answers, and it tells the customer a person can take
-          over. It replies in the language the customer wrote in. Your Mink
-          credits are under Plans &amp; Billing.
+          Mink only answers. It never cancels, refunds or changes an order.
         </p>
       </div>
     </Card>
@@ -403,6 +399,7 @@ function MinkCard({
 function Card({
   title,
   description,
+  info,
   on,
   disabled,
   onToggle,
@@ -410,6 +407,8 @@ function Card({
 }: {
   title: string;
   description: string;
+  /** Detail behind the "i" beside the title, not under it. */
+  info?: string;
   on: boolean;
   disabled: boolean;
   onToggle: (next: boolean) => void;
@@ -419,7 +418,12 @@ function Card({
     <section className="dash-card">
       <div className="dash-card-header">
         <div>
-          <div className="dash-card-title">{title}</div>
+          <div className="flex items-center gap-1.5">
+            <div className="dash-card-title">{title}</div>
+            {info ? (
+              <InfoTip label={`About ${title.toLowerCase()}`}>{info}</InfoTip>
+            ) : null}
+          </div>
           <div className="dash-card-sub max-w-xl">{description}</div>
         </div>
         <Toggle on={on} disabled={disabled} onChange={onToggle} label={title} />
@@ -470,7 +474,8 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
     <div className="flex max-w-3xl flex-col gap-4">
       <Card
         title="Welcome message"
-        description={`Sent when a customer messages you for the first time, or after ${WELCOME_QUIET_DAYS} days with no messages either way. The conversation still waits for you in Needs reply.`}
+        description={`Sent on a customer's first message, or after ${WELCOME_QUIET_DAYS} quiet days.`}
+        info="The conversation still waits for you in Needs reply."
         on={settings.welcomeEnabled}
         disabled={disabled}
         onToggle={(on) => patch({ welcomeEnabled: on })}
@@ -485,7 +490,8 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
 
       <Card
         title="Away message"
-        description={`Sent when a customer messages you outside your business hours, once until you're open again. It isn't sent if someone on your team replied to that customer in the last ${AWAY_AFTER_HUMAN_REPLY_HOURS} hours.`}
+        description="Sent once when a customer writes outside your business hours."
+        info={`Not sent if your team replied to that customer in the last ${AWAY_AFTER_HUMAN_REPLY_HOURS} hours.`}
         on={settings.awayEnabled}
         disabled={disabled}
         onToggle={(on) => patch({ awayEnabled: on })}
@@ -498,7 +504,13 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
             onChange={(awayText) => patch({ awayText })}
           />
           <div>
-            <div className="mb-2 text-[13px] font-semibold">Business hours</div>
+            <div className="mb-2 flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold">Business hours</div>
+              <InfoTip label="About business hours">
+                A closing time before the opening time runs into the next day.
+                For a holiday, set the day to Closed.
+              </InfoTip>
+            </div>
             <HoursEditor
               hours={settings.hours}
               disabled={disabled}
@@ -514,9 +526,7 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
                   </Link>
                   .
                 </>
-              ) : null}{" "}
-              A closing time earlier than the opening time runs into the next
-              day. To be away for a holiday, set those days to Closed.
+              ) : null}
             </p>
           </div>
         </div>
@@ -524,7 +534,7 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
 
       <Card
         title="Menu buttons"
-        description={`Up to ${MENU_MAX_BUTTONS} buttons under the welcome message, and again whenever a customer types "menu". Each one checks their order, hands the chat to your team, or sends a message you write.`}
+        description={`Up to ${MENU_MAX_BUTTONS} buttons under the welcome message, and when a customer types "menu".`}
         on={settings.menuEnabled}
         disabled={disabled}
         onToggle={(on) => patch({ menuEnabled: on })}
@@ -543,22 +553,12 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
 
       <Card
         title="Order status"
-        description="When a customer asks where their order is, they get its status and tracking link straight away, for orders placed with the number they are messaging from. If no order matches, or a delivery has a problem, the conversation waits for you in Needs reply."
+        description="A customer asking where their order is gets its status and tracking link at once."
+        info="Works in English or Hindi, for orders placed with the number they write from. Anything else waits for you in Needs reply."
         on={settings.orderStatusEnabled}
         disabled={disabled}
         onToggle={(on) => patch({ orderStatusEnabled: on })}
-      >
-        <div className="rounded-[10px] bg-[rgba(17,24,39,0.04)] px-3 py-2.5 text-[13px] leading-relaxed whitespace-pre-line">
-          {
-            "Here's the latest on your order:\n\nOrder ORD10011027, placed 12 Oct: On the way with Delhivery. Expected by 15 Oct.\nTrack it: https://…"
-          }
-        </div>
-        <p className="mt-2 text-[12px] text-[var(--dash-text-3)]">
-          An example. Customers can ask in English or Hindi, for example
-          &ldquo;where is my order&rdquo; or &ldquo;mera order kab
-          aayega&rdquo;.
-        </p>
-      </Card>
+      />
 
       <MinkCard
         mode={settings.minkMode}

@@ -708,7 +708,7 @@ export function DashboardCanvas({
                 <UpgradePopover
                   lock={customizeLock}
                   feature="Customise your dashboard"
-                  pitch="Add the cards that matter to you, from inventory velocity to discounts and returns, and arrange them into your own sections."
+                  pitch="Choose the cards you see and arrange them into your own sections."
                   triggerClassName="dash-an-btn is-locked"
                   triggerLabel="Edit dashboard needs a paid plan"
                 >

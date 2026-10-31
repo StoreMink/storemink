@@ -50,10 +50,8 @@ export default async function RefundsPage({
 
       <h1 className="text-2xl font-bold text-[var(--dash-text)]">Refunds</h1>
       <p className="mt-1 mb-5 max-w-2xl text-sm text-[var(--dash-text-2)]">
-        Money StoreMink is returning to merchants: renewal payments for cycles a
-        plan never reached, which the billing run finds by itself, and refunds
-        an operator issues. Each refund goes back to the payment it reverses,
-        and a credit note is issued when it completes.
+        Money StoreMink is returning to merchants. Each refund goes back to the
+        payment it reverses, with a credit note when it completes.
       </p>
 
       <RefundTabs tab={tab} needsPerson={count ? count.total : null} />
@@ -65,8 +63,8 @@ export default async function RefundsPage({
           role="status"
           className="mb-4 max-w-3xl rounded-[var(--dash-radius-sm)] border border-[var(--dash-border-strong)] bg-[var(--dash-amber-soft)] px-3 py-2 text-sm text-[var(--dash-text)]"
         >
-          The refunds that need a look couldn&apos;t be counted just now, so
-          this list may be incomplete. Refresh the page to try again.
+          The refunds that need a look couldn&apos;t be counted, so this list
+          may be incomplete. Refresh to try again.
         </p>
       ) : null}
 

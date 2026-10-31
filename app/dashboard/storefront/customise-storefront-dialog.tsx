@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   CUSTOMISE_FORM_LIMITS,
   customiseFormProblem,
@@ -23,36 +24,31 @@ import { useChat } from "../chat-context";
 const FIELDS: {
   key: keyof CustomiseStorefrontAnswers;
   label: string;
-  hint?: string;
-  placeholder: string;
+  /** Guidance shown behind the field's "i" button, not under the field. */
+  info?: string;
   rows: number;
   required?: boolean;
 }[] = [
   {
     key: "business",
     label: "What do you sell, and who buys it?",
-    placeholder:
-      "Cold-pressed mustard and groundnut oils for families who cook at home",
     rows: 3,
     required: true,
   },
   {
     key: "look",
     label: "The look and feel you want",
-    placeholder: "Warm and earthy, like a village kitchen",
     rows: 2,
   },
   {
     key: "facts",
     label: "Facts about your business",
-    hint: "Where you are, how your products are made, since when. Mink AI uses only what you write here and never invents claims.",
-    placeholder: "Pressed in our own mill in Faridkot since 1998",
+    info: "Where you are, how your products are made and since when. Mink AI uses only what you write here and never invents claims.",
     rows: 3,
   },
   {
     key: "avoid",
     label: "Anything to avoid",
-    placeholder: "No bright pink, no slang",
     rows: 2,
   },
 ];
@@ -98,57 +94,51 @@ export function CustomiseStorefrontButton({
         Customise storefront
       </button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[560px]">
-          <form onSubmit={submit} noValidate>
+        <DialogContent className="sm:max-w-[540px]">
+          <form onSubmit={submit} noValidate className="grid gap-5">
             <DialogHeader>
               <DialogTitle>Customise your storefront</DialogTitle>
               <DialogDescription>
-                Tell Mink AI about your business. It redesigns your pages,
-                header and footer for you, then shows you everything to review
-                before anything changes on your store.
+                Mink AI redesigns your storefront in a new chat. Nothing changes
+                on your store until you approve it.
               </DialogDescription>
             </DialogHeader>
-            <div className="mt-4 space-y-4">
+            <div className="grid gap-4">
               {FIELDS.map((field) => {
                 const id = `customise-${field.key}`;
-                const hintId = field.hint ? `${id}-hint` : undefined;
                 const errorId =
                   field.key === "business" && problem
                     ? `${id}-error`
                     : undefined;
                 return (
-                  <div key={field.key}>
-                    <label
-                      htmlFor={id}
-                      className="block text-sm font-medium text-[#111827]"
-                    >
-                      {field.label}
-                      {!field.required && (
-                        <span className="font-normal text-[#5b6472]">
-                          {" "}
-                          (optional)
-                        </span>
-                      )}
-                    </label>
-                    {field.hint && (
-                      <p
-                        id={hintId}
-                        className="mt-0.5 text-xs leading-5 text-[#5b6472]"
+                  <div key={field.key} className="grid gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <label
+                        htmlFor={id}
+                        className="text-sm font-medium text-[#111827]"
                       >
-                        {field.hint}
-                      </p>
-                    )}
+                        {field.label}
+                        {!field.required && (
+                          <span className="font-normal text-[#5b6472]">
+                            {" "}
+                            (optional)
+                          </span>
+                        )}
+                      </label>
+                      {field.info && (
+                        <InfoTip label={`About ${field.label.toLowerCase()}`}>
+                          {field.info}
+                        </InfoTip>
+                      )}
+                    </div>
                     <textarea
                       id={id}
                       rows={field.rows}
                       maxLength={CUSTOMISE_FORM_LIMITS[field.key]}
                       value={answers[field.key]}
-                      placeholder={field.placeholder}
                       required={field.required}
                       aria-invalid={errorId ? true : undefined}
-                      aria-describedby={
-                        [hintId, errorId].filter(Boolean).join(" ") || undefined
-                      }
+                      aria-describedby={errorId}
                       onChange={(event) => {
                         const value = event.target.value;
                         setAnswers((current) => ({
@@ -157,13 +147,15 @@ export function CustomiseStorefrontButton({
                         }));
                         if (field.key === "business") setProblem(null);
                       }}
-                      className="dash-input mt-1.5 w-full resize-y"
+                      className={`dash-input field-sizing-content max-h-48 w-full resize-none ${
+                        field.rows > 2 ? "min-h-[84px]" : "min-h-[62px]"
+                      }`}
                     />
                     {errorId && (
                       <p
                         id={errorId}
                         role="alert"
-                        className="mt-1 text-xs text-[#b42318]"
+                        className="text-xs text-[#b42318]"
                       >
                         {problem}
                       </p>
@@ -171,13 +163,8 @@ export function CustomiseStorefrontButton({
                   </div>
                 );
               })}
-              <p className="text-xs leading-5 text-[#5b6472]">
-                Mink AI uses the products already in your store and keeps your
-                categories as they are. The redesign opens in a chat, where you
-                can follow it and ask for changes.
-              </p>
             </div>
-            <DialogFooter className="mt-5">
+            <DialogFooter>
               <Button
                 type="button"
                 variant="outline"

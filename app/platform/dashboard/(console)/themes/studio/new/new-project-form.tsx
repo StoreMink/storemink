@@ -8,6 +8,7 @@ import {
   queueThemeStudioGenerationAction,
 } from "@/app/actions/theme-studio-actions";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   INDUSTRY_LABELS,
   type ThemeCatalogSize,
@@ -508,9 +509,15 @@ export function NewProjectForm({
           </p>
           {editingId ? (
             <div id={fieldId("theme-id-box")} className="mt-3">
-              <label htmlFor={fieldId("theme-id")} className={LABEL}>
-                Theme ID
-              </label>
+              <div className="flex items-center gap-1.5">
+                <label htmlFor={fieldId("theme-id")} className={LABEL}>
+                  Theme ID
+                </label>
+                <InfoTip label="About the theme ID">
+                  It also names the theme&apos;s demo store. If a deleted theme
+                  used this ID, a new ending is added.
+                </InfoTip>
+              </div>
               <input
                 ref={idInput}
                 id={fieldId("theme-id")}
@@ -531,9 +538,7 @@ export function NewProjectForm({
                 id={fieldId("theme-id-help")}
                 className="studio-muted mt-1.5 text-sm"
               >
-                Lowercase letters and numbers joined by single hyphens. It also
-                names the theme&apos;s demo store. If this ID belonged to a
-                deleted theme, a new ending is added for you and the name stays.
+                Lowercase letters and numbers, joined by single hyphens.
               </p>
               {errors.themeId ? (
                 <p
@@ -548,9 +553,15 @@ export function NewProjectForm({
         </div>
 
         <div>
-          <label htmlFor={fieldId("brief")} className={LABEL}>
-            Brief
-          </label>
+          <div className="flex items-center gap-1.5">
+            <label htmlFor={fieldId("brief")} className={LABEL}>
+              Brief
+            </label>
+            <InfoTip label="About the brief">
+              Say who the store sells to, what should feel distinctive, which
+              pages matter most and what to avoid.
+            </InfoTip>
+          </div>
           <textarea
             ref={briefInput}
             id={fieldId("brief")}
@@ -561,7 +572,6 @@ export function NewProjectForm({
             aria-invalid={errors.brief ? true : undefined}
             aria-describedby={`${fieldId("brief-count")}${errors.brief ? ` ${fieldId("brief-error")}` : ""}`}
             onChange={(e) => setBrief(e.target.value)}
-            placeholder="Who the store sells to, what should feel distinctive, which pages matter most, and what to avoid."
           />
           <p
             id={fieldId("brief-count")}
@@ -605,7 +615,11 @@ export function NewProjectForm({
           >
             <p className="text-sm font-medium text-[var(--dash-text)]">
               Drop or paste screenshots of stores you like (up to {limits.files}
-              )
+              ){" "}
+              <InfoTip label="About screenshots" className="ml-0.5">
+                They are inspiration only: Theme Studio takes the layout and the
+                feel, and never copies logos, words, product photos or artwork.
+              </InfoTip>
             </p>
             <button
               type="button"
@@ -637,9 +651,7 @@ export function NewProjectForm({
           ) : null}
           <p className="studio-muted mt-1.5 text-sm">
             JPEG, PNG, WebP or AVIF, up to {fileSizeWords(limits.fileBytes)}{" "}
-            each and {fileSizeWords(limits.totalBytes)} in all. They are
-            inspiration only: Theme Studio takes the layout and the feel, and
-            never copies logos, words, product photos or artwork.
+            each and {fileSizeWords(limits.totalBytes)} in all.
           </p>
           {problems.length > 0 ? (
             <ul role="alert" className="studio-error mt-2 space-y-1 text-sm">
@@ -823,8 +835,7 @@ export function NewProjectForm({
                   id={fieldId("base-help")}
                   className="studio-muted mt-1.5 text-sm"
                 >
-                  StoreMink&apos;s own themes only: a theme made in Theme Studio
-                  can&apos;t be a starting point yet.
+                  Only StoreMink&apos;s own themes can be a starting point.
                 </p>
               </div>
               <div>
@@ -879,8 +890,7 @@ export function NewProjectForm({
             <p className="studio-reason text-sm sm:text-right">
               {buildingOffReason ??
                 "Building is switched off on this deployment."}{" "}
-              The theme is created with its brief and screenshots, and you can
-              start it from its page once building is back on.
+              The theme is created, and you can start it from its page later.
             </p>
           ) : null}
           <p aria-live="polite" className="sr-only">

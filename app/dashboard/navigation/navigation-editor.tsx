@@ -58,7 +58,7 @@ function LinkListEditor({
             aria-label={`Link ${i + 1} label`}
             value={link.label}
             onChange={(e) => set(i, { label: e.target.value })}
-            placeholder="Label (e.g. Our Story)"
+            placeholder="Label"
             disabled={disabled}
           />
           <input
@@ -66,7 +66,7 @@ function LinkListEditor({
             aria-label={`Link ${i + 1} address`}
             value={link.href}
             onChange={(e) => set(i, { href: e.target.value })}
-            placeholder="/our-story"
+            placeholder="Link"
             disabled={disabled}
           />
           <button
@@ -134,8 +134,7 @@ export function NavigationEditor({
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Navigation</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            The links in your storefront header and footer. Use internal paths
-            like <code>/shop</code> or <code>/our-story</code>, or full URLs.
+            The links in your storefront header and footer.
           </p>
         </div>
         <Button onClick={save} disabled={!canManage || isPending}>
@@ -188,7 +187,7 @@ export function NavigationEditor({
                     className={inputClass}
                     value={group.title}
                     onChange={(e) => setGroup(gi, { title: e.target.value })}
-                    placeholder="e.g. Company"
+                    aria-label="Column title"
                     disabled={!canManage}
                   />
                 </div>
@@ -221,7 +220,7 @@ export function NavigationEditor({
       <section className="dash-card mb-5 p-5">
         <h2 className="mb-1 text-sm font-semibold">Footer legal row</h2>
         <p className="text-muted-foreground mb-4 text-xs">
-          The small print row at the very bottom (Privacy, Terms, …).
+          The small print at the very bottom.
         </p>
         <LinkListEditor
           links={footerLegal}

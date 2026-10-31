@@ -73,14 +73,8 @@ describe("GroupForm", () => {
     vi.mocked(createUserGroup).mockResolvedValue({} as any);
     render(<GroupForm group={null} />);
 
-    await user.type(
-      screen.getByPlaceholderText("e.g. VIP shoppers"),
-      "Newbies",
-    );
-    await user.type(
-      screen.getByPlaceholderText("Optional - what this group is for"),
-      "Just joined",
-    );
+    await user.type(screen.getByLabelText(/^Name/), "Newbies");
+    await user.type(screen.getByLabelText(/^Description/), "Just joined");
     await user.click(screen.getByRole("button", { name: "Create group" }));
 
     await waitFor(() =>
@@ -100,7 +94,7 @@ describe("GroupForm", () => {
     vi.mocked(createUserGroup).mockResolvedValue({ error: "dupe" } as any);
     render(<GroupForm group={null} />);
 
-    await user.type(screen.getByPlaceholderText("e.g. VIP shoppers"), "Dup");
+    await user.type(screen.getByLabelText(/^Name/), "Dup");
     await user.click(screen.getByRole("button", { name: "Create group" }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("dupe"));
@@ -113,7 +107,7 @@ describe("GroupForm", () => {
     vi.mocked(createUserGroup).mockResolvedValue({} as any);
     render(<GroupForm group={null} />);
 
-    await user.type(screen.getByPlaceholderText("e.g. VIP shoppers"), "Greens");
+    await user.type(screen.getByLabelText(/^Name/), "Greens");
     await user.click(screen.getByRole("button", { name: "green" }));
     await user.click(screen.getByRole("button", { name: "Create group" }));
 
@@ -132,12 +126,8 @@ describe("GroupForm", () => {
     expect(
       screen.getByRole("heading", { name: "Edit group" }),
     ).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("e.g. VIP shoppers")).toHaveValue(
-      "VIP shoppers",
-    );
-    expect(
-      screen.getByPlaceholderText("Optional - what this group is for"),
-    ).toHaveValue("Top spenders");
+    expect(screen.getByLabelText(/^Name/)).toHaveValue("VIP shoppers");
+    expect(screen.getByLabelText(/^Description/)).toHaveValue("Top spenders");
 
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 

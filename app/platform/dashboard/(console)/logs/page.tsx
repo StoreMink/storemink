@@ -54,9 +54,8 @@ export default async function PlatformLogsHub() {
       </div>
 
       <p className="text-xs text-slate-400">
-        Stack traces and platform internals stay in Cloud Logging and Error
-        Reporting, which already group and alert on them. These logs are the
-        merchant-readable record.
+        Stack traces and platform internals are in Cloud Logging and Error
+        Reporting.
       </p>
     </div>
   );

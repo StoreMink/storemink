@@ -361,7 +361,6 @@ export function ShiftClient({
                       <input
                         value={movementReason}
                         onChange={(e) => setMovementReason(e.target.value)}
-                        placeholder="e.g. banked at 4pm"
                         className="w-full rounded-lg border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2 outline-none focus:border-[var(--pos-border-strong)]"
                       />
                     </label>
@@ -410,9 +409,8 @@ export function ShiftClient({
               <>
                 <h3 className="font-semibold">Count the drawer</h3>
                 <p className="mb-3 text-sm text-[var(--pos-ink-2)]">
-                  Enter what is physically there. The expected figure is hidden
-                  until you have - a count you can see the answer to is not a
-                  count.
+                  Enter what is physically there. The expected figure stays
+                  hidden until you do.
                 </p>
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="min-w-32 flex-1">
@@ -437,7 +435,6 @@ export function ShiftClient({
                     <input
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
-                      placeholder="e.g. 50 short, drawer jam at 3pm"
                       className="w-full rounded-lg border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2 outline-none focus:border-[var(--pos-border-strong)]"
                     />
                   </label>

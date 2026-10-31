@@ -161,7 +161,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "phone",
       title: "Verify your mobile number",
       description:
-        "We text a six-digit code to confirm a real person runs this store and that we can reach you about it. It takes a few seconds.",
+        "We text a six-digit code to confirm a real person runs this store.",
       href: "/dashboard/settings/account?focus=phone",
       action: "Verify mobile",
       required: true,
@@ -171,7 +171,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "theme",
       title: "Choose your storefront theme",
       description:
-        "Until you pick one, your storefront shows a “store in progress” page. You choose it once, so preview a few first.",
+        "Until you pick one, your storefront shows a “store in progress” page. You choose it once.",
       href: "/dashboard/storefront",
       action: "Choose a theme",
       required: true,
@@ -181,7 +181,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "products",
       title: "Add your first product",
       description:
-        "Publish at least one product of your own. Theme samples don't count - they're drafts your customers never see.",
+        "Publish at least one product of your own. Theme samples don't count.",
       href: "/dashboard/products",
       action: "Add product",
       required: true,
@@ -192,7 +192,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
         key: "business",
         title: "Add your business and delivery details",
         description:
-          "Your trading name, address, email and mobile print on every invoice. Save your delivery charges once, or checkout shows a default nobody chose.",
+          "Your business details print on every invoice. Save delivery charges so checkout shows yours.",
         action: "Add business details",
       },
       [
@@ -217,7 +217,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
         key: "policies",
         title: "Publish your store policies",
         description:
-          "Shoppers can read all four before they pay. Checkout asks them to accept your terms, Indian e-commerce rules require a refund policy, and you hold their details from the first order.",
+          "Shoppers can read all four before they pay, and Indian rules require a refund policy.",
         action: "Write policies",
       },
       LAUNCH_POLICY_SLUGS.map((slug) => ({
@@ -232,7 +232,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "homepage",
       title: "Personalise your homepage",
       description:
-        "Your homepage still shows the theme's starting copy and pictures. Pick the look you want under Storefront, then make it yours in the Website Builder.",
+        "Pick the look you want under Storefront, then make it yours in the Website Builder.",
       href: "/dashboard/builder",
       action: "Open Website Builder",
       required: false,
@@ -252,7 +252,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "samples",
       title: "Remove the sample products",
       description:
-        "The theme's example products are still in your catalogue as drafts. Delete them so they can't be published by mistake.",
+        "Delete the theme's example drafts so they can't be published by mistake.",
       href: "/dashboard/products",
       action: "Review products",
       required: false,

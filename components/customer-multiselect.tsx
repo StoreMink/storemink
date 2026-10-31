@@ -107,7 +107,8 @@ export function CustomerMultiselect({
         <input
           type="text"
           className="w-full bg-transparent text-sm outline-none placeholder:text-[#9ca3af]"
-          placeholder="Search name, email or phone..."
+          placeholder="Search customers"
+          aria-label="Search customers by name, email or phone"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />

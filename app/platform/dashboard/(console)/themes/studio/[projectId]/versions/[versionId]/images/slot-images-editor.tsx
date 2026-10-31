@@ -6,6 +6,7 @@ import { ImageUp, Loader2, Save, X } from "lucide-react";
 import { toast } from "sonner";
 import { replaceThemeStudioSlotImagesAction } from "@/app/actions/theme-studio-actions";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   THEME_IMAGE_PROBLEM_LABEL,
   redrawEstimate,
@@ -547,16 +548,20 @@ export function SlotImagesEditor({
                           <option value="licensed">Licensed</option>
                         </select>
                       </label>
-                      <label className="grid gap-1 text-xs">
-                        Licence note
+                      <div className="grid gap-1 text-xs">
+                        <div className="flex items-center gap-1.5">
+                          <label htmlFor={`studio-licence-${slot.id}`}>
+                            Licence note
+                          </label>
+                          <InfoTip label="About the licence note">
+                            Say where the picture came from, such as its licence
+                            or who made it. Publish relies on it.
+                          </InfoTip>
+                        </div>
                         <input
+                          id={`studio-licence-${slot.id}`}
                           value={image.licenseNote}
                           maxLength={300}
-                          placeholder={
-                            image.source === "licensed"
-                              ? "For example: Unsplash licence, photo by ..."
-                              : "For example: Photographed by StoreMink, 2026"
-                          }
                           onChange={(event) =>
                             update(slot.id, {
                               licenseNote: event.target.value,
@@ -564,7 +569,7 @@ export function SlotImagesEditor({
                           }
                           className="dash-input"
                         />
-                      </label>
+                      </div>
                     </div>
                   ) : null}
 

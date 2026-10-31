@@ -16,6 +16,7 @@ import Underline from "@tiptap/extension-underline";
 import TextAlign from "@tiptap/extension-text-align";
 import Placeholder from "@tiptap/extension-placeholder";
 import { SlashCommand } from "./slash-command";
+import { InfoTip } from "@/components/ui/info-tip";
 import { uploadImage } from "@/lib/storage/uploads";
 import {
   submitCustomerBlog,
@@ -142,7 +143,7 @@ export default function WriteBlogEditor({
       Underline,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
       Placeholder.configure({
-        placeholder: 'Write your story, or press "/" for blocks...',
+        placeholder: "Write your story…",
       }),
       SlashCommand,
     ],
@@ -511,7 +512,6 @@ export default function WriteBlogEditor({
           <h1 className="write-blog-auth-title">Share Your Story</h1>
           <p className="write-blog-auth-desc">
             Sign in to write and publish your own blog posts on {brand.name}.
-            Join our community of readers and contributors.
           </p>
           <button className="write-blog-submit-btn" onClick={openAuthModal}>
             Sign In to Start Writing
@@ -531,10 +531,10 @@ export default function WriteBlogEditor({
           <div className="write-blog-success-icon">
             <CheckCircle size={64} />
           </div>
-          <h1 className="write-blog-success-title">Successfully Submitted!</h1>
+          <h1 className="write-blog-success-title">Submitted successfully</h1>
           <p className="write-blog-success-desc">
-            Your blog post has been submitted and is pending review. Our team
-            will read it over and publish it shortly.
+            Your post is pending review. We&apos;ll publish it once it&apos;s
+            approved.
           </p>
           <div className="flex gap-4 justify-center">
             <button
@@ -598,10 +598,7 @@ export default function WriteBlogEditor({
                 <FileText size={32} />
               </div>
               <h2>No submissions yet</h2>
-              <p>
-                You haven&apos;t submitted any blogs yet. Start writing to share
-                your story with the community.
-              </p>
+              <p>Start writing to share your story.</p>
               <button
                 className="write-blog-submit-btn"
                 onClick={() => {
@@ -842,7 +839,8 @@ export default function WriteBlogEditor({
         {/* Title */}
         <input
           type="text"
-          placeholder="Your blog title..."
+          placeholder="Title"
+          aria-label="Title"
           className="write-blog-title-input"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -896,10 +894,12 @@ export default function WriteBlogEditor({
 
         {/* Excerpt */}
         <section className="wb-section">
-          <span className="wb-label">Excerpt</span>
+          <label className="wb-label" htmlFor="write-blog-excerpt">
+            Excerpt
+          </label>
           <textarea
+            id="write-blog-excerpt"
             className="write-blog-textarea"
-            placeholder="A brief summary of your post..."
             value={excerpt}
             onChange={(e) => setExcerpt(e.target.value)}
             maxLength={200}
@@ -910,7 +910,12 @@ export default function WriteBlogEditor({
 
         {/* Content */}
         <section className="wb-section">
-          <span className="wb-label">Content</span>
+          <div className="flex items-center gap-1.5">
+            <span className="wb-label">Content</span>
+            <InfoTip label="About the editor">
+              Type &ldquo;/&rdquo; to add headings, lists and more.
+            </InfoTip>
+          </div>
           <div className="write-blog-editor-area">
             {editor && (
               <BubbleMenu
@@ -1210,14 +1215,13 @@ export default function WriteBlogEditor({
               Add your email
             </h2>
             <p className="text-sm text-[var(--blog-muted)] mb-5">
-              We&apos;ll use this to let you know when your blog is approved or
-              if it isn&apos;t accepted. An email is required to submit for
-              review.
+              We&apos;ll email you when your post is reviewed. An email is
+              required to submit.
             </p>
             <input
               type="email"
               autoFocus
-              placeholder="you@example.com"
+              aria-label="Email"
               value={emailInput}
               onChange={(e) => {
                 setEmailInput(e.target.value);

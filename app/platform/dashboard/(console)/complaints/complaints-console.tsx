@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Check } from "lucide-react";
 import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   complaintKindLabel,
   kindWord,
@@ -243,21 +244,34 @@ export const OUTCOME_LABEL: Record<string, string> = {
   answered: "Answered",
 };
 
-/** Each kind's line in the form and the Change kind dialog (design 6.3). */
+/**
+ * Each kind's line in the form and the Change kind dialog (design 6.3): its
+ * name and its deadlines. What a kind covers, where that needs saying, is in
+ * `KIND_INFO`, behind the "i" beside the line.
+ */
 export const KIND_HELP: Record<ComplaintKind, string> = {
   court_order: "Court order: remove or block within 3 hours.",
   government_order:
-    "Government or police order to remove content: remove or block within 3 hours. It must be in writing from an authorised officer and name the law and the exact address.",
+    "Government or police order: remove or block within 3 hours.",
   information_order:
-    "Order to give information or help: provide it within 72 hours. It must be in writing and say what is wanted and why.",
+    "Order to give information or help: provide it within 72 hours.",
   intimate_or_impersonation:
-    "Intimate image or impersonation: shows someone naked, partly naked or in a sexual act, or pretends to be them, including faked or morphed images. Remove or block within 2 hours, at any hour, and resolve within 36 hours.",
+    "Intimate image or impersonation: remove or block within 2 hours, at any hour. Resolve within 36 hours.",
   listed_content:
     "Content listed in Acceptable Use section 2: resolve within 36 hours.",
-  other_removal:
-    "Other removal request: someone else's rights, intellectual property or another law. Resolve within 7 days.",
+  other_removal: "Other removal request: resolve within 7 days.",
   grievance: "Other complaint: resolve within 7 days.",
   data_request: "Personal data request: answer within 10 working days.",
+};
+
+/** What a kind covers, shown behind the "i" beside its line. */
+export const KIND_INFO: Partial<Record<ComplaintKind, string>> = {
+  government_order:
+    "It must be in writing from an authorised officer and name the law and the exact address.",
+  information_order: "It must be in writing and say what is wanted and why.",
+  intimate_or_impersonation:
+    "Shows someone naked, partly naked or in a sexual act, or pretends to be them, including faked or morphed images.",
+  other_removal: "Someone else's rights, intellectual property or another law.",
 };
 
 /** A kind's line split at its first colon: the bold part and the rest. */
@@ -270,6 +284,60 @@ export function kindHelpParts(kind: ComplaintKind): {
   return at < 0
     ? { head: line, rest: "" }
     : { head: line.slice(0, at), rest: line.slice(at + 2) };
+}
+
+/**
+ * One kind as a radio row, for the form and the Change kind dialog. The "i"
+ * sits beside the label, never inside it, so the radio's name stays the
+ * kind's own line.
+ */
+export function KindRadioRow({
+  kind,
+  name,
+  checked,
+  disabled,
+  onSelect,
+}: {
+  kind: ComplaintKind;
+  name: string;
+  checked: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+}) {
+  const { head, rest } = kindHelpParts(kind);
+  const info = KIND_INFO[kind];
+  return (
+    <div
+      className={`flex items-start gap-2 rounded-[var(--dash-radius-sm)] border px-3 py-2 text-sm pointer-coarse:min-h-11 ${
+        checked
+          ? "border-[var(--dash-accent)] bg-[var(--dash-accent-soft)]"
+          : "border-[var(--dash-border-strong)]"
+      }`}
+    >
+      <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-2">
+        <input
+          type="radio"
+          name={name}
+          value={kind}
+          checked={checked}
+          onChange={onSelect}
+          disabled={disabled}
+          className="mt-1"
+        />
+        <span className="text-[var(--dash-text)]">
+          <span className="font-medium">{head}:</span> {rest}
+        </span>
+      </label>
+      {info ? (
+        <InfoTip
+          label={`About ${complaintKindLabel(kind).toLowerCase()}`}
+          className="mt-0.5"
+        >
+          {info}
+        </InfoTip>
+      ) : null}
+    </div>
+  );
 }
 
 /**

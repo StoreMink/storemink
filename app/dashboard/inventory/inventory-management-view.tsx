@@ -258,7 +258,6 @@ export function InventoryManagementView({
       <header className="dash-page-header row">
         <div>
           <h1>Inventory</h1>
-          <p>Count and adjust stock at one physical location at a time.</p>
         </div>
         {/* Export the shop currently being shown, so a stocktake sheet counts
             the shelf the merchant is standing in front of. */}
@@ -302,8 +301,8 @@ export function InventoryManagementView({
               </div>
               <p className="mt-0.5 text-xs text-[#6b7280]">
                 {isAggregate
-                  ? "Store-wide totals for comparison. Choose a location before changing stock."
-                  : `Every change on this page affects only ${locationName}.`}
+                  ? "Choose a location to change stock."
+                  : `Changes here affect only ${locationName}.`}
               </p>
             </div>
           </div>
@@ -381,7 +380,8 @@ export function InventoryManagementView({
               <Search className="h-4 w-4 shrink-0 opacity-50" />
               <input
                 type="text"
-                placeholder="Search products..."
+                placeholder="Search products"
+                aria-label="Search products"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -392,7 +392,7 @@ export function InventoryManagementView({
         {isAggregate && (
           <div className="border-b border-slate-200 bg-slate-50 px-5 py-3 text-sm text-slate-700">
             <span className="font-semibold">View only:</span> these are totals
-            across all locations. Choose a location above to edit a shelf.
+            across all locations.
           </div>
         )}
 
@@ -402,9 +402,7 @@ export function InventoryManagementView({
               <PackageMinus className="h-5 w-5" />
             </span>
             <div className="dash-empty-title">No inventory found</div>
-            <p className="dash-empty-text">
-              Try adjusting your filters or search query.
-            </p>
+            <p className="dash-empty-text">Try other filters or search.</p>
           </div>
         ) : (
           <ResponsiveTable className="dash-table dash-table-wide">
@@ -566,14 +564,17 @@ export function InventoryManagementView({
           <DialogHeader>
             <DialogTitle>Set stock for {selection.count} items</DialogTitle>
             <DialogDescription>
-              This will overwrite the stock level for all selected tracked items
-              at {locationName}.
+              Replaces the stock of every selected tracked item at{" "}
+              {locationName}.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-4">
+          <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">New stock level</label>
+              <label className="text-sm font-medium" htmlFor="bulk-stock-level">
+                New stock level
+              </label>
               <NumberField
+                id="bulk-stock-level"
                 value={bulkValue}
                 onValueChange={setBulkValue}
                 className="w-full"

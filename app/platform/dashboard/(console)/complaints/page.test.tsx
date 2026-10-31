@@ -119,7 +119,7 @@ describe("the open complaints", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Every complaint, order and data request StoreMink receives, with its deadlines. Log each one as soon as it arrives.",
+        "Every complaint, order and data request, with its deadlines. Log each one as soon as it arrives.",
       ),
     ).toBeInTheDocument();
     expect(

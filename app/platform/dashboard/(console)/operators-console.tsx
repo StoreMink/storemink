@@ -63,28 +63,37 @@ export function OperatorsConsole({
             Operators
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Platform operators can manage every store. Superadmins can also add
-            and remove operators.
+            Operators manage every store. Superadmins can also add and remove
+            operators.
           </p>
         </div>
 
         {canManage && (
           <form
-            className="flex w-full sm:w-auto items-center gap-3"
+            className="flex w-full sm:w-auto items-end gap-3"
             onSubmit={invite}
           >
-            <input
-              className="flex h-10 w-[240px] rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-100 transition-all shadow-sm"
-              type="email"
-              placeholder="operator@email.com"
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-                setMsg(null);
-              }}
-              required
-            />
+            <div className="grid gap-1">
+              <label
+                htmlFor="operator-email"
+                className="text-xs font-medium text-gray-600"
+              >
+                Email
+              </label>
+              <input
+                id="operator-email"
+                className="flex h-10 w-[240px] rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none placeholder:text-gray-400 focus:border-gray-300 focus:ring-4 focus:ring-gray-100 transition-all shadow-sm"
+                type="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setMsg(null);
+                }}
+                required
+              />
+            </div>
             <select
+              aria-label="Role"
               className="flex h-10 w-[140px] rounded-md border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-300 focus:ring-4 focus:ring-gray-100 transition-all shadow-sm"
               value={role}
               onChange={(e) =>

@@ -48,7 +48,6 @@ export default function SignupPhoneVerify({
               defaultCountry="IN"
               countrySelectComponent={CountrySelect}
               labels={customPhoneLabels}
-              placeholder="Mobile number"
               value={v.phone}
               onChange={v.setPhone}
               disabled={v.sending}

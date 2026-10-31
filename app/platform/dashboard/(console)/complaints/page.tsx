@@ -145,8 +145,8 @@ export default async function ComplaintsPage({
             Complaints
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[var(--dash-text-2)]">
-            Every complaint, order and data request StoreMink receives, with its
-            deadlines. Log each one as soon as it arrives.
+            Every complaint, order and data request, with its deadlines. Log
+            each one as soon as it arrives.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

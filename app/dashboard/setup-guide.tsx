@@ -249,8 +249,7 @@ function TaskRow({
               // Anyone else verifying THEIR number would not finish the
               // owner's task, so there is nothing to press here.
               <p className="text-[12.5px] text-[var(--dash-text-3)]">
-                The store owner verifies their own mobile number, from this card
-                or from their account settings.
+                The store owner verifies their own mobile number.
               </p>
             )
           ) : steps.length > 0 ? (

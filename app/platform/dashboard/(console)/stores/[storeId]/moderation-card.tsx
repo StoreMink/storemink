@@ -54,14 +54,14 @@ export const MODERATION_CARD_TEXT = {
     `On hold for an investigation since ${date}, set by ${setBy}: ${reason}. It can't be deleted.`,
   holdTitle: (name: string) => `Put ${name} on hold?`,
   holdBody:
-    "While it is on hold, nobody can delete this store, from the console or anywhere else. The store is not told.",
+    "Nobody can delete this store while it is on hold. The store is not told.",
   reasonLabel: "Reason",
   whoAskedLabel: "Who asked",
   /** Added: the hint under "Who asked" (design 6.7: "authority and reference"). */
   whoAskedHint: "The authority and its reference.",
   complaintLabel: "Complaint",
   /** Added: the hint under "Complaint". */
-  complaintHint: "Optional. Its reference, for example SM-000123.",
+  complaintHint: "Optional. The complaint's reference.",
   reviewOnLabel: "Review on",
   /** Added: the hint under "Review on". */
   reviewOnHint: "Optional. The Overview lists the hold from that day.",

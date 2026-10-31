@@ -7,6 +7,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -270,8 +271,8 @@ export function ExploreBuilder({
               {report && !asNew ? "Save report" : "Save as a new report"}
             </DialogTitle>
             <DialogDescription>
-              Saved reports keep their measures and grouping. The dates follow
-              whatever range you pick when you open them.
+              Saves the measures and grouping. Dates follow the range you pick
+              when you open it.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -288,7 +289,6 @@ export function ExploreBuilder({
                 value={name}
                 maxLength={80}
                 onChange={(event) => setName(event.target.value)}
-                placeholder="Diwali sales by channel"
                 required
               />
             </label>
@@ -307,7 +307,15 @@ export function ExploreBuilder({
                 {error}
               </p>
             ) : null}
-            <div className="dash-target-actions">
+            <DialogFooter>
+              <button
+                type="button"
+                className="dash-btn dash-btn-ghost"
+                onClick={() => setSaveOpen(false)}
+                disabled={pending}
+              >
+                Cancel
+              </button>
               <button
                 type="submit"
                 className="dash-btn dash-btn-primary"
@@ -315,7 +323,7 @@ export function ExploreBuilder({
               >
                 {pending ? "Saving…" : "Save"}
               </button>
-            </div>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

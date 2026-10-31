@@ -191,17 +191,15 @@ export function readableTextOn(hex: string): "#ffffff" | "#111827" {
     : "#111827";
 }
 
-/** The Basic and Pro placeholder: a line of the store's own, never the badge's. */
-export const OWN_LINE_PLACEHOLDER = "e.g. Made with care by Acme Foods";
-
 /**
  * What the Credit line field says, by whether the store's plan removes
  * StoreMink's "Powered by" badge (PLAN_LIMITS.removeBadge for its effective
  * plan, read by the page) and by what the field holds. The storefront follows
  * the same rule (lib/store/footer-credit.ts): Free always shows the badge,
  * Basic and Pro show the store's own line or nothing. ★ On Basic and Pro the
- * placeholder is an example of a line of the store's own: the badge's words
- * there would suggest the badge still shows when the field is empty. ★ And a
+ * field has no placeholder: the badge's words there would suggest the badge
+ * still shows when the field is empty, and an example line reads as store
+ * data (owner's rule, 31 Oct 2026: no example placeholders). ★ And a
  * line that is only the badge's words shows NOTHING there (isDefaultCreditWords,
  * the storefront's own test), so the hint says so rather than promising it
  * shows: the Free placeholder suggests exactly those words, so a store that
@@ -217,23 +215,21 @@ export function creditLineCopy(
 } {
   if (removeBadge === false) {
     return {
-      hint: "Your store shows Powered by StoreMink here on the Free plan. On Basic or Pro you can show your own line, or nothing.",
+      hint: "The Free plan shows Powered by StoreMink here. On Basic or Pro, show your own line or nothing.",
       placeholder: "Powered by StoreMink",
     };
   }
   if (removeBadge === true) {
     if (isDefaultCreditWords(creditLine)) {
       return {
-        hint: "These are the words of StoreMink's badge, so nothing shows at the very bottom of your store. Type a line of your own, or leave it empty.",
-        placeholder: OWN_LINE_PLACEHOLDER,
+        hint: "These are StoreMink's badge words, so nothing shows here. Type your own line, or leave it empty.",
       };
     }
     return {
       hint: "Shown at the very bottom of your store. Leave it empty to show nothing.",
-      placeholder: OWN_LINE_PLACEHOLDER,
     };
   }
   return {
-    hint: "Shown at the very bottom of your store on Basic and Pro. On the Free plan, Powered by StoreMink shows here instead.",
+    hint: "Shown on Basic and Pro only. The Free plan shows Powered by StoreMink here.",
   };
 }

@@ -145,14 +145,14 @@ export function publishDialogWords(
     return {
       title: `Re-check ${design} before publishing?`,
       confirm: "Re-check now",
-      lead: `${facts.recheckReason ?? "These checks are not from today's StoreMink build."} ${design} is re-checked on today's build first, about 3 to 5 minutes; you can leave this page${facts.notifies ? ", and we'll tell you when it's ready to publish" : ", and it shows Ready to publish when it passes"}. Nothing is redrawn.`,
+      lead: `${facts.recheckReason ?? "These checks are not from today's StoreMink build."} ${design} is re-checked on today's build first, about 3 to 5 minutes. Nothing is redrawn${facts.notifies ? ", and we'll tell you when it's ready to publish" : ", and it shows Ready to publish when it passes"}.`,
     };
   return {
     title: retry
       ? `Try publishing ${design}${made} again?`
       : `Publish ${design}${made}?`,
     confirm: retry ? "Try again" : "Publish now",
-    lead: `It appears in ${PUBLISH_REACH}, with a live demo store. Stores that install it keep this exact version. You can stop offering it at any time.`,
+    lead: `It appears in ${PUBLISH_REACH}, with a live demo store. Stores that install it keep this exact version.`,
   };
 }
 
@@ -413,7 +413,7 @@ export function ReleasePanel({
               <DialogDescription>
                 {dialog === "offer_again"
                   ? `It appears again in ${PUBLISH_REACH}, with its live demo store.`
-                  : "New stores can't pick it any more, and it leaves the Theme library of every store that has not installed it. Stores that installed it keep this exact version. You can offer it again at any time."}
+                  : "New stores can't pick it, and it leaves the Theme library of every store that has not installed it. Stores that installed it keep it."}
               </DialogDescription>
             </DialogHeader>
             {catalogError ? (

@@ -56,7 +56,6 @@ export function VerifyPhoneForm({
               defaultCountry="IN"
               countrySelectComponent={CountrySelect}
               labels={customPhoneLabels}
-              placeholder="Mobile number"
               value={v.phone}
               onChange={v.setPhone}
               disabled={v.sending}
@@ -101,7 +100,6 @@ export function VerifyPhoneForm({
               ref={codeInput}
               inputMode="numeric"
               autoComplete="one-time-code"
-              placeholder="6-digit code"
               value={v.code}
               disabled={v.verifying || v.verifyBlocked}
               onChange={(event) => v.onCodeChange(event.target.value)}

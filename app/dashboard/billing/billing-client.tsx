@@ -1,8 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { X } from "lucide-react";
 import { ImageUpload } from "@/components/ui/image-upload";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   saveBillingSettings,
   createTaxClass,
@@ -276,9 +282,7 @@ export function BillingClient({
         <div className="billSection">
           <h2>Tax</h2>
           <p className="hint">
-            Turn on tax to apply it at checkout. Assign a tax class to each
-            product (Products → edit); products without one use the default
-            below.
+            Products without their own tax class use the default below.
           </p>
 
           <div className="billToggle">
@@ -339,10 +343,7 @@ export function BillingClient({
         {/* ---- Tax classes ---- */}
         <div className="billSection">
           <h2>Tax classes</h2>
-          <p className="hint">
-            Named rates you can assign to products (e.g. GST 5%, GST 12%, GST
-            18%).
-          </p>
+          <p className="hint">Named tax rates you assign to products.</p>
 
           {classes.length === 0 ? (
             <div className="taxEmpty">No tax classes yet. Add one below.</div>
@@ -388,7 +389,6 @@ export function BillingClient({
                 id="businessName"
                 value={settings.businessName}
                 onChange={(e) => set("businessName", e.target.value)}
-                placeholder="Acme Foods Pvt. Ltd."
                 disabled={!canManage}
               />
             </div>
@@ -398,7 +398,6 @@ export function BillingClient({
                 id="taxId"
                 value={settings.taxId}
                 onChange={(e) => set("taxId", e.target.value)}
-                placeholder="22AAAAA0000A1Z5"
                 disabled={!canManage}
               />
             </div>
@@ -408,7 +407,6 @@ export function BillingClient({
                 id="businessAddress"
                 value={settings.businessAddress}
                 onChange={(e) => set("businessAddress", e.target.value)}
-                placeholder="Street, City, State, PIN"
                 disabled={!canManage}
               />
             </div>
@@ -458,7 +456,6 @@ export function BillingClient({
                     template: { ...s.template, title: e.target.value },
                   }))
                 }
-                placeholder="Tax Invoice"
                 disabled={!canManage}
               />
             </div>
@@ -468,7 +465,6 @@ export function BillingClient({
                 id="invoicePrefix"
                 value={settings.invoicePrefix}
                 onChange={(e) => set("invoicePrefix", e.target.value)}
-                placeholder="INV"
                 disabled={!canManage}
               />
             </div>
@@ -508,7 +504,6 @@ export function BillingClient({
                 id="footerNote"
                 value={settings.footerNote}
                 onChange={(e) => set("footerNote", e.target.value)}
-                placeholder="Thank you for shopping with us!"
                 disabled={!canManage}
               />
             </div>
@@ -518,7 +513,6 @@ export function BillingClient({
                 id="terms"
                 value={settings.terms}
                 onChange={(e) => set("terms", e.target.value)}
-                placeholder="Goods once sold will not be taken back…"
                 disabled={!canManage}
               />
             </div>
@@ -526,41 +520,23 @@ export function BillingClient({
         </div>
       </div>
 
-      {showPreview && (
-        <div
-          className="billPreviewOverlay"
-          onClick={() => setShowPreview(false)}
-        >
-          <div
-            className="billPreviewPanel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="billPreviewHead">
-              <div>
-                <div className="billPreviewTitle">Invoice preview</div>
-                <div className="billPreviewNote">
-                  Sample order · reflects your unsaved changes
-                </div>
-              </div>
-              <button
-                type="button"
-                className="billPreviewClose"
-                onClick={() => setShowPreview(false)}
-                aria-label="Close preview"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="billPreviewBody">
-              <InvoiceDocument
-                order={preview.order}
-                items={preview.items}
-                billing={toBillingSettings(settings)}
-              />
-            </div>
+      <Dialog open={showPreview} onOpenChange={setShowPreview}>
+        <DialogContent className="sm:max-w-[860px]">
+          <DialogHeader>
+            <DialogTitle>Invoice preview</DialogTitle>
+            <DialogDescription>
+              A sample order with your unsaved changes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="billPreviewBody rounded-lg">
+            <InvoiceDocument
+              order={preview.order}
+              items={preview.items}
+              billing={toBillingSettings(settings)}
+            />
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -619,7 +595,7 @@ function TaxClassRow({
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="GST 18%"
+          aria-label="Tax class name"
           disabled={!canManage || busy}
         />
         <div className="rate">
@@ -627,7 +603,7 @@ function TaxClassRow({
             value={rate}
             inputMode="decimal"
             onChange={(e) => setRate(e.target.value)}
-            placeholder="18"
+            aria-label="Rate (%)"
             disabled={!canManage || busy}
           />
         </div>
@@ -695,7 +671,8 @@ function AddTaxClass({ onAdded }: { onAdded: (c: TaxClass) => void }) {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="New tax class name (e.g. GST 12%)"
+          placeholder="Name"
+          aria-label="New tax class name"
           disabled={busy}
         />
         <div className="rate">
@@ -703,7 +680,8 @@ function AddTaxClass({ onAdded }: { onAdded: (c: TaxClass) => void }) {
             value={rate}
             inputMode="decimal"
             onChange={(e) => setRate(e.target.value)}
-            placeholder="12"
+            placeholder="0"
+            aria-label="New tax class rate (%)"
             disabled={busy}
           />
         </div>

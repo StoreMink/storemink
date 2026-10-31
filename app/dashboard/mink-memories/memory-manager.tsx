@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { InfoTip } from "@/components/ui/info-tip";
 import type { ApprovedMemory, MemoryKind } from "@/lib/mink/memory-policy";
 const blank = () => ({
   id: crypto.randomUUID(),
@@ -66,17 +67,13 @@ export function MinkMemoryManager() {
   }
   return (
     <section className="space-y-5">
-      <p className="text-sm">
-        Up to 10 memories, 600 characters each. Expired memories are not used.
-        Permission or location-access changes require you to review and approve
-        a memory again. Memories never approve actions or override your current
-        request.
-      </p>
-      <p className="text-sm">
-        Deleting stops use in future turns; it cannot remove context already
-        sent to an active run or erase mentions in saved conversations. Delete
-        those conversations separately.
-      </p>
+      <div className="flex items-center gap-1.5 text-sm">
+        <p>Up to 10 memories, 600 characters each.</p>
+        <InfoTip label="About memories">
+          Expired memories aren&apos;t used, and an access change means
+          approving one again. Deleting one doesn&apos;t erase past chats.
+        </InfoTip>
+      </div>
       {error && (
         <p role="alert" className="text-red-700">
           {error}
@@ -105,8 +102,7 @@ export function MinkMemoryManager() {
           </p>
           {!m.usable && (
             <p className="text-amber-800">
-              Not used: your access changed. Edit and approve again if this
-              context is still appropriate.
+              Not used because your access changed. Edit and approve it again.
             </p>
           )}
           <div className="flex gap-2">

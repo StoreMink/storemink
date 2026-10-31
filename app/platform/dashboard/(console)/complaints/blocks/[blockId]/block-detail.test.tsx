@@ -233,7 +233,7 @@ describe("liftDialogLines", () => {
         archive,
       }),
     ).toEqual([
-      "The original file goes back to its address. In rare cases some image sizes keep showing the placeholder for up to 4 hours.",
+      "The original file goes back to its address. Some image sizes may show the placeholder for up to 4 hours.",
       "The archived copy is kept until 27 Apr 2027.",
     ]);
   });
@@ -248,7 +248,7 @@ describe("liftDialogLines", () => {
         archive: null,
       }),
     ).toEqual([
-      "Pages show it again. Put the file itself back by hand from the archived copy if it should return (see the runbook).",
+      "Pages show it again. Put the file back by hand from the archived copy if needed (see the runbook).",
     ]);
   });
 
@@ -612,9 +612,10 @@ describe("MarkRemovedButton", () => {
     fireEvent.click(screen.getByRole("button", { name: "Mark as removed" }));
     const box = dialog();
     expect(
-      within(box).getByRole("heading", {
-        name: "Mark it as removed? Do this only after it is deleted.",
-      }),
+      within(box).getByRole("heading", { name: "Mark it as removed?" }),
+    ).toBeTruthy();
+    expect(
+      within(box).getByText("Do this only after the file is deleted."),
     ).toBeTruthy();
     fireEvent.change(within(box).getByLabelText("How it was removed"), {
       target: { value: "Deleted from the theme code." },
@@ -689,7 +690,7 @@ describe("ArchiveCopy", () => {
     ).toBeTruthy();
     expect(
       within(box).getByText(
-        "For example the complaint reference or the authority that asked.",
+        "The complaint reference or the authority that asked.",
       ),
     ).toBeTruthy();
     fireEvent.click(within(box).getByRole("button", { name: "Open the copy" }));
@@ -930,9 +931,9 @@ describe("StoreReplyForms", () => {
     const box = screen.getByLabelText(
       "Reply to the store",
     ) as HTMLTextAreaElement;
-    expect(box.getAttribute("placeholder")).toBe(
-      "The store sees this in its dashboard and by email.",
-    );
+    // No instruction in the box: who sees a reply sits behind the "i".
+    expect(box.getAttribute("placeholder")).toBeNull();
+    expect(screen.getByRole("button", { name: "About replies" })).toBeTruthy();
     fireEvent.change(box, { target: { value: "We are looking at it." } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() =>

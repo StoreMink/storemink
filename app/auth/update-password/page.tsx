@@ -37,7 +37,7 @@ export default function UpdatePasswordPage() {
           Update Password
         </h1>
         <p className="mt-2 text-sm text-[#6B7280]">
-          Please enter your new password below.
+          Choose a new password for your account.
         </p>
       </div>
 
@@ -49,7 +49,6 @@ export default function UpdatePasswordPage() {
           <Input
             id="password"
             type="password"
-            placeholder="••••••••"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}

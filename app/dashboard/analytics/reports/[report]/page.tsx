@@ -281,8 +281,8 @@ export default async function AnalyticsReportPage({
         ) : null}
         {report === "search-queries" ? (
           <p className="px-5 pb-4 text-[12px] text-[var(--dash-text-3)]">
-            Google may omit rare searches for privacy. Data usually arrives
-            about two days late and uses Pacific Time dates.
+            Data arrives about two days late, in Pacific Time. Rare searches may
+            be omitted.
           </p>
         ) : null}
       </div>

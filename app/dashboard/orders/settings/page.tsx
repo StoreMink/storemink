@@ -27,9 +27,8 @@ export default async function OrderSettingsPage() {
           canManage={access.can("orders", "manage")}
         />
         <p className="mt-3 text-sm text-muted-foreground">
-          Requests wait in <strong>Orders → Cancellations</strong> unless you
-          switch approval to automatic. When you approve one you choose where
-          the money goes - nothing is refunded without you saying so.
+          Requests wait in <strong>Orders → Cancellations</strong> unless
+          approval is automatic.
         </p>
       </div>
     </div>

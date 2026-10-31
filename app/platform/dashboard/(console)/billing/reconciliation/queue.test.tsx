@@ -449,7 +449,7 @@ describe("the closed-tab purchase items (RC-F1b, RC-F1c)", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Nothing was applied or refunded. Do what the note says: apply the purchase by hand, or refund the payment in the Razorpay dashboard. Then close this with what you did.",
+        "Nothing was applied or refunded. Apply it by hand or refund it in the Razorpay dashboard, then close this.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -511,7 +511,7 @@ describe("the closed-tab purchase items (RC-F1b, RC-F1c)", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "The invoice is issued and the merchant was told not to pay again. Apply the purchase by hand as the note says, or issue a refund. Then close this with what you did.",
+        "The merchant was told not to pay again. Apply it by hand or issue a refund, then close this.",
       ),
     ).toBeInTheDocument();
     expect(

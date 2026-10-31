@@ -244,9 +244,7 @@ export default function SetPasswordPage() {
         <CardTitle className="text-xl font-bold">
           Complete your profile
         </CardTitle>
-        <CardDescription>
-          Please verify your details and set a secure password
-        </CardDescription>
+        <CardDescription>Verify your phone and set a password.</CardDescription>
       </CardHeader>
       <CardContent>
         {/* Invisible reCAPTCHA anchor for Identity Platform phone verification. */}
@@ -257,17 +255,15 @@ export default function SetPasswordPage() {
               <Label htmlFor="firstName">First Name</Label>
               <Input
                 id="firstName"
-                placeholder="First name"
                 required
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label htmlFor="lastName">Last Name</Label>
+              <Label htmlFor="lastName">Last Name (optional)</Label>
               <Input
                 id="lastName"
-                placeholder="Last name (optional)"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
               />
@@ -280,7 +276,7 @@ export default function SetPasswordPage() {
               defaultCountry="IN"
               countrySelectComponent={CountrySelect}
               labels={customPhoneLabels}
-              placeholder="Mobile number"
+              id="phone"
               value={phone}
               onChange={setPhone}
               disabled={isPhoneVerified || otpSent}
@@ -319,7 +315,8 @@ export default function SetPasswordPage() {
                     <div className="flex gap-2">
                       <Input
                         type="text"
-                        placeholder="Enter 6-digit OTP"
+                        aria-label="6-digit OTP"
+                        inputMode="numeric"
                         value={otp}
                         onChange={(e) =>
                           setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))
@@ -365,13 +362,16 @@ export default function SetPasswordPage() {
             <Input
               id="password"
               type="password"
-              placeholder="Minimum 8 characters"
+              aria-describedby="password-hint"
               required
               minLength={8}
               value={password}
               onChange={(e) => setPasswordVal(e.target.value)}
               autoComplete="new-password"
             />
+            <span id="password-hint" className="text-xs text-muted-foreground">
+              At least 8 characters.
+            </span>
             {strength && (
               <div className="flex flex-col gap-1">
                 <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
@@ -390,7 +390,6 @@ export default function SetPasswordPage() {
             <Input
               id="confirmPassword"
               type="password"
-              placeholder="Re-enter your password"
               required
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}

@@ -90,14 +90,12 @@ export default async function ThemeStudioPage({
         {!config.generationEnabled ? (
           <p className="studio-notice" data-tone="warning">
             Building is switched off on this deployment. You can still create
-            themes and add screenshots; nothing builds until it is switched back
-            on.
+            themes; nothing builds until it is back on.
           </p>
         ) : config.provider === "fake" ? (
           <p className="studio-notice" data-tone="info">
-            This deployment uses the offline test provider: a build makes no
-            model call and produces a placeholder design, so you can try every
-            step before real building is switched on.
+            This deployment uses the offline test provider: builds make no model
+            call and produce a placeholder design.
           </p>
         ) : null}
         {list ? (

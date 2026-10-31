@@ -88,20 +88,18 @@ export function CustomerDetail({
                 />
               </label>
               <label>
-                <span>Last name</span>
+                <span>Last name (optional)</span>
                 <input
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Optional"
                 />
               </label>
               <label>
-                <span>Email</span>
+                <span>Email (optional)</span>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Optional"
                 />
               </label>
               <div className="customer-detail-danger-row">

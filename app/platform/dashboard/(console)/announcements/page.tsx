@@ -62,8 +62,7 @@ export default async function AnnouncementsPage() {
             Nothing announced yet
           </h2>
           <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">
-            Draft a message, check who it reaches, send yourself a test, and
-            then send it. Every recipient is recorded.
+            Draft one, check who it reaches and send yourself a test first.
           </p>
         </div>
       ) : (
@@ -134,8 +133,7 @@ export default async function AnnouncementsPage() {
 
       {!canManage(viewer) ? (
         <p className="text-xs text-slate-400">
-          You can draft and preview announcements. Sending one is restricted to
-          a platform superadmin.
+          Only a superadmin can send an announcement.
         </p>
       ) : null}
     </div>

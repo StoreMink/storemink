@@ -2210,10 +2210,6 @@ a.dash-status-pill:hover {
   font-size: 13px;
 }
 
-.enquiry-confirm-dialog {
-  border-radius: 10px;
-}
-
 @media (max-width: 1200px) {
   .dashboard-shell .enquiries-command,
   .dashboard-shell .enquiries-filters {
@@ -7465,8 +7461,11 @@ a.customer-detail-field:hover {
     width: 100%;
     max-width: 100%;
   }
+  /* `--dialog-pad` is what the dialog footer reads to run edge to edge, so it
+     moves with the side padding. */
   .dashboard-shell[data-slot="dialog-content"] {
-    padding: 20px 16px;
+    --dialog-pad: 16px;
+    padding: 20px 16px 16px;
   }
   .dashboard-shell .dash-topbar button,
   .dashboard-shell .dash-table-responsive button,

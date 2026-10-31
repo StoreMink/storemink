@@ -121,7 +121,8 @@ export function ResetClient({
             type="password"
             inputMode={isPin ? "numeric" : "text"}
             autoCapitalize="none"
-            placeholder={isPin ? "New 8-digit PIN" : "New password (min 8)"}
+            aria-label={isPin ? "New 8-digit PIN" : "New password"}
+            placeholder={isPin ? "8 digits" : "At least 8 characters"}
             onChange={(e) =>
               setValue(
                 isPin
@@ -136,6 +137,7 @@ export function ResetClient({
             type="password"
             inputMode={isPin ? "numeric" : "text"}
             autoCapitalize="none"
+            aria-label={isPin ? "Confirm PIN" : "Confirm password"}
             placeholder={isPin ? "Confirm PIN" : "Confirm password"}
             onKeyDown={(e) => e.key === "Enter" && submit()}
             onChange={(e) =>

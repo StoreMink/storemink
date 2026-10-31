@@ -234,8 +234,7 @@ export function GenerateImagesButton({
             {slots === 1
               ? "the placeholder"
               : `each of the ${slots} placeholders`}
-            , matched to one art direction so they read as a set, and checks
-            each one. They are saved as a new design; {design} stays as it is.
+            , in one matched style, as a new design. {design} stays as it is.
           </p>
           <p className="mt-2">{costLine(estimate)}</p>
         </>
@@ -304,9 +303,8 @@ export function RedrawPicturesButton({
       body={
         <>
           <p>
-            Theme Studio draws {n === 1 ? "this picture" : `these ${n}`} again,
-            matched to the theme&apos;s art direction, and checks each one. They
-            are saved as a new design; {design} stays as it is.
+            Theme Studio draws {n === 1 ? "this picture" : `these ${n}`} again
+            in the theme&apos;s style, as a new design. {design} stays as it is.
           </p>
           {names.length ? (
             <ul className="mt-2 list-disc pl-5">

@@ -17,7 +17,7 @@ const STATUS_NOTE: Record<string, string> = {
   // ★ Said plainly, because the instinct on seeing "failed" is to re-upload —
   // which on a partial import duplicates everything that already worked.
   partial:
-    "Some rows were applied and some weren't. The ones that worked are already saved - re-importing the whole file would duplicate them. Fix the rows below and import just those.",
+    "Some rows were saved and some weren't. Import only the failed rows below, or the saved ones will be added twice.",
   failed: "Nothing was applied.",
   cancelled:
     "This was stopped part-way. Rows applied before it stopped are saved.",
@@ -113,8 +113,8 @@ export function JobIssuesView({
                 />
               </div>
               <p className="text-xs text-[var(--dash-text-3)]">
-                This page updates itself. The import runs on our servers, so you
-                can close this tab and come back - it carries on either way.
+                This page updates itself, and the import keeps running if you
+                close it.
               </p>
             </div>
           ) : (
@@ -139,11 +139,9 @@ export function JobIssuesView({
               says so — see ISSUE_CAP in lib/import-export/jobs.ts. */}
           {job.droppedIssues > 0 ? (
             <p className="text-xs text-[var(--dash-text-3)]">
-              Showing the first {issueCap.toLocaleString("en-IN")} problems.
-              Another {job.droppedIssues.toLocaleString("en-IN")} weren&apos;t
-              recorded - when this many rows fail it&apos;s usually one thing
-              wrong with the whole file rather than {job.droppedIssues} separate
-              mistakes.
+              Showing the first {issueCap.toLocaleString("en-IN")} problems;{" "}
+              {job.droppedIssues.toLocaleString("en-IN")} more weren&apos;t
+              recorded. This many usually means one problem with the whole file.
             </p>
           ) : null}
         </div>

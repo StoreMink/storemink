@@ -98,8 +98,7 @@ export default async function InvoicesPage() {
 
       <h1 className="text-2xl font-bold text-[#111827]">Invoices</h1>
       <p className="mt-1 mb-6 text-sm text-[#5b6472]">
-        Every subscription invoice and credit note StoreMink has issued to this
-        store. Open one to print it or save it as a PDF.
+        Your StoreMink invoices and credit notes. Open one to print or save it.
       </p>
 
       {invoices.length === 0 ? (
@@ -113,8 +112,7 @@ export default async function InvoicesPage() {
           />
           <p className="text-sm font-medium text-[#111827]">No invoices yet</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-[#6b7280]">
-            Invoices appear here once you subscribe to a paid plan. Your first
-            one is issued when you pay.
+            Your first invoice is issued when you pay for a plan.
           </p>
         </div>
       ) : (

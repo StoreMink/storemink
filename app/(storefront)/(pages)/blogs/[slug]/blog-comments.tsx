@@ -132,7 +132,8 @@ export function BlogComments({
         <textarea
           id="blog-comment-input"
           className="blog-comment-textarea"
-          placeholder="Share your thoughts…"
+          placeholder="Write a comment"
+          aria-label="Comment"
           value={body}
           onChange={(e) => setBody(e.target.value)}
           rows={3}

@@ -68,8 +68,8 @@ export default async function InboxPage({
             {!channel
               ? (state.error ?? "Reload the page to try again.")
               : channel.planAllows
-                ? "Once your number is connected, every message a customer sends to it appears here, and replies to your order updates land in the same place."
-                : "WhatsApp is included from the Basic plan. Upgrade under Plans & Billing, then connect your number in Channels."}
+                ? "Connect your number in Channels to see customer messages here."
+                : "WhatsApp is included from the Basic plan. Upgrade, then connect your number in Channels."}
           </p>
           {link && (
             <Link

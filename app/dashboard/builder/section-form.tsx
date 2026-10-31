@@ -1,6 +1,8 @@
 "use client";
 
+import { cloneElement, useId, type ReactElement } from "react";
 import { ChevronUp, ChevronDown, X, Plus } from "lucide-react";
+import { InfoTip } from "@/components/ui/info-tip";
 import { specForRatio } from "@/lib/media/image-specs";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { VideoUpload } from "@/components/ui/video-upload";
@@ -108,6 +110,56 @@ export const fieldClass =
   "border-input bg-background focus:border-primary placeholder:text-muted-foreground w-full rounded-md border px-3 py-2 text-sm outline-none";
 export const labelClass =
   "text-muted-foreground mb-1.5 block text-xs font-medium uppercase tracking-wide";
+/** `labelClass` without its margin, for a label that sits in a row. */
+const labelTextClass =
+  "text-muted-foreground block text-xs font-medium uppercase tracking-wide";
+/** The small label of a field inside a repeated block (slide, tile, row). */
+const itemLabelClass = "text-muted-foreground block text-[11px]";
+
+/**
+ * A visible label tied to the one control it wraps (the control gets the
+ * label's id), with an optional "i" beside it. `small` is the style used
+ * inside repeated blocks.
+ */
+function Field({
+  label,
+  info,
+  small = false,
+  className,
+  children,
+}: {
+  label: string;
+  info?: string;
+  small?: boolean;
+  className?: string;
+  children: ReactElement<{ id?: string }>;
+}) {
+  const id = useId();
+  return (
+    <div className={className}>
+      <div className={`flex items-center gap-1.5 ${small ? "mb-1" : "mb-1.5"}`}>
+        <label htmlFor={id} className={small ? itemLabelClass : labelTextClass}>
+          {label}
+        </label>
+        {info && (
+          <InfoTip label={`About ${label.toLowerCase()}`}>{info}</InfoTip>
+        )}
+      </div>
+      {cloneElement(children, { id })}
+    </div>
+  );
+}
+
+/** A label for a control that is not a single input (an uploader), with an
+ *  "i" beside it. */
+function LabelWithInfo({ label, info }: { label: string; info: string }) {
+  return (
+    <div className="mb-1.5 flex items-center gap-1.5">
+      <span className={labelTextClass}>{label}</span>
+      <InfoTip label={`About ${label.toLowerCase()}`}>{info}</InfoTip>
+    </div>
+  );
+}
 
 export function SectionForm({
   type,
@@ -378,6 +430,7 @@ function OrderedPicker({
           <select
             className={fieldClass}
             value=""
+            aria-label={addLabel}
             onChange={(e) => {
               if (e.target.value) onChange([...selectedIds, e.target.value]);
             }}
@@ -397,14 +450,16 @@ function OrderedPicker({
 
 // Strict-colour input: free text (hex/rgb/hsl) + a native picker swatch.
 // Invalid values are dropped by validateConfig, so this stays permissive.
+// An empty value means the theme's own colour, which the placeholder says.
 function ColorField({
   value,
   onChange,
-  placeholder,
+  label = "Background colour",
 }: {
   value: string;
   onChange: (v: string) => void;
-  placeholder?: string;
+  /** Names both inputs for screen readers. */
+  label?: string;
 }) {
   const pickable = /^#[0-9a-f]{6}$/i.test(value);
   return (
@@ -414,13 +469,14 @@ function ColorField({
         className="h-9 w-10 shrink-0 cursor-pointer rounded-md border p-0.5"
         value={pickable ? value : "#ffffff"}
         onChange={(e) => onChange(e.target.value)}
-        aria-label="Pick a colour"
+        aria-label={`Pick ${label.toLowerCase()}`}
       />
       <input
         className={fieldClass}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder ?? "#f6e7cf (blank = theme default)"}
+        aria-label={label}
+        placeholder="Theme default"
       />
     </div>
   );
@@ -443,12 +499,14 @@ function VideoField({
         defaultVideo={value || undefined}
         onUploadSuccess={onChange}
       />
-      <input
-        className={fieldClass}
-        value={value}
-        onChange={(e) => onChange(e.target.value.trim())}
-        placeholder="…or paste a YouTube / Vimeo / .mp4 link"
-      />
+      <Field small label="Or paste a YouTube, Vimeo or .mp4 link">
+        <input
+          className={fieldClass}
+          value={value}
+          onChange={(e) => onChange(e.target.value.trim())}
+          placeholder="https://"
+        />
+      </Field>
     </div>
   );
 }
@@ -530,7 +588,7 @@ function HeroFields({
             className={fieldClass}
             value={config.heading}
             onChange={(e) => set("heading", e.target.value)}
-            placeholder="From farm to your kitchen"
+            aria-label="Headline"
           />
         </div>
 
@@ -540,7 +598,7 @@ function HeroFields({
             className={`${fieldClass} min-h-[60px] resize-y`}
             value={config.subheading}
             onChange={(e) => set("subheading", e.target.value)}
-            placeholder="(optional)"
+            aria-label="Subheadline"
           />
         </div>
 
@@ -550,7 +608,7 @@ function HeroFields({
             className={fieldClass}
             value={config.badge_text}
             onChange={(e) => set("badge_text", e.target.value)}
-            placeholder="51% off this week"
+            aria-label="Badge"
           />
         </div>
       </FieldGroup>
@@ -563,7 +621,7 @@ function HeroFields({
               className={fieldClass}
               value={config.cta_label}
               onChange={(e) => set("cta_label", e.target.value)}
-              placeholder="Shop now"
+              aria-label="Button label"
             />
           </div>
           <div>
@@ -572,7 +630,7 @@ function HeroFields({
               className={fieldClass}
               value={config.cta_href}
               onChange={(e) => set("cta_href", e.target.value)}
-              placeholder="/shop"
+              aria-label="Button link"
             />
           </div>
         </div>
@@ -580,7 +638,10 @@ function HeroFields({
 
       <FieldGroup title="Image & colour">
         <div>
-          <label className={labelClass}>Image</label>
+          <LabelWithInfo
+            label="Image"
+            info="Banner and split show it beside the copy, stacked shows it below. The other layouts use it as the background."
+          />
           <ImageUpload
             folder="homepage"
             spec={
@@ -591,11 +652,6 @@ function HeroFields({
             defaultImage={config.image_url || undefined}
             onUploadSuccess={(url) => set("image_url", url)}
           />
-          <p className="text-muted-foreground mt-1 text-[11px]">
-            Banner/split show it beside the copy; stacked puts it under the
-            copy; full-bleed, minimal and offset use it as the band&apos;s
-            background (offset puts the copy in a card over it).
-          </p>
         </div>
 
         <HeroImageFields
@@ -614,8 +670,7 @@ function HeroFields({
             onChange={(url) => set("video_url", url)}
           />
           <p className="text-muted-foreground mt-1 text-[11px]">
-            Plays muted on loop in place of the image; the image becomes the
-            loading poster.
+            Plays muted on a loop in place of the image.
           </p>
         </div>
 
@@ -736,8 +791,7 @@ export function HeroImageFields({
             />
           </button>
           <p className="text-muted-foreground mt-1 text-[11px]">
-            Click the subject. Every crop - wide desktop, tall phone - keeps
-            this point in view.{" "}
+            Click the subject to keep it in view on every screen.{" "}
             {value.focal_x !== undefined && (
               <button
                 type="button"
@@ -752,7 +806,10 @@ export function HeroImageFields({
       )}
 
       <div>
-        <label className={labelClass}>Phone image (optional)</label>
+        <LabelWithInfo
+          label="Phone image (optional)"
+          info="A taller photo for phones. Phones load only this one."
+        />
         <ImageUpload
           folder="homepage"
           spec="hero_phone"
@@ -761,9 +818,6 @@ export function HeroImageFields({
             onChange({ mobile_image_url: url || undefined })
           }
         />
-        <p className="text-muted-foreground mt-1 text-[11px]">
-          A taller photo composed for phones. Phones download only this one.
-        </p>
       </div>
 
       {overlay && (
@@ -891,8 +945,10 @@ function CarouselFields({
   return (
     <>
       <FieldGroup title="Layout">
-        <div>
-          <label className={labelClass}>Slide layout</label>
+        <Field
+          label="Slide layout"
+          info="Split shows the photo first on phones. The overlay and text position settings don't apply to it."
+        >
           <select
             className={fieldClass}
             value={config.layout === "split" ? "split" : "full"}
@@ -901,12 +957,7 @@ function CarouselFields({
             <option value="full">Full photo (copy over it)</option>
             <option value="split">Split (copy beside the photo)</option>
           </select>
-          <p className="text-muted-foreground mt-1 text-[11px]">
-            Split puts each slide&apos;s copy on a colour field beside its
-            photo, photo first on phones; the overlay and text-over-photo
-            controls do not apply to it.
-          </p>
-        </div>
+        </Field>
       </FieldGroup>
 
       <FieldGroup title="Playback">
@@ -984,47 +1035,60 @@ function CarouselFields({
                 </button>
               </div>
             </div>
-            <input
-              className={fieldClass}
-              value={slide.heading}
-              onChange={(e) => setSlide(i, { heading: e.target.value })}
-              placeholder="Fresh deals every week"
-            />
-            <input
-              className={fieldClass}
-              value={slide.subheading}
-              onChange={(e) => setSlide(i, { subheading: e.target.value })}
-              placeholder="Subheading (optional)"
-            />
+            <Field small label="Heading">
+              <input
+                className={fieldClass}
+                value={slide.heading}
+                onChange={(e) => setSlide(i, { heading: e.target.value })}
+              />
+            </Field>
+            <Field small label="Subheading">
+              <input
+                className={fieldClass}
+                value={slide.subheading}
+                onChange={(e) => setSlide(i, { subheading: e.target.value })}
+              />
+            </Field>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={slide.cta_label}
-                onChange={(e) => setSlide(i, { cta_label: e.target.value })}
-                placeholder="Shop now"
-              />
-              <input
-                className={fieldClass}
-                value={slide.cta_href}
-                onChange={(e) => setSlide(i, { cta_href: e.target.value })}
-                placeholder="/shop"
-              />
+              <Field small label="Button label">
+                <input
+                  className={fieldClass}
+                  value={slide.cta_label}
+                  onChange={(e) => setSlide(i, { cta_label: e.target.value })}
+                />
+              </Field>
+              <Field small label="Button link">
+                <input
+                  className={fieldClass}
+                  value={slide.cta_href}
+                  onChange={(e) => setSlide(i, { cta_href: e.target.value })}
+                />
+              </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <select
-                className={fieldClass}
-                value={slide.theme}
-                onChange={(e) =>
-                  setSlide(i, { theme: e.target.value as HeroSlide["theme"] })
-                }
-              >
-                <option value="dark">Dark text</option>
-                <option value="light">Light text (adds a scrim)</option>
-              </select>
-              <ColorField
-                value={slide.background}
-                onChange={(v) => setSlide(i, { background: v })}
-              />
+              <Field small label="Text colour">
+                <select
+                  className={fieldClass}
+                  value={slide.theme}
+                  onChange={(e) =>
+                    setSlide(i, {
+                      theme: e.target.value as HeroSlide["theme"],
+                    })
+                  }
+                >
+                  <option value="dark">Dark text</option>
+                  <option value="light">Light text (adds a scrim)</option>
+                </select>
+              </Field>
+              <div>
+                <span className={`${itemLabelClass} mb-1`}>
+                  Background colour
+                </span>
+                <ColorField
+                  value={slide.background}
+                  onChange={(v) => setSlide(i, { background: v })}
+                />
+              </div>
             </div>
             <ImageUpload
               folder="homepage"
@@ -1078,8 +1142,10 @@ function UspBarFields({
 
   return (
     <>
-      <div>
-        <label className={labelClass}>Text theme</label>
+      <Field
+        label="Text theme"
+        info="For a dark strip, set a dark background in the Style tab and choose light text here."
+      >
         <select
           className={fieldClass}
           value={config.theme}
@@ -1093,11 +1159,7 @@ function UspBarFields({
           <option value="dark">Dark text (light background)</option>
           <option value="light">Light text (dark background)</option>
         </select>
-        <p className="text-muted-foreground mt-1 text-[11px]">
-          For a dark strip, set a dark background in the Style tab and pick
-          light text here.
-        </p>
-      </div>
+      </Field>
 
       <BlockList
         label="Items"
@@ -1110,32 +1172,36 @@ function UspBarFields({
       >
         {(item, _index, setItem) => (
           <>
-            <select
-              className={`${fieldClass} max-w-[180px]`}
-              value={item.icon}
-              onChange={(e) =>
-                setItem({ icon: e.target.value as UspItem["icon"] })
-              }
-            >
-              {USP_ICONS.map((icon) => (
-                <option key={icon} value={icon}>
-                  {USP_ICON_LABELS[icon]}
-                </option>
-              ))}
-            </select>
+            <Field small label="Icon" className="max-w-[180px]">
+              <select
+                className={fieldClass}
+                value={item.icon}
+                onChange={(e) =>
+                  setItem({ icon: e.target.value as UspItem["icon"] })
+                }
+              >
+                {USP_ICONS.map((icon) => (
+                  <option key={icon} value={icon}>
+                    {USP_ICON_LABELS[icon]}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={item.title}
-                onChange={(e) => setItem({ title: e.target.value })}
-                placeholder="Free delivery"
-              />
-              <input
-                className={fieldClass}
-                value={item.subtitle}
-                onChange={(e) => setItem({ subtitle: e.target.value })}
-                placeholder="On orders over ₹499 (optional)"
-              />
+              <Field small label="Title">
+                <input
+                  className={fieldClass}
+                  value={item.title}
+                  onChange={(e) => setItem({ title: e.target.value })}
+                />
+              </Field>
+              <Field small label="Subtitle">
+                <input
+                  className={fieldClass}
+                  value={item.subtitle}
+                  onChange={(e) => setItem({ subtitle: e.target.value })}
+                />
+              </Field>
             </div>
           </>
         )}
@@ -1183,8 +1249,10 @@ function TickerFields({
             <option value="fast">Fast</option>
           </select>
         </div>
-        <div>
-          <label className={labelClass}>Text theme</label>
+        <Field
+          label="Text theme"
+          info="For a dark strip, set a dark background in the Style tab and choose light text here."
+        >
           <select
             className={fieldClass}
             value={config.theme}
@@ -1198,12 +1266,8 @@ function TickerFields({
             <option value="dark">Dark text (light background)</option>
             <option value="light">Light text (dark background)</option>
           </select>
-        </div>
+        </Field>
       </div>
-      <p className="text-muted-foreground -mt-1 text-[11px]">
-        For a dark strip, set a dark background in the Style tab and pick light
-        text here.
-      </p>
 
       <div className="space-y-2">
         <label className={labelClass}>Messages</label>
@@ -1213,7 +1277,7 @@ function TickerFields({
               className={fieldClass}
               value={message}
               onChange={(e) => setMessage(i, e.target.value)}
-              placeholder="Free shipping over ₹499"
+              aria-label={`Message ${i + 1}`}
               maxLength={120}
             />
             <div className="flex items-center">
@@ -1284,7 +1348,7 @@ function TileGridFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="Top offers this week"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -1293,7 +1357,7 @@ function TileGridFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -1369,36 +1433,41 @@ function TileGridFields({
         {(tile, _index, setTile) => (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={tile.title}
-                onChange={(e) => setTile({ title: e.target.value })}
-                placeholder="Fresh produce"
-              />
-              <input
-                className={fieldClass}
-                value={tile.subtitle}
-                onChange={(e) => setTile({ subtitle: e.target.value })}
-                placeholder="from ₹19 (optional)"
-              />
+              <Field small label="Title">
+                <input
+                  className={fieldClass}
+                  value={tile.title}
+                  onChange={(e) => setTile({ title: e.target.value })}
+                />
+              </Field>
+              <Field small label="Subtitle">
+                <input
+                  className={fieldClass}
+                  value={tile.subtitle}
+                  onChange={(e) => setTile({ subtitle: e.target.value })}
+                />
+              </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={tile.href}
-                onChange={(e) => setTile({ href: e.target.value })}
-                placeholder="/collections/fruits"
-              />
-              <select
-                className={fieldClass}
-                value={tile.theme}
-                onChange={(e) =>
-                  setTile({ theme: e.target.value as TileItem["theme"] })
-                }
-              >
-                <option value="dark">Dark text</option>
-                <option value="light">Light text</option>
-              </select>
+              <Field small label="Link">
+                <input
+                  className={fieldClass}
+                  value={tile.href}
+                  onChange={(e) => setTile({ href: e.target.value })}
+                />
+              </Field>
+              <Field small label="Text colour">
+                <select
+                  className={fieldClass}
+                  value={tile.theme}
+                  onChange={(e) =>
+                    setTile({ theme: e.target.value as TileItem["theme"] })
+                  }
+                >
+                  <option value="dark">Dark text</option>
+                  <option value="light">Light text</option>
+                </select>
+              </Field>
             </div>
             {config.layout === "collage" && (
               <div>
@@ -1422,10 +1491,15 @@ function TileGridFields({
                 </select>
               </div>
             )}
-            <ColorField
-              value={tile.background}
-              onChange={(v) => setTile({ background: v })}
-            />
+            <div>
+              <span className={`${itemLabelClass} mb-1`}>
+                Background colour
+              </span>
+              <ColorField
+                value={tile.background}
+                onChange={(v) => setTile({ background: v })}
+              />
+            </div>
             <ImageUpload
               folder="homepage"
               spec="landscape"
@@ -1473,7 +1547,7 @@ function FaqFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="Frequently asked questions"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -1482,7 +1556,7 @@ function FaqFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -1542,25 +1616,32 @@ function FaqFields({
                 </button>
               </div>
             </div>
-            <input
-              className={fieldClass}
-              value={item.question}
-              onChange={(e) => setItem(i, { question: e.target.value })}
-              placeholder="How fresh is the produce?"
-            />
-            <textarea
-              className={`${fieldClass} min-h-[70px] resize-y`}
-              value={item.answer}
-              onChange={(e) => setItem(i, { answer: e.target.value })}
-              placeholder="Answer…"
-            />
-            {config.show_filters && (
+            <Field small label="Question">
               <input
                 className={fieldClass}
-                value={item.category}
-                onChange={(e) => setItem(i, { category: e.target.value })}
-                placeholder="Filter group (e.g. Delivery)"
+                value={item.question}
+                onChange={(e) => setItem(i, { question: e.target.value })}
               />
+            </Field>
+            <Field small label="Answer">
+              <textarea
+                className={`${fieldClass} min-h-[70px] resize-y`}
+                value={item.answer}
+                onChange={(e) => setItem(i, { answer: e.target.value })}
+              />
+            </Field>
+            {config.show_filters && (
+              <Field
+                small
+                label="Filter group"
+                info="Questions with the same group appear under one filter pill."
+              >
+                <input
+                  className={fieldClass}
+                  value={item.category}
+                  onChange={(e) => setItem(i, { category: e.target.value })}
+                />
+              </Field>
             )}
           </div>
         ))}
@@ -1612,7 +1693,7 @@ function MediaTextFields({
             className={fieldClass}
             value={config.eyebrow}
             onChange={(e) => set("eyebrow", e.target.value)}
-            placeholder="Our story"
+            aria-label="Eyebrow"
           />
         </div>
         <div>
@@ -1621,7 +1702,7 @@ function MediaTextFields({
             className={fieldClass}
             value={config.heading}
             onChange={(e) => set("heading", e.target.value)}
-            placeholder="Made with intention"
+            aria-label="Heading"
           />
         </div>
         <div>
@@ -1630,7 +1711,7 @@ function MediaTextFields({
             className={`${fieldClass} min-h-[120px] resize-y`}
             value={config.body}
             onChange={(e) => set("body", e.target.value)}
-            placeholder="Tell the story behind your materials, process or people."
+            aria-label="Body"
           />
         </div>
       </FieldGroup>
@@ -1648,7 +1729,7 @@ function MediaTextFields({
             className={fieldClass}
             value={config.image_alt}
             onChange={(e) => set("image_alt", e.target.value)}
-            placeholder="Describe the image for screen readers"
+            aria-label="Image description"
           />
         </div>
       </FieldGroup>
@@ -1712,7 +1793,7 @@ function MediaTextFields({
               className={fieldClass}
               value={config.cta_label}
               onChange={(e) => set("cta_label", e.target.value)}
-              placeholder="Discover more"
+              aria-label="Button label"
             />
           </div>
           <div>
@@ -1721,7 +1802,7 @@ function MediaTextFields({
               className={fieldClass}
               value={config.cta_href}
               onChange={(e) => set("cta_href", e.target.value)}
-              placeholder="/our-story"
+              aria-label="Button link"
             />
           </div>
         </div>
@@ -1729,9 +1810,8 @@ function MediaTextFields({
 
       <FieldGroup title="More stories" defaultOpen={stories.length > 0}>
         <p className="text-muted-foreground text-[11px]">
-          Further image-and-copy bands under this one - a process told in three
-          beats, an ingredient per band. Each story chooses its own image side;
-          the shape and alignment above apply to all of them.
+          Extra image-and-copy bands. They share the image shape and alignment
+          above.
         </p>
         <BlockList
           label="Stories"
@@ -1752,62 +1832,70 @@ function MediaTextFields({
         >
           {(story, _index, setStory) => (
             <>
-              <input
-                className={fieldClass}
-                value={story.eyebrow}
-                onChange={(e) => setStory({ eyebrow: e.target.value })}
-                placeholder="Eyebrow (optional)"
-              />
-              <input
-                className={fieldClass}
-                value={story.heading}
-                onChange={(e) => setStory({ heading: e.target.value })}
-                placeholder="Heading"
-              />
-              <textarea
-                className={`${fieldClass} min-h-[88px] resize-y`}
-                value={story.body}
-                onChange={(e) => setStory({ body: e.target.value })}
-                placeholder="The story behind this step."
-              />
+              <Field small label="Eyebrow">
+                <input
+                  className={fieldClass}
+                  value={story.eyebrow}
+                  onChange={(e) => setStory({ eyebrow: e.target.value })}
+                />
+              </Field>
+              <Field small label="Heading">
+                <input
+                  className={fieldClass}
+                  value={story.heading}
+                  onChange={(e) => setStory({ heading: e.target.value })}
+                />
+              </Field>
+              <Field small label="Body">
+                <textarea
+                  className={`${fieldClass} min-h-[88px] resize-y`}
+                  value={story.body}
+                  onChange={(e) => setStory({ body: e.target.value })}
+                />
+              </Field>
               <ImageUpload
                 folder="homepage"
                 spec={specForRatio(config.media_ratio)}
                 defaultImage={story.image_url || undefined}
                 onUploadSuccess={(url) => setStory({ image_url: url })}
               />
-              <input
-                className={fieldClass}
-                value={story.image_alt}
-                onChange={(e) => setStory({ image_alt: e.target.value })}
-                placeholder="Describe the image for screen readers"
-              />
+              <Field small label="Image description">
+                <input
+                  className={fieldClass}
+                  value={story.image_alt}
+                  onChange={(e) => setStory({ image_alt: e.target.value })}
+                />
+              </Field>
               <div className="grid grid-cols-3 gap-2">
-                <select
-                  className={fieldClass}
-                  value={story.media_position}
-                  onChange={(e) =>
-                    setStory({
-                      media_position: e.target
-                        .value as MediaTextStory["media_position"],
-                    })
-                  }
-                >
-                  <option value="left">Image left</option>
-                  <option value="right">Image right</option>
-                </select>
-                <input
-                  className={fieldClass}
-                  value={story.cta_label}
-                  onChange={(e) => setStory({ cta_label: e.target.value })}
-                  placeholder="Button label"
-                />
-                <input
-                  className={fieldClass}
-                  value={story.cta_href}
-                  onChange={(e) => setStory({ cta_href: e.target.value })}
-                  placeholder="/shop"
-                />
+                <Field small label="Image side">
+                  <select
+                    className={fieldClass}
+                    value={story.media_position}
+                    onChange={(e) =>
+                      setStory({
+                        media_position: e.target
+                          .value as MediaTextStory["media_position"],
+                      })
+                    }
+                  >
+                    <option value="left">Image left</option>
+                    <option value="right">Image right</option>
+                  </select>
+                </Field>
+                <Field small label="Button label">
+                  <input
+                    className={fieldClass}
+                    value={story.cta_label}
+                    onChange={(e) => setStory({ cta_label: e.target.value })}
+                  />
+                </Field>
+                <Field small label="Button link">
+                  <input
+                    className={fieldClass}
+                    value={story.cta_href}
+                    onChange={(e) => setStory({ cta_href: e.target.value })}
+                  />
+                </Field>
               </div>
             </>
           )}
@@ -1866,7 +1954,7 @@ function AccordionFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="Good to know"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -1875,7 +1963,7 @@ function AccordionFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -1909,32 +1997,36 @@ function AccordionFields({
         {(item, _index, setItem) => (
           <>
             <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-2">
-              <select
-                className={fieldClass}
-                value={item.type}
-                onChange={(e) =>
-                  setItem({ type: e.target.value as AccordionItem["type"] })
-                }
-              >
-                {ACCORDION_BLOCK_TYPES.map((blockType) => (
-                  <option key={blockType} value={blockType}>
-                    {ACCORDION_BLOCK_LABELS[blockType]}
-                  </option>
-                ))}
-              </select>
-              <input
-                className={fieldClass}
-                value={item.heading}
-                onChange={(e) => setItem({ heading: e.target.value })}
-                placeholder="Shipping and returns"
-              />
+              <Field small label="Row type">
+                <select
+                  className={fieldClass}
+                  value={item.type}
+                  onChange={(e) =>
+                    setItem({ type: e.target.value as AccordionItem["type"] })
+                  }
+                >
+                  {ACCORDION_BLOCK_TYPES.map((blockType) => (
+                    <option key={blockType} value={blockType}>
+                      {ACCORDION_BLOCK_LABELS[blockType]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field small label="Heading">
+                <input
+                  className={fieldClass}
+                  value={item.heading}
+                  onChange={(e) => setItem({ heading: e.target.value })}
+                />
+              </Field>
             </div>
-            <textarea
-              className={`${fieldClass} min-h-[70px] resize-y`}
-              value={item.body}
-              onChange={(e) => setItem({ body: e.target.value })}
-              placeholder="What a shopper finds when they open this row."
-            />
+            <Field small label="Text">
+              <textarea
+                className={`${fieldClass} min-h-[70px] resize-y`}
+                value={item.body}
+                onChange={(e) => setItem({ body: e.target.value })}
+              />
+            </Field>
             {item.type === "image" && (
               <div>
                 <label className={labelClass}>Picture in the open row</label>
@@ -1944,12 +2036,13 @@ function AccordionFields({
                   defaultImage={item.image_url || undefined}
                   onUploadSuccess={(url) => setItem({ image_url: url })}
                 />
-                <input
-                  className={`${fieldClass} mt-2`}
-                  value={item.image_alt}
-                  onChange={(e) => setItem({ image_alt: e.target.value })}
-                  placeholder="Describe the image for screen readers"
-                />
+                <Field small label="Image description" className="mt-2">
+                  <input
+                    className={fieldClass}
+                    value={item.image_alt}
+                    onChange={(e) => setItem({ image_alt: e.target.value })}
+                  />
+                </Field>
               </div>
             )}
           </>
@@ -2008,7 +2101,7 @@ function ComparisonFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="Which one is for you?"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -2017,7 +2110,7 @@ function ComparisonFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -2048,32 +2141,36 @@ function ComparisonFields({
         {(column, index, setColumn) => (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={column.label}
-                onChange={(e) => setColumn({ label: e.target.value })}
-                placeholder="Starter"
-              />
-              <input
-                className={fieldClass}
-                value={column.caption}
-                onChange={(e) => setColumn({ caption: e.target.value })}
-                placeholder="For one (optional)"
-              />
+              <Field small label="Name">
+                <input
+                  className={fieldClass}
+                  value={column.label}
+                  onChange={(e) => setColumn({ label: e.target.value })}
+                />
+              </Field>
+              <Field small label="Caption">
+                <input
+                  className={fieldClass}
+                  value={column.caption}
+                  onChange={(e) => setColumn({ caption: e.target.value })}
+                />
+              </Field>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={column.cta_label}
-                onChange={(e) => setColumn({ cta_label: e.target.value })}
-                placeholder="Button label (optional)"
-              />
-              <input
-                className={fieldClass}
-                value={column.cta_href}
-                onChange={(e) => setColumn({ cta_href: e.target.value })}
-                placeholder="/shop/starter-set"
-              />
+              <Field small label="Button label">
+                <input
+                  className={fieldClass}
+                  value={column.cta_label}
+                  onChange={(e) => setColumn({ cta_label: e.target.value })}
+                />
+              </Field>
+              <Field small label="Button link">
+                <input
+                  className={fieldClass}
+                  value={column.cta_href}
+                  onChange={(e) => setColumn({ cta_href: e.target.value })}
+                />
+              </Field>
             </div>
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -2112,25 +2209,28 @@ function ComparisonFields({
         {(row, _index, setRow) => (
           <>
             <div className="grid grid-cols-[170px_minmax(0,1fr)] gap-2">
-              <select
-                className={fieldClass}
-                value={row.type}
-                onChange={(e) =>
-                  setRow({ type: e.target.value as ComparisonRow["type"] })
-                }
-              >
-                {COMPARISON_ROW_TYPES.map((rowType) => (
-                  <option key={rowType} value={rowType}>
-                    {COMPARISON_ROW_LABELS[rowType]}
-                  </option>
-                ))}
-              </select>
-              <input
-                className={fieldClass}
-                value={row.label}
-                onChange={(e) => setRow({ label: e.target.value })}
-                placeholder="Feature"
-              />
+              <Field small label="Row type">
+                <select
+                  className={fieldClass}
+                  value={row.type}
+                  onChange={(e) =>
+                    setRow({ type: e.target.value as ComparisonRow["type"] })
+                  }
+                >
+                  {COMPARISON_ROW_TYPES.map((rowType) => (
+                    <option key={rowType} value={rowType}>
+                      {COMPARISON_ROW_LABELS[rowType]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field small label="Feature">
+                <input
+                  className={fieldClass}
+                  value={row.label}
+                  onChange={(e) => setRow({ label: e.target.value })}
+                />
+              </Field>
             </div>
             {config.columns.length === 0 ? (
               <p className="text-muted-foreground text-[11px]">
@@ -2162,7 +2262,6 @@ function ComparisonFields({
                         onChange={(e) =>
                           setValue(row, setRow, j, e.target.value)
                         }
-                        placeholder="Value"
                       />
                     )}
                   </label>
@@ -2208,12 +2307,13 @@ function MulticolumnFields({
   return (
     <>
       <FieldGroup title="Header">
-        <input
-          className={fieldClass}
-          value={config.eyebrow}
-          onChange={(e) => set("eyebrow", e.target.value)}
-          placeholder="Eyebrow (optional)"
-        />
+        <Field label="Eyebrow">
+          <input
+            className={fieldClass}
+            value={config.eyebrow}
+            onChange={(e) => set("eyebrow", e.target.value)}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass}>Heading</label>
@@ -2221,7 +2321,7 @@ function MulticolumnFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="Why shop with us"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -2230,7 +2330,7 @@ function MulticolumnFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -2302,46 +2402,54 @@ function MulticolumnFields({
       >
         {(item, _index, setItem) => (
           <>
-            <input
-              className={fieldClass}
-              value={item.heading}
-              onChange={(e) => setItem({ heading: e.target.value })}
-              placeholder="Heading"
-            />
-            <textarea
-              className={`${fieldClass} min-h-[70px] resize-y`}
-              value={item.body}
-              onChange={(e) => setItem({ body: e.target.value })}
-              placeholder="A sentence or two."
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <select
-                className={fieldClass}
-                value={item.icon}
-                onChange={(e) =>
-                  setItem({ icon: e.target.value as MulticolumnItem["icon"] })
-                }
-              >
-                <option value="">No icon</option>
-                {USP_ICONS.map((icon) => (
-                  <option key={icon} value={icon}>
-                    {USP_ICON_LABELS[icon]}
-                  </option>
-                ))}
-              </select>
+            <Field small label="Heading">
               <input
                 className={fieldClass}
-                value={item.cta_label}
-                onChange={(e) => setItem({ cta_label: e.target.value })}
-                placeholder="Link label (optional)"
+                value={item.heading}
+                onChange={(e) => setItem({ heading: e.target.value })}
               />
+            </Field>
+            <Field small label="Body">
+              <textarea
+                className={`${fieldClass} min-h-[70px] resize-y`}
+                value={item.body}
+                onChange={(e) => setItem({ body: e.target.value })}
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-2">
+              <Field small label="Icon">
+                <select
+                  className={fieldClass}
+                  value={item.icon}
+                  onChange={(e) =>
+                    setItem({
+                      icon: e.target.value as MulticolumnItem["icon"],
+                    })
+                  }
+                >
+                  <option value="">No icon</option>
+                  {USP_ICONS.map((icon) => (
+                    <option key={icon} value={icon}>
+                      {USP_ICON_LABELS[icon]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field small label="Link label">
+                <input
+                  className={fieldClass}
+                  value={item.cta_label}
+                  onChange={(e) => setItem({ cta_label: e.target.value })}
+                />
+              </Field>
             </div>
-            <input
-              className={fieldClass}
-              value={item.cta_href}
-              onChange={(e) => setItem({ cta_href: e.target.value })}
-              placeholder="/shop (link destination)"
-            />
+            <Field small label="Link">
+              <input
+                className={fieldClass}
+                value={item.cta_href}
+                onChange={(e) => setItem({ cta_href: e.target.value })}
+              />
+            </Field>
             <div>
               <label className={labelClass}>
                 Picture (optional - replaces the icon)
@@ -2352,12 +2460,13 @@ function MulticolumnFields({
                 defaultImage={item.image_url || undefined}
                 onUploadSuccess={(url) => setItem({ image_url: url })}
               />
-              <input
-                className={`${fieldClass} mt-2`}
-                value={item.image_alt}
-                onChange={(e) => setItem({ image_alt: e.target.value })}
-                placeholder="Describe the picture for screen readers"
-              />
+              <Field small label="Picture description" className="mt-2">
+                <input
+                  className={fieldClass}
+                  value={item.image_alt}
+                  onChange={(e) => setItem({ image_alt: e.target.value })}
+                />
+              </Field>
             </div>
           </>
         )}
@@ -2382,8 +2491,10 @@ function ImageMarqueeFields({
     <>
       <FieldGroup title="Motion & size">
         <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className={labelClass}>Speed</label>
+          <Field
+            label="Speed"
+            info="The row pauses on hover and stays still for visitors who reduce motion."
+          >
             <select
               className={fieldClass}
               value={config.speed}
@@ -2395,7 +2506,7 @@ function ImageMarqueeFields({
               <option value="medium">Medium</option>
               <option value="fast">Fast</option>
             </select>
-          </div>
+          </Field>
           <div>
             <label className={labelClass}>Height</label>
             <select
@@ -2428,10 +2539,6 @@ function ImageMarqueeFields({
             </select>
           </div>
         </div>
-        <p className="text-muted-foreground text-[11px]">
-          The row pauses while a shopper hovers it and stays still for anyone
-          who has turned on reduced motion.
-        </p>
       </FieldGroup>
 
       <BlockList
@@ -2456,18 +2563,20 @@ function ImageMarqueeFields({
               onUploadSuccess={(url) => setItem({ image_url: url })}
             />
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={item.image_alt}
-                onChange={(e) => setItem({ image_alt: e.target.value })}
-                placeholder="Describe the picture"
-              />
-              <input
-                className={fieldClass}
-                value={item.href}
-                onChange={(e) => setItem({ href: e.target.value })}
-                placeholder="/shop (optional link)"
-              />
+              <Field small label="Picture description">
+                <input
+                  className={fieldClass}
+                  value={item.image_alt}
+                  onChange={(e) => setItem({ image_alt: e.target.value })}
+                />
+              </Field>
+              <Field small label="Link">
+                <input
+                  className={fieldClass}
+                  value={item.href}
+                  onChange={(e) => setItem({ href: e.target.value })}
+                />
+              </Field>
             </div>
           </>
         )}
@@ -2493,12 +2602,13 @@ function ImageHotspotsFields({
   return (
     <>
       <FieldGroup title="Header">
-        <input
-          className={fieldClass}
-          value={config.eyebrow}
-          onChange={(e) => set("eyebrow", e.target.value)}
-          placeholder="Eyebrow (optional)"
-        />
+        <Field label="Eyebrow">
+          <input
+            className={fieldClass}
+            value={config.eyebrow}
+            onChange={(e) => set("eyebrow", e.target.value)}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass}>Heading</label>
@@ -2506,7 +2616,7 @@ function ImageHotspotsFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="Shop the look"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -2515,7 +2625,7 @@ function ImageHotspotsFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -2545,12 +2655,13 @@ function ImageHotspotsFields({
           defaultImage={config.image_url || undefined}
           onUploadSuccess={(url) => set("image_url", url)}
         />
-        <input
-          className={fieldClass}
-          value={config.image_alt}
-          onChange={(e) => set("image_alt", e.target.value)}
-          placeholder="Describe the picture for screen readers"
-        />
+        <Field label="Picture description">
+          <input
+            className={fieldClass}
+            value={config.image_alt}
+            onChange={(e) => set("image_alt", e.target.value)}
+          />
+        </Field>
         {config.image_url && config.hotspots.length > 0 && (
           <div
             className="relative overflow-hidden rounded-md border"
@@ -2617,31 +2728,39 @@ function ImageHotspotsFields({
                 />
               </label>
             </div>
-            <input
-              className={fieldClass}
-              value={spot.title}
-              onChange={(e) => setSpot({ title: e.target.value })}
-              placeholder="What is here"
-            />
-            <textarea
-              className={`${fieldClass} min-h-[60px] resize-y`}
-              value={spot.body}
-              onChange={(e) => setSpot({ body: e.target.value })}
-              placeholder="A line about it (optional)"
-            />
+            <Field small label="Title">
+              <input
+                className={fieldClass}
+                value={spot.title}
+                onChange={(e) => setSpot({ title: e.target.value })}
+              />
+            </Field>
+            <Field small label="Text">
+              <textarea
+                className={`${fieldClass} min-h-[60px] resize-y`}
+                value={spot.body}
+                onChange={(e) => setSpot({ body: e.target.value })}
+              />
+            </Field>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={spot.href}
-                onChange={(e) => setSpot({ href: e.target.value })}
-                placeholder="/shop/the-product (link)"
-              />
-              <input
-                className={fieldClass}
-                value={spot.cta_label}
-                onChange={(e) => setSpot({ cta_label: e.target.value })}
-                placeholder="Link label (default: Shop)"
-              />
+              <Field small label="Link">
+                <input
+                  className={fieldClass}
+                  value={spot.href}
+                  onChange={(e) => setSpot({ href: e.target.value })}
+                />
+              </Field>
+              <Field
+                small
+                label="Link label"
+                info="Shows Shop when left empty."
+              >
+                <input
+                  className={fieldClass}
+                  value={spot.cta_label}
+                  onChange={(e) => setSpot({ cta_label: e.target.value })}
+                />
+              </Field>
             </div>
           </>
         )}
@@ -2661,7 +2780,7 @@ function BeforeAfterFields({
     key: K,
     value: BeforeAfterConfig[K],
   ) => setConfig({ ...config, [key]: value });
-  const side = (key: "before" | "after", placeholder: string) => (
+  const side = (key: "before" | "after") => (
     <FieldGroup title={key === "before" ? "Before" : "After"}>
       <ImageUpload
         folder="homepage"
@@ -2670,20 +2789,24 @@ function BeforeAfterFields({
         onUploadSuccess={(url) => set(key, { ...config[key], image_url: url })}
       />
       <div className="grid grid-cols-2 gap-2">
-        <input
-          className={fieldClass}
-          value={config[key].label}
-          onChange={(e) => set(key, { ...config[key], label: e.target.value })}
-          placeholder={placeholder}
-        />
-        <input
-          className={fieldClass}
-          value={config[key].image_alt}
-          onChange={(e) =>
-            set(key, { ...config[key], image_alt: e.target.value })
-          }
-          placeholder="Describe the picture"
-        />
+        <Field small label="Label">
+          <input
+            className={fieldClass}
+            value={config[key].label}
+            onChange={(e) =>
+              set(key, { ...config[key], label: e.target.value })
+            }
+          />
+        </Field>
+        <Field small label="Picture description">
+          <input
+            className={fieldClass}
+            value={config[key].image_alt}
+            onChange={(e) =>
+              set(key, { ...config[key], image_alt: e.target.value })
+            }
+          />
+        </Field>
       </div>
     </FieldGroup>
   );
@@ -2691,12 +2814,13 @@ function BeforeAfterFields({
   return (
     <>
       <FieldGroup title="Header">
-        <input
-          className={fieldClass}
-          value={config.eyebrow}
-          onChange={(e) => set("eyebrow", e.target.value)}
-          placeholder="Eyebrow (optional)"
-        />
+        <Field label="Eyebrow">
+          <input
+            className={fieldClass}
+            value={config.eyebrow}
+            onChange={(e) => set("eyebrow", e.target.value)}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass}>Heading</label>
@@ -2704,7 +2828,7 @@ function BeforeAfterFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="See the difference"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -2713,7 +2837,7 @@ function BeforeAfterFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -2748,8 +2872,8 @@ function BeforeAfterFields({
           </div>
         </div>
       </FieldGroup>
-      {side("before", "Before")}
-      {side("after", "After")}
+      {side("before")}
+      {side("after")}
     </>
   );
 }
@@ -2817,34 +2941,38 @@ function ProductSpotlightFields({
       </FieldGroup>
 
       <FieldGroup title="Copy">
-        <input
-          className={fieldClass}
-          value={config.eyebrow}
-          onChange={(e) => set("eyebrow", e.target.value)}
-          placeholder="Eyebrow (optional)"
-        />
-        <input
-          className={fieldClass}
-          value={config.heading}
-          onChange={(e) => set("heading", e.target.value)}
-          placeholder="Heading (defaults to the product's name)"
-        />
-        <textarea
-          className={`${fieldClass} min-h-[100px] resize-y`}
-          value={config.body}
-          onChange={(e) => set("body", e.target.value)}
-          placeholder="Why this product, in your words."
-        />
+        <Field label="Eyebrow">
+          <input
+            className={fieldClass}
+            value={config.eyebrow}
+            onChange={(e) => set("eyebrow", e.target.value)}
+          />
+        </Field>
+        <Field label="Heading" info="Leave empty to use the product's name.">
+          <input
+            className={fieldClass}
+            value={config.heading}
+            onChange={(e) => set("heading", e.target.value)}
+          />
+        </Field>
+        <Field label="Body">
+          <textarea
+            className={`${fieldClass} min-h-[100px] resize-y`}
+            value={config.body}
+            onChange={(e) => set("body", e.target.value)}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>Button label</label>
+          <Field
+            label="Button label"
+            info="Shows View product when left empty."
+          >
             <input
               className={fieldClass}
               value={config.cta_label}
               onChange={(e) => set("cta_label", e.target.value)}
-              placeholder="View product"
             />
-          </div>
+          </Field>
           <div>
             <label className={labelClass}>Picture position</label>
             <select
@@ -2882,12 +3010,13 @@ function LogoStripFields({
   return (
     <>
       <FieldGroup title="Strip">
-        <input
-          className={fieldClass}
-          value={config.heading}
-          onChange={(e) => set("heading", e.target.value)}
-          placeholder="As seen in"
-        />
+        <Field label="Heading">
+          <input
+            className={fieldClass}
+            value={config.heading}
+            onChange={(e) => set("heading", e.target.value)}
+          />
+        </Field>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass}>Arrangement</label>
@@ -2931,18 +3060,21 @@ function LogoStripFields({
               onUploadSuccess={(url) => setItem({ image_url: url })}
             />
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={item.image_alt}
-                onChange={(e) => setItem({ image_alt: e.target.value })}
-                placeholder="Whose mark this is"
-              />
-              <input
-                className={fieldClass}
-                value={item.href}
-                onChange={(e) => setItem({ href: e.target.value })}
-                placeholder="https://… (optional link)"
-              />
+              <Field small label="Logo description">
+                <input
+                  className={fieldClass}
+                  value={item.image_alt}
+                  onChange={(e) => setItem({ image_alt: e.target.value })}
+                />
+              </Field>
+              <Field small label="Link">
+                <input
+                  className={fieldClass}
+                  value={item.href}
+                  onChange={(e) => setItem({ href: e.target.value })}
+                  placeholder="https://"
+                />
+              </Field>
             </div>
           </>
         )}
@@ -2975,71 +3107,84 @@ function CountdownFields({
   return (
     <>
       <FieldGroup title="When it ends">
-        <input
-          type="datetime-local"
-          className={fieldClass}
-          value={toLocalDateTimeInput(config.ends_at)}
-          onChange={(e) => {
-            const ms = Date.parse(e.target.value);
-            set(
-              "ends_at",
-              Number.isFinite(ms) ? new Date(ms).toISOString() : "",
-            );
-          }}
-        />
-        <p className="text-muted-foreground text-[11px]">
-          In your local time. Shoppers everywhere count down to the same moment.
-        </p>
-        <input
-          className={fieldClass}
-          value={config.expired_message}
-          onChange={(e) => set("expired_message", e.target.value)}
-          placeholder="Once it ends, show… (leave empty to hide the section)"
-        />
+        <Field
+          label="Ends at"
+          info="Set in your local time. Every shopper counts down to the same moment."
+        >
+          <input
+            type="datetime-local"
+            className={fieldClass}
+            value={toLocalDateTimeInput(config.ends_at)}
+            onChange={(e) => {
+              const ms = Date.parse(e.target.value);
+              set(
+                "ends_at",
+                Number.isFinite(ms) ? new Date(ms).toISOString() : "",
+              );
+            }}
+          />
+        </Field>
+        <Field
+          label="Message after it ends"
+          info="Leave empty to hide the section once it ends."
+        >
+          <input
+            className={fieldClass}
+            value={config.expired_message}
+            onChange={(e) => set("expired_message", e.target.value)}
+          />
+        </Field>
       </FieldGroup>
 
       <FieldGroup title="Copy">
-        <input
-          className={fieldClass}
-          value={config.eyebrow}
-          onChange={(e) => set("eyebrow", e.target.value)}
-          placeholder="Eyebrow (optional)"
-        />
-        <input
-          className={fieldClass}
-          value={config.heading}
-          onChange={(e) => set("heading", e.target.value)}
-          placeholder="The sale ends in"
-        />
-        <input
-          className={fieldClass}
-          value={config.subheading}
-          onChange={(e) => set("subheading", e.target.value)}
-          placeholder="Subheading (optional)"
-        />
+        <Field label="Eyebrow">
+          <input
+            className={fieldClass}
+            value={config.eyebrow}
+            onChange={(e) => set("eyebrow", e.target.value)}
+          />
+        </Field>
+        <Field label="Heading">
+          <input
+            className={fieldClass}
+            value={config.heading}
+            onChange={(e) => set("heading", e.target.value)}
+          />
+        </Field>
+        <Field label="Subheading">
+          <input
+            className={fieldClass}
+            value={config.subheading}
+            onChange={(e) => set("subheading", e.target.value)}
+          />
+        </Field>
         <div className="grid grid-cols-3 gap-3">
-          <input
-            className={fieldClass}
-            value={config.cta_label}
-            onChange={(e) => set("cta_label", e.target.value)}
-            placeholder="Button label"
-          />
-          <input
-            className={fieldClass}
-            value={config.cta_href}
-            onChange={(e) => set("cta_href", e.target.value)}
-            placeholder="/shop"
-          />
-          <select
-            className={fieldClass}
-            value={config.alignment}
-            onChange={(e) =>
-              set("alignment", e.target.value as CountdownConfig["alignment"])
-            }
-          >
-            <option value="center">Centred</option>
-            <option value="left">Left</option>
-          </select>
+          <Field label="Button label">
+            <input
+              className={fieldClass}
+              value={config.cta_label}
+              onChange={(e) => set("cta_label", e.target.value)}
+            />
+          </Field>
+          <Field label="Button link">
+            <input
+              className={fieldClass}
+              value={config.cta_href}
+              onChange={(e) => set("cta_href", e.target.value)}
+            />
+          </Field>
+          <Field label="Alignment">
+            <select
+              className={fieldClass}
+              value={config.alignment}
+              onChange={(e) =>
+                set("alignment", e.target.value as CountdownConfig["alignment"])
+              }
+            >
+              <option value="center">Centred</option>
+              <option value="left">Left</option>
+            </select>
+          </Field>
         </div>
       </FieldGroup>
     </>
@@ -3089,7 +3234,7 @@ function GalleryFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="The edit"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -3098,7 +3243,7 @@ function GalleryFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="A closer look at the collection"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -3208,25 +3353,30 @@ function GalleryFields({
               onUploadSuccess={(url) => setItem(index, { image_url: url })}
             />
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={item.image_alt}
-                onChange={(e) => setItem(index, { image_alt: e.target.value })}
-                placeholder="Image description"
-              />
-              <input
-                className={fieldClass}
-                value={item.caption}
-                onChange={(e) => setItem(index, { caption: e.target.value })}
-                placeholder="Caption (optional)"
-              />
+              <Field small label="Image description">
+                <input
+                  className={fieldClass}
+                  value={item.image_alt}
+                  onChange={(e) =>
+                    setItem(index, { image_alt: e.target.value })
+                  }
+                />
+              </Field>
+              <Field small label="Caption">
+                <input
+                  className={fieldClass}
+                  value={item.caption}
+                  onChange={(e) => setItem(index, { caption: e.target.value })}
+                />
+              </Field>
             </div>
-            <input
-              className={fieldClass}
-              value={item.href}
-              onChange={(e) => setItem(index, { href: e.target.value })}
-              placeholder="Link (optional, e.g. /shop/new-arrivals)"
-            />
+            <Field small label="Link">
+              <input
+                className={fieldClass}
+                value={item.href}
+                onChange={(e) => setItem(index, { href: e.target.value })}
+              />
+            </Field>
           </div>
         ))}
         {config.items.length < MAX_GALLERY_ITEMS && (
@@ -3274,7 +3424,7 @@ function TestimonialsFields({
             className={fieldClass}
             value={config.eyebrow}
             onChange={(e) => set("eyebrow", e.target.value)}
-            placeholder="Loved by customers"
+            aria-label="Eyebrow"
           />
         </div>
         <div className="grid grid-cols-2 gap-4">
@@ -3284,7 +3434,7 @@ function TestimonialsFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="What people are saying"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -3293,7 +3443,7 @@ function TestimonialsFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -3344,25 +3494,32 @@ function TestimonialsFields({
       >
         {(item, _index, setItem) => (
           <>
-            <textarea
-              className={`${fieldClass} min-h-[88px] resize-y`}
-              value={item.quote}
-              onChange={(e) => setItem({ quote: e.target.value })}
-              placeholder="The product changed our daily ritual…"
-            />
+            <Field small label="Quote">
+              <textarea
+                className={`${fieldClass} min-h-[88px] resize-y`}
+                value={item.quote}
+                onChange={(e) => setItem({ quote: e.target.value })}
+              />
+            </Field>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                className={fieldClass}
-                value={item.author}
-                onChange={(e) => setItem({ author: e.target.value })}
-                placeholder="Name or publication"
-              />
-              <input
-                className={fieldClass}
-                value={item.detail}
-                onChange={(e) => setItem({ detail: e.target.value })}
-                placeholder="Customer, city or award"
-              />
+              <Field small label="Name or publication">
+                <input
+                  className={fieldClass}
+                  value={item.author}
+                  onChange={(e) => setItem({ author: e.target.value })}
+                />
+              </Field>
+              <Field
+                small
+                label="Detail"
+                info="A short line under the name, like a city or an award."
+              >
+                <input
+                  className={fieldClass}
+                  value={item.detail}
+                  onChange={(e) => setItem({ detail: e.target.value })}
+                />
+              </Field>
             </div>
             <div>
               <label className={labelClass}>Logo (optional)</label>
@@ -3372,12 +3529,13 @@ function TestimonialsFields({
                 defaultImage={item.logo_url || undefined}
                 onUploadSuccess={(url) => setItem({ logo_url: url })}
               />
-              <input
-                className={`${fieldClass} mt-2`}
-                value={item.logo_alt}
-                onChange={(e) => setItem({ logo_alt: e.target.value })}
-                placeholder="Logo description"
-              />
+              <Field small label="Logo description" className="mt-2">
+                <input
+                  className={fieldClass}
+                  value={item.logo_alt}
+                  onChange={(e) => setItem({ logo_alt: e.target.value })}
+                />
+              </Field>
             </div>
           </>
         )}
@@ -3405,7 +3563,7 @@ function VideoFields({
             className={fieldClass}
             value={config.eyebrow}
             onChange={(e) => set("eyebrow", e.target.value)}
-            placeholder="Watch"
+            aria-label="Eyebrow"
           />
         </div>
         <div className="grid grid-cols-2 gap-4">
@@ -3415,7 +3573,7 @@ function VideoFields({
               className={fieldClass}
               value={config.heading}
               onChange={(e) => set("heading", e.target.value)}
-              placeholder="See the story unfold"
+              aria-label="Heading"
             />
           </div>
           <div>
@@ -3424,7 +3582,7 @@ function VideoFields({
               className={fieldClass}
               value={config.subheading}
               onChange={(e) => set("subheading", e.target.value)}
-              placeholder="(optional)"
+              aria-label="Subheading"
             />
           </div>
         </div>
@@ -3449,12 +3607,13 @@ function VideoFields({
             defaultImage={config.poster_url || undefined}
             onUploadSuccess={(url) => set("poster_url", url)}
           />
-          <input
-            className={`${fieldClass} mt-2`}
-            value={config.poster_alt}
-            onChange={(e) => set("poster_alt", e.target.value)}
-            placeholder="Describe the poster image"
-          />
+          <Field small label="Poster description" className="mt-2">
+            <input
+              className={fieldClass}
+              value={config.poster_alt}
+              onChange={(e) => set("poster_alt", e.target.value)}
+            />
+          </Field>
         </div>
       </FieldGroup>
 
@@ -3541,7 +3700,7 @@ function NewsletterFields({
             className={fieldClass}
             value={config.eyebrow}
             onChange={(e) => set("eyebrow", e.target.value)}
-            placeholder="Stay close"
+            aria-label="Eyebrow"
           />
         </div>
         <div>
@@ -3550,7 +3709,7 @@ function NewsletterFields({
             className={fieldClass}
             value={config.heading}
             onChange={(e) => set("heading", e.target.value)}
-            placeholder="Notes worth opening"
+            aria-label="Heading"
           />
         </div>
         <div>
@@ -3559,7 +3718,7 @@ function NewsletterFields({
             className={`${fieldClass} min-h-[72px] resize-y`}
             value={config.subheading}
             onChange={(e) => set("subheading", e.target.value)}
-            placeholder="New releases, useful stories and occasional offers."
+            aria-label="Subheading"
           />
         </div>
       </FieldGroup>
@@ -3572,7 +3731,7 @@ function NewsletterFields({
               className={fieldClass}
               value={config.button_label}
               onChange={(e) => set("button_label", e.target.value)}
-              placeholder="Subscribe"
+              aria-label="Button label"
             />
           </div>
           <div>
@@ -3581,7 +3740,7 @@ function NewsletterFields({
               className={fieldClass}
               value={config.success_message}
               onChange={(e) => set("success_message", e.target.value)}
-              placeholder="You're on the list - thank you."
+              aria-label="Success message"
             />
           </div>
         </div>
@@ -3591,7 +3750,7 @@ function NewsletterFields({
             className={`${fieldClass} min-h-[72px] resize-y`}
             value={config.consent_text}
             onChange={(e) => set("consent_text", e.target.value)}
-            placeholder="I agree to receive store news and offers by email."
+            aria-label="Consent text"
           />
           <p className="text-muted-foreground mt-1 text-[11px]">
             Visitors must tick this before subscribing.
@@ -3661,7 +3820,7 @@ function FeaturedFields({
             className={fieldClass}
             value={config.heading}
             onChange={(e) => set("heading", e.target.value)}
-            placeholder="Bestsellers"
+            aria-label="Heading"
           />
         </div>
         <div>
@@ -3670,7 +3829,7 @@ function FeaturedFields({
             className={fieldClass}
             value={config.subheading}
             onChange={(e) => set("subheading", e.target.value)}
-            placeholder="(optional)"
+            aria-label="Subheading"
           />
         </div>
       </div>
@@ -3697,7 +3856,7 @@ function FeaturedFields({
             selectedIds={config.product_ids}
             options={products.map((p) => ({ id: p.id, name: p.name }))}
             onChange={(ids) => set("product_ids", ids)}
-            addLabel="Add a product..."
+            addLabel="Add a product"
           />
         </div>
       )}
@@ -3710,7 +3869,7 @@ function FeaturedFields({
             value={config.category_id ?? ""}
             onChange={(e) => set("category_id", e.target.value || null)}
           >
-            <option value="">Select a category...</option>
+            <option value="">Select a category</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -3729,7 +3888,7 @@ function FeaturedFields({
             onValueChange={(n) => set("limit", n)}
             allowDecimal={false}
           />
-          <p className="text-muted-foreground mt-1 text-[11px]">1–12.</p>
+          <p className="text-muted-foreground mt-1 text-[11px]">1 to 12.</p>
         </div>
       )}
     </>
@@ -3759,7 +3918,7 @@ function CategoryFields({
             className={fieldClass}
             value={config.heading}
             onChange={(e) => set("heading", e.target.value)}
-            placeholder="Shop by Category"
+            aria-label="Heading"
           />
         </div>
         <div>
@@ -3768,7 +3927,7 @@ function CategoryFields({
             className={fieldClass}
             value={config.subheading}
             onChange={(e) => set("subheading", e.target.value)}
-            placeholder="(optional)"
+            aria-label="Subheading"
           />
         </div>
       </div>
@@ -3824,7 +3983,7 @@ function CategoryFields({
             selectedIds={config.category_ids}
             options={categories.map((c) => ({ id: c.id, name: c.name }))}
             onChange={(ids) => set("category_ids", ids)}
-            addLabel="Add a category..."
+            addLabel="Add a category"
           />
         </div>
       )}
@@ -3862,7 +4021,7 @@ function BannerFields({
           className={fieldClass}
           value={config.heading}
           onChange={(e) => set("heading", e.target.value)}
-          placeholder="Summer Sale"
+          aria-label="Heading"
         />
       </div>
 
@@ -3872,7 +4031,7 @@ function BannerFields({
           className={`${fieldClass} min-h-[60px] resize-y`}
           value={config.subtext}
           onChange={(e) => set("subtext", e.target.value)}
-          placeholder="(optional)"
+          aria-label="Subtext"
         />
       </div>
 
@@ -3883,7 +4042,7 @@ function BannerFields({
             className={fieldClass}
             value={config.cta_label}
             onChange={(e) => set("cta_label", e.target.value)}
-            placeholder="Shop now"
+            aria-label="Button label"
           />
         </div>
         <div>
@@ -3892,7 +4051,7 @@ function BannerFields({
             className={fieldClass}
             value={config.cta_href}
             onChange={(e) => set("cta_href", e.target.value)}
-            placeholder="/shop"
+            aria-label="Button link"
           />
         </div>
       </div>
@@ -3953,7 +4112,7 @@ function BlogFields({
             className={fieldClass}
             value={config.heading}
             onChange={(e) => set("heading", e.target.value)}
-            placeholder="From the Journal"
+            aria-label="Heading"
           />
         </div>
         <div>
@@ -3962,7 +4121,7 @@ function BlogFields({
             className={fieldClass}
             value={config.subheading}
             onChange={(e) => set("subheading", e.target.value)}
-            placeholder="(optional)"
+            aria-label="Subheading"
           />
         </div>
       </div>
@@ -4004,7 +4163,7 @@ function BlogFields({
             selectedIds={config.blog_ids}
             options={blogs.map((b) => ({ id: b.id, name: b.name }))}
             onChange={(ids) => set("blog_ids", ids)}
-            addLabel="Add a blog post..."
+            addLabel="Add a blog post"
           />
           {blogs.length === 0 && (
             <p className="text-muted-foreground mt-1 text-[11px]">
@@ -4021,7 +4180,7 @@ function BlogFields({
             onValueChange={(n) => set("limit", n)}
             allowDecimal={false}
           />
-          <p className="text-muted-foreground mt-1 text-[11px]">1–12.</p>
+          <p className="text-muted-foreground mt-1 text-[11px]">1 to 12.</p>
         </div>
       )}
     </>
@@ -4048,12 +4207,10 @@ function RichTextFields({
           language="html"
           value={config.html}
           onChange={(v) => set("html", v)}
-          placeholder="<h2>About us</h2>&#10;<p>Tell your story…</p>"
           minHeight="180px"
         />
         <p className="text-muted-foreground mt-1 text-[11px]">
-          Basic HTML - headings, paragraphs, links, lists, images. Unsafe tags
-          and scripts are removed automatically.
+          Basic HTML only. Unsafe tags and scripts are removed.
         </p>
       </div>
       <div className="max-w-[220px]">
@@ -4088,9 +4245,8 @@ function CustomCodeFields({
   return (
     <>
       <div className="rounded-md border border-[var(--dash-amber-border,#f0c67a)] bg-[var(--dash-amber-soft,#fdf6e7)] px-3 py-2 text-[11px] leading-relaxed text-[var(--dash-amber-ink,#8a6d1f)]">
-        Your code runs in a secure sandbox - isolated from the rest of your site
-        and from customer accounts. Great for self-contained widgets (carousels,
-        embeds, animations).
+        Your code runs in a secure sandbox, apart from the rest of your site and
+        from customer accounts.
       </div>
 
       <div>
@@ -4099,7 +4255,6 @@ function CustomCodeFields({
           language="html"
           value={config.html}
           onChange={(v) => set("html", v)}
-          placeholder="<div class='my-carousel'>…</div>"
           minHeight="280px"
         />
       </div>
@@ -4110,7 +4265,6 @@ function CustomCodeFields({
           language="css"
           value={config.css}
           onChange={(v) => set("css", v)}
-          placeholder=".my-carousel { … }"
           minHeight="240px"
         />
       </div>
@@ -4121,7 +4275,6 @@ function CustomCodeFields({
           language="javascript"
           value={config.js}
           onChange={(v) => set("js", v)}
-          placeholder="// runs when the section loads"
           minHeight="240px"
         />
       </div>

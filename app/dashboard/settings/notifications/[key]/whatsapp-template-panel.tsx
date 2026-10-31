@@ -26,12 +26,12 @@ const STATUS_COPY: Record<
   APPROVED: {
     label: "Approved",
     tone: "text-emerald-700 bg-emerald-50 dark:bg-emerald-950/30",
-    note: "Meta approved this wording. Messages send as soon as the WhatsApp box above is ticked.",
+    note: "Meta approved this wording; it sends once the WhatsApp box above is ticked.",
   },
   PENDING: {
     label: "In review",
     tone: "text-amber-700 bg-amber-50 dark:bg-amber-950/30",
-    note: "Meta is reviewing the wording - usually within a day. Nothing sends until it is approved.",
+    note: "Meta is reviewing it, usually within a day. Nothing sends until it's approved.",
   },
   IN_APPEAL: {
     label: "In appeal",
@@ -110,13 +110,11 @@ export function WhatsAppTemplatePanel({
                   Cash-on-delivery orders
                 </p>
                 <p className="mt-0.5">
-                  Sent instead of the message above for website cash-on-delivery
-                  orders when{" "}
+                  Sent instead of the message above for website COD orders when{" "}
                   <Link href="/dashboard/channels" className="underline">
                     Ask cash-on-delivery customers to confirm on WhatsApp
                   </Link>{" "}
-                  is on. Confirm order marks the order confirmed; Cancel order
-                  cancels it if it hasn&apos;t shipped.
+                  is on.
                 </p>
               </div>
             )}
@@ -126,9 +124,8 @@ export function WhatsAppTemplatePanel({
       )}
 
       <p className="text-[12px] text-[var(--dash-text-3)]">
-        Customers receive WhatsApp updates only if they ticked the box at
-        checkout. Team members receive them on the mobile number on their
-        account.
+        Customers get these only if they opted in at checkout; staff get them on
+        their account&apos;s mobile.
       </p>
     </div>
   );

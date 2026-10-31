@@ -8,7 +8,6 @@
 // nobody is offered a toggle for something that never fires.
 
 import { useMemo, useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Bell, Lock, Mail } from "lucide-react";
@@ -119,16 +118,7 @@ export function MyNotificationsView({
       <header className="dash-page-header row">
         <div>
           <h1>My notifications</h1>
-          <p>
-            What you personally get told about. Your store&apos;s{" "}
-            <Link
-              href="/dashboard/settings/notifications"
-              className="underline"
-            >
-              notification settings
-            </Link>{" "}
-            decide what&apos;s available here.
-          </p>
+          <p>What you personally get told about.</p>
         </div>
       </header>
 

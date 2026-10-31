@@ -22,6 +22,7 @@ import {
 } from "@/app/actions/store-domain";
 import type { GoogleIndexingHealth } from "@/lib/seo/indexing-health";
 import { formatWhen } from "@/lib/dates";
+import { InfoTip } from "@/components/ui/info-tip";
 
 // Poll while the merchant is actually looking, bounded — each check costs API
 // calls. This is a CONVENIENCE, not the mechanism: issuance regularly outlives
@@ -166,17 +167,16 @@ export function DomainSettingsView({
                 Use your own domain
               </h2>
               <p className="mt-1 max-w-xl text-sm text-[#5b6472]">
-                Serve your store from a domain you own, with HTTPS set up for
-                you. Part of the Pro plan.
+                Use a domain you own, with HTTPS set up for you. Part of the Pro
+                plan.
               </p>
               {state.domain && (
                 // Honest about the consequence. This isn't a dormant setting —
                 // the domain has stopped serving, and saying so is kinder than
                 // letting them discover it from a customer.
                 <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  <strong>{state.domain}</strong> is no longer serving your
-                  store because your plan changed. Upgrade to Pro to bring it
-                  back.
+                  <strong>{state.domain}</strong> stopped serving your store
+                  when your plan changed. Upgrade to Pro to bring it back.
                 </p>
               )}
               <Link
@@ -235,9 +235,8 @@ export function DomainSettingsView({
                 Finish covering {pending.map((r) => hostOf(r.fqdn)).join(", ")}
               </h2>
               <p className="mt-1 text-sm text-[#5b6472]">
-                Your store is live. Add the record below and visitors who type
-                the other form of your address get HTTPS too - until then their
-                browser shows a security warning.
+                Add this record so visitors who type this address don&apos;t see
+                a security warning.
               </p>
             </div>
             <div className="divide-y divide-[rgba(17,24,39,0.08)]">
@@ -270,9 +269,8 @@ export function DomainSettingsView({
                       will sit here and then assume it failed. Deliberately does
                       NOT promise an email: platform.domain_verified is
                       operators-only/in-app, so there is nothing to send yet. */}
-                  Waiting on DNS and your certificate. You can safely close this
-                  page - setup finishes on its own, usually within an hour of
-                  your records going live.
+                  Waiting for DNS and HTTPS. You can close this page; setup
+                  usually finishes within an hour.
                 </p>
               </div>
             </div>
@@ -302,16 +300,18 @@ export function DomainSettingsView({
 
         <Card>
           <div className="border-b border-[rgba(17,24,39,0.08)] p-6">
-            <h2 className="text-lg font-semibold text-[#111827]">
-              Add these DNS records
-            </h2>
+            <div className="flex items-center gap-1.5">
+              <h2 className="text-lg font-semibold text-[#111827]">
+                Add these DNS records
+              </h2>
+              <InfoTip label="About record names">
+                Enter each Name exactly as shown. GoDaddy and most DNS providers
+                add <strong>{state.domain}</strong> automatically, so don&apos;t
+                type it again.
+              </InfoTip>
+            </div>
             <p className="mt-1 text-sm text-[#5b6472]">
-              Add them wherever you bought your domain. We check automatically.
-            </p>
-            <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              Enter each Name exactly as shown. GoDaddy and most DNS providers
-              add <strong>{state.domain}</strong> automatically - don&apos;t
-              type the domain again.
+              Add them where you bought your domain. We check automatically.
             </p>
           </div>
           <div className="divide-y divide-[rgba(17,24,39,0.08)]">
@@ -345,7 +345,7 @@ export function DomainSettingsView({
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="yourstore.com"
+              aria-label="Domain"
               className="dash-input max-w-md"
               autoComplete="off"
               spellCheck={false}
@@ -486,8 +486,7 @@ function GoogleIndexingCard({
       {canRetry ? (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[rgba(17,24,39,0.08)] px-6 py-4">
           <p className="text-xs text-[#5b6472]">
-            Search results and Search Console metrics can take about two days to
-            appear after setup succeeds.
+            Search results can take about two days to appear.
           </p>
           <button
             type="button"

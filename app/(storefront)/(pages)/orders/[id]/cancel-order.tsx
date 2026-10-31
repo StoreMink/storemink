@@ -78,19 +78,19 @@ export function CancelOrderButton({ orderId }: { orderId: string }) {
       <div className={styles.cancelPanel}>
         <p className={styles.cancelPanelTitle}>Request to cancel this order?</p>
         <p className={styles.cancelNote}>
-          This asks the store to cancel <strong>the entire order</strong> -
-          every item on it. They&apos;ll review the request and let you know.
-          Any refund is handled by the store and may take a few days.
+          This asks the store to cancel <strong>the entire order</strong>. Any
+          refund may take a few days.
         </p>
-        <textarea
-          className={styles.cancelReasonInput}
-          rows={2}
-          maxLength={200}
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          placeholder="Why are you cancelling? (optional)"
-          aria-label="Reason for cancelling"
-        />
+        <label className={styles.returnField}>
+          <span>Reason (optional)</span>
+          <textarea
+            className={styles.cancelReasonInput}
+            rows={2}
+            maxLength={200}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </label>
         <div className={styles.cancelActions}>
           <button
             type="button"

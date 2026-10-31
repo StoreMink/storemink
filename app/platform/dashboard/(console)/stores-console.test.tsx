@@ -132,7 +132,7 @@ describe("StoresConsole", () => {
 
   async function confirmDelete() {
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    fireEvent.change(screen.getByPlaceholderText("echos"), {
+    fireEvent.change(screen.getByLabelText(/to confirm/), {
       target: { value: "echos" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Delete forever" }));

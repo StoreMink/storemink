@@ -47,7 +47,7 @@ import {
 const SORT_OPTIONS: { key: CustomerSort; label: string }[] = [
   { key: "newest", label: "Newest first" },
   { key: "oldest", label: "Oldest first" },
-  { key: "name", label: "Name A–Z" },
+  { key: "name", label: "Name A-Z" },
   { key: "active", label: "Most active" },
 ];
 
@@ -273,7 +273,8 @@ export function CustomersManagementView({
           <Search className="h-4 w-4" />
           <input
             type="text"
-            placeholder="Search name, email, phone..."
+            aria-label="Search customers"
+            placeholder="Search customers"
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
           />
@@ -328,7 +329,7 @@ export function CustomersManagementView({
             <div className="dash-card-sub">
               {total === 0
                 ? "No users"
-                : `Showing ${rangeFrom}–${rangeTo} of ${total}`}
+                : `Showing ${rangeFrom}-${rangeTo} of ${total}`}
               {navigating ? " · updating…" : ""}
             </div>
           </div>
@@ -504,8 +505,7 @@ export function CustomersManagementView({
           <DialogHeader>
             <DialogTitle>Edit user</DialogTitle>
             <DialogDescription>
-              Update this user&apos;s name and email. Their phone number is
-              their verified login and can&apos;t be changed here.
+              Their phone number is their login and can&apos;t be changed here.
             </DialogDescription>
           </DialogHeader>
 
@@ -515,24 +515,21 @@ export function CustomersManagementView({
               <input
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
-                placeholder="First name"
               />
             </label>
             <label>
-              <span>Last name</span>
+              <span>Last name (optional)</span>
               <input
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
-                placeholder="Last name (optional)"
               />
             </label>
             <label>
-              <span>Email</span>
+              <span>Email (optional)</span>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@example.com (optional)"
               />
             </label>
             <p className="customers-form-phone">
@@ -564,10 +561,9 @@ export function CustomersManagementView({
           <DialogHeader>
             <DialogTitle>Delete user</DialogTitle>
             <DialogDescription>
-              Permanently delete{" "}
-              {deleteTarget ? customerName(deleteTarget) : "this user"} and
-              their account? Their reviews and blog submissions will also be
-              removed. This cannot be undone.
+              Delete {deleteTarget ? customerName(deleteTarget) : "this user"}{" "}
+              and their account? Their reviews and blog submissions go too. This
+              can&apos;t be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

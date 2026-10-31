@@ -33,9 +33,8 @@ export function ThemesHeader({
         <div className="min-w-0">
           <h1>Themes</h1>
           <p>
-            The catalog merchants pick from in their store&apos;s Theme library,
-            and Theme Studio, where new themes are designed, checked and
-            published.
+            The catalog merchants pick from, and Theme Studio, where new themes
+            are designed and published.
           </p>
         </div>
         <Link

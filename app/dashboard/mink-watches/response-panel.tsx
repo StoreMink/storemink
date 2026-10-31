@@ -84,8 +84,8 @@ export function MinkResponsePanel({ watchId }: { watchId: string }) {
           <p className="text-xs text-muted-foreground">{data.ranking}</p>
           {!data.plans.length && (
             <p>
-              No actionable response from the latest completed check. This is
-              not an all-clear.
+              No suggested response from the latest check. This isn&apos;t an
+              all-clear.
             </p>
           )}
           {data.plans.map((p) => (
@@ -104,9 +104,8 @@ export function MinkResponsePanel({ watchId }: { watchId: string }) {
               </p>
               <p className="text-sm">{p.limits}</p>
               <p className="text-xs">
-                Plan expires {new Date(p.expiresAt).toLocaleString()}. Approval
-                rechecks evidence using the latest completed daily/weekly period
-                and current inventory.
+                Plan expires {new Date(p.expiresAt).toLocaleString()}. Approving
+                checks the evidence again first.
               </p>
               {p.status === "proposed" ? (
                 <>

@@ -16,9 +16,8 @@ export default async function PlatformAnalyticsPage() {
           Analytics
         </h1>
         <p className="mt-1 max-w-3xl text-sm text-slate-500">
-          Control which Analytics modules StoreMink makes available. Pro labels
-          describe plan entitlement; these switches control platform-wide
-          availability and never override a merchant&apos;s plan.
+          Choose which Analytics modules StoreMink offers. These switches never
+          override a merchant&apos;s plan.
         </p>
       </header>
 

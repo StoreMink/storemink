@@ -82,8 +82,7 @@ export function FailuresView({
 
       {rows.length === 0 ? (
         <p className="p-8 text-center text-sm text-black/50 dark:text-white/50">
-          Nothing has failed{source ? ` in ${source}` : ""}. That&apos;s the
-          right answer.
+          Nothing has failed{source ? ` in ${source}` : ""}.
         </p>
       ) : (
         <div className="dash-table-wrap overflow-x-auto">

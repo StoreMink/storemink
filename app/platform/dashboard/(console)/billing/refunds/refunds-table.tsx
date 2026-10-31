@@ -260,7 +260,7 @@ export function RefundTabs({
 const EMPTY: Record<RefundQueueTab, { title: string; text: string }> = {
   needs_person: {
     title: "Nothing needs a person",
-    text: "A refund lands here when Razorpay refuses it, when it has waited more than a day, or while automatic sending is off and it waits for Send.",
+    text: "Refunds Razorpay refused, refunds waiting over a day and refunds held for Send show here.",
   },
   in_progress: {
     title: "Nothing in progress",
@@ -272,7 +272,7 @@ const EMPTY: Record<RefundQueueTab, { title: string; text: string }> = {
   },
   credit_notes: {
     title: "No credit notes yet",
-    text: "A credit note is issued when a refund completes, and when an unpaid invoice that charged GST is cancelled.",
+    text: "Issued when a refund completes, or when an unpaid GST invoice is cancelled.",
   },
 };
 
@@ -395,7 +395,7 @@ export function RefundsTable({
         <NoteDialog
           key={`cancel-${dialog.row.id}`}
           title="Cancel this refund?"
-          description="It won't be sent. The merchant has been told a refund is coming, so write to them to explain. If it was already paid another way, use Record a refund made outside StoreMink instead. Say why, for the record."
+          description="It won't be sent, so write to the merchant to explain. If it was paid another way, record it instead."
           summary={refundSummary(dialog.row)}
           label="Reason"
           confirmLabel="Cancel refund"
@@ -698,9 +698,8 @@ export function RecordRefundDialog({
         <DialogHeader>
           <DialogTitle>Record a refund made outside StoreMink</DialogTitle>
           <DialogDescription>
-            Use this after paying the merchant another way, or for a refund
-            already made in the Razorpay dashboard. The merchant is emailed and
-            the credit note is issued when you save.
+            For a refund paid another way or made in the Razorpay dashboard.
+            Saving emails the merchant and issues the credit note.
           </DialogDescription>
         </DialogHeader>
         <p className="rounded-[var(--dash-radius-sm)] bg-[var(--dash-surface-2)] px-3 py-2 text-sm text-[var(--dash-text)]">
@@ -751,16 +750,15 @@ export function RecordRefundDialog({
             className="dash-input w-full font-mono"
             value={reference}
             onChange={(e) => setReference(e.target.value)}
-            placeholder={
-              method === "bank_transfer" ? "UTR" : "Razorpay refund id"
-            }
             autoComplete="off"
             spellCheck={false}
             disabled={pending}
           />
         </label>
         <p className={`-mt-2 ${HINT}`}>
-          The UTR of the bank transfer, or the Razorpay refund id.
+          {method === "bank_transfer"
+            ? "The UTR of the bank transfer."
+            : "The Razorpay refund id."}
         </p>
         <label className="block">
           <span className={LABEL}>Note</span>

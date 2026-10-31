@@ -88,13 +88,13 @@ function hintOf(input: HTMLInputElement): string | null {
 const PAID_HINT =
   "Shown at the very bottom of your store. Leave it empty to show nothing.";
 const BADGE_WORDS_HINT =
-  "These are the words of StoreMink's badge, so nothing shows at the very bottom of your store. Type a line of your own, or leave it empty.";
+  "These are StoreMink's badge words, so nothing shows here. Type your own line, or leave it empty.";
 
 describe("BrandingForm Credit line", () => {
   it("on Free, says the store shows Powered by StoreMink and what Basic or Pro allow", () => {
     const { input, hint } = renderForm(false);
     expect(hint).toBe(
-      "Your store shows Powered by StoreMink here on the Free plan. On Basic or Pro you can show your own line, or nothing.",
+      "The Free plan shows Powered by StoreMink here. On Basic or Pro, show your own line or nothing.",
     );
     expect(input.placeholder).toBe("Powered by StoreMink");
   });
@@ -134,7 +134,7 @@ describe("BrandingForm Credit line", () => {
   it("on Free, the badge's words in the field change nothing: the badge shows either way", () => {
     const { hint } = renderForm(false, { creditLine: "Powered by StoreMink" });
     expect(hint).toBe(
-      "Your store shows Powered by StoreMink here on the Free plan. On Basic or Pro you can show your own line, or nothing.",
+      "The Free plan shows Powered by StoreMink here. On Basic or Pro, show your own line or nothing.",
     );
   });
 
@@ -149,7 +149,7 @@ describe("BrandingForm Credit line", () => {
   it("states both rules when the plan could not be read", () => {
     const { input, hint } = renderForm(null);
     expect(hint).toBe(
-      "Shown at the very bottom of your store on Basic and Pro. On the Free plan, Powered by StoreMink shows here instead.",
+      "Shown on Basic and Pro only. The Free plan shows Powered by StoreMink here.",
     );
     expect(input.placeholder).toBe("");
   });
@@ -484,7 +484,7 @@ describe("BrandingForm view only", () => {
     expect(
       screen.queryByRole("button", { name: "Generate with AI" }),
     ).toBeNull();
-    expect(screen.getByText(/changing them needs permission/)).toBeTruthy();
+    expect(screen.getByText(/permission to change them/)).toBeTruthy();
     expect(saveBar()).toBeNull();
   });
 });
