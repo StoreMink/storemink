@@ -95,7 +95,7 @@ const en: MinkStrings = {
   introLead: "Hi! I’m Mink AI.",
   welcomeTitle: "Hi, I’m Mink AI",
   welcomeText:
-    "Tell me what you want to do, or describe the StoreMink screen where you’re stuck. I’ll guide you using published Help Centre guides.",
+    "Describe your StoreMink issue, and I’ll guide you using Help Centre guides.",
   examplesLabel: "Example questions",
   starters: [
     "How do I add my first product?",
@@ -146,7 +146,7 @@ const en: MinkStrings = {
   thanks:
     "Thanks. Your rating, your question and this answer were sent to StoreMink to improve the guides.",
   emailSupport: "Email support",
-  disclaimer: "Answers can be wrong, so check the guide.",
+  disclaimer: "",
   talkStatus: {
     starting: "Starting the microphone…",
     listening: "Listening… ask your question",
