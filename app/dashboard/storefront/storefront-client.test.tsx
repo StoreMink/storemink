@@ -19,6 +19,11 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
+const startExpandedChat = vi.fn();
+const chat = { enabled: true };
+vi.mock("@/app/dashboard/chat-context", () => ({
+  useChat: () => ({ startExpandedChat, enabled: chat.enabled }),
+}));
 vi.mock("@/app/actions/theme-actions", () => ({
   switchStoreTheme: vi.fn(async () => ({
     ok: true,
@@ -51,11 +56,9 @@ function card(id: string, extra: Partial<ThemeCard> = {}): ThemeCard {
 const FRESH: ThemeSwitchFacts = {
   firstTheme: false,
   launched: false,
-  homepage: "seeded",
-  catalogueIsSampleOnly: true,
-  catalogueIsEmpty: false,
+  homepage: "missing",
   hasBuilderChrome: false,
-  brandColorIsTheme: true,
+  brandColorUnset: false,
   hasDesignOverrides: false,
 };
 
@@ -64,10 +67,8 @@ const PENDING: ThemeSwitchFacts = {
   firstTheme: true,
   launched: false,
   homepage: "missing",
-  catalogueIsSampleOnly: false,
-  catalogueIsEmpty: true,
   hasBuilderChrome: false,
-  brandColorIsTheme: true,
+  brandColorUnset: true,
   hasDesignOverrides: false,
 };
 
@@ -78,16 +79,15 @@ function renderClient(
     <StorefrontClient
       current={card("basket")}
       currentId="basket"
-      library={[
-        card("vitrine"),
-        card("luxe", { minPlanName: "Pro", locked: true }),
-      ]}
+      library={[]}
       categories={[
         { id: "all", label: "All" },
         { id: "clothing", label: "Clothing" },
       ]}
       facts={FRESH}
       canManage
+      canCustomise
+      canEditBranding
       managedByOperators={false}
       unavailable={false}
       {...props}
@@ -96,33 +96,79 @@ function renderClient(
 }
 
 describe("Storefront page", () => {
-  it("is headed Storefront, not Themes", () => {
+  it("is headed Storefront, with no theme library once a theme is chosen", () => {
     renderClient();
     expect(
       screen.getByRole("heading", { level: 1, name: "Storefront" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Choose how your store looks to customers. Your products, pages and settings stay yours when you change themes.",
+        "How your store looks to customers. Customise it with Mink AI, or edit any page in the Website Builder.",
       ),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 2, name: "Your theme" }),
     ).toBeInTheDocument();
+    // ★★ A theme is chosen once: no library, no way to pick another.
     expect(
-      screen.getByRole("heading", { level: 2, name: "Theme library" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("heading", { level: 2, name: "Theme library" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Use this theme" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("shows the current theme and the library", () => {
+  it("★ shows the theme in use with Customise storefront, the Website Builder and the store", () => {
     renderClient();
     expect(screen.getByText("Basket")).toBeInTheDocument();
     expect(screen.getByText("In use")).toBeInTheDocument();
-    expect(screen.getByText("Vitrine")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Customize" })).toHaveAttribute(
+    expect(
+      screen.getByRole("button", { name: "Customise storefront" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Edit in Website Builder" }),
+    ).toHaveAttribute("href", "/dashboard/builder");
+    expect(
+      screen.getByRole("link", { name: /View your store/ }),
+    ).toHaveAttribute("href", "/");
+  });
+
+  it("Customise storefront is hidden without permission, or while Mink AI is off", () => {
+    const { unmount } = renderClient({ canCustomise: false });
+    expect(
+      screen.queryByRole("button", { name: "Customise storefront" }),
+    ).not.toBeInTheDocument();
+    // The Website Builder takes the main button instead.
+    expect(
+      screen.getByRole("link", { name: "Edit in Website Builder" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    chat.enabled = false;
+    try {
+      renderClient();
+      expect(
+        screen.queryByRole("button", { name: "Customise storefront" }),
+      ).not.toBeInTheDocument();
+    } finally {
+      chat.enabled = true;
+    }
+  });
+
+  it("★ Branding sits on the Storefront page for anyone who may open it", () => {
+    const { unmount } = renderClient();
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Branding" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Edit branding" })).toHaveAttribute(
       "href",
-      "/dashboard/builder",
+      "/dashboard/branding",
     );
+    unmount();
+    renderClient({ canEditBranding: false });
+    expect(
+      screen.queryByRole("link", { name: "Edit branding" }),
+    ).not.toBeInTheDocument();
   });
 
   // ★ "In use" follows currentId, not the card: a store with no theme on file
@@ -131,11 +177,12 @@ describe("Storefront page", () => {
     renderClient({ current: null, currentId: null });
     expect(screen.getByText("No theme")).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "Your store doesn't use a theme from the library. Choose one below to change how it looks.",
-      ),
+      screen.getByText("Your store doesn't use a theme from the library."),
     ).toBeInTheDocument();
     expect(screen.queryByText("In use")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Theme library" }),
+    ).not.toBeInTheDocument();
   });
 
   it("a theme no longer in the library is still badged In use", () => {
@@ -147,90 +194,6 @@ describe("Storefront page", () => {
     ).toBeInTheDocument();
   });
 
-  it("a theme above the store's plan offers an upgrade, not a switch", () => {
-    renderClient();
-    expect(
-      screen.getByRole("link", { name: "Upgrade to Pro" }),
-    ).toHaveAttribute("href", "/dashboard/plans");
-    expect(
-      screen.getAllByRole("button", { name: "Use this theme" }),
-    ).toHaveLength(1);
-  });
-
-  it("view-only staff can preview but not switch", () => {
-    renderClient({ canManage: false });
-    expect(
-      screen.queryByRole("button", { name: "Use this theme" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: /Preview/ }).length).toBe(2);
-  });
-
-  it("★ the confirm dialog says what the switch will do, from the server's own rules", async () => {
-    renderClient();
-    fireEvent.click(screen.getByRole("button", { name: "Use this theme" }));
-    expect(
-      await screen.findByText(
-        "Your storefront's colours, fonts and layout change to Vitrine.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "The sample products and categories change to Vitrine's examples. The products stay drafts.",
-      ),
-    ).toBeInTheDocument();
-    // A seeded homepage needs no opt-in.
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-  });
-
-  it("★ an edited homepage is kept unless the box is ticked, and the dialog says which", async () => {
-    renderClient({ facts: { ...FRESH, homepage: "edited" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use this theme" }));
-    expect(
-      await screen.findByText(
-        "Your homepage keeps its sections and their new look. Redesign it any time in the Website Builder.",
-      ),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("checkbox"));
-    expect(
-      screen.getByText(
-        'Your edited homepage is saved as a draft page called "Homepage before Vitrine", then replaced with Vitrine\'s.',
-      ),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch theme" }));
-    await waitFor(() =>
-      expect(switchStoreTheme).toHaveBeenCalledWith("vitrine", {
-        replaceEditedHomepage: true,
-        expectFirstTheme: false,
-      }),
-    );
-    await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith(
-        "Your store now uses Vitrine.",
-      ),
-    );
-    expect(refresh).toHaveBeenCalled();
-  });
-
-  it("a refused switch keeps the dialog open with the reason", async () => {
-    vi.mocked(switchStoreTheme).mockImplementation(async () => ({
-      ok: false,
-      error: "Vitrine needs the Pro plan or above.",
-    }));
-    renderClient();
-    fireEvent.click(screen.getByRole("button", { name: "Use this theme" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Switch theme" }),
-    );
-    await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(
-        "Vitrine needs the Pro plan or above.",
-      ),
-    );
-    expect(
-      screen.getByRole("button", { name: "Switch theme" }),
-    ).toBeInTheDocument();
-  });
   describe("a store that has not chosen a theme yet", () => {
     function renderPending(
       props: Partial<Parameters<typeof StorefrontClient>[0]> = {},
@@ -255,14 +218,20 @@ describe("Storefront page", () => {
       ).toBeInTheDocument();
       expect(screen.getByText(/store in progress/)).toBeInTheDocument();
       expect(
-        screen.getByText(/You can switch to another any time/),
+        screen.getByText(/You choose it once: after that/),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { level: 2, name: "Theme library" }),
       ).toBeInTheDocument();
     });
 
     it("★ offers nothing that assumes a theme exists", () => {
       renderPending();
       expect(
-        screen.queryByRole("link", { name: "Customize" }),
+        screen.queryByRole("button", { name: "Customise storefront" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: "Edit in Website Builder" }),
       ).not.toBeInTheDocument();
       expect(
         screen.queryByRole("link", { name: /View your store/ }),
@@ -316,11 +285,13 @@ describe("Storefront page", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Vitrine's sample products and categories are added as examples. The products are drafts, so customers don't see them.",
+          "No sample products or categories are added, so your dashboard shows only what you add.",
         ),
       ).toBeInTheDocument();
       expect(
-        screen.getByText("You can switch to another theme any time."),
+        screen.getByText(
+          "You can't switch to another theme later, but you can change how your store looks any time with Customise storefront and the Website Builder.",
+        ),
       ).toBeInTheDocument();
       // Not the switch wording.
       expect(
@@ -336,7 +307,6 @@ describe("Storefront page", () => {
       await waitFor(() =>
         expect(switchStoreTheme).toHaveBeenCalledWith("vitrine", {
           replaceEditedHomepage: false,
-          expectFirstTheme: true,
         }),
       );
       await waitFor(() =>
@@ -347,15 +317,32 @@ describe("Storefront page", () => {
       expect(refresh).toHaveBeenCalled();
     });
 
-    it("a store with products of its own is told no samples are added", async () => {
-      renderPending({
-        library: [card("vitrine")],
-        facts: { ...PENDING, catalogueIsEmpty: false },
-      });
+    it("a refused install keeps the dialog open with the reason", async () => {
+      vi.mocked(switchStoreTheme).mockImplementation(async () => ({
+        ok: false,
+        error: "Vitrine needs the Pro plan or above.",
+      }));
+      renderPending({ library: [card("vitrine")] });
+      fireEvent.click(screen.getByRole("button", { name: "Use this theme" }));
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Use Vitrine" }),
+      );
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "Vitrine needs the Pro plan or above.",
+        ),
+      );
+      expect(
+        screen.getByRole("button", { name: "Use Vitrine" }),
+      ).toBeInTheDocument();
+    });
+
+    it("★ the confirm dialog says no samples are added", async () => {
+      renderPending({ library: [card("vitrine")], facts: PENDING });
       fireEvent.click(screen.getByRole("button", { name: "Use this theme" }));
       expect(
         await screen.findByText(
-          "Your products and categories are not changed, and no samples are added.",
+          "No sample products or categories are added, so your dashboard shows only what you add.",
         ),
       ).toBeInTheDocument();
     });
@@ -376,7 +363,6 @@ describe("Storefront page", () => {
       await waitFor(() =>
         expect(switchStoreTheme).toHaveBeenCalledWith("vitrine", {
           replaceEditedHomepage: true,
-          expectFirstTheme: true,
         }),
       );
     });
@@ -397,7 +383,7 @@ describe("Storefront page", () => {
       screen.queryByRole("heading", { name: "Your theme" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: "Customize" }),
+      screen.queryByRole("link", { name: "Edit in Website Builder" }),
     ).not.toBeInTheDocument();
   });
 });

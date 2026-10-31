@@ -1713,3 +1713,71 @@ describe("prompt v5: this store's earlier redesigns, as data (step 6's memory)",
     ).toHaveLength(REVAMP_EARLIER_DESIGNS_MAX);
   });
 });
+
+describe("menus and theme pages left in the theme's words (owner, 31 Oct 2026)", () => {
+  /** The store with an About page still entirely the theme's words. */
+  function withThemeAbout(owner: "theme" | "merchant"): RevampSnapshot {
+    const snap = snapshot();
+    snap.pages = [
+      ...snap.pages,
+      {
+        id: "page-about",
+        slug: "about",
+        title: "About",
+        status: "published",
+        version: "v",
+        sectionsDigest: "d",
+        sections: [
+          {
+            id: "t-about",
+            type: "rich_text",
+            enabled: true,
+            config: { html: "<p>Theme words.</p>" },
+          } as unknown as PageSectionItem,
+        ],
+        owners: { "t-about": owner },
+        skipped: null,
+        seoTitle: null,
+        seoDescription: null,
+      },
+    ];
+    return snap;
+  }
+
+  it("★★ names the pages a menu may link to when a theme page is left out of the redesign", () => {
+    const content = revampSiteContent({
+      request: { ...request("Ground spices from Jaipur."), pages: ["home"] },
+      snapshot: withThemeAbout("theme"),
+      previous: null,
+    });
+    expect(content).toContain("Pages: /about");
+    expect(content).toContain(
+      "Pages a menu may link to: none besides the pages you write (/about is still in the theme's own words: a section may link it, menus.header, menus.footerGroups and announcement.href never do)",
+    );
+  });
+
+  it("prints no such line when every page a link may reach speaks for the store", () => {
+    for (const content of [
+      // The redesign writes About.
+      revampSiteContent({
+        request: request("Ground spices from Jaipur."),
+        snapshot: withThemeAbout("theme"),
+        previous: null,
+      }),
+      // The merchant wrote About.
+      revampSiteContent({
+        request: { ...request("Ground spices from Jaipur."), pages: ["home"] },
+        snapshot: withThemeAbout("merchant"),
+        previous: null,
+      }),
+    ]) {
+      expect(content).not.toContain("Pages a menu may link to");
+    }
+  });
+
+  it("tells the planner to write every menu label for this store", () => {
+    expect(revampSiteSystem()).toContain(
+      "Write every menu label and group title for this store, never the theme's own wording.",
+    );
+  });
+});

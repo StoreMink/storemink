@@ -59,6 +59,8 @@ import {
   revampGoodsKeyForSlug,
   revampHasRealProducts,
   revampLinkTargets,
+  revampMenuLinkTargets,
+  revampPageSpeaksForStore,
   revampNewProductSlugs,
   revampOwnedPhotoUrls,
   revampPageScope,
@@ -4431,5 +4433,129 @@ describe("server-owned photograph budget", () => {
     );
     expect(result.issues).toEqual([]);
     expect(result.plan!.shots.length).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("menus link only where the store speaks for itself (owner, 31 Oct 2026)", () => {
+  const onlyHome: Over = { request: { pages: ["home"] } };
+  /** The clean answer for a redesign of the homepage only. */
+  const homeOnlyRaw = (): Raw => {
+    const raw = goodRaw();
+    raw.pages = [raw.pages[0]];
+    return raw;
+  };
+  /** The snapshot with About written by the merchant. */
+  const merchantAbout = (): Over["snapshot"] => {
+    const snap = snapshot();
+    return {
+      pages: snap.pages.map((p) =>
+        p.slug === "about" ? { ...p, owners: { "t-about": "merchant" } } : p,
+      ),
+    };
+  };
+
+  it("★ a page speaks for the store once anything on it is not the theme's starting words", () => {
+    const [home, about, terms] = snapshot().pages;
+    expect(revampPageSpeaksForStore(home!)).toBe(true);
+    expect(revampPageSpeaksForStore(about!)).toBe(false);
+    expect(revampPageSpeaksForStore(terms!)).toBe(true);
+    expect(
+      revampPageSpeaksForStore({ ...about!, owners: { "t-about": "mink" } }),
+    ).toBe(true);
+    // In doubt (no owner recorded, or a page that could not be read), the
+    // merchant's.
+    expect(revampPageSpeaksForStore({ ...about!, owners: {} })).toBe(true);
+    expect(revampPageSpeaksForStore({ ...about!, skipped: "invalid" })).toBe(
+      true,
+    );
+  });
+
+  it("★★ menu targets leave out a theme page the redesign does not write; section targets keep it", () => {
+    const args = {
+      request: { ...request(), pages: ["home"] },
+      snapshot: snapshot(),
+      plan: { pages: [{ slug: "" }] as RevampSitePlan["pages"] },
+    };
+    expect(revampLinkTargets(args).pages.has("about")).toBe(true);
+    const menu = revampMenuLinkTargets(args);
+    expect(menu.pages.has("about")).toBe(false);
+    expect(menu.pages.has("terms")).toBe(true);
+    // Categories and products are the same either way.
+    expect(menu.categories).toEqual(revampLinkTargets(args).categories);
+    expect(menu.products).toEqual(revampLinkTargets(args).products);
+    // Once the redesign writes the page, a menu may link it.
+    expect(
+      revampMenuLinkTargets({
+        ...args,
+        plan: {
+          pages: [{ slug: "" }, { slug: "about" }] as RevampSitePlan["pages"],
+        },
+      }).pages.has("about"),
+    ).toBe(true);
+  });
+
+  it("★★ the header and footer never link a page still in the theme's own words", () => {
+    const raw = homeOnlyRaw();
+    raw.menus.footerGroups.push({
+      title: "Learn",
+      links: [
+        { label: "Our mill", href: "/about" },
+        { label: "Terms", href: "/terms" },
+      ],
+    });
+    const result = strict(raw, onlyHome);
+    expect(result.plan).toBeNull();
+    const text = result.issues.join("\n");
+    expect(text).toMatch(
+      /menus\.header\[2\] "About" links to "\/about", which is a page still in the theme's own words/,
+    );
+    expect(text).toMatch(
+      /"Our mill" links to "\/about", which is a page still in the theme's own words/,
+    );
+    expect(text).not.toMatch(/"Terms" links to/);
+
+    const plan = lenient(raw, onlyHome);
+    const hrefs = [
+      ...plan.menus.header.map((link) => link.href),
+      ...plan.menus.footerGroups.flatMap((group) =>
+        group.links.map((link) => link.href),
+      ),
+    ];
+    expect(hrefs).not.toContain("/about");
+    expect(hrefs).toContain("/terms");
+  });
+
+  it("★ a page the merchant wrote stays a menu link though the redesign leaves it alone", () => {
+    const over: Over = { ...onlyHome, snapshot: merchantAbout() };
+    const result = strict(homeOnlyRaw(), over);
+    expect(result.issues.join("\n")).not.toMatch(/"\/about"/);
+    expect(
+      lenient(homeOnlyRaw(), over).menus.header.map((link) => link.href),
+    ).toContain("/about");
+  });
+
+  it("★ a page the redesign writes is a menu link as before", () => {
+    const result = strict(goodRaw());
+    expect(result.issues).toEqual([]);
+    expect(result.plan!.menus.header.map((link: Raw) => link.href)).toContain(
+      "/about",
+    );
+  });
+
+  it("★ the announcement bar follows the menus' rule", () => {
+    const raw = homeOnlyRaw();
+    raw.announcement.href = "/about";
+    expect(strict(raw, onlyHome).issues.join("\n")).toMatch(
+      /announcement\.href "\/about" is a page still in the theme's own words/,
+    );
+    expect(lenient(raw, onlyHome).announcement.href).toBe("");
+  });
+
+  it("a link to nothing keeps its own sentence", () => {
+    const raw = homeOnlyRaw();
+    raw.menus.header.push({ label: "Press", href: "/press", children: [] });
+    expect(strict(raw, onlyHome).issues.join("\n")).toMatch(
+      /"Press" links to "\/press", which will not exist after Apply/,
+    );
   });
 });

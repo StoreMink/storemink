@@ -171,7 +171,7 @@ export function evaluateLaunchChecklist(facts: LaunchFacts): LaunchChecklist {
       key: "theme",
       title: "Choose your storefront theme",
       description:
-        "Until you pick one, your storefront shows a “store in progress” page. You can change it any time.",
+        "Until you pick one, your storefront shows a “store in progress” page. You choose it once, so preview a few first.",
       href: "/dashboard/storefront",
       action: "Choose a theme",
       required: true,

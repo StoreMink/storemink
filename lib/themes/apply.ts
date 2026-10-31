@@ -21,6 +21,11 @@ import {
   type RichTextConfig,
 } from "@/lib/sections/registry";
 import { resolveThemeDefinition } from "./runtime-registry";
+import {
+  menusWithoutSampleLinks,
+  sampleAddresses,
+  sectionsWithoutSampleLinks,
+} from "./sample-links";
 import type { StoredThemeInstallation } from "./meta";
 import type { ThemeDefinition } from "./types";
 
@@ -35,6 +40,11 @@ import type { ThemeDefinition } from "./types";
 //    Studio publication. Signup installs no theme (2026-10-11); a store's
 //    first theme goes through lib/themes/switch.ts, which composes this
 //    module's exports so nothing the seller already made is overwritten.
+//  • ★★ SAMPLES ARE FOR SHOWCASE STORES ONLY (owner, 31 Oct 2026). The demo
+//    and Theme Studio preview stores get the theme's sample categories and
+//    products; a merchant's store never does (switch.ts seeds no catalogue
+//    and installs the menus and pages without links to it,
+//    lib/themes/sample-links.ts).
 //  • BEST-EFFORT per entity with an errors accumulator — entities are
 //    independent (a store with products but a failed page is still coherent),
 //    and every write is an idempotent upsert keyed on (store_id, slug), so
@@ -56,16 +66,9 @@ export interface ApplyThemeOptions {
   /**
    * Publish the theme's SAMPLE products (default: seed them as drafts).
    *
-   * Only the demo stores want them live. For a real merchant they are
-   * placeholders that say so in their own copy — "Tomatoes (500 g) (Sample)",
-   * "replace it with your own" — and publishing them means every store on
-   * this theme serves the same handful of identical product pages under a
-   * different subdomain. That is a near-duplicate cluster that competes with
-   * the merchant's own products, and a shop whose live catalogue announces
-   * itself as placeholder is worse for a visitor than one that is empty.
-   *
-   * As drafts they still appear in the dashboard, fully written, one click
-   * from live — which is what makes them useful as a starting point.
+   * Only the demo stores want them live. A Theme Studio preview store keeps
+   * them as drafts. A merchant's store gets none at all: it installs themes
+   * through lib/themes/switch.ts, which never calls applyThemeDefinition.
    */
   publishSampleProducts?: boolean;
 }
@@ -264,9 +267,8 @@ type FailFn = (step: string, message: string) => void;
 
 /**
  * Seed (or re-seed) a theme's sample categories and products, upserted on
- * (store_id, slug). Shared by applyThemeDefinition and the dashboard's theme
- * switch, which swaps one theme's samples for another's while a store has
- * nothing else (lib/themes/switch.ts).
+ * (store_id, slug). For the demo and Theme Studio preview stores only
+ * (applyThemeDefinition): a merchant's store gets no samples.
  */
 export async function seedSampleCatalogue(
   storeId: string,
@@ -443,31 +445,40 @@ export async function seedSampleCatalogue(
   }
 }
 
-/** Upsert the theme's header and footer menus (store_menus). */
+/**
+ * Upsert the theme's header and footer menus (store_menus).
+ *
+ * `withoutSampleLinks` is for a merchant's store, which gets no samples
+ * (lib/themes/sample-links.ts): the menus then leave out every link to a
+ * sample category or product, which would otherwise lead nowhere.
+ */
 export async function seedMenus(
   storeId: string,
   theme: ThemeDefinition,
   actorUserId: string | null,
   fail: FailFn,
+  { withoutSampleLinks = false }: { withoutSampleLinks?: boolean } = {},
 ): Promise<void> {
-  const { preset } = theme;
+  const menus = withoutSampleLinks
+    ? menusWithoutSampleLinks(theme.preset.menus, sampleAddresses(theme))
+    : theme.preset.menus;
   try {
     await withService((db) =>
       db
         .insert(storeMenus)
         .values({
           storeId,
-          header: preset.menus.header,
-          footerGroups: preset.menus.footerGroups,
-          footerLegal: preset.menus.footerLegal,
+          header: menus.header,
+          footerGroups: menus.footerGroups,
+          footerLegal: menus.footerLegal,
           updatedBy: actorUserId,
         })
         .onConflictDoUpdate({
           target: storeMenus.storeId,
           set: {
-            header: preset.menus.header,
-            footerGroups: preset.menus.footerGroups,
-            footerLegal: preset.menus.footerLegal,
+            header: menus.header,
+            footerGroups: menus.footerGroups,
+            footerLegal: menus.footerLegal,
             updatedBy: actorUserId,
           },
         }),
@@ -491,16 +502,26 @@ export function revalidateThemeSeed(): void {
  * Validate a theme page's sections (strict publish mode), regenerate ids as
  * real UUIDs, and sanitize rich_text HTML — the same server rules every other
  * write path applies.
+ *
+ * `withoutSampleLinks` is for a merchant's store, which gets no samples: a
+ * button or tile that pointed at a sample category or product goes to the
+ * shop instead (lib/themes/sample-links.ts).
  */
 export function prepareSections(
   theme: ThemeDefinition,
   pageSlug: string,
+  { withoutSampleLinks = false }: { withoutSampleLinks?: boolean } = {},
 ): { sections: PageSectionItem[] } | { error: string } {
   const page = theme.preset.pages.find((p) => p.slug === pageSlug);
   if (!page) return { error: "page missing from theme" };
 
   const withIds = page.sections.map((s) => ({ ...s, id: randomUUID() }));
-  const validated = validateSections(withIds, { mode: "publish" });
+  const validated = validateSections(
+    withoutSampleLinks
+      ? sectionsWithoutSampleLinks(withIds, sampleAddresses(theme))
+      : withIds,
+    { mode: "publish" },
+  );
   if ("error" in validated) return validated;
 
   return {

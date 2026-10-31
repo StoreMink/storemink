@@ -34,13 +34,17 @@ function toCard(theme: ThemeMeta, plan: Plan): ThemeCard {
 // Dashboard → Storefront (was "Themes" at /dashboard/themes, which now
 // redirects here; the permission key is still `themes`). A new store starts
 // with NO theme (settings.themePending) and its storefront shows a "store in
-// progress" page until its owner picks one here; older stores switch from the
-// theme they have. What an install or switch may change is decided in
-// lib/themes/switch-rules.ts, and the confirm dialog shows those exact rules
-// before anything happens.
+// progress" page until its owner picks one here. ★★ A theme is chosen once
+// (owner, 31 Oct 2026): the library is offered only while the store has none,
+// and lib/themes/switch.ts refuses a second choice. Afterwards the page offers
+// Customise storefront (a Mink AI redesign, Website Builder manage), the
+// Website Builder and Branding, which sits under Storefront. What an install
+// may change is decided in lib/themes/switch-rules.ts, and the confirm dialog
+// shows those exact rules before anything happens.
 export default async function StorefrontPage() {
   const access = await requireSectionAccess("themes", "view");
   const canManage = access.can("themes", "manage");
+  const canEditBranding = access.can("branding", "view");
   const storeId = await getActingStoreId();
 
   const [catalog, context] = await Promise.all([
@@ -52,8 +56,7 @@ export default async function StorefrontPage() {
   ]);
   const plan: Plan = context?.plan ?? "free";
   // ★ A pending store has no current theme, whatever `settings.theme` says: a
-  // stray key must not render an "In use" card or hide that theme from the
-  // library the owner is about to choose from.
+  // stray key must not render an "In use" card.
   const currentId =
     context && !context.facts.firstTheme
       ? (readThemeSelection(context.settings)?.id ?? null)
@@ -61,15 +64,16 @@ export default async function StorefrontPage() {
   const currentMeta = currentId
     ? (catalog.find((theme) => theme.id === currentId) ?? null)
     : null;
+  const pending = context?.facts.firstTheme === true;
+  const operatorStore = !context || context.managedByOperators;
 
-  // The library is the public catalogue, newest first, without the theme the
-  // store already uses (it has its own card above).
-  const library = newestThemesFirst(
-    catalog.filter(
-      (theme) =>
-        theme.catalog.visibility === "public" && theme.id !== currentId,
-    ),
-  );
+  // The library is the public catalogue, newest first, and only while the
+  // store has no theme to keep.
+  const library = pending
+    ? newestThemesFirst(
+        catalog.filter((theme) => theme.catalog.visibility === "public"),
+      )
+    : [];
 
   return (
     <StorefrontClient
@@ -78,7 +82,12 @@ export default async function StorefrontPage() {
       library={library.map((theme) => toCard(theme, plan))}
       categories={themeCategoriesFor(library)}
       facts={context?.facts ?? null}
-      canManage={canManage && !!context && !context.managedByOperators}
+      canManage={canManage && !operatorStore}
+      // A redesign needs a theme to redesign, and a merchant's store.
+      canCustomise={
+        access.can("builder", "manage") && !operatorStore && !pending
+      }
+      canEditBranding={canEditBranding}
       managedByOperators={context?.managedByOperators ?? false}
       unavailable={!context}
     />

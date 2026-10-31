@@ -58,9 +58,9 @@ export default function OnlineStorePage() {
           art={<StorefrontArt />}
           tone="lilac"
         >
-          Every theme is a complete store: pages, navigation, sample products
-          and imagery. Pick one at signup, then make it yours. The look updates
-          across every page at once.
+          Every theme is a complete design: pages, navigation and imagery, with
+          a demo store to preview first. Pick one from your dashboard, then make
+          it yours. The look updates across every page at once.
         </FeatureRow>
         <div id="builder" />
         <FeatureRow
