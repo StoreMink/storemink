@@ -922,7 +922,11 @@ describe("step 3, why", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(
       "It changed while you were blocking it. Find it again.",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Block now" }));
+    // The refusal renders a beat before the transition ends, and the button
+    // stays disabled until it does, so a click in that gap does nothing.
+    const blockNow = screen.getByRole("button", { name: "Block now" });
+    await waitFor(() => expect(blockNow).not.toBeDisabled());
+    fireEvent.click(blockNow);
     await waitFor(() =>
       expect(screen.getByRole("alert").textContent).toBe(REQUEST_FAILED),
     );
