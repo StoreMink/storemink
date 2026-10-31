@@ -177,9 +177,12 @@
 }
 
 /* ---- Hero ---- */
+/* ★ NO `overflow: hidden` here. The search's suggestions list (.hc-suggest)
+   hangs below the search box and past the hero's bottom edge; clipping the
+   hero cut the list off after its first result (31 Oct 2026). The gradients
+   are backgrounds, which never paint outside the box, so nothing needs it. */
 .hc-hero {
   position: relative;
-  overflow: hidden;
   background:
     radial-gradient(
       ellipse 60% 70% at 85% -10%,
