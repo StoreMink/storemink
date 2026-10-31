@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { dbErrorMessage } from "@/lib/db/errors";
 import {
@@ -21,12 +21,7 @@ import { studioPreviewMarker } from "@/lib/theme-studio/preview-store";
 import { logError } from "@/lib/observability/logger";
 import { readThemeSelection, type StoredThemeInstallation } from "./meta";
 import { resolveInstalledThemeDefinition } from "./runtime-registry";
-import {
-  prepareSections,
-  revalidateThemeSeed,
-  seedMenus,
-  seedSampleCatalogue,
-} from "./apply";
+import { prepareSections, revalidateThemeSeed, seedMenus } from "./apply";
 import {
   homepageBackupSlug,
   homepageEditedSinceSeed,
@@ -50,12 +45,45 @@ import type { ThemeDefinition } from "./types";
 // best-effort and reported, the applyThemeDefinition model: a store with the
 // new design and its old homepage is coherent, and a failed homepage write
 // never loses the old one.
+//
+// ★★ NO SAMPLE CATALOGUE (owner, 31 Oct 2026). A theme's sample products and
+// categories are for demo and preview stores only (lib/themes/apply.ts). Here
+// a theme brings its design, pages and menus; its menus and page buttons
+// arrive without their links to samples this store does not have, and a
+// switch removes the previous theme's untouched samples (stores that installed
+// a theme before this still carry them) instead of adding new ones.
 // ---------------------------------------------------------------------------
 
-/** Theme samples are named "… (Sample)" by every bundled preset, the same
- *  marker the go-live checklist counts (lib/store/launch-checklist.ts). */
-const SAMPLE_MARK = "%(Sample)%";
 const SEED_WINDOW_SECONDS = SEED_WINDOW_MS / 1000;
+
+/**
+ * ★ A SAMPLE IS ONE NOBODY HAS TOUCHED: one of the theme's seeded products
+ * under the address AND the name the theme gave it, still a draft, its content
+ * unchanged since it was seeded. The pair, not a "(Sample)" mark: Basket marks
+ * its sample names, while Studio, Ritual and Vitrine name theirs like real
+ * goods ("Rowan Ankle Boot"), so the mark alone never recognised theirs. A
+ * merchant who renamed, published or rewrote one has made it theirs. The facts
+ * and the removal share this rule, so they cannot disagree about which rows go.
+ */
+function untouchedSampleProduct(theme: ThemeDefinition | null): SQL {
+  const seeds = theme?.preset.sampleData?.products ?? [];
+  if (seeds.length === 0) return sql`false`;
+  const pairs = sql.join(
+    seeds.map((seed) => sql`(${seed.slug}, ${seed.name})`),
+    sql`, `,
+  );
+  return sql`(${products.slug}, ${products.name}) in (${pairs})
+    and ${products.status} = 'draft'
+    and abs(extract(epoch from (${products.contentUpdatedAt} - ${products.createdAt}))) <= ${SEED_WINDOW_SECONDS}`;
+}
+
+/** A theme's seeded category, unchanged since it was seeded. */
+function untouchedSampleCategory(theme: ThemeDefinition | null): SQL {
+  const slugs = theme?.preset.sampleData?.categories.map((c) => c.slug) ?? [];
+  if (slugs.length === 0) return sql`false`;
+  return sql`${inArray(categories.slug, slugs)}
+    and abs(extract(epoch from (${categories.updatedAt} - ${categories.createdAt}))) <= ${SEED_WINDOW_SECONDS}`;
+}
 
 export interface ThemeSwitchContext {
   storeId: string;
@@ -149,27 +177,10 @@ export async function loadThemeSwitchContext(
           return null;
         },
       );
-  const sampleProductSlugs =
-    currentTheme?.preset.sampleData?.products.map((p) => p.slug) ?? [];
-  const sampleCategorySlugs =
-    currentTheme?.preset.sampleData?.categories.map((c) => c.slug) ?? [];
-
-  // ★ A SAMPLE IS ONE NOBODY HAS TOUCHED: the current theme's slug, still
-  // named "(Sample)", still a draft, and its content unchanged since it was
-  // seeded. A merchant who published, renamed or rewrote one has made it
-  // theirs, and the catalogue then counts as theirs too.
-  const productSample =
-    sampleProductSlugs.length > 0
-      ? sql`${inArray(products.slug, sampleProductSlugs)}
-          and ${products.name} like ${SAMPLE_MARK}
-          and ${products.status} = 'draft'
-          and abs(extract(epoch from (${products.contentUpdatedAt} - ${products.createdAt}))) <= ${SEED_WINDOW_SECONDS}`
-      : sql`false`;
-  const categorySample =
-    sampleCategorySlugs.length > 0
-      ? sql`${inArray(categories.slug, sampleCategorySlugs)}
-          and abs(extract(epoch from (${categories.updatedAt} - ${categories.createdAt}))) <= ${SEED_WINDOW_SECONDS}`
-      : sql`false`;
+  // ★ An untouched sample of the CURRENT theme (untouchedSampleProduct). One
+  // the merchant changed is theirs, and the catalogue then counts as theirs.
+  const productSample = untouchedSampleProduct(currentTheme);
+  const categorySample = untouchedSampleCategory(currentTheme);
 
   const [productCounts, categoryCounts, anyOrder, chromeRows, homeRows] =
     await Promise.all([
@@ -259,16 +270,14 @@ export async function loadThemeSwitchContext(
         : homepageEditedSinceSeed(settings, home)
           ? "edited"
           : "seeded",
-    // ★ Only a store that still HAS its samples and nothing else. One with an
-    // empty catalogue (samples already deleted, as the checklist suggests) is
-    // not given a new set it did not ask for.
+    // ★ Only a store that still HAS samples and nothing else, so removing
+    // them takes nothing of the merchant's and leaves no category of theirs
+    // without its products.
     catalogueIsSampleOnly:
       anyOrder.length === 0 &&
-      productTotal > 0 &&
+      productSamples + categorySamples > 0 &&
       productTotal === productSamples &&
       categoryTotal === categorySamples,
-    catalogueIsEmpty:
-      anyOrder.length === 0 && productTotal === 0 && categoryTotal === 0,
     hasBuilderChrome: !!chrome,
     brandColorIsTheme: !brandColor || brandColor === themeColor,
     hasDesignOverrides,
@@ -454,74 +463,47 @@ export async function switchStoreThemeTo(input: {
     };
   }
 
-  // --- 2. The sample catalogue: seeded into an empty store on its first
-  // install, or swapped while it is still only the old theme's samples -------
-  if (plan.catalogue === "seed-samples") {
-    // Drafts, as signup's seed made them: placeholders a customer never sees.
-    await seedSampleCatalogue(storeId, theme, {
-      actorUserId,
-      publishSampleProducts: false,
-      fail: (step, message) => fail(`samples (${step})`, message),
-    });
-  } else if (
-    plan.catalogue === "swap-samples" &&
-    ctx.currentTheme?.preset.sampleData
-  ) {
-    const oldProducts = ctx.currentTheme.preset.sampleData.products.map(
-      (p) => p.slug,
-    );
-    const oldCategories = ctx.currentTheme.preset.sampleData.categories.map(
-      (c) => c.slug,
-    );
-    let cleared = false;
+  // --- 2. The old theme's untouched samples are removed; none are added ------
+  // ★ Only while the store holds nothing but them and has never taken an
+  // order (catalogueIsSampleOnly), with the facts' own rule, so nothing the
+  // merchant made or changed can match. Stores that installed a theme before
+  // 31 Oct 2026 still carry samples; a merchant's store never gets new ones.
+  if (plan.catalogue === "remove-samples" && ctx.currentTheme) {
+    const productSample = untouchedSampleProduct(ctx.currentTheme);
+    const categorySample = untouchedSampleCategory(ctx.currentTheme);
     try {
       await withService(async (db) => {
-        // The same narrow predicate the facts used: an untouched draft named
-        // "(Sample)". Anything else stays, whatever its slug.
-        if (oldProducts.length > 0) {
-          await db
-            .delete(products)
-            .where(
-              and(
-                eq(products.storeId, storeId),
-                inArray(products.slug, oldProducts),
-                sql`${products.name} like ${SAMPLE_MARK}`,
-                eq(products.status, "draft"),
-              ),
-            );
-        }
-        if (oldCategories.length > 0) {
-          await db
-            .delete(categories)
-            .where(
-              and(
-                eq(categories.storeId, storeId),
-                inArray(categories.slug, oldCategories),
-              ),
-            );
-        }
+        await db
+          .delete(products)
+          .where(and(eq(products.storeId, storeId), productSample));
+        // A category a product still sits in stays, sample or not.
+        await db
+          .delete(categories)
+          .where(
+            and(
+              eq(categories.storeId, storeId),
+              categorySample,
+              sql`not exists (select 1 from products p where p.category_id = ${categories.id})`,
+            ),
+          );
       });
-      cleared = true;
     } catch (err) {
       fail("samples", dbErrorMessage(err, "could not remove the old samples"));
-    }
-    if (cleared) {
-      await seedSampleCatalogue(storeId, theme, {
-        actorUserId,
-        publishSampleProducts: false,
-        fail: (step, message) => fail(`samples (${step})`, message),
-      });
     }
   }
 
   // --- 3. Menus, which link to the catalogue ---------------------------------
+  // ★ Without links to the theme's sample catalogue, which this store does
+  // not have (lib/themes/sample-links.ts).
   if (plan.menus === "replace") {
-    await seedMenus(storeId, theme, actorUserId, fail);
+    await seedMenus(storeId, theme, actorUserId, fail, {
+      withoutSampleLinks: true,
+    });
   }
 
   // --- 4. The homepage: kept, or backed up and replaced in ONE transaction ---
   if (plan.homepage !== "keep") {
-    const prepared = prepareSections(theme, "");
+    const prepared = prepareSections(theme, "", { withoutSampleLinks: true });
     const page = theme.preset.pages.find((p) => p.slug === "");
     if ("error" in prepared || !page) {
       fail(
@@ -610,7 +592,9 @@ export async function switchStoreThemeTo(input: {
   if (plan.addMissingPages) {
     for (const page of theme.preset.pages) {
       if (page.slug === "" || ctx.pageSlugs.has(page.slug)) continue;
-      const prepared = prepareSections(theme, page.slug);
+      const prepared = prepareSections(theme, page.slug, {
+        withoutSampleLinks: true,
+      });
       if ("error" in prepared) {
         fail(`page ${page.slug}`, prepared.error);
         continue;

@@ -26,12 +26,13 @@ vi.mock("./apply", async (importOriginal) => {
   const real = await importOriginal<typeof import("./apply")>();
   return {
     ...real,
-    seedSampleCatalogue: vi.fn(async () => {}),
     seedMenus: vi.fn(async () => {}),
     revalidateThemeSeed: vi.fn(),
   };
 });
 
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import {
   categories,
   products,
@@ -40,7 +41,8 @@ import {
   stores,
 } from "@/drizzle/schema";
 import { getThemeDefinition } from "./index";
-import { seedMenus, seedSampleCatalogue, revalidateThemeSeed } from "./apply";
+import { seedMenus, revalidateThemeSeed } from "./apply";
+import { isSampleLink, sampleAddresses } from "./sample-links";
 import { resolveInstalledThemeDefinition } from "./runtime-registry";
 import { loadThemeSwitchContext, switchStoreThemeTo } from "./switch";
 
@@ -109,6 +111,25 @@ function mockStore(opts: {
   });
 }
 
+/** Every WHERE the mock saw, rendered as SQL text with its parameters. */
+function whereTexts(mock: DbMock): { sql: string; params: unknown[] }[] {
+  const dialect = new PgDialect();
+  return mock.calls.where
+    .filter((c: unknown) => c && typeof c === "object")
+    .map((c: unknown) => dialect.sqlToQuery(c as SQL));
+}
+
+/** Every href / *_href value in a list of sections. */
+function sectionHrefs(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(sectionHrefs);
+  if (!value || typeof value !== "object") return [];
+  return Object.entries(value).flatMap(([key, nested]) =>
+    (key === "href" || key.endsWith("_href")) && typeof nested === "string"
+      ? [nested]
+      : sectionHrefs(nested),
+  );
+}
+
 function settingsWrites(mock: DbMock): any[] {
   return mock.calls.update
     .map((table, i) => ({ table, set: mock.calls.set[i] }))
@@ -128,7 +149,6 @@ describe("loadThemeSwitchContext", () => {
       launched: false,
       homepage: "seeded",
       catalogueIsSampleOnly: true,
-      catalogueIsEmpty: false,
       hasBuilderChrome: false,
       brandColorIsTheme: true,
       hasDesignOverrides: false,
@@ -151,7 +171,7 @@ describe("loadThemeSwitchContext", () => {
     ).toBe(false);
   });
 
-  it("an empty catalogue is not given new samples", async () => {
+  it("an empty catalogue has no samples to remove", async () => {
     dbHolder.current = mockStore({
       products: { total: 0, samples: 0 },
       categories: { total: 0, samples: 0 },
@@ -212,7 +232,7 @@ describe("switchStoreThemeTo", () => {
     expect(mock.calls.insert).toEqual([]);
   });
 
-  it("★ a fresh store takes the new design and its starting content", async () => {
+  it("★ a fresh store takes the new design and pages, and loses the old samples", async () => {
     const mock = mockStore({});
     dbHolder.current = mock;
     const result = await switchStoreThemeTo(input);
@@ -223,7 +243,7 @@ describe("switchStoreThemeTo", () => {
         firstTheme: false,
         homepage: "replace",
         addMissingPages: true,
-        catalogue: "swap-samples",
+        catalogue: "remove-samples",
         menus: "replace",
         brandColor: "theme",
       },
@@ -240,18 +260,17 @@ describe("switchStoreThemeTo", () => {
     // ★ The homepage records its own seed moment, from the written row.
     expect(record.theme.homepageSeededAt).toBe("2026-10-10 12:00:00+00");
 
-    // The old samples went before the new ones came.
+    // ★ The old samples went, and nothing new was seeded.
     expect(mock.calls.delete).toEqual([products, categories]);
-    expect(seedSampleCatalogue).toHaveBeenCalledWith(
-      "store-1",
-      vitrine,
-      expect.objectContaining({ publishSampleProducts: false }),
-    );
+    expect(mock.calls.insert).not.toContain(products);
+    expect(mock.calls.insert).not.toContain(categories);
+    // ★ Menus without their links to samples the store doesn't have.
     expect(seedMenus).toHaveBeenCalledWith(
       "store-1",
       vitrine,
       "owner-1",
       expect.any(Function),
+      { withoutSampleLinks: true },
     );
     // Homepage written, published; missing pages added without overwriting.
     const homepage = mock.calls.values.find(
@@ -260,6 +279,47 @@ describe("switchStoreThemeTo", () => {
     expect(homepage).toMatchObject({ status: "published" });
     expect(homepage.sections.length).toBeGreaterThan(0);
     expect(revalidateThemeSeed).toHaveBeenCalled();
+  });
+
+  it("★★ the old samples are recognised by their seeded address AND name, still a draft and untouched", async () => {
+    // Vitrine names its samples like real goods, so the old "(Sample)" mark
+    // never matched them. The pair does.
+    const mock = mockStore({
+      settings: {
+        template: "vitrine",
+        theme: { presetId: "vitrine", presetVersion: vitrine.release.version },
+        brand: { primaryColor: vitrine.preset.brand.primaryColor },
+      },
+    });
+    dbHolder.current = mock;
+    expect((await switchStoreThemeTo({ ...input, theme: basket })).ok).toBe(
+      true,
+    );
+    const removal = whereTexts(mock).find((w) =>
+      w.sql.includes('("products"."slug", "products"."name") in'),
+    );
+    expect(removal).toBeDefined();
+    expect(removal!.sql).toContain(`"products"."status" = 'draft'`);
+    const seed = vitrine.preset.sampleData!.products[0]!;
+    expect(removal!.params).toEqual(
+      expect.arrayContaining([seed.slug, seed.name]),
+    );
+    // A category a product still sits in is never deleted.
+    expect(
+      whereTexts(mock).some((w) =>
+        w.sql.includes("not exists (select 1 from products p"),
+      ),
+    ).toBe(true);
+  });
+
+  it("★★ the theme's pages arrive with no button pointing at its samples", async () => {
+    const mock = mockStore({});
+    dbHolder.current = mock;
+    expect((await switchStoreThemeTo(input)).ok).toBe(true);
+    const addresses = sampleAddresses(vitrine);
+    const hrefs = pageInserts(mock).flatMap((v) => sectionHrefs(v.sections));
+    expect(hrefs.length).toBeGreaterThan(0);
+    expect(hrefs.filter((href) => isSampleLink(href, addresses))).toEqual([]);
   });
 
   it("★ an edited homepage and the merchant's catalogue are left alone", async () => {
@@ -280,7 +340,6 @@ describe("switchStoreThemeTo", () => {
       },
     });
     expect(mock.calls.delete).toEqual([]);
-    expect(seedSampleCatalogue).not.toHaveBeenCalled();
     expect(seedMenus).not.toHaveBeenCalled();
     expect(mock.calls.insert).not.toContain(storePages);
     // Only the design write, with the merchant's colour untouched.
@@ -309,13 +368,13 @@ describe("switchStoreThemeTo", () => {
     expect(backup.publishedSections).toBeUndefined();
   });
 
-  it("a Builder-edited header keeps its menus even when the samples swap", async () => {
+  it("a Builder-edited header keeps its menus even when the samples go", async () => {
     const mock = mockStore({ chrome: { draft: {}, published: null } });
     dbHolder.current = mock;
     const result = await switchStoreThemeTo(input);
     expect(result).toMatchObject({
       ok: true,
-      plan: { catalogue: "swap-samples", menus: "keep" },
+      plan: { catalogue: "remove-samples", menus: "keep" },
     });
     expect(seedMenus).not.toHaveBeenCalled();
     expect(mock.calls.insert).not.toContain(storeMenus);
@@ -377,7 +436,7 @@ describe("switchStoreThemeTo", () => {
         "We couldn't switch your theme. Nothing was changed. Please try again.",
     });
     expect(mock.calls.delete).toEqual([]);
-    expect(seedSampleCatalogue).not.toHaveBeenCalled();
+    expect(seedMenus).not.toHaveBeenCalled();
   });
 });
 
@@ -470,7 +529,6 @@ describe("loadThemeSwitchContext on a store with no theme yet", () => {
       launched: false,
       homepage: "missing",
       catalogueIsSampleOnly: false,
-      catalogueIsEmpty: true,
       hasBuilderChrome: false,
       brandColorIsTheme: true,
       hasDesignOverrides: false,
@@ -499,10 +557,10 @@ describe("loadThemeSwitchContext on a store with no theme yet", () => {
     ["a product", { products: { total: 1, samples: 0 } }],
     ["a category", { categories: { total: 1, samples: 0 } }],
     ["an order", { ordered: true }],
-  ])("★ %s means the catalogue is not empty", async (_label, opts) => {
+  ])("★ %s is never read as samples to remove", async (_label, opts) => {
     dbHolder.current = mockPendingStore(opts);
     expect(
-      (await loadThemeSwitchContext("store-1"))?.facts.catalogueIsEmpty,
+      (await loadThemeSwitchContext("store-1"))?.facts.catalogueIsSampleOnly,
     ).toBe(false);
   });
 
@@ -534,7 +592,7 @@ describe("switchStoreThemeTo on a first install", () => {
     actorUserId: "owner-1",
   };
 
-  it("★ installs the theme into an empty store and clears themePending with the pin", async () => {
+  it("★ installs the theme, with no samples, and clears themePending with the pin", async () => {
     const mock = mockPendingStore();
     dbHolder.current = mock;
     const result = await switchStoreThemeTo(input);
@@ -545,7 +603,7 @@ describe("switchStoreThemeTo on a first install", () => {
         firstTheme: true,
         homepage: "replace",
         addMissingPages: true,
-        catalogue: "seed-samples",
+        catalogue: "keep",
         menus: "replace",
         brandColor: "theme",
       },
@@ -572,18 +630,16 @@ describe("switchStoreThemeTo on a first install", () => {
     // The homepage then records its own seed moment.
     expect(record.theme.homepageSeededAt).toBe("2026-10-11 12:00:00+00");
 
-    // Samples as drafts, and menus, with nothing deleted first.
+    // ★★ No samples: nothing deleted, no product or category written.
     expect(mock.calls.delete).toEqual([]);
-    expect(seedSampleCatalogue).toHaveBeenCalledWith(
-      "store-1",
-      vitrine,
-      expect.objectContaining({ publishSampleProducts: false }),
-    );
+    expect(mock.calls.insert).not.toContain(products);
+    expect(mock.calls.insert).not.toContain(categories);
     expect(seedMenus).toHaveBeenCalledWith(
       "store-1",
       vitrine,
       "owner-1",
       expect.any(Function),
+      { withoutSampleLinks: true },
     );
     // The homepage and every one of the theme's pages.
     expect(pageInserts(mock).map((v) => v.slug)).toEqual([
@@ -618,23 +674,37 @@ describe("switchStoreThemeTo on a first install", () => {
     ["the store has products", { products: { total: 2, samples: 0 } }],
     ["the store has categories", { categories: { total: 1, samples: 0 } }],
     ["the store has taken an order", { ordered: true }],
-    [
-      "the header and footer were edited in the Builder",
-      { chrome: { draft: {}, published: null } },
-    ],
-  ])("★ seeds no samples and no menus when %s", async (_label, opts) => {
-    const mock = mockPendingStore(opts);
+  ])(
+    "★ touches nothing of the catalogue and still sets up menus when %s",
+    async (_label, opts) => {
+      const mock = mockPendingStore(opts);
+      dbHolder.current = mock;
+      const result = await switchStoreThemeTo(input);
+      expect(result).toMatchObject({
+        ok: true,
+        plan: { firstTheme: true, catalogue: "keep", menus: "replace" },
+      });
+      expect(mock.calls.delete).toEqual([]);
+      expect(mock.calls.insert).not.toContain(products);
+      expect(mock.calls.insert).not.toContain(categories);
+      expect(seedMenus).toHaveBeenCalledWith(
+        "store-1",
+        vitrine,
+        "owner-1",
+        expect.any(Function),
+        { withoutSampleLinks: true },
+      );
+    },
+  );
+
+  it("★ a Builder header and footer keeps the theme's menus out", async () => {
+    const mock = mockPendingStore({ chrome: { draft: {}, published: null } });
     dbHolder.current = mock;
-    const result = await switchStoreThemeTo(input);
-    expect(result).toMatchObject({
+    expect(await switchStoreThemeTo(input)).toMatchObject({
       ok: true,
       plan: { firstTheme: true, catalogue: "keep", menus: "keep" },
     });
-    expect(seedSampleCatalogue).not.toHaveBeenCalled();
     expect(seedMenus).not.toHaveBeenCalled();
-    expect(mock.calls.delete).toEqual([]);
-    expect(mock.calls.insert).not.toContain(products);
-    expect(mock.calls.insert).not.toContain(categories);
     expect(mock.calls.insert).not.toContain(storeMenus);
   });
 
@@ -748,6 +818,6 @@ describe("switchStoreThemeTo on a first install", () => {
     });
     expect(mock.calls.update).toEqual([]);
     expect(mock.calls.insert).toEqual([]);
-    expect(seedSampleCatalogue).not.toHaveBeenCalled();
+    expect(seedMenus).not.toHaveBeenCalled();
   });
 });

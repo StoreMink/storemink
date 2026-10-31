@@ -583,8 +583,9 @@ export async function createStore(
   });
 
   // Nothing is seeded here any more: the owner's first theme choice seeds the
-  // homepage, the theme's pages, its sample catalogue and its menus, without
-  // overwriting anything they have made in the meantime (lib/themes/switch.ts).
+  // homepage, the theme's pages and its menus, without overwriting anything
+  // they have made in the meantime, and never a sample catalogue (owner,
+  // 31 Oct 2026; lib/themes/switch.ts).
 
   // New store row must be resolvable on the VERY NEXT request. `revalidateTag`
   // with the `max` profile is stale-while-revalidate: the first dashboard load

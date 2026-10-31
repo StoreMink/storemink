@@ -38,7 +38,6 @@ const FACTS = {
   launched: false,
   homepage: "seeded",
   catalogueIsSampleOnly: true,
-  catalogueIsEmpty: false,
   hasBuilderChrome: false,
   brandColorIsTheme: true,
   hasDesignOverrides: false,

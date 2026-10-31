@@ -53,7 +53,6 @@ const FRESH: ThemeSwitchFacts = {
   launched: false,
   homepage: "seeded",
   catalogueIsSampleOnly: true,
-  catalogueIsEmpty: false,
   hasBuilderChrome: false,
   brandColorIsTheme: true,
   hasDesignOverrides: false,
@@ -65,7 +64,6 @@ const PENDING: ThemeSwitchFacts = {
   launched: false,
   homepage: "missing",
   catalogueIsSampleOnly: false,
-  catalogueIsEmpty: true,
   hasBuilderChrome: false,
   brandColorIsTheme: true,
   hasDesignOverrides: false,
@@ -175,7 +173,7 @@ describe("Storefront page", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "The sample products and categories change to Vitrine's examples. The products stay drafts.",
+        "Your previous theme's sample products and categories are removed. Vitrine adds no samples, so your dashboard shows only what you add.",
       ),
     ).toBeInTheDocument();
     // A seeded homepage needs no opt-in.
@@ -316,7 +314,7 @@ describe("Storefront page", () => {
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Vitrine's sample products and categories are added as examples. The products are drafts, so customers don't see them.",
+          "No sample products or categories are added, so your dashboard shows only what you add.",
         ),
       ).toBeInTheDocument();
       expect(
@@ -347,15 +345,15 @@ describe("Storefront page", () => {
       expect(refresh).toHaveBeenCalled();
     });
 
-    it("a store with products of its own is told no samples are added", async () => {
+    it("★ a store with products of its own is told no samples are added either", async () => {
       renderPending({
         library: [card("vitrine")],
-        facts: { ...PENDING, catalogueIsEmpty: false },
+        facts: { ...PENDING, catalogueIsSampleOnly: false },
       });
       fireEvent.click(screen.getByRole("button", { name: "Use this theme" }));
       expect(
         await screen.findByText(
-          "Your products and categories are not changed, and no samples are added.",
+          "No sample products or categories are added, so your dashboard shows only what you add.",
         ),
       ).toBeInTheDocument();
     });

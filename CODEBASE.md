@@ -3299,6 +3299,28 @@ store's own category, product or page called Home (`homeNamedLinks`: a
 lifestyle shop's Home category keeps its link; a theme sample never counts);
 `copy-checks.ts` holds English, the claims list (FSSAI's conditional words)
 and dashes.
+★★ THE NAVBAR SPEAKS FOR THE STORE (owner, 31 Oct 2026: a redesign must
+take care of the header too, not leave the theme's categories, wording and
+navigation in it). A page link in the header, the footer groups or the
+announcement bar may go only to a page the redesign writes or a page that
+already speaks for the store (`revampMenuLinkTargets`, site-compiler.ts:
+`revampPageSpeaksForStore` is true for a policy or skipped page and for a
+page holding at least one section the theme does not own), besides `/`,
+`/shop`, categories, products, `/blogs` and `/enquiries`; a theme page left
+in the theme's own words is not linked from them (a section may still link
+it, through `revampLinkTargets`). The compiler refuses such a link with its
+own sentence (`menuLinkProblem`: "is a page still in the theme's own words
+that this redesign does not write"); the lenient compile drops it.
+`checks.ts` `fixLinks` takes out any that slip through and notes "N menu
+links to a page still in the theme's words were taken out.". The prompt
+(`site-schema.ts`) prints "Pages a menu may link to" in `<link_targets>`
+when that list is shorter than every page, and tells the planner to write
+every menu label and group title for the store, never the theme's own
+wording. The prompt version is unchanged: the menu rule applies to every
+answer, whatever version planned it. Help: migration 0275 edits the Mink
+website guide's redesign sentence (the menus lead only to pages it writes
+and the store's own pages, categories and products). Tests:
+`site-compiler.test.ts`, `checks.test.ts`, `site-schema.test.ts`.
 ★★ DISTINCT BY DEFAULT (prompt v5; robustness audit, section 5, steps 1 to 3,
 2026-10-24). The audit found 62 of 70 layout choices (89%) equal to the one
 value the v4 examples printed, a near-white page in 4 of 4 known designs and
@@ -10739,13 +10761,20 @@ wholesip/
 │                              # 0274 edits it again for the minimal chat layout:
 │                              # Maximize, Language and Recent chats in the Mink AI
 │                              # menu, the microphone on every device (§21).
-│                              # Next free: 0275 (0260 = redesign recovery fence,
+│                              # 0275 edits the theme guide in place (a theme adds
+│                              # no sample products or categories; a switch removes
+│                              # the previous theme's untouched samples) and the
+│                              # Mink website guide's redesign sentence (its menus
+│                              # lead only to pages it writes and the store's own
+│                              # pages, categories and products) (§11).
+│                              # Next free: 0276 (0260 = redesign recovery fence,
 │                              # 0261 = voice controls Help edit, 0262 and 0263 =
 │                              # private chat attachments, 0264 and 0265 = refunds
 │                              # and credit notes, 0266 to 0268 = GST, 0269 and
 │                              # 0270 = content takedown, 0271 = Help voice, 0272
 │                              # and 0273 = Help ratings and languages, 0274 =
-│                              # Help chat menu). Previously: 0274.
+│                              # Help chat menu, 0275 = no theme samples Help).
+│                              # Previously: 0275.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -11928,11 +11957,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     it is still the seed, or on an explicit opt-in that first saves the
     edited one as a draft page "Homepage before {theme}" in the SAME
     transaction as the replacement; the theme's missing pages only alongside
-    a replaced homepage, never over an existing one; the sample catalogue
-    only while every product is an untouched "(Sample)" draft of the CURRENT
-    theme, every category is an untouched sample, and the store has never
-    taken an order (an emptied catalogue is not re-seeded); `store_menus`
-    only together with the catalogue and never when a `store_chrome` row
+    a replaced homepage, never over an existing one; no sample catalogue,
+    ever (the paragraph after this one); `store_menus` only when the previous
+    theme's samples are removed, and never when a `store_chrome` row
     exists; the brand colour only while it is still the old theme's. Products,
     categories, pages, menus and Builder design choices the merchant made are
     never touched. The design write is the one that must land; the rest is
@@ -11947,10 +11974,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (kept, or saved as a draft first on the same opt-in); ALWAYS adds the
     theme's starting pages, but only at free slugs and with do-nothing on
     conflict, so Terms/Refund/Shipping/Privacy pages written in Settings →
-    Policies at those slugs survive untouched; seeds the sample products (as
-    drafts), categories and menus only when the store has no products, no
-    categories, never took an order and has no `store_chrome` row
-    (`catalogueIsEmpty && !hasBuilderChrome`); applies the brand colour only if
+    Policies at those slugs survive untouched; adds no sample products or
+    categories; installs the theme's menus unless a `store_chrome` row exists
+    (`hasBuilderChrome`); applies the brand colour only if
     unset (tagline and blurb only if empty). The pin (`settings.theme` with
     `homepageSeededAt`) and deleting `themePending` are ONE locked transaction;
     a tab that lost the race to another first choice is told "A theme was just
@@ -11961,8 +11987,43 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and stops showing the store-in-progress page; starting pages go only where
     the store has no page, "like your policies"; "You can switch to another
     theme any time."); the dialog title reads "Use {name}?".
-    `seedSampleCatalogue`, `seedMenus`, `prepareSections` and
-    `revalidateThemeSeed` are exported from apply.ts for it. v1 constraints are
+    `seedMenus`, `prepareSections` and `revalidateThemeSeed` are exported from
+    apply.ts for it (`seedSampleCatalogue` is now used only by
+    `applyThemeDefinition`, for demo and Theme Studio preview stores).
+    **★★ NO SAMPLE CATALOGUE (owner, 31 Oct 2026: a theme's sample products
+    and categories "should not be visible anywhere in the dashboard at
+    all").** A merchant's store never receives a theme's sample products or
+    categories: a first install adds none, and a switch adds none of the new
+    theme's. A switch REMOVES the previous theme's samples only while the
+    store holds nothing but them, untouched, and has never taken an order
+    (`facts.catalogueIsSampleOnly`; the plan's `catalogue` is
+    `"remove-samples" | "keep"`). A sample product is matched by its exact
+    seed (slug, name) pair, still a draft, with `content_updated_at` within
+    a minute of `created_at` (`SEED_WINDOW_MS`); a sample category by its
+    seed slug with `updated_at` within a minute of `created_at`, and one
+    still holding any product is kept. ★ The old "(Sample)" name mark matched
+    only Basket: Studio, Ritual and Vitrine seed their samples without it, so
+    a switch away from them used to count their samples as the merchant's.
+    The theme's menus and page sections arrive through
+    `lib/themes/sample-links.ts` (pure): a header or footer link to one of
+    the theme's sample categories (`/collections/<slug>`,
+    `/shop?category=<slug>`) or products (`/shop/<slug>`) is taken out (a
+    heading keeps the links left under it; an emptied header becomes one
+    "Shop" link and an emptied footer one "Shop" group, so a store never
+    falls back to stock links), and a section button, tile or slide pointing
+    at one goes to `/shop` (`SAMPLE_LINK_FALLBACK`). `switch.ts` passes
+    `{ withoutSampleLinks: true }` to `seedMenus` and `prepareSections`;
+    demo and Theme Studio preview stores (`applyThemeDefinition`) keep their
+    samples and links. The confirm dialog says what happens
+    (`describeThemeSwitch`: "No sample products or categories are added, so
+    your dashboard shows only what you add.", or that the previous theme's
+    samples are removed). ⚠ Stores that installed a theme before this still
+    hold its samples; nothing deletes them (a clean-up across stores would
+    be a data change for the owner to approve). Help:
+    `20261031_0275_no_theme_samples_help` edits the theme guide's two sample
+    sentences in place. Tests: `sample-links.test.ts` (every bundled theme
+    installs with no menu link at its own samples), `switch-rules.test.ts`,
+    `switch.test.ts`. v1 constraints are
     production functions in `lib/themes/validation.ts` (Theme Studio's
     acceptance gates run them too), asserted for every bundled theme by
     `lib/themes/themes.test.ts`:
@@ -28549,8 +28610,10 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   live shops; `createStore` writes `launched: false` explicitly. Migration 0170
   also opens any `launched: false` store that has ever taken an order, so no
   trading shop wakes up behind a password. Demo stores (`settings.demo`) are
-  never gated and never indexed. Theme SAMPLE products seed as **drafts**
-  (`applyTheme`'s `publishSampleProducts`, true only for demo stores).
+  never gated and never indexed. A merchant's store gets no theme SAMPLE
+  products or categories at all since 31 Oct 2026 (§11, "No sample
+  catalogue"); demo stores still seed them, published
+  (`applyTheme`'s `publishSampleProducts`).
   **Dashboard Home is ONE card while the store is closed** (`setup-guide.tsx`,
   the Shopify setup-guide shape, redesigned 2026-10-08 after the first version
   ran to three cards and six tiles): a slim `PlanTag` beside the greeting

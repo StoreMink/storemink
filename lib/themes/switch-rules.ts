@@ -17,17 +17,23 @@
 //   • the design (colours, fonts, layout) always changes;
 //   • the homepage is replaced while it is still the seed, and an edited one
 //     only on request, and then only after it is kept as a draft page;
-//   • the sample catalogue is swapped only while the store has nothing but the
-//     current theme's samples and has never taken an order;
-//   • the menus follow the catalogue, because they link to its categories, and
-//     never replace a header and footer edited in the Website Builder;
+//   • ★★ NO SAMPLE CATALOGUE EVER ARRIVES (owner, 31 Oct 2026: the theme's
+//     sample products and categories "should not be visible anywhere in the
+//     dashboard at all"). A switch REMOVES the old theme's samples, and only
+//     while the store has nothing but those untouched samples and has never
+//     taken an order (stores that installed a theme before this still have
+//     them); it adds none of the new theme's;
+//   • the menus follow the catalogue, because a store's own menus may link to
+//     its categories, and never replace a header and footer edited in the
+//     Website Builder. The theme's menus arrive without their links to the
+//     theme's sample catalogue (lib/themes/sample-links.ts);
 //   • the brand colour follows the theme only while it is still the theme's.
 //
 // A FIRST install (no theme yet) follows the same rule from an empty start:
 // the homepage is created unless the merchant already built one, the theme's
 // pages fill only free slugs (policies written in Settings → Policies live at
-// those slugs and stay), and samples and menus arrive only in a store with no
-// catalogue, no orders and no Website Builder header or footer.
+// those slugs and stay), no samples are added, and the theme's menus arrive
+// unless a Website Builder header and footer exist.
 //
 // Products, categories, pages and menus the merchant made are never touched.
 // ---------------------------------------------------------------------------
@@ -105,14 +111,11 @@ export interface ThemeSwitchFacts {
    */
   homepage: "missing" | "seeded" | "edited";
   /**
-   * Every product and category in the store is one of the CURRENT theme's
-   * samples, and the store has never taken an order. Only then may the
-   * starting catalogue be swapped for the new theme's.
+   * The store holds at least one of the CURRENT theme's untouched samples,
+   * every product and category in it is one, and it has never taken an
+   * order. Only then does a switch remove them.
    */
   catalogueIsSampleOnly: boolean;
-  /** No products, no categories, and never an order. A first install seeds
-   *  the theme's samples only into a store like this. */
-  catalogueIsEmpty: boolean;
   /** The header and footer are edited in the Website Builder (a
    *  `store_chrome` row), so the theme's menus would not show anyway. */
   hasBuilderChrome: boolean;
@@ -138,10 +141,9 @@ export interface ThemeSwitchPlan {
    *  homepage, whose links may point at them, and always on a first install,
    *  which has none of them. Never overwrites a page. */
   addMissingPages: boolean;
-  /** "seed-samples" adds the theme's samples (products as drafts) to an empty
-   *  store on its first install; "swap-samples" replaces the current theme's
-   *  untouched samples with the new theme's. */
-  catalogue: "seed-samples" | "swap-samples" | "keep";
+  /** "remove-samples" deletes the current theme's untouched samples on a
+   *  switch. No plan ever adds samples to a merchant's store. */
+  catalogue: "remove-samples" | "keep";
   menus: "replace" | "keep";
   brandColor: "theme" | "keep";
 }
@@ -157,34 +159,29 @@ export function planThemeSwitch(
         : "keep"
       : "replace";
   if (facts.firstTheme) {
-    // ★ Samples and menus only into a store with nothing of its own: no
-    // product, no category, no order, and no Builder header and footer. The
-    // theme's menus link to its sample categories, so the two arrive together
-    // or not at all, and a Builder header is the merchant's.
-    const catalogue =
-      facts.catalogueIsEmpty && !facts.hasBuilderChrome
-        ? "seed-samples"
-        : "keep";
+    // ★ No samples, ever. The theme's menus arrive without their links to
+    // its sample catalogue, so they need no catalogue to be right; only a
+    // Builder header and footer, which are the merchant's, keep them out.
     return {
       firstTheme: true,
       homepage,
       addMissingPages: true,
-      catalogue,
-      menus: catalogue === "seed-samples" ? "replace" : "keep",
+      catalogue: "keep",
+      menus: facts.hasBuilderChrome ? "keep" : "replace",
       brandColor: facts.brandColorIsTheme ? "theme" : "keep",
     };
   }
-  const catalogue = facts.catalogueIsSampleOnly ? "swap-samples" : "keep";
+  const catalogue = facts.catalogueIsSampleOnly ? "remove-samples" : "keep";
   return {
     firstTheme: false,
     homepage,
     addMissingPages: homepage !== "keep",
     catalogue,
-    // ★ The menus link to the catalogue's categories. Swapping one without
-    // the other leaves dead links in the header, and a Builder-edited header
-    // is the merchant's.
+    // ★ The old menus link to the old samples. Removing one without the
+    // other leaves dead links in the header, and a Builder-edited header is
+    // the merchant's.
     menus:
-      catalogue === "swap-samples" && !facts.hasBuilderChrome
+      catalogue === "remove-samples" && !facts.hasBuilderChrome
         ? "replace"
         : "keep",
     brandColor: facts.brandColorIsTheme ? "theme" : "keep",
@@ -234,13 +231,11 @@ export function describeThemeSwitch(
     );
   }
   lines.push(
-    plan.catalogue === "seed-samples"
-      ? `${themeName}'s sample products and categories are added as examples. The products are drafts, so customers don't see them.`
-      : plan.catalogue === "swap-samples"
-        ? `The sample products and categories change to ${themeName}'s examples. The products stay drafts.`
-        : first
-          ? "Your products and categories are not changed, and no samples are added."
-          : "Your products and categories are not changed.",
+    plan.catalogue === "remove-samples"
+      ? `Your previous theme's sample products and categories are removed. ${themeName} adds no samples, so your dashboard shows only what you add.`
+      : first
+        ? "No sample products or categories are added, so your dashboard shows only what you add."
+        : "Your products and categories are not changed, and no samples are added.",
   );
   if (plan.menus === "replace") {
     lines.push(

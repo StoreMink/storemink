@@ -84,6 +84,7 @@ import {
   revampFrameKeyFor,
   revampHasRealProducts,
   revampLinkTargets,
+  revampMenuLinkTargets,
 } from "./site-compiler";
 
 type Path = Array<string | number>;
@@ -715,6 +716,23 @@ function fixLinks(w: Working, t: Tally): void {
   }
 
   const stored = w.plan.chrome;
+  // ★★ The menus and the bar are on every page, so they never link to a
+  //    theme page this redesign leaves in the theme's own words
+  //    (revampMenuLinkTargets; owner, 31 Oct 2026).
+  const menuTargets = revampMenuLinkTargets({
+    request: w.request,
+    snapshot: w.snapshot,
+    plan: { pages: w.plan.pages },
+  });
+  let themeWords = 0;
+  /** A menu or bar link, normalised; null (counted) when it cannot stay. */
+  const checkMenuLink = (href: string): string | null => {
+    const checked = checkRevampLink(href, menuTargets);
+    if (checked !== null) return checked;
+    if (checkRevampLink(href, targets) !== null) themeWords += 1;
+    else dead += 1;
+    return null;
+  };
   if (stored) {
     const next = stored.next;
     // ★★ A link the store already has to a route the storefront always
@@ -730,11 +748,8 @@ function fixLinks(w: Working, t: Tally): void {
       for (const link of links) {
         const href = link.href ?? "";
         if (!isExternalLink(href) && !leaveAlone(href)) {
-          const checked = checkRevampLink(href, targets);
-          if (checked === null) {
-            dead += 1;
-            continue;
-          }
+          const checked = checkMenuLink(href);
+          if (checked === null) continue;
           link.href = checked;
         }
         if (link.children) {
@@ -756,19 +771,18 @@ function fixLinks(w: Working, t: Tally): void {
     }
     const bar = next.header?.announcement;
     if (bar?.href && !isExternalLink(bar.href) && !leaveAlone(bar.href)) {
-      const checked = checkRevampLink(bar.href, targets);
-      if (checked === null) {
-        bar.href = "";
-        dead += 1;
-      } else {
-        bar.href = checked;
-      }
+      bar.href = checkMenuLink(bar.href) ?? "";
     }
     stored.next = sanitizeChromeForSave(next);
   }
   if (dead) {
     t.fixed.push(
       `${countLabel(dead, "link")} to a page that will not exist ${dead === 1 ? "was" : "were"} taken out.`,
+    );
+  }
+  if (themeWords) {
+    t.fixed.push(
+      `${countLabel(themeWords, "menu link")} to a page still in the theme's words ${themeWords === 1 ? "was" : "were"} taken out.`,
     );
   }
 }

@@ -81,6 +81,7 @@ import {
   revampGoodsKeyForSlug,
   revampHasRealProducts,
   revampLinkTargets,
+  revampMenuLinkTargets,
   revampOwnedPhotoUrls,
   revampPageScope,
   revampRefillSlots,
@@ -562,6 +563,7 @@ export function revampSiteSystem(): string {
     "",
     "Header, footer and the rest",
     `- menus.header has at most ${REVAMP_MAX_HEADER_LINKS} top-level links; put more under a link's children. footerGroups are a few titled groups of links.`,
+    `- The menus and announcement.href link only to pages you write in this answer, the store's own pages, categories, products, /shop, /blogs and /enquiries (when <link_targets> lists "Pages a menu may link to", only those pages and yours). Write every menu label and group title for this store, never the theme's own wording.`,
     `- announcement.text is one short line from the store facts (at most ${t.announcement} characters), or "" to write none (<theme> says what the bar shows now and what "" does to it). brand.tagline is one line (at most ${t.tagline}); brand.blurb is two or three sentences (at most ${t.blurb}).`,
     `- newsletter.heading (at most ${t.newsletterHeading}), subtext (at most ${t.newsletterSubtext}) and buttonLabel (at most ${t.newsletterButton}) are short.`,
     `- productCopy holds a polished description of each product in <products>, by key, from the merchant's own words (at most ${t.productCopy} characters).`,
@@ -883,6 +885,24 @@ function targetsBlock(input: RevampSiteInput): string[] {
   lines.push(
     `Pages: ${[...targets.pages].map((s) => `/${s}`).join(", ") || "none"}`,
   );
+  // ★★ Only when it differs, so a store whose every page speaks for it gets
+  //    the same prompt as before: the theme pages this redesign leaves in the
+  //    theme's own words are kept off the menus (revampMenuLinkTargets).
+  const menuPages = revampMenuLinkTargets({
+    request: input.request,
+    snapshot: input.snapshot,
+    plan: {
+      pages: scope.pages.map((p) => ({
+        slug: p.slug,
+      })) as RevampSitePlan["pages"],
+    },
+  }).pages;
+  if (menuPages.size !== targets.pages.size) {
+    const left = [...targets.pages].filter((slug) => !menuPages.has(slug));
+    lines.push(
+      `Pages a menu may link to: ${[...menuPages].map((s) => `/${s}`).join(", ") || "none besides the pages you write"} (${left.map((s) => `/${s}`).join(", ")} ${left.length === 1 ? "is" : "are"} still in the theme's own words: a section may link ${left.length === 1 ? "it" : "them"}, menus.header, menus.footerGroups and announcement.href never do)`,
+    );
+  }
   lines.push(
     `Categories: ${[...targets.categories].map((s) => `/collections/${s}`).join(", ") || "none"}`,
   );

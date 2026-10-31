@@ -10581,6 +10581,43 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261031_0275_no_theme_samples_help",
+      "description": "Help Centre: the theme guide (change-your-storefront-theme) and the Mink AI website guide (manage-your-website-with-mink-ai) edited in place. Choosing a theme adds no sample products or categories and its menus leave out links to them; a switch removes the previous theme's untouched samples instead of swapping them; a Mink AI redesign's menus lead only to pages it writes and the store's own pages, categories and products. Content only.",
+      "file": "sql/20261031_0275_no_theme_samples_help.sql",
+      "transaction": true,
+      "requires": ["20261031_0274_help_assistant_menu_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a first theme adds no samples",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%No sample products or categories are added, so your dashboard shows only the products and categories you add.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old first-install samples sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%the theme adds its sample products and categories as examples%'",
+            "equals": "0"
+          },
+          {
+            "name": "a switch removes the old samples",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%they are removed and the new theme adds none.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old swap sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%they are swapped for the new theme''s samples%'",
+            "equals": "0"
+          },
+          {
+            "name": "a redesign's menus lead to the store's own pages",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-website-with-mink-ai' and status = 'published' and body like '%a new header, footer and menus that lead only to pages it writes and your own pages, categories and products,%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

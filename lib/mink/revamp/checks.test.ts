@@ -522,6 +522,94 @@ describe("runRevampChecks: links", () => {
   });
 });
 
+describe("runRevampChecks: menus and the store's own words (owner, 31 Oct 2026)", () => {
+  /** The snapshot with About still entirely the theme's words. */
+  function themeAbout(): RevampSnapshot {
+    const snap = snapshot();
+    snap.pages = snap.pages.map((p) =>
+      p.slug === "about"
+        ? {
+            ...p,
+            sections: [p.sections[0]!],
+            owners: { "t-about": "theme" },
+          }
+        : p,
+    );
+    return snap;
+  }
+
+  it("★★ takes a theme page the redesign leaves alone out of the header, footer and bar, never out of a section", async () => {
+    const out = await run(
+      plan(
+        [
+          page("", [
+            sec("n-link", "media_text", {
+              heading: "About",
+              cta_label: "Read",
+              cta_href: "/about",
+            }),
+          ]),
+        ],
+        {},
+        {
+          header: {
+            ...sanitizeChromeForSave({}).header,
+            links: [
+              { label: "Shop", href: "/shop" },
+              { label: "About", href: "/about" },
+            ],
+            announcement: { enabled: true, text: "Hi", href: "/about" },
+          },
+          footer: {
+            ...sanitizeChromeForSave({}).footer,
+            groups: [
+              {
+                title: "Help",
+                links: [
+                  { label: "Our story", href: "/about" },
+                  { label: "Oils", href: "/collections/oils" },
+                ],
+              },
+            ],
+          },
+        },
+      ),
+      themeAbout(),
+      request({ pages: ["home"] }),
+    );
+    expect(conf(out.pages[0].sections[0]).cta_href).toBe("/about");
+    const next = out.chrome!.next;
+    expect(next.header.links.map((l) => l.href)).toEqual(["/shop"]);
+    expect(next.footer.groups[0]!.links.map((l) => l.href)).toEqual([
+      "/collections/oils",
+    ]);
+    expect(next.header.announcement.href).toBe("");
+    expect(check(out, "links").note).toMatch(
+      /3 menu links to a page still in the theme's words were taken out/,
+    );
+  });
+
+  it("keeps a menu link to a page the merchant wrote", async () => {
+    const out = await run(
+      plan(
+        [page("", [])],
+        {},
+        {
+          header: {
+            ...sanitizeChromeForSave({}).header,
+            links: [{ label: "About", href: "/about" }],
+          },
+        },
+      ),
+      snapshot(),
+      request({ pages: ["home"] }),
+    );
+    expect(out.chrome!.next.header.links.map((l) => l.href)).toEqual([
+      "/about",
+    ]);
+  });
+});
+
 describe("runRevampChecks: reading", () => {
   it("keeps the store's colours when the new ones are hard to read, and fixes heroes", async () => {
     const out = await run(

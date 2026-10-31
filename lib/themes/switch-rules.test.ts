@@ -14,7 +14,6 @@ const FRESH: ThemeSwitchFacts = {
   launched: false,
   homepage: "seeded",
   catalogueIsSampleOnly: true,
-  catalogueIsEmpty: false,
   hasBuilderChrome: false,
   brandColorIsTheme: true,
   hasDesignOverrides: false,
@@ -26,7 +25,6 @@ const FIRST: ThemeSwitchFacts = {
   launched: false,
   homepage: "missing",
   catalogueIsSampleOnly: false,
-  catalogueIsEmpty: true,
   hasBuilderChrome: false,
   brandColorIsTheme: true,
   hasDesignOverrides: false,
@@ -86,12 +84,12 @@ describe("homepage seed detection", () => {
 });
 
 describe("planThemeSwitch", () => {
-  it("a fresh store takes the new theme's starting content wholesale", () => {
+  it("★ a fresh store takes the new theme's pages and menus, and loses the old samples", () => {
     expect(planThemeSwitch(FRESH, { replaceEditedHomepage: false })).toEqual({
       firstTheme: false,
       homepage: "replace",
       addMissingPages: true,
-      catalogue: "swap-samples",
+      catalogue: "remove-samples",
       menus: "replace",
       brandColor: "theme",
     });
@@ -123,13 +121,31 @@ describe("planThemeSwitch", () => {
     ).toMatchObject({ catalogue: "keep", menus: "keep" });
   });
 
-  it("★ a Builder-edited header and footer are never replaced, even with the samples swapped", () => {
+  it("★ a Builder-edited header and footer are never replaced, even with the samples removed", () => {
     expect(
       planThemeSwitch(
         { ...FRESH, hasBuilderChrome: true },
         { replaceEditedHomepage: false },
       ),
-    ).toMatchObject({ catalogue: "swap-samples", menus: "keep" });
+    ).toMatchObject({ catalogue: "remove-samples", menus: "keep" });
+  });
+
+  it("★★ no plan ever adds samples to a merchant's store", () => {
+    for (const facts of [FRESH, FIRST]) {
+      for (const sampleOnly of [true, false]) {
+        for (const chrome of [true, false]) {
+          const plan = planThemeSwitch(
+            {
+              ...facts,
+              catalogueIsSampleOnly: sampleOnly,
+              hasBuilderChrome: chrome,
+            },
+            { replaceEditedHomepage: false },
+          );
+          expect(["remove-samples", "keep"]).toContain(plan.catalogue);
+        }
+      }
+    }
   });
 
   it("a brand colour the merchant chose stays", () => {
@@ -143,27 +159,27 @@ describe("planThemeSwitch", () => {
 });
 
 describe("planThemeSwitch on a first install", () => {
-  it("★ an empty store takes the theme's homepage, pages, samples, menus and colour", () => {
+  it("★ a store takes the theme's homepage, pages, menus and colour, and no samples", () => {
     expect(planThemeSwitch(FIRST, { replaceEditedHomepage: false })).toEqual({
       firstTheme: true,
       homepage: "replace",
       addMissingPages: true,
-      catalogue: "seed-samples",
+      catalogue: "keep",
       menus: "replace",
       brandColor: "theme",
     });
   });
 
-  it("★ a store with products, categories or an order gets no samples and no menus", () => {
+  it("★ a store with products of its own still gets the theme's menus (they carry no sample links)", () => {
     expect(
       planThemeSwitch(
-        { ...FIRST, catalogueIsEmpty: false },
+        { ...FIRST, catalogueIsSampleOnly: false },
         { replaceEditedHomepage: false },
       ),
-    ).toMatchObject({ catalogue: "keep", menus: "keep" });
+    ).toMatchObject({ catalogue: "keep", menus: "replace" });
   });
 
-  it("★ a Builder header and footer means no samples and no menus either", () => {
+  it("★ a Builder header and footer keeps the theme's menus out", () => {
     expect(
       planThemeSwitch(
         { ...FIRST, hasBuilderChrome: true },
@@ -172,10 +188,10 @@ describe("planThemeSwitch on a first install", () => {
     ).toMatchObject({ catalogue: "keep", menus: "keep" });
   });
 
-  it("never swaps samples on a first install, whatever the sample fact says", () => {
+  it("never removes samples on a first install, whatever the sample fact says", () => {
     expect(
       planThemeSwitch(
-        { ...FIRST, catalogueIsSampleOnly: true, catalogueIsEmpty: false },
+        { ...FIRST, catalogueIsSampleOnly: true },
         { replaceEditedHomepage: false },
       ).catalogue,
     ).toBe("keep");
@@ -212,7 +228,7 @@ describe("describeThemeSwitch", () => {
       "Your storefront gets Vitrine's colours, fonts and layout, and stops showing the store-in-progress page.",
       "Your homepage is created from Vitrine's starting design.",
       "Vitrine's starting pages are added where your store doesn't have a page yet. Pages you've already written, like your policies, are not changed.",
-      "Vitrine's sample products and categories are added as examples. The products are drafts, so customers don't see them.",
+      "No sample products or categories are added, so your dashboard shows only what you add.",
       "Your header and footer menus are set up from Vitrine's.",
       "Your brand colour starts as Vitrine's. You can change it any time.",
       "You can switch to another theme any time.",
@@ -225,7 +241,6 @@ describe("describeThemeSwitch", () => {
     const facts: ThemeSwitchFacts = {
       ...FIRST,
       homepage: "edited",
-      catalogueIsEmpty: false,
       hasBuilderChrome: true,
       brandColorIsTheme: false,
     };
@@ -238,7 +253,7 @@ describe("describeThemeSwitch", () => {
       "Your homepage keeps its sections and their new look. Redesign it any time in the Website Builder.",
     );
     expect(lines).toContain(
-      "Your products and categories are not changed, and no samples are added.",
+      "No sample products or categories are added, so your dashboard shows only what you add.",
     );
     expect(lines).toContain(
       "Your header and footer stay as you set them in the Website Builder.",
@@ -259,7 +274,7 @@ describe("describeThemeSwitch", () => {
       "Your storefront's colours, fonts and layout change to Vitrine.",
       "Your homepage is replaced with Vitrine's starting homepage. You haven't edited it yet, so nothing of yours is lost.",
       "Vitrine's other starting pages are added where your store doesn't have one. Your existing pages are not changed.",
-      "The sample products and categories change to Vitrine's examples. The products stay drafts.",
+      "Your previous theme's sample products and categories are removed. Vitrine adds no samples, so your dashboard shows only what you add.",
       "Your header and footer menus change to Vitrine's.",
     ]);
   });
@@ -270,7 +285,6 @@ describe("describeThemeSwitch", () => {
       launched: true,
       homepage: "edited",
       catalogueIsSampleOnly: false,
-      catalogueIsEmpty: false,
       hasBuilderChrome: true,
       brandColorIsTheme: false,
       hasDesignOverrides: true,
@@ -283,7 +297,9 @@ describe("describeThemeSwitch", () => {
     expect(lines).toContain(
       "Your homepage keeps its sections and their new look. Redesign it any time in the Website Builder.",
     );
-    expect(lines).toContain("Your products and categories are not changed.");
+    expect(lines).toContain(
+      "Your products and categories are not changed, and no samples are added.",
+    );
     expect(lines).toContain(
       "Your header and footer stay as you set them in the Website Builder.",
     );
@@ -317,13 +333,12 @@ describe("describeThemeSwitch", () => {
         launched: true,
         homepage: "edited" as const,
         catalogueIsSampleOnly: false,
-        catalogueIsEmpty: false,
         hasBuilderChrome: true,
         brandColorIsTheme: false,
         hasDesignOverrides: true,
       },
       FIRST,
-      { ...FIRST, homepage: "edited" as const, catalogueIsEmpty: false },
+      { ...FIRST, homepage: "edited" as const },
     ]) {
       for (const replace of [false, true]) {
         const text = describeThemeSwitch(
