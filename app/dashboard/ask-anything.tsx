@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowUp, Sparkles } from "lucide-react";
+import { ArrowUp } from "lucide-react";
+import { MinkFace } from "@/components/mink/mink-face";
 import { useState } from "react";
 import { useChat } from "./chat-context";
 import { ASSISTANT_NAME } from "./mink-ai";
@@ -29,9 +30,7 @@ export function AskAnything() {
       onSubmit={submit}
       className="group flex w-full items-center gap-3 rounded-[var(--dash-radius)] border border-[var(--dash-border)] bg-[var(--dash-surface)] px-4 py-3.5 shadow-[var(--dash-shadow-xs)] transition-colors focus-within:border-[var(--dash-accent)]"
     >
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
-        <Sparkles className="h-4 w-4" />
-      </span>
+      <MinkFace size={32} />
       <input
         type="text"
         value={text}

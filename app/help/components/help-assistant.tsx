@@ -1273,9 +1273,6 @@ export function HelpAssistant({
                     />
                     <strong>StoreMink</strong>
                   </div>
-                  <span className="hc-assistant-disclaimer">
-                    {t.disclaimer}
-                  </span>
                 </footer>
               </div>
             </section>

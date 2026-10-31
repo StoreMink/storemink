@@ -5460,6 +5460,13 @@ a.customer-detail-field:hover {
   color: var(--dash-accent);
 }
 
+/* The Mink face keeps its own size: the 15px icon rule above it
+   (.dash-an-btn svg) would shrink its eyes past reading. */
+.dashboard-shell .dash-an-btn svg[data-mink-face] {
+  width: 18px;
+  height: 18px;
+}
+
 @media (max-width: 760px) {
   .dashboard-shell .dash-insights-panel {
     grid-template-columns: minmax(0, 1fr);

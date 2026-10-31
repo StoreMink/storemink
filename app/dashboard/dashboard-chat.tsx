@@ -1002,7 +1002,7 @@ export function DashboardChat({
                           </div>
                         ) : null}
                         <div className="flex items-center gap-2.5 py-2 text-sm text-[#5c5f62]">
-                          <MinkMark size="sm" />
+                          <MinkMark size="sm" state="thinking" animated />
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
                           {statusText ?? "Thinking…"}
                         </div>

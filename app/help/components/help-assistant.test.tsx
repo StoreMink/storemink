@@ -69,6 +69,9 @@ describe("HelpAssistant", () => {
       expect.stringContaining("storemink-mark.webp"),
     );
     expect(credit.children[2]).toHaveTextContent("StoreMink");
+    // The footer is the credit alone: no disclaimer line (owner, 31 Oct).
+    expect(credit.parentElement?.tagName).toBe("FOOTER");
+    expect(credit.parentElement?.children).toHaveLength(1);
 
     fireEvent.change(
       screen.getByLabelText("Ask Mink AI a StoreMink question"),
@@ -122,7 +125,7 @@ describe("HelpAssistant", () => {
       screen.getByRole("button", { name: "Start a new conversation" }),
     );
     expect(
-      screen.getByText(/Tell me what you want to do/i),
+      screen.getByText(/Describe your StoreMink issue/i),
     ).toBeInTheDocument();
     expect(
       screen.queryByText("Use the Sell screen to complete the checkout."),
@@ -583,7 +586,7 @@ describe("HelpAssistant: language, ratings, recent chats and launching", () => {
     // The chat on screen was the one deleted, so the drawer starts afresh.
     expect(screen.queryByText(ANSWER.answer)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Tell me what you want to do/i),
+      screen.getByText(/Describe your StoreMink issue/i),
     ).toBeInTheDocument();
   });
 

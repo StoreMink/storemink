@@ -2693,21 +2693,6 @@
   color: var(--hc-ink-soft);
   font-weight: 600;
 }
-.hc-assistant-disclaimer::before {
-  content: "·";
-  margin-right: 8px;
-}
-/* Too narrow for one line (a phone, or the side drawer at its narrowest):
-   the two parts stack, and the separator dot would otherwise start the
-   second line. */
-@container (max-width: 520px) {
-  .hc-assistant-footer {
-    flex-direction: column;
-  }
-  .hc-assistant-disclaimer::before {
-    content: none;
-  }
-}
 .hc-assistant-sr-only {
   position: absolute;
   width: 1px;

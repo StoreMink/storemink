@@ -7506,7 +7506,7 @@ wholesip/
 │   │   │                      # (mink-history-sidebar.tsx: pages, Search chats, Try again;
 │   │   │                      # mink-earlier-messages.tsx: Show earlier messages)
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
-│   │   │                      # Help-matched robot identity and auto-growing composer;
+│   │   │                      # the Mink face (MinkMark) and auto-growing composer;
 │   │   │                      # maximize is a shell-level viewport takeover above the
 │   │   │                      # dashboard topbar, navigation and page content. Phones use
 │   │   │                      # one dynamic-viewport full-screen surface, history closed by
@@ -7536,7 +7536,9 @@ wholesip/
 │   │   │                      # review, Stop, then its three buttons; mink-revamp-preview.tsx
 │   │   │                      # is the before/after preview on the storefront's renderer.
 │   │   ├── mink-feedback.tsx  # Per-answer thumbs + bounded, privacy-redacted issue report.
-│   │   ├── mink-mark.tsx      # Shared solid-purple robot mark matching Help Centre Mink.
+│   │   ├── mink-mark.tsx      # MinkMark: the Mink face (components/mink) at the old
+│   │   │                      # robot tile's sizes (sm 28, md 36, lg 44 px), with an
+│   │   │                      # optional expression; the dashboard's one Mink icon.
 │   │   ├── page.tsx           # Home: greeting + PlanTag (plan-tag.tsx), then while the
 │   │   │                      # store is closed ONLY LaunchChecklistCard
 │   │   │                      # (launch-checklist.tsx → setup-guide.tsx: password +
@@ -10167,7 +10169,7 @@ wholesip/
 │   ├── mink/                  # ★ MinkFace: the Mink AI face from the expression sheet
 │   │                          # (five states, hook-free, reduced-motion aware) over the
 │   │                          # pure geometry in mink-face-geometry.ts; used by the
-│   │                          # Help Centre (§21)
+│   │                          # Help Centre (§21) and the dashboard (MinkMark)
 │   └── customer-multiselect.tsx
 ├── hooks/use-mobile.ts
 │
@@ -18328,7 +18330,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      responsive sidebar, allows confirmed same-origin deletion, renders
      supported Markdown without raw HTML, remembers a bounded drag/keyboard
      panel width, and grows the multiline composer to a scrollable cap. The
-     dashboard and Help Centre share the same solid-purple robot identity.
+     dashboard and Help Centre share the same Mink face (the purple robot until
+     31 Oct 2026; see §21).
      Explicit Stop and Retry remain available.
      Migration `20260829_0039_mink_phase_2` adds the invitation and feedback
      tables, trusted run context, extractive conversation summaries and shadow
@@ -19243,8 +19246,20 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       `help-assistant-voice.test.tsx`, `help-assistant.test.tsx`,
       `app/help/page.test.tsx`, `app/api/help/voice/route.test.ts`,
       `lib/mink/input-limits.test.ts`, `lib/mink/voice-turn.test.ts`. ⚠ Not run
-      in a real browser or against the live provider from the Help host;
-      the dashboard's Mink mark is still the purple robot. Help migration
+      in a real browser or against the live provider from the Help host.
+      ★ The dashboard wears the same face since 31 Oct 2026 (owner: "change
+      the mink icon in the dashboard also"): `app/dashboard/mink-mark.tsx`
+      draws `MinkFace` at the robot tile's old sizes, so the topbar button,
+      the chat header, welcome and status line, the voice bar and the Website
+      Builder's Mink button all switched with no layout change; the chat's
+      status line shows the thinking face, the voice bar follows voice chat
+      (`minkVoiceFace`: listening, thinking, talking), and Home's Ask
+      anything box and Mink suggests card show the face where a sparkle tile
+      was. The "Ask Mink" buttons (each Mink suggests row, and Analytics'
+      "Ask Mink why") carry an 18 px face too; a CSS rule keeps the face at
+      18 px inside `.dash-an-btn`, whose icon rule is 15 px. The sparkle stays
+      on buttons that ask AI to write something (Generate with AI). Help
+      migration
       `20261030_0271_help_assistant_voice_help` edits the guide's opening steps
       in place and adds a Talk with Mink AI section after them.
       ★★ **THE HELP CENTRE REDESIGN (2026-10-31, from the owner's five

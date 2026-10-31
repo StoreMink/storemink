@@ -74,7 +74,6 @@ export interface MinkStrings {
   notHelpful: string;
   thanks: string;
   emailSupport: string;
-  disclaimer: string;
   talkStatus: Record<MinkTalkStatus, string>;
   skip: string;
   skipLabel: string;
@@ -146,7 +145,6 @@ const en: MinkStrings = {
   thanks:
     "Thanks. Your rating, your question and this answer were sent to StoreMink to improve the guides.",
   emailSupport: "Email support",
-  disclaimer: "",
   talkStatus: {
     starting: "Starting the microphone…",
     listening: "Listening… ask your question",
@@ -233,7 +231,6 @@ const hi: MinkStrings = {
   thanks:
     "धन्यवाद। आपकी रेटिंग, आपका सवाल और यह जवाब गाइड बेहतर बनाने के लिए StoreMink को भेजे गए।",
   emailSupport: "सपोर्ट को ईमेल करें",
-  disclaimer: "जवाब गलत हो सकते हैं, इसलिए गाइड ज़रूर देखें।",
   talkStatus: {
     starting: "माइक्रोफ़ोन शुरू हो रहा है…",
     listening: "सुना जा रहा है… अपना सवाल पूछें",
@@ -320,7 +317,6 @@ const bn: MinkStrings = {
   thanks:
     "ধন্যবাদ। গাইড আরও ভালো করার জন্য আপনার রেটিং, আপনার প্রশ্ন আর এই উত্তর StoreMink-কে পাঠানো হয়েছে।",
   emailSupport: "সাপোর্টে ইমেল করুন",
-  disclaimer: "উত্তর ভুল হতে পারে, তাই গাইডটি দেখে নিন।",
   talkStatus: {
     starting: "মাইক্রোফোন চালু হচ্ছে…",
     listening: "শোনা হচ্ছে… আপনার প্রশ্ন বলুন",
@@ -407,7 +403,6 @@ const ta: MinkStrings = {
   thanks:
     "நன்றி. வழிகாட்டிகளை மேம்படுத்த உங்கள் மதிப்பீடு, உங்கள் கேள்வி மற்றும் இந்தப் பதில் StoreMink-க்கு அனுப்பப்பட்டன.",
   emailSupport: "ஆதரவுக்கு மின்னஞ்சல் அனுப்பு",
-  disclaimer: "பதில்கள் தவறாக இருக்கலாம், எனவே வழிகாட்டியைச் சரிபாருங்கள்.",
   talkStatus: {
     starting: "மைக்ரோஃபோன் தொடங்குகிறது…",
     listening: "கேட்கப்படுகிறது… உங்கள் கேள்வியைக் கேளுங்கள்",
@@ -496,7 +491,6 @@ const te: MinkStrings = {
   thanks:
     "ధన్యవాదాలు. గైడ్‌లను మెరుగుపరచడానికి మీ రేటింగ్, మీ ప్రశ్న మరియు ఈ సమాధానం StoreMink కు పంపబడ్డాయి.",
   emailSupport: "సపోర్ట్‌కు ఈమెయిల్ చేయండి",
-  disclaimer: "సమాధానాలు తప్పు కావచ్చు, కాబట్టి గైడ్‌ను తనిఖీ చేయండి.",
   talkStatus: {
     starting: "మైక్రోఫోన్ ప్రారంభమవుతోంది…",
     listening: "వింటోంది… మీ ప్రశ్న అడగండి",
@@ -584,7 +578,6 @@ const mr: MinkStrings = {
   thanks:
     "धन्यवाद. तुमचे रेटिंग, तुमचा प्रश्न आणि हे उत्तर मार्गदर्शक सुधारण्यासाठी StoreMink कडे पाठवले गेले.",
   emailSupport: "सपोर्टला ईमेल करा",
-  disclaimer: "उत्तरे चुकीची असू शकतात, म्हणून मार्गदर्शक नक्की पाहा.",
   talkStatus: {
     starting: "मायक्रोफोन सुरू होत आहे…",
     listening: "ऐकत आहे… तुमचा प्रश्न विचारा",
@@ -671,7 +664,6 @@ const gu: MinkStrings = {
   thanks:
     "આભાર. માર્ગદર્શિકાઓ સુધારવા માટે તમારું રેટિંગ, તમારો પ્રશ્ન અને આ જવાબ StoreMink ને મોકલવામાં આવ્યા.",
   emailSupport: "સપોર્ટને ઇમેઇલ કરો",
-  disclaimer: "જવાબો ખોટા હોઈ શકે છે, તેથી માર્ગદર્શિકા જરૂર તપાસો.",
   talkStatus: {
     starting: "માઇક્રોફોન શરૂ થઈ રહ્યું છે…",
     listening: "સાંભળી રહ્યું છે… તમારો પ્રશ્ન પૂછો",
@@ -758,7 +750,6 @@ const kn: MinkStrings = {
   thanks:
     "ಧನ್ಯವಾದಗಳು. ಮಾರ್ಗದರ್ಶಿಗಳನ್ನು ಸುಧಾರಿಸಲು ನಿಮ್ಮ ರೇಟಿಂಗ್, ನಿಮ್ಮ ಪ್ರಶ್ನೆ ಮತ್ತು ಈ ಉತ್ತರವನ್ನು StoreMink ಗೆ ಕಳುಹಿಸಲಾಗಿದೆ.",
   emailSupport: "ಸಪೋರ್ಟ್‌ಗೆ ಇಮೇಲ್ ಮಾಡಿ",
-  disclaimer: "ಉತ್ತರಗಳು ತಪ್ಪಾಗಿರಬಹುದು, ಆದ್ದರಿಂದ ಮಾರ್ಗದರ್ಶಿಯನ್ನು ಪರಿಶೀಲಿಸಿ.",
   talkStatus: {
     starting: "ಮೈಕ್ರೋಫೋನ್ ಆರಂಭವಾಗುತ್ತಿದೆ…",
     listening: "ಕೇಳಲಾಗುತ್ತಿದೆ… ನಿಮ್ಮ ಪ್ರಶ್ನೆ ಕೇಳಿ",
@@ -846,7 +837,6 @@ const pa: MinkStrings = {
   thanks:
     "ਧੰਨਵਾਦ। ਗਾਈਡਾਂ ਬਿਹਤਰ ਬਣਾਉਣ ਲਈ ਤੁਹਾਡੀ ਰੇਟਿੰਗ, ਤੁਹਾਡਾ ਸਵਾਲ ਅਤੇ ਇਹ ਜਵਾਬ StoreMink ਨੂੰ ਭੇਜੇ ਗਏ।",
   emailSupport: "ਸਪੋਰਟ ਨੂੰ ਈਮੇਲ ਕਰੋ",
-  disclaimer: "ਜਵਾਬ ਗਲਤ ਹੋ ਸਕਦੇ ਹਨ, ਇਸ ਲਈ ਗਾਈਡ ਜ਼ਰੂਰ ਦੇਖੋ।",
   talkStatus: {
     starting: "ਮਾਈਕ੍ਰੋਫ਼ੋਨ ਸ਼ੁਰੂ ਹੋ ਰਿਹਾ ਹੈ…",
     listening: "ਸੁਣਿਆ ਜਾ ਰਿਹਾ ਹੈ… ਆਪਣਾ ਸਵਾਲ ਪੁੱਛੋ",
