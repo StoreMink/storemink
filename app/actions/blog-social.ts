@@ -8,6 +8,11 @@ import { blogComments, blogLikes, users } from "@/drizzle/schema";
 import { getCurrentStoreId } from "@/lib/store/resolve";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
 import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
+import {
+  authorBlockRefusal,
+  authorBlockSentence,
+  liveAuthorBlock,
+} from "@/lib/moderation/author-blocks";
 import { revalidatePath } from "next/cache";
 import {
   BLOG_REACTIONS,
@@ -135,6 +140,17 @@ export async function submitBlogComment(form: {
   if (!user) return { error: "Please sign in to comment." };
 
   const storeId = await getCurrentStoreId();
+  // A shopper whose comment StoreMink removed can't post another on this post
+  // (takedown design 7.4). The database guard refuses the write too; this
+  // says so first, in the shopper's words.
+  const block = await liveAuthorBlock({
+    kind: "blog_comment",
+    storeId,
+    authorUserId: user.id,
+    parentItemId: form.blog_id,
+  });
+  if (block) return { error: authorBlockSentence("blog_comment") };
+
   try {
     const result = await withUser(
       { uid: user.id, email: user.email },
@@ -176,6 +192,9 @@ export async function submitBlogComment(form: {
       payload: { author: result.authorName, url: `/blogs/${form.slug}` },
     });
   } catch (err) {
+    // A block that landed after the check above: the guard's refusal.
+    const refusal = authorBlockRefusal(err);
+    if (refusal) return { error: refusal };
     console.error("submitBlogComment error:", err);
     return {
       error: err instanceof Error ? err.message : "Failed to post comment.",

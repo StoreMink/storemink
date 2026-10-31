@@ -158,3 +158,58 @@ describe("★★ Mink tool effects (the stop handshake)", () => {
     expect(effectOf("request_more_tools")).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ★★ AN ATTACHED PICTURE REACHES THE STORE ONLY THROUGH THESE ARGUMENTS
+// (storage build, 2026-10-28; design 5.7). The registry copies a chat
+// attachment into the Media Library only for a tool that names the argument
+// it may appear in, and refuses an attachment address anywhere else: a
+// customer message, a coupon email, a social post or a workflow must never
+// turn a private screenshot into a public link. So the nine are pinned by
+// name with their exact arguments, and a new tool that sets `attachmentArgs`
+// fails this file until somebody decides. `generate_storefront_image` reads
+// its references as private bytes instead, and must be the only tool that
+// does. A blog's Markdown body is deliberately NOT one of the arguments: it
+// renders no image, so an address there could only be published as text.
+// ---------------------------------------------------------------------------
+
+const ATTACHMENT_ARGS: Record<string, readonly string[]> = {
+  propose_blog_draft: ["cover_image_url"],
+  propose_category_create: ["image_url"],
+  propose_category_update: ["image_url"],
+  propose_product_create: ["image_url"],
+  propose_product_images: ["image_urls"],
+  propose_storefront_layout: ["sections"],
+  propose_website_builder_change: ["changes_json"],
+  refine_storefront_revamp: ["products"],
+  start_storefront_revamp: ["products"],
+};
+
+describe("★★ Mink tools that may take an attached picture", () => {
+  it("★★ exactly these nine carry attachmentArgs, with exactly these arguments", () => {
+    const carrying = names
+      .filter(
+        (name) => minkReadToolRegistry.attachmentArgsOf(name) !== undefined,
+      )
+      .sort();
+    expect(carrying).toEqual(Object.keys(ATTACHMENT_ARGS).sort());
+    for (const [name, args] of Object.entries(ATTACHMENT_ARGS)) {
+      expect(minkReadToolRegistry.attachmentArgsOf(name), name).toEqual(args);
+    }
+  });
+
+  it("★ every one of them writes or commits, never reads", () => {
+    for (const name of Object.keys(ATTACHMENT_ARGS)) {
+      expect(["write", "commit"], name).toContain(effectOf(name));
+    }
+  });
+
+  it("★★ only generate_storefront_image reads attachments itself, and it copies none", () => {
+    expect(
+      names.filter((name) => minkReadToolRegistry.readsAttachmentsItself(name)),
+    ).toEqual(["generate_storefront_image"]);
+    expect(
+      minkReadToolRegistry.attachmentArgsOf("generate_storefront_image"),
+    ).toBeUndefined();
+  });
+});

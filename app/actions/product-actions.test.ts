@@ -12,7 +12,13 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("next/server", () => ({ after: vi.fn() }));
 vi.mock("@/lib/seo/store-indexing", () => ({
-  notifyStoreContentPublished: vi.fn(),
+  notifyStoreContentPublished: vi.fn(async () => undefined),
+}));
+// The told-only blocked reader the merchant screens use. The discovery ping no
+// longer asks it (the row's own flag decides); a test names told blocks here
+// to show the ping ignores this set either way.
+vi.mock("@/lib/moderation/merchant", () => ({
+  blockedItemIds: vi.fn(async () => new Map<string, string>()),
 }));
 vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerUserId: vi.fn(),
@@ -104,7 +110,9 @@ import {
   callGemini,
 } from "@/lib/ai/gemini";
 import { after } from "next/server";
-import { productVariants } from "@/drizzle/schema";
+import { productVariants, products } from "@/drizzle/schema";
+import { notifyStoreContentPublished } from "@/lib/seo/store-indexing";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 
 const validForm = {
   name: "Almonds",
@@ -584,6 +592,220 @@ describe("product-actions", () => {
       dbHolder.current = makeDbMock({ returning: [] });
       const result = await toggleProductPublish("p1", true);
       expect(result.error).toMatch(/not found/i);
+    });
+  });
+
+  // ★ A product StoreMink blocked stays off the storefront whatever its
+  //   status, so its URL answers 404: publishing it must not send that URL to
+  //   IndexNow or Google (takedown fix pass). One rule with the blog
+  //   publishes: the row's own moderation_blocked_at decides, returned by the
+  //   publishing UPDATE itself, so a block the store was told about and one
+  //   kept from it (D21) are both left out, and the told-only reader is never
+  //   asked.
+  describe("the discovery ping leaves blocked products out", () => {
+    const STORE = "a0000000-0000-4000-8000-000000000001";
+    const BLOCKED_AT = "2026-10-29T09:00:00.000Z";
+    let pending: Promise<unknown>[];
+
+    beforeEach(() => {
+      pending = [];
+      vi.mocked(after).mockImplementation(((task: () => unknown) => {
+        pending.push(Promise.resolve(task()));
+      }) as typeof after);
+    });
+
+    async function settled() {
+      await Promise.all(pending);
+    }
+
+    // The told-only set the merchant screens read: a told block is in it, a
+    // block kept from the store (D21) is not. The ping must not depend on it.
+    function toldBlocks(...ids: string[]) {
+      vi.mocked(blockedItemIds).mockResolvedValue(
+        new Map(ids.map((id, i) => [id, `block-${i}`])),
+      );
+    }
+
+    // What each UPDATE ... RETURNING asked for, by table. The db mock returns
+    // the rows a test gives it whatever the projection, so without this a
+    // RETURNING that stopped carrying the flag would pass every other test.
+    function returningProjections() {
+      const seen: { table: unknown; projection: any }[] = [];
+      const db = dbHolder.current.db;
+      const update = db.update;
+      db.update = vi.fn((table: unknown) => {
+        const u = update(table);
+        const set = u.set;
+        u.set = vi.fn((values: unknown) => {
+          const s = set(values);
+          const where = s.where;
+          s.where = vi.fn((condition: unknown) => {
+            const w = where(condition);
+            const returning = w.returning;
+            w.returning = vi.fn((projection: any) => {
+              seen.push({ table, projection });
+              return returning(projection);
+            });
+            return w;
+          });
+          return s;
+        });
+        return u;
+      });
+      return seen;
+    }
+
+    function productProjection(seen: { table: unknown; projection: any }[]) {
+      return seen.find((entry) => entry.table === products)?.projection;
+    }
+
+    it("toggleProductPublish pings an unblocked product's page", async () => {
+      dbHolder.current = makeDbMock({
+        returning: [{ slug: "almonds", blocked_at: null }],
+      });
+      await toggleProductPublish("p1", true);
+      await settled();
+      expect(notifyStoreContentPublished).toHaveBeenCalledWith({
+        storeId: STORE,
+        paths: ["/shop/almonds", "/shop", "/"],
+      });
+    });
+
+    it("toggleProductPublish reads the block flag from its own UPDATE", async () => {
+      dbHolder.current = makeDbMock({
+        returning: [{ slug: "almonds", blocked_at: null }],
+      });
+      const seen = returningProjections();
+      await toggleProductPublish("p1", true);
+      expect(productProjection(seen)).toMatchObject({
+        slug: products.slug,
+        blocked_at: products.moderationBlockedAt,
+      });
+    });
+
+    it("toggleProductPublish sends nothing for a told block, and still publishes", async () => {
+      toldBlocks("p1");
+      dbHolder.current = makeDbMock({
+        returning: [{ slug: "almonds", blocked_at: BLOCKED_AT }],
+      });
+      const result = await toggleProductPublish("p1", true);
+      await settled();
+      // The publish itself still succeeds (design 3.1 allows the change).
+      expect(result.success).toBe(true);
+      expect(dbHolder.current.calls.set[0].status).toBe("published");
+      expect(after).not.toHaveBeenCalled();
+      expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+    });
+
+    it("toggleProductPublish sends nothing for a block kept from the store (D21)", async () => {
+      // The told-only set does not name p1; the row's own flag still does.
+      toldBlocks();
+      dbHolder.current = makeDbMock({
+        returning: [{ slug: "almonds", blocked_at: BLOCKED_AT }],
+      });
+      const result = await toggleProductPublish("p1", true);
+      await settled();
+      expect(result.success).toBe(true);
+      expect(after).not.toHaveBeenCalled();
+      expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+      expect(blockedItemIds).not.toHaveBeenCalled();
+    });
+
+    it("an unpublish pings nothing", async () => {
+      dbHolder.current = makeDbMock({
+        returning: [{ slug: "almonds", blocked_at: null }],
+      });
+      await toggleProductPublish("p1", false);
+      await settled();
+      expect(after).not.toHaveBeenCalled();
+      expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+    });
+
+    it("bulkToggleProductPublish leaves told and untold blocks out and pings the rest", async () => {
+      toldBlocks("p2");
+      dbHolder.current = makeDbMock({
+        returning: [
+          { slug: "almonds", blocked_at: null },
+          { slug: "cashews", blocked_at: BLOCKED_AT },
+          { slug: "walnuts", blocked_at: BLOCKED_AT },
+        ],
+      });
+      const seen = returningProjections();
+      await bulkToggleProductPublish(["p1", "p2", "p3"], true);
+      await settled();
+      expect(productProjection(seen)).toMatchObject({
+        slug: products.slug,
+        blocked_at: products.moderationBlockedAt,
+      });
+      expect(notifyStoreContentPublished).toHaveBeenCalledTimes(1);
+      expect(notifyStoreContentPublished).toHaveBeenCalledWith({
+        storeId: STORE,
+        paths: ["/shop/almonds", "/shop", "/"],
+      });
+      expect(blockedItemIds).not.toHaveBeenCalled();
+    });
+
+    it("bulkToggleProductPublish sends nothing when every product is blocked", async () => {
+      toldBlocks("p1");
+      dbHolder.current = makeDbMock({
+        returning: [
+          { slug: "almonds", blocked_at: BLOCKED_AT },
+          { slug: "cashews", blocked_at: BLOCKED_AT },
+        ],
+      });
+      const result = await bulkToggleProductPublish(["p1", "p2"], true);
+      await settled();
+      expect(result.success).toBe(true);
+      expect(after).not.toHaveBeenCalled();
+      expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+    });
+
+    it("an editor save of a published product skips a told or untold block and pings an open one", async () => {
+      const editorDb = (blockedAt: string | null) =>
+        makeDbMock({
+          returning: [{ id: "p1", blocked_at: blockedAt }],
+          selectQueue: [[], [{ published_at: null }], [], [], [], [], []],
+        });
+
+      // A told block.
+      toldBlocks("p1");
+      dbHolder.current = editorDb(BLOCKED_AT);
+      const seen = returningProjections();
+      const saved = await updateProduct("p1", {
+        ...validForm,
+        status: "published",
+      });
+      await settled();
+      expect(saved.success).toBe(true);
+      expect(productProjection(seen)).toMatchObject({
+        blocked_at: products.moderationBlockedAt,
+      });
+      expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+
+      // A block kept from the store (D21).
+      toldBlocks();
+      dbHolder.current = editorDb(BLOCKED_AT);
+      await updateProduct("p1", { ...validForm, status: "published" });
+      await settled();
+      expect(notifyStoreContentPublished).not.toHaveBeenCalled();
+      expect(blockedItemIds).not.toHaveBeenCalled();
+
+      // No block.
+      dbHolder.current = editorDb(null);
+      await updateProduct("p1", { ...validForm, status: "published" });
+      await settled();
+      expect(notifyStoreContentPublished).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(notifyStoreContentPublished).mock.calls[0][0]).toEqual({
+        storeId: STORE,
+        paths: expect.arrayContaining(["/shop", "/"]),
+      });
+    });
+
+    it("a product created as published is pinged (a new product carries no block)", async () => {
+      await createProduct({ ...validForm, status: "published" });
+      await settled();
+      expect(blockedItemIds).not.toHaveBeenCalled();
+      expect(notifyStoreContentPublished).toHaveBeenCalledTimes(1);
     });
   });
 

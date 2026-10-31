@@ -5,11 +5,35 @@ import { gcsConfigured, gcsUploadObject } from "@/lib/storage/gcs";
 import { processImageUpload } from "@/lib/storage/process-image";
 import { logError } from "@/lib/observability/logger";
 import { storeUploadPath } from "@/lib/storage/paths";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { resolveUploadOwner } from "@/lib/storage/upload-owner";
+import { uploadRefusal } from "@/lib/moderation/copy";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 
 // Run on the Node runtime: uploads are optimized with sharp and stored to
 // Google Cloud Storage server-side.
 export const runtime = "nodejs";
+
+/** Where an operator's upload on the platform host goes. */
+const PLATFORM_UPLOAD_ROOT = "platform/uploads/";
+
+/**
+ * An operator's upload on the platform host: `platform/uploads/...` is not a
+ * store object, so it is the one write here that does not go through
+ * `writeStoreObject` (which refuses any path outside `stores/` and
+ * `theme-releases/`, takedown plan A8). Nothing a store shows lives under it,
+ * and every store's upload goes through the re-upload guard below.
+ */
+async function writePlatformUpload(
+  path: string,
+  bytes: Uint8Array,
+  contentType: string,
+): Promise<string> {
+  if (!path.startsWith(PLATFORM_UPLOAD_ROOT)) {
+    throw new Error("upload: a platform upload must stay under platform/.");
+  }
+  return gcsUploadObject(path, bytes, contentType);
+}
 
 export async function POST(request: Request) {
   // Require an authenticated user (admins for dashboard, logged-in customers
@@ -83,9 +107,31 @@ export async function POST(request: Request) {
     );
   }
   try {
-    const url = await gcsUploadObject(filePath, bytes, contentType);
+    // A store's upload passes the re-upload guard: bytes StoreMink has
+    // blocked are refused (takedown design 5.7, 7.4).
+    const url =
+      owner.kind === "store"
+        ? await writeStoreObject(filePath, bytes, contentType, {
+            storeId: owner.storeId,
+            via: "upload_route",
+            actor: user.id,
+          })
+        : await writePlatformUpload(filePath, bytes, contentType);
     return NextResponse.json({ url });
   } catch (err) {
+    if (isBlockedUploadError(err)) {
+      return NextResponse.json(
+        {
+          // Only the store's own people can open Settings, Notices from
+          // StoreMink, so a shopper gets the sentence that names no page.
+          error: uploadRefusal({
+            told: err.told && owner.kind === "store" && owner.staff,
+            kindWord: err.kindWord,
+          }),
+        },
+        { status: 409 },
+      );
+    }
     logError("upload: GCS upload failed", err, { path: filePath });
     return NextResponse.json(
       { error: "Upload failed. Please try again." },

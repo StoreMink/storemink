@@ -70,9 +70,12 @@ vi.mock("@/lib/db/client", () => {
     ),
   };
 });
+// ★ The picture goes through the store's one writer (takedown design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: h.upload,
+}));
 vi.mock("@/lib/storage/gcs", () => ({
   gcsConfigured: true,
-  gcsUploadObject: h.upload,
   gcsDeletePaths: vi.fn(async (paths: string[]) => {
     h.deleted.push(...paths);
     return [];
@@ -115,6 +118,7 @@ import {
   TOOL_COMMIT_GRACE_MS,
 } from "./registry";
 import { MEDIA_TOOL_TIMEOUT_MS, minkMediaTools } from "./media-tools";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
 import type { MinkActorContext } from "../types";
 
 const STORE = "a0000000-0000-4000-8000-000000000001";
@@ -282,6 +286,36 @@ describe("★★ a chat image through the tool (B3, B6, B10)", () => {
     expect(h.inserts).toEqual([]);
     expect(h.draft).not.toHaveBeenCalled();
     // The request had been sent: it may have been billed.
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  // ★★ A picture whose bytes StoreMink has blocked: the model is told the
+  //    design's sentence, nothing is saved or charged, the draw stays spent.
+  it("★★ a blocked picture: the chat hears StoreMink's sentence, nothing is saved or charged", async () => {
+    h.generateContent.mockResolvedValueOnce(imageResponse());
+    h.upload.mockRejectedValueOnce(
+      new BlockedUploadError({
+        told: true,
+        kindWord: "image",
+        blockId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    const response = await registry().execute(actor, call);
+    expect(response.response.error).toMatchObject({
+      code: "tool_failed",
+      message:
+        "StoreMink has blocked this image, so it can't be uploaded again. See Settings, Notices from StoreMink.",
+    });
+    expect(h.upload).toHaveBeenCalledWith(
+      expect.stringMatching(new RegExp(`^stores/${STORE}/mink-generated/`)),
+      expect.anything(),
+      "image/jpeg",
+      expect.objectContaining({ storeId: STORE, via: "mink_media_image" }),
+    );
+    expect(h.inserts).toEqual([]);
+    expect(h.deleted).toEqual([]);
+    expect(h.draft).not.toHaveBeenCalled();
+    // The picture came back, so it may have been billed: kept spent.
     expect(h.release).not.toHaveBeenCalled();
   });
 

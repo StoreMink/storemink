@@ -2,6 +2,7 @@ import { asc, eq, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { categories } from "@/drizzle/schema";
 import { requireSectionAccess, getActingStoreId } from "../lib/access";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 import { CategoriesManagementView } from "./categories-management-view";
 
 export interface Category {
@@ -82,5 +83,24 @@ export default async function CategoriesPage() {
     c.product_count = counts.get(c.id) ?? 0;
   }
 
-  return <CategoriesManagementView categories={list} canManage={canManage} />;
+  // The collections StoreMink blocked and told the store about (takedown
+  // design 7.3), each with the notice "See why" opens. Read once, in its own
+  // scope after the list's scope has closed (never inside another scope's
+  // callback); it never throws, and a failed read marks nothing. A block kept
+  // from the store is not in it (D21).
+  const blockedCollections =
+    list.length > 0
+      ? await blockedItemIds(storeId, "collection").catch(
+          () => new Map<string, string>(),
+        )
+      : new Map<string, string>();
+
+  return (
+    <CategoriesManagementView
+      categories={list}
+      canManage={canManage}
+      blockedByStoreMink={Object.fromEntries(blockedCollections)}
+      canSeeNotices={access.can("settings", "view")}
+    />
+  );
 }

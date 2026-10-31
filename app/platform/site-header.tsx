@@ -1,6 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronDown } from "lucide-react";
+import { MinkFace } from "@/components/mink/mink-face";
 import { POS_URL, THEMES_URL } from "@/lib/site";
 import { BrandMark } from "./brand-mark";
 import { HomepageMobileNav } from "./homepage-mobile-nav";
@@ -35,7 +36,8 @@ export function SiteHeader() {
   };
 
   // The rail's two tiles are a picture of each product rather than an icon:
-  // Mink as the two lines of a chat, POS as a drawing of a sale in progress.
+  // Mink as the two lines of a chat (its reply wearing the Mink face), POS as
+  // a drawing of a sale in progress.
   // ★ DRAWN, NOT PHOTOGRAPHED, until a new product picture exists (owner,
   // 26 Oct 2026): the multidevice picture shows "Register" on its screens.
   const builtIn = (
@@ -45,7 +47,9 @@ export function SiteHeader() {
         <span>
           <span className="smh-mega-tile-chat" aria-hidden="true">
             <span>What sold best last week?</span>
-            <span>Here is last week by channel and shop.</span>
+            <span>
+              <MinkFace size={16} /> Here is last week by channel and shop.
+            </span>
           </span>
         </span>
         <b>Mink AI</b>

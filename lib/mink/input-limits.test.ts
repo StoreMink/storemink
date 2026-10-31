@@ -3,7 +3,11 @@ const h = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("@/lib/db/client", () => ({
   withService: (fn: (db: unknown) => unknown) => fn({ execute: h.execute }),
 }));
-import { reserveMinkInput, reserveMinkVoice } from "./input-limits";
+import {
+  reserveHelpVoice,
+  reserveMinkInput,
+  reserveMinkVoice,
+} from "./input-limits";
 import { MINK_INPUT_FILES } from "./input-policy";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { MinkActorContext } from "./types";
@@ -84,5 +88,37 @@ describe("voice budget", () => {
     expect(String((refused as Error).message)).not.toMatch(/[\u2014\u2013]/);
     h.execute.mockRejectedValue(new Error("db unavailable"));
     await expect(reserveMinkVoice(actor, "request")).rejects.toThrow();
+  });
+});
+
+describe("public Help Centre voice budget", () => {
+  const params = () =>
+    h.execute.mock.calls.map(
+      ([query]) => new PgDialect().sqlToQuery(query).params,
+    );
+
+  it("keys every bucket by the visitor's address, never a store", async () => {
+    await reserveHelpVoice("203.0.113.9", "request");
+    expect(params()).toEqual([
+      ["help-voice-visitor:203.0.113.9", 8, 60],
+      ["help-voice-visitor-hour:203.0.113.9", 60, 3600],
+      ["help-voice-global", 1000, 3600],
+      ["help-voice-replay:203.0.113.9:request", 1, 3600],
+    ]);
+    expect(
+      params().some(([key]) => /^mink-(voice|input)-/.test(String(key))),
+    ).toBe(false);
+  });
+
+  it("refuses in a visitor's words, and fails closed", async () => {
+    h.execute.mockResolvedValue({ rows: [{ allowed: false }] });
+    const refused = await reserveHelpVoice("203.0.113.9", "request").catch(
+      (error: unknown) => error,
+    );
+    expect(refused).toMatchObject({ code: "voice_rate_limit", status: 429 });
+    expect(String((refused as Error).message)).toMatch(/type your question/);
+    expect(String((refused as Error).message)).not.toMatch(/[\u2014\u2013]/);
+    h.execute.mockRejectedValue(new Error("db unavailable"));
+    await expect(reserveHelpVoice("203.0.113.9", "request")).rejects.toThrow();
   });
 });

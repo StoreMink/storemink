@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
 // The refusals that must happen before the database is touched, and the
@@ -8,11 +8,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // publication-postgres.test.ts (THEME_STUDIO_RECOVERY_DB_TEST=1).
 // ---------------------------------------------------------------------------
 
-const { evidence, recheck, config } = vi.hoisted(() => ({
-  evidence: vi.fn(),
-  recheck: vi.fn(),
-  config: { autoQaEnabled: true },
-}));
+const { evidence, recheck, config, storage, writeStoreObject } = vi.hoisted(
+  () => ({
+    evidence: vi.fn(),
+    recheck: vi.fn(),
+    config: { autoQaEnabled: true },
+    /** Whether media storage reads as configured (the default deps need it). */
+    storage: { configured: false },
+    writeStoreObject: vi.fn(),
+  }),
+);
 
 vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 vi.mock("next/cache", () => ({
@@ -21,11 +26,19 @@ vi.mock("next/cache", () => ({
   unstable_cache: (fn: unknown) => fn,
 }));
 vi.mock("@/lib/storage/gcs", () => ({
-  gcsConfigured: false,
+  get gcsConfigured() {
+    return storage.configured;
+  },
   gcsPathFromUrl: () => null,
-  gcsPublicUrl: (path: string) => `https://storage.googleapis.com/b/${path}`,
-  gcsUploadObject: vi.fn(),
+  gcsPublicUrl: (path: string) =>
+    `https://storage.googleapis.com/media-bucket/${path}`,
+  gcsUploadObject: vi.fn(async () => {
+    throw new Error("publication writes through writeStoreObject");
+  }),
 }));
+// Release images go through the re-upload guard's one writer (takedown A8);
+// every test here says what it answers.
+vi.mock("@/lib/storage/store-objects", () => ({ writeStoreObject }));
 vi.mock("./acceptance", async (original) => ({
   ...(await original<typeof import("./acceptance")>()),
   publishEvidenceWithDb: evidence,
@@ -67,6 +80,8 @@ import {
   type PublicationDeps,
 } from "./publication";
 import { recordThemeStudioEvent, ThemeStudioError } from "./repository";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
+import { hex } from "./_test-helpers";
 
 const actor = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -576,6 +591,108 @@ describe("Publish on today's evidence (owner decision 4)", () => {
       expect(message).toMatch(/3 to 5 minutes/);
       expect(message).not.toMatch(/[\u2013\u2014]|credit/i);
     }
+  });
+});
+
+describe("release images through the re-upload guard (takedown D4, A8)", () => {
+  const BLOCK = "b0000000-0000-4000-8000-000000000001";
+
+  /** The stored WebP bytes of every image the package names, whose digest
+   * is the one the package declares. */
+  function storedImages(pkg: ThemePackageV2): Row[] {
+    return pkg.assets.map((asset) => {
+      const bytes = new Uint8Array(Buffer.from(`image-${asset.id}`));
+      return {
+        sha256: hex(`image-${asset.id}`),
+        mediaType: "image/webp",
+        bytes,
+      };
+    });
+  }
+
+  function publishableDb() {
+    const pkg = operatorImagePackage();
+    return {
+      pkg,
+      ...scriptedDb(
+        new Map<unknown, Row[]>([
+          [themeStudioProjects, [project()]],
+          [themeStudioVersions, [version(pkg)]],
+          [themeStudioAssets, storedImages(pkg)],
+        ]),
+      ),
+    };
+  }
+
+  beforeEach(() => {
+    vi.mocked(recordThemeStudioEvent).mockClear();
+    evidence.mockResolvedValue(passedEvidence());
+    config.autoQaEnabled = true;
+    storage.configured = true;
+  });
+
+  afterEach(() => {
+    storage.configured = false;
+  });
+
+  it("writes every release image with no store and the one-minute cache", async () => {
+    const { pkg } = publishableDb();
+    writeStoreObject.mockRejectedValue(new Error("storage unavailable"));
+    const result = await publishThemeStudioProject(actor, {
+      projectId,
+      expectedRevision: 7,
+    });
+    expect(writeStoreObject).toHaveBeenCalledTimes(pkg.assets.length);
+    for (const [path, bytes, type, options] of writeStoreObject.mock.calls) {
+      expect(path).toMatch(
+        /^theme-releases\/[a-z0-9-]+\/1\.0\.0\/[a-z0-9-]+-[a-f0-9]{16}\.webp$/,
+      );
+      expect(bytes).toBeInstanceOf(Uint8Array);
+      expect(type).toBe("image/webp");
+      expect(options).toEqual({
+        storeId: null,
+        cacheControl: "public, max-age=60",
+        via: "theme_studio_publication",
+        actor: "owner@storemink.com",
+      });
+    }
+    // A plain storage failure keeps its own sentence.
+    expect(result).toMatchObject({ ok: false, kind: "failed" });
+    if (result.kind !== "failed") throw new Error("expected a failure");
+    expect(result.problems).toEqual(
+      pkg.assets.map((a) => `Image ${a.id} could not be copied to storage.`),
+    );
+  });
+
+  it("names a blocked image to the operator, and stores no release", async () => {
+    const { pkg, inserts } = publishableDb();
+    const blocked = pkg.assets[0].id;
+    writeStoreObject.mockImplementation(async (path: string) => {
+      if (path.includes(`/${blocked}-`)) {
+        throw new BlockedUploadError({
+          told: false,
+          kindWord: "image",
+          blockId: BLOCK,
+        });
+      }
+      return `https://storage.googleapis.com/media-bucket/${path}`;
+    });
+    const result = await publishThemeStudioProject(actor, {
+      projectId,
+      expectedRevision: 7,
+    });
+    expect(result).toMatchObject({ ok: false, kind: "failed" });
+    if (result.kind !== "failed") throw new Error("expected a failure");
+    expect(result.problems).toEqual([
+      `Image ${blocked} is a file StoreMink has blocked (block ${BLOCK}), so it can't be published. Replace the image, then publish again.`,
+    ]);
+    // The other images were still written, and nothing points at a release.
+    expect(writeStoreObject).toHaveBeenCalledTimes(pkg.assets.length);
+    expect(inserts.some((i) => i.table === themeReleases)).toBe(false);
+    expect(events().map((e) => e.eventType)).toEqual([
+      "publication_started",
+      "publication_failed",
+    ]);
   });
 });
 

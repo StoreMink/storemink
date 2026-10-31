@@ -35,6 +35,7 @@ import {
 } from "@/lib/homepage/section-types";
 import type { PageSectionItem } from "@/lib/sections/registry";
 import type { PageListItem } from "@/app/actions/page-actions";
+import { ITEM } from "@/lib/moderation/copy";
 
 // Left panel: page switcher + Header (theme) + draggable section outline +
 // Footer (theme) + Add Section — the Unizap-style structure column.
@@ -55,6 +56,7 @@ export function OutlinePanel({
   chromeTarget,
   onSelectChrome,
   loading,
+  blockedByStoreMink,
 }: {
   pages: PageListItem[];
   selectedPageId: string | null;
@@ -77,6 +79,11 @@ export function OutlinePanel({
   onSelectChrome: (target: "header" | "footer" | "brand") => void;
   /** A page is being opened. Distinct from "no page chosen". */
   loading: boolean;
+  /**
+   * Pages StoreMink blocked and told the store about (page id to block id).
+   * Never `blocked`, which is the autosave status (takedown design 7.3).
+   */
+  blockedByStoreMink?: Record<string, string>;
 }) {
   const [switcherOpen, setSwitcherOpen] = useState(false);
 
@@ -123,6 +130,7 @@ export function OutlinePanel({
           <div className="sm-builder-rail-list">
             {sorted.map((p) => {
               const isHome = p.slug === "";
+              const blocked = Boolean(blockedByStoreMink?.[p.id]);
               return (
                 <button
                   key={p.id}
@@ -141,10 +149,23 @@ export function OutlinePanel({
                     <span className="sm-builder-pageitem-slug">
                       {isHome ? "Homepage" : `/${p.slug}`}
                     </span>
+                    {blocked ? (
+                      // The words carry the state; the red dot only repeats
+                      // it. Second ink, so it reads on the active row's tint.
+                      <span className="text-[11px] font-semibold text-[var(--dash-text-2,#5b6472)]">
+                        {ITEM.blocked}
+                      </span>
+                    ) : null}
                   </span>
                   <span
                     className={`sm-builder-dot ${p.status === "published" ? "is-live" : ""}`}
-                    title={p.status}
+                    // builder.css is unlayered, so the red goes inline.
+                    style={
+                      blocked
+                        ? { background: "var(--dash-red, #dc2626)" }
+                        : undefined
+                    }
+                    title={blocked ? ITEM.blocked : p.status}
                   />
                 </button>
               );

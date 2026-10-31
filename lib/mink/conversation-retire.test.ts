@@ -51,6 +51,8 @@ function shapes(statements: { text: string }[]): string[] {
     if (text.startsWith("select d.id")) return "lock drafts";
     if (text.startsWith("select v.id")) return "lock redesigns";
     if (text.startsWith("update public.mink_revamps")) return "strip";
+    if (text.startsWith("update public.mink_attachments"))
+      return "mark pictures";
     if (text.includes(" as holds")) return "records check";
     if (text.startsWith("SAVEPOINT")) return "savepoint";
     if (text.startsWith("RELEASE SAVEPOINT")) return "release";
@@ -107,6 +109,7 @@ describe("retireMinkConversation", () => {
       "lock drafts",
       "lock redesigns",
       "strip",
+      "mark pictures",
       "records check",
       "savepoint",
       "delete chat",
@@ -124,6 +127,7 @@ describe("retireMinkConversation", () => {
       "lock drafts",
       "lock redesigns",
       "strip",
+      "mark pictures",
       "records check",
       ...REDUCE,
     ]);
@@ -143,6 +147,7 @@ describe("retireMinkConversation", () => {
       "lock drafts",
       "lock redesigns",
       "strip",
+      "mark pictures",
       "records check",
       "savepoint",
       "delete chat",
@@ -294,6 +299,29 @@ describe("retireMinkConversation", () => {
         expect(statement.params, statement.text).toContain(STORE);
         expect(statement.params, statement.text).toContain(CHAT);
       }
+    }
+  });
+
+  it("★ marks the chat's attached pictures for the purge on both paths, before any delete could unlink them", async () => {
+    for (const holds of [false, true]) {
+      const { db, statements } = recorder({ holds });
+      await retireMinkConversation(db, {
+        storeId: STORE,
+        conversationId: CHAT,
+      });
+      const order = shapes(statements);
+      const mark = order.indexOf("mark pictures");
+      expect(mark, `holds ${holds}`).toBe(order.indexOf("strip") + 1);
+      expect(mark).toBeLessThan(order.indexOf("records check"));
+      if (!holds) expect(mark).toBeLessThan(order.indexOf("delete chat"));
+      expect(order.filter((shape) => shape === "mark pictures")).toHaveLength(
+        1,
+      );
+      const statement = statementOf(statements, "mark pictures");
+      expect(statement.text).toBe(
+        "update public.mink_attachments set discard_requested_at = now() where store_id = $1 and conversation_id = $2 and discard_requested_at is null",
+      );
+      expect(statement.params).toEqual([STORE, CHAT]);
     }
   });
 });

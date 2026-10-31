@@ -4,9 +4,13 @@ import {
   AlertTriangle,
   ArrowRight,
   CircleDollarSign,
+  FileWarning,
+  Flag,
   Globe,
+  Lock,
   MailWarning,
   MessageSquareWarning,
+  MessagesSquare,
   Radar,
   Rocket,
   ShieldAlert,
@@ -104,7 +108,9 @@ function Queue({
         >
           {label}
         </div>
-        <div className="truncate text-xs text-slate-400">{hint}</div>
+        {/* Wraps rather than truncates: the takedown hints are full sentences
+            and a phone shows one card per row. */}
+        <div className="text-xs text-slate-400">{hint}</div>
       </div>
       <span
         className={`text-lg font-semibold tabular-nums ${
@@ -365,6 +371,36 @@ export default async function PlatformDashboard() {
           </span>
         </header>
         <div className="grid gap-2.5 px-5 py-5 sm:grid-cols-2 xl:grid-cols-3">
+          {/* The takedown queues come first (design 6.1): a court order or an
+              intimate image can leave hours, not days. */}
+          <Queue
+            label="Complaints due"
+            count={insights.attention.complaintsDue}
+            href="/dashboard/complaints?view=due"
+            hint="Next deadline within 6 hours or passed"
+            icon={Flag}
+          />
+          <Queue
+            label="Store replies"
+            count={insights.attention.storeReplies}
+            href="/dashboard/complaints?view=replies"
+            hint="Stores waiting for an answer about a block"
+            icon={MessagesSquare}
+          />
+          <Queue
+            label="Files to finish"
+            count={insights.attention.filesToFinish}
+            href="/dashboard/complaints?view=files"
+            hint="A blocked file is still in storage, or must be removed by hand"
+            icon={FileWarning}
+          />
+          <Queue
+            label="Holds to review"
+            count={insights.attention.holdsToReview}
+            href="/dashboard/complaints?view=holds"
+            hint="A store hold has reached its review date"
+            icon={Lock}
+          />
           <Queue
             label="Suspended stores"
             count={insights.attention.suspendedStores}

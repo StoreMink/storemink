@@ -21,6 +21,7 @@ import {
   users,
 } from "@/drizzle/schema";
 import { getActingStoreId } from "@/app/dashboard/lib/access";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 import type {
   Customer,
   CustomerBlog,
@@ -218,8 +219,9 @@ export async function getCustomerStats(): Promise<CustomerStats> {
 export async function getCustomer(id: string): Promise<CustomerDetail | null> {
   const storeId = await getActingStoreId();
 
+  let detail: CustomerDetail | null;
   try {
-    return await withService(async (db) => {
+    detail = await withService(async (db) => {
       const detailRows = await db
         .select(DETAIL_COLUMNS)
         .from(users)
@@ -268,4 +270,21 @@ export async function getCustomer(id: string): Promise<CustomerDetail | null> {
     console.error("Failed to load customer:", err);
     return null;
   }
+  if (!detail || detail.reviews.length === 0) return detail;
+
+  // The reviews StoreMink removed and told the store about (takedown design
+  // 7.3): each reads "Removed by StoreMink" with the notice its "See why"
+  // opens. Read AFTER the scope above has closed, never inside its callback,
+  // and only when there is a review to mark. It never throws, and a failed
+  // read marks nothing. A block kept from the store is not in it (D21).
+  const removed = await blockedItemIds(storeId, "review").catch(
+    () => new Map<string, string>(),
+  );
+  return {
+    ...detail,
+    reviews: detail.reviews.map((review) => ({
+      ...review,
+      storemink_block_id: removed.get(review.id) ?? null,
+    })),
+  };
 }

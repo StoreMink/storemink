@@ -31,7 +31,7 @@
 
 import { MINK_CSV_MARKER } from "./csv-input";
 import { REVIEWED_DOCUMENT_MARKER } from "./document-input";
-import { SAVED_MEDIA_MARKER } from "./media-attachment";
+import { MINK_ATTACHMENT_MARKER, SAVED_MEDIA_MARKER } from "./media-attachment";
 import type { MinkSelectedResource, MinkToolDeclaration } from "./types";
 
 export const MINK_TOOL_GROUPS = [
@@ -677,7 +677,10 @@ const PAGE_GROUPS: ReadonlyArray<readonly [string, MinkToolGroup]> = [
   ["/dashboard/mink-watches", "watches"],
 ];
 
+// Both picture markers: the new one (kept privately with the chat) and the
+// old one (a Media Library copy, in messages sent before the change).
 const ATTACHMENT_MARKERS = [
+  MINK_ATTACHMENT_MARKER,
   SAVED_MEDIA_MARKER,
   REVIEWED_DOCUMENT_MARKER,
   MINK_CSV_MARKER,

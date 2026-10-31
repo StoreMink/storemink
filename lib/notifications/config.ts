@@ -45,6 +45,7 @@ import {
   stores,
 } from "@/drizzle/schema";
 import {
+  canonicalEventGroup,
   getEventDef,
   type Digest,
   type EventDef,
@@ -228,8 +229,12 @@ function applyDefinition(
     ...base,
     displayName: row.displayName?.trim() || base.displayName,
     description: row.description?.trim() || base.description,
-    category: row.category?.trim() || base.category,
-    group: row.group?.trim() || base.group,
+    // An override saved before a group was renamed still carries the old name
+    // (LEGACY_EVENT_GROUPS); read it as today's, or the row falls outside
+    // EVENT_GROUPS and drops out of every group tab and heading. Category is a
+    // group too: it defaults to def.group, and the console's tabs read it.
+    category: canonicalEventGroup(row.category?.trim() || base.category),
+    group: canonicalEventGroup(row.group?.trim() || base.group),
     audiences,
     isCustom: row.isCustom,
   };

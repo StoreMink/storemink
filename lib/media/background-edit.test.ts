@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import type { MinkActorContext } from "@/lib/mink/types";
 import { MinkRequestError } from "@/lib/mink/errors";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
 
 const STORE = "a0000000-0000-4000-8000-0000000000aa";
 const OTHER = "b0000000-0000-4000-8000-0000000000bb";
@@ -13,6 +14,11 @@ type Row = Record<string, unknown>;
 const state = vi.hoisted(() => ({
   objects: new Map<string, Buffer>(),
   uploads: [] as { path: string; type: string }[],
+  writeOptions: [] as Record<string, unknown>[],
+  /** Refuse the write whose path contains `match`, as the guard would. */
+  blockOn: null as { match: string; told: boolean } | null,
+  /** Fail the write whose path contains this, as a storage outage would. */
+  failOn: null as string | null,
   deleted: [] as string[],
   inserts: [] as Row[],
   executed: [] as string[],
@@ -63,14 +69,35 @@ vi.mock("@/lib/storage/gcs", () => ({
     if (!bytes) throw new Error(`no object ${path}`);
     return new Uint8Array(bytes);
   },
-  gcsUploadObject: async (path: string, bytes: Buffer, type: string) => {
-    state.objects.set(path, Buffer.from(bytes));
-    state.uploads.push({ path, type });
-    return `${BUCKET}${path}`;
-  },
   gcsDeletePaths: async (paths: string[]) => {
     state.deleted.push(...paths);
     return [];
+  },
+}));
+// Every store write goes through the re-upload guard (takedown design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: async (
+    path: string,
+    bytes: Buffer,
+    type: string,
+    options: Record<string, unknown>,
+  ) => {
+    state.writeOptions.push(options);
+    if (state.blockOn && path.includes(state.blockOn.match)) {
+      const { BlockedUploadError: Refusal } =
+        await import("@/lib/moderation/upload-guard");
+      throw new Refusal({
+        told: state.blockOn.told,
+        kindWord: "image",
+        blockId: "b0000000-0000-4000-8000-000000000001",
+      });
+    }
+    if (state.failOn && path.includes(state.failOn)) {
+      throw new Error("storage unavailable");
+    }
+    state.objects.set(path, Buffer.from(bytes));
+    state.uploads.push({ path, type });
+    return `${BUCKET}${path}`;
   },
 }));
 vi.mock("@/lib/rate-limit", () => ({
@@ -191,6 +218,9 @@ beforeEach(async () => {
   state.objects.clear();
   state.objects.set(`stores/${STORE}/uploads/shoe.png`, await photo());
   state.uploads = [];
+  state.writeOptions = [];
+  state.blockOn = null;
+  state.failOn = null;
   state.deleted = [];
   state.inserts = [];
   state.executed = [];
@@ -531,6 +561,102 @@ describe("replaceProductBackground", () => {
     expect(result.chargedCredits).toBe(0);
     expect(result.reused).toBe(true);
     expect(result.url).toContain(`${theirsId}-product-white.webp`);
+  });
+});
+
+describe("bytes StoreMink has blocked (takedown design 7.4)", () => {
+  it("writes the cut-out and the result through the re-upload guard for this store", async () => {
+    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
+    await replaceProductBackground({
+      actor: actor(),
+      sourceUrl: SOURCE,
+      specKey: "product",
+      background: { kind: "white" },
+    });
+    expect(state.writeOptions).toEqual([
+      { storeId: STORE, via: "background_edit", actor: "admin-1" },
+      { storeId: STORE, via: "background_edit", actor: "admin-1" },
+    ]);
+  });
+
+  it("refuses a blocked cut-out with 409 and the named sentence, before any charge", async () => {
+    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
+    state.blockOn = { match: "/cutouts/", told: true };
+    const error = await replaceProductBackground({
+      actor: actor(),
+      sourceUrl: SOURCE,
+      specKey: "product",
+      background: { kind: "white" },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(MinkRequestError);
+    expect(error).toMatchObject({
+      code: "upload_blocked",
+      status: 409,
+      message:
+        "StoreMink has blocked this image, so it can't be uploaded again. See Settings, Notices from StoreMink.",
+    });
+    expect(
+      state.executed.some((t) => t.includes("consume_mink_cutout_credits")),
+    ).toBe(false);
+    expect(state.uploads).toHaveLength(0);
+    expect(state.deleted).toHaveLength(0);
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it("refuses a blocked result naming nothing for a block kept from the store, and deletes nothing", async () => {
+    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
+    state.blockOn = { match: "/edited/", told: false };
+    const error = await replaceProductBackground({
+      actor: actor(),
+      sourceUrl: SOURCE,
+      specKey: "product",
+      background: { kind: "white" },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(MinkRequestError);
+    expect(error).toMatchObject({
+      code: "upload_blocked",
+      status: 409,
+      message:
+        "This file can't be uploaded. If you need help, write to support@storemink.com.",
+    });
+    // The cut-out was stored and charged; the refused result wrote nothing,
+    // so nothing is deleted and no Media row is made.
+    expect(state.uploads.map((u) => u.path)).toEqual([
+      expect.stringMatching(/\/cutouts\//),
+    ]);
+    expect(state.deleted).toHaveLength(0);
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it("keeps the storage failure, and its clean-up, for any other write error", async () => {
+    state.chargeRow = { cutout_id: null, credit_source: "plan", reused: false };
+    state.failOn = "/edited/";
+    await expectRefusal(
+      replaceProductBackground({
+        actor: actor(),
+        sourceUrl: SOURCE,
+        specKey: "product",
+        background: { kind: "white" },
+      }),
+      503,
+      "cutout_storage_failed",
+    );
+    expect(state.deleted).toEqual([expect.stringMatching(/\/edited\//)]);
+  });
+
+  it("recognises the refusal class the guard throws", () => {
+    const refusal = new BlockedUploadError({
+      told: true,
+      kindWord: "image",
+      blockId: "b0000000-0000-4000-8000-000000000001",
+    });
+    expect(refusal.name).toBe("BlockedUploadError");
   });
 });
 

@@ -469,6 +469,57 @@ describe("readMinkShopperOffers: what a stranger on WhatsApp may be told", () =>
     );
   });
 
+  it("★★ never names an item or a gift StoreMink has blocked", async () => {
+    // Takedown design 5.7 (review finding F6). This read is service-scope, so
+    // the read policies that hide a blocked row never run: the flag is in
+    // every join and the gift read returns it. The mock ignores predicates,
+    // so they are checked as SQL here and against real blocked rows in
+    // lib/moderation/shopper-reads.local.test.ts.
+    mocks.settings = { "offers.autoApply": true };
+    mocks.rows = [
+      shopperRow({
+        id: "o-blocked-gift",
+        name: "Blocked gift",
+        rewardType: "free_item",
+        rewardConfig: { giftProductId: "g-blocked", giftQuantity: 1 },
+      }),
+      shopperRow({
+        id: "o-gift",
+        name: "Tumbler",
+        rewardType: "free_item",
+        rewardConfig: { giftProductId: "g1", giftQuantity: 1 },
+      }),
+    ];
+    mocks.giftRows = [
+      {
+        productId: "g-blocked",
+        productName: "Banned Mug",
+        blockedAt: "2026-10-14 06:00:00+00",
+      },
+      { productId: "g1", productName: "Steel Tumbler", blockedAt: null },
+    ];
+
+    const result = await read();
+    expect(result.offers.map((o) => o.name)).toEqual(["Tumbler"]);
+    expect(result.offers[0].reward).toBe("Free Steel Tumbler");
+    expect(JSON.stringify(result)).not.toContain("Banned Mug");
+
+    // The gift read takes a blocked gift whatever its status, with the flag.
+    const gift = whereOf("productId");
+    expect(gift.sql).toContain(
+      '("products"."status" = $2 or "products"."moderation_blocked_at" is not null)',
+    );
+    // Every join a name comes through hides a blocked row.
+    const ons = mocks.joins.map((on) => new PgDialect().sqlToQuery(on).sql);
+    for (const table of ["products", "variant_product", "categories"]) {
+      expect(ons).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(`"${table}"."moderation_blocked_at" is null`),
+        ]),
+      );
+    }
+  });
+
   it("★ leaves out an offer it cannot describe truthfully, without leaving a gap", async () => {
     mocks.settings = { "offers.autoApply": true };
     mocks.rows = [

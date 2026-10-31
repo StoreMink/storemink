@@ -27,6 +27,7 @@ import {
 } from "@/app/actions/store-signup";
 import {
   confirmSignupSubscribe,
+  saveSignupBillingDetails,
   startSignupSubscribe,
   type SubscribeConfirm,
   type SubscribeStart,
@@ -38,10 +39,22 @@ import {
   chargeFor,
   formatInr,
   parseSignupPlanQuote,
+  signupAmount,
   type BillingPeriod,
   type SignupPlanQuote,
 } from "@/lib/plans/signup-quote";
 import type { MandateMethod } from "@/lib/billing/mandate-types";
+import type { SaveBillingDetailsResult } from "@/lib/billing/quote-types";
+import { gstStateOptions, gstinStateCode } from "@/lib/billing/gst";
+import {
+  BILLING_DETAILS,
+  BILLING_PAGE,
+  SIGNUP_STATE,
+  amountChanged,
+  asksForState,
+  signupContinueLabel,
+} from "@/lib/billing/tax-copy";
+import { shouldOpenPayment } from "@/app/dashboard/plans/amount-guard";
 import {
   openRazorpayModal,
   type RazorpaySuccess,
@@ -135,13 +148,55 @@ type CheckState =
 
 /** Where the Plan step is. "phone" verifies the owner's mobile before a paid
  *  plan's payment; "confirm-failed" is a payment that went to Razorpay but
- *  could not be confirmed here, which must never offer to take it again. */
-type PlanPhase = "choose" | "phone" | "confirm-failed";
+ *  could not be confirmed here, which must never offer to take it again;
+ *  "payment-waiting" is a payment that went through whose plan switches on
+ *  shortly (RC-F1b), a notice that must never offer to take it again either. */
+type PlanPhase = "choose" | "phone" | "confirm-failed" | "payment-waiting";
 
 type QuoteState =
   | { status: "idle" | "loading" }
-  | { status: "ready"; quote: SignupPlanQuote }
+  /** `at`: when the quote was read (ms), for the first renewal's GST terms. */
+  | { status: "ready"; quote: SignupPlanQuote; at: number }
   | { status: "failed" };
+
+/**
+ * The payment a Continue press asks for, fixed when it is pressed: the plan,
+ * the period, the pay-now total the step showed (the amount guard's "shown"
+ * side, design 7.4) and, while GST is charged or scheduled, the state and
+ * GSTIN to save first (design 7.2).
+ */
+interface PayIntent {
+  plan: Plan;
+  period: BillingPeriod;
+  shownPaise: number;
+  billing: { stateCode: string; gstin: string } | null;
+}
+
+/** A typed GSTIN as the server reads it: no spaces, capitals. */
+function gstinOf(typed: string): string {
+  return typed.replace(/\s+/g, "").toUpperCase();
+}
+
+/**
+ * Does GST stop a paid plan for this country (design 7.2)? Only while GST is
+ * charged NOW: with a switch-on only scheduled, a business outside India can
+ * still subscribe.
+ */
+function outsideIndiaNow(
+  quote: SignupPlanQuote | null,
+  country: string,
+): boolean {
+  return !!quote?.tax?.active && country !== DEFAULT_COUNTRY;
+}
+
+/** Does the step ask for the business's state before a paid plan? While GST
+ *  is charged or a switch-on is scheduled, for a business in India. */
+function asksSignupState(
+  quote: SignupPlanQuote | null,
+  country: string,
+): boolean {
+  return !!quote?.tax && asksForState(quote.tax) && country === DEFAULT_COUNTRY;
+}
 
 /** The store this signup created. Known once, then reused: a paid plan whose
  *  payment is dismissed must not try to create a second store. */
@@ -156,11 +211,16 @@ type EnsureStoreResult =
 
 /** The live plan prices. A GET, not a Server Action, so it never queues in
  *  front of a signup tap (app/api/plans/pricing). Null means unavailable. */
-async function fetchSignupQuote(): Promise<SignupPlanQuote | null> {
+async function fetchSignupQuote(): Promise<{
+  quote: SignupPlanQuote;
+  at: number;
+} | null> {
   try {
     const res = await fetch("/api/plans/pricing", { cache: "no-store" });
     if (!res.ok) return null;
-    return parseSignupPlanQuote(await res.json());
+    const quote = parseSignupPlanQuote(await res.json());
+    // When it was read: the first renewal's GST terms are measured from it.
+    return quote ? { quote, at: Date.now() } : null;
   } catch {
     return null;
   }
@@ -172,6 +232,12 @@ function dashboardUrl(slug: string): string {
   return root
     ? `${protocol}//${slug}.${root}${port ? ":" + port : ""}/dashboard`
     : `https://${slug}.${ROOT_DOMAIN}/dashboard`;
+}
+
+/** A full page load into a store's dashboard, outside the component so the
+ *  React Compiler does not read it as a render-time write. */
+function openDashboard(slug: string): void {
+  window.location.href = dashboardUrl(slug);
 }
 
 // The documents the consent box covers, straight from the registry — the same
@@ -269,6 +335,11 @@ export default function SignupPage() {
   const [progress, setProgress] = useState<string | null>(null);
   const [store, setStore] = useState<CreatedStore | null>(null);
   const [verifiedPhone, setVerifiedPhone] = useState<string | null>(null);
+  // The state step (design 7.2): shown while GST is charged or scheduled, for
+  // a paid plan and a business in India. A valid GSTIN decides the state.
+  const [gstState, setGstState] = useState("");
+  const [gstin, setGstin] = useState("");
+  const [gstinBlurred, setGstinBlurred] = useState(false);
   const [creating, setCreating] = useState({
     title: "Creating your store…",
     detail: "Setting up your store and dashboard.",
@@ -606,18 +677,53 @@ export default function SignupPage() {
   async function loadQuote() {
     const mySeq = ++quoteSeq.current;
     setQuoteState({ status: "loading" });
-    const quote = await fetchSignupQuote();
+    const read = await fetchSignupQuote();
     if (mySeq !== quoteSeq.current) return;
-    if (!quote) {
+    if (!read) {
       setQuoteState({ status: "failed" });
       return;
     }
-    setQuoteState({ status: "ready", quote });
+    const { quote } = read;
+    setQuoteState({ status: "ready", quote, at: read.at });
     // Basic is preselected because it is the plan most new brands need; Skip
     // sits right under the button. Without the platform's own gateway no paid
     // plan can be bought here, so Free is the only real choice.
     if (!quote.paidCheckout) setPlan("free");
     else if (!planTouched.current) setPlan("basic");
+  }
+
+  /** Read the prices again quietly, keeping the step on screen: after the
+   *  amount guard stopped a payment (design 7.4). */
+  async function refreshQuote() {
+    const mySeq = ++quoteSeq.current;
+    const read = await fetchSignupQuote();
+    if (read && mySeq === quoteSeq.current) {
+      setQuoteState({ status: "ready", quote: read.quote, at: read.at });
+    }
+  }
+
+  /** What a press of Continue pays for, from this quote and what the step
+   *  holds now. */
+  function payIntentFor(q: SignupPlanQuote): PayIntent {
+    let billing: PayIntent["billing"] = null;
+    if (asksSignupState(q, country)) {
+      const typed = gstinOf(gstin);
+      const fromGstin = typed ? gstinStateCode(typed) : null;
+      billing = { stateCode: fromGstin ?? gstState, gstin: typed };
+    }
+    return {
+      plan,
+      period,
+      shownPaise: signupAmount(q.plans[plan], period, q.tax).totalPaise,
+      billing,
+    };
+  }
+
+  /** Is the state step answered: a state chosen, or a valid GSTIN typed? */
+  function stateReadyFor(q: SignupPlanQuote | null): boolean {
+    if (!asksSignupState(q, country)) return true;
+    const typed = gstinOf(gstin);
+    return typed ? gstinStateCode(typed) !== null : gstState !== "";
   }
 
   function goToPlan() {
@@ -730,12 +836,19 @@ export default function SignupPage() {
     if (
       quoteState.status !== "ready" ||
       !quoteState.quote.paidCheckout ||
+      outsideIndiaNow(quoteState.quote, country) ||
       plan === "free"
     ) {
       await startOnFree();
       return;
     }
     const shown = chargeFor(quoteState.quote.plans[plan], period);
+    const shownTotal = signupAmount(
+      quoteState.quote.plans[plan],
+      period,
+      quoteState.quote.tax,
+    ).totalPaise;
+    let current = quoteState.quote;
     setBusy(true);
     setError("");
     setPlanNotice(null);
@@ -747,9 +860,11 @@ export default function SignupPage() {
     // re-read, carry on: the server computes the charge and Razorpay shows it
     // before anything is paid.
     const mySeq = ++quoteSeq.current;
-    const fresh = await fetchSignupQuote();
-    if (fresh && mySeq === quoteSeq.current) {
-      setQuoteState({ status: "ready", quote: fresh });
+    const read = await fetchSignupQuote();
+    if (read && mySeq === quoteSeq.current) {
+      const fresh = read.quote;
+      current = fresh;
+      setQuoteState({ status: "ready", quote: fresh, at: read.at });
       if (!fresh.paidCheckout) {
         setPlan("free");
         setBusy(false);
@@ -757,6 +872,13 @@ export default function SignupPage() {
         setPlanNotice(
           "Paying for a plan isn't available right now. Start on Free and upgrade from your dashboard when you're ready.",
         );
+        return;
+      }
+      // GST started while the page was open: a business outside India can
+      // no longer buy a paid plan here, and the step now says so.
+      if (outsideIndiaNow(fresh, country)) {
+        setBusy(false);
+        setProgress(null);
         return;
       }
       const now = chargeFor(fresh.plans[plan], period);
@@ -768,7 +890,29 @@ export default function SignupPage() {
         );
         return;
       }
+      // The list price held but the GST terms moved: the pay-now total the
+      // step showed is no longer what is charged.
+      const freshTotal = signupAmount(
+        fresh.plans[plan],
+        period,
+        fresh.tax,
+      ).totalPaise;
+      if (freshTotal !== shownTotal) {
+        setBusy(false);
+        setProgress(null);
+        setPlanNotice(amountChanged(freshTotal, "continue"));
+        return;
+      }
+      // A switch-on scheduled while the page was open: the state step has
+      // just appeared and is not answered yet.
+      if (!stateReadyFor(fresh)) {
+        setBusy(false);
+        setProgress(null);
+        setPlanNotice(BILLING_DETAILS.errors.state);
+        return;
+      }
     }
+    const intent = payIntentFor(current);
 
     setProgress(store ? null : "Creating your store…");
     const made = await ensureStore();
@@ -788,26 +932,50 @@ export default function SignupPage() {
       setPlanPhase("phone");
       return;
     }
-    await pay(made.store, verifiedPhone ?? undefined);
+    await pay(made.store, intent, verifiedPhone ?? undefined);
   }
 
   /** The mobile is verified: carry straight on to the payment. */
   function onPhoneVerified(phone: string) {
     setVerifiedPhone(phone);
-    if (!store) return;
+    if (!store || quoteState.status !== "ready") return;
     const made = { ...store, phoneVerified: true };
     setStore(made);
     setPlanPhase("choose");
-    void pay(made, phone);
+    void pay(made, payIntentFor(quoteState.quote), phone);
   }
 
-  async function pay(made: CreatedStore, contact?: string) {
-    const chosen = plan;
-    const chosenPeriod = period;
+  /**
+   * Take the payment, in the order design 7.2 sets: save the business's state
+   * (while GST is charged or scheduled), start the subscription, check the
+   * amount against the one the step showed (the amount guard, design 7.4),
+   * then open Razorpay.
+   */
+  async function pay(made: CreatedStore, intent: PayIntent, contact?: string) {
+    const chosen = intent.plan;
+    const chosenPeriod = intent.period;
     setBusy(true);
     setError("");
     setPlanNotice(null);
     setProgress("Opening payment…");
+
+    // ★ The state first: the server refuses a GST payment for a business in
+    // India with no state, and the store exists by now (ensureStore), so it
+    // is saved for that store through the owner gate.
+    if (intent.billing) {
+      let saved: SaveBillingDetailsResult;
+      try {
+        saved = await saveSignupBillingDetails(intent.billing);
+      } catch {
+        saved = { ok: false, error: SIGNUP_STATE.saveFailed };
+      }
+      if (!saved.ok) {
+        setBusy(false);
+        setProgress(null);
+        setError(saved.error);
+        return;
+      }
+    }
 
     let start: SubscribeStart;
     try {
@@ -818,7 +986,39 @@ export default function SignupPage() {
     if (!start.ok) {
       setBusy(false);
       setProgress(null);
+      if (start.waiting) {
+        // ★ An earlier payment went through and the plan switches on shortly
+        // (RC-F1b). Not an error and not a retry: say so, and offer only the
+        // dashboard, where the plan shows once it moves.
+        setPaymentIssue(start.error);
+        setPlanPhaseRaw("payment-waiting");
+        return;
+      }
       setError(start.error);
+      return;
+    }
+    if (start.completedEarlier) {
+      // ★★ An earlier payment was finished instead of opening a second one
+      // (RC-F1b): the plan is active, so move on to the dashboard exactly as
+      // after a payment made here.
+      setCreating({
+        title: "Opening your dashboard…",
+        detail: start.message,
+      });
+      setStep("creating");
+      openDashboard(made.slug);
+      return; // stays busy while the dashboard loads
+    }
+
+    // ★★ THE AMOUNT GUARD (design 7.4). The window opens only for exactly the
+    // amount the step showed; a price or GST change in between stops here,
+    // says the new amount, and reads the prices again. The next press resumes
+    // the same order (lib/billing/enrol.ts), whose amount is the new one.
+    if (!shouldOpenPayment(intent.shownPaise, start.amountPaise)) {
+      setBusy(false);
+      setProgress(null);
+      setError(amountChanged(start.amountPaise, "continue"));
+      void refreshQuote();
       return;
     }
 
@@ -897,19 +1097,42 @@ export default function SignupPage() {
     setBusy(false);
     setProgress(null);
     setPaymentIssue(confirmed.error);
-    setPlanPhaseRaw("confirm-failed");
+    // A payment that went through and switches the plan on shortly is told as
+    // such; anything else could not be confirmed here.
+    setPlanPhaseRaw(confirmed.waiting ? "payment-waiting" : "confirm-failed");
     setStep("plan");
   }
 
   const h = slugHint();
   const stage = stageOf(step);
   const quote = quoteState.status === "ready" ? quoteState.quote : null;
-  const paidSelected = !!quote && quote.paidCheckout && plan !== "free";
-  const planCta = paidSelected
-    ? `Continue with ${PLAN_META[plan].name} · ${formatInr(chargeFor(quote.plans[plan], period))}/${periodWord(period)}`
-    : store
-      ? "Continue on Free"
-      : "Start on Free";
+  const quotedAt = quoteState.status === "ready" ? quoteState.at : 0;
+  const lockedOutside = outsideIndiaNow(quote, country);
+  const paidAllowed = !!quote && quote.paidCheckout && !lockedOutside;
+  const paidSelected = paidAllowed && plan !== "free";
+  const payNow =
+    paidSelected && quote
+      ? signupAmount(quote.plans[plan], period, quote.tax)
+      : null;
+  const planCta =
+    quote && payNow
+      ? signupContinueLabel(
+          quote.tax,
+          PLAN_META[plan].name,
+          period,
+          payNow.totalPaise,
+        )
+      : store
+        ? "Continue on Free"
+        : "Start on Free";
+  const askState = paidSelected && asksSignupState(quote, country);
+  const stateReady = !paidSelected || stateReadyFor(quote);
+  const typedGstin = gstinOf(gstin);
+  const gstinState = typedGstin ? gstinStateCode(typedGstin) : null;
+  const gstinInvalid =
+    typedGstin !== "" &&
+    gstinState === null &&
+    (gstinBlurred || typedGstin.length >= 15);
   const wideCard = step === "plan" && planPhase === "choose";
 
   return (
@@ -1396,10 +1619,85 @@ export default function SignupPage() {
               {quote && (
                 <PlanPicker
                   quote={quote}
-                  plan={plan}
+                  quotedAt={quotedAt}
+                  plan={paidAllowed ? plan : "free"}
                   period={period}
                   mandateMethod={mandateMethod}
                   disabled={busy}
+                  outsideIndia={lockedOutside}
+                  stateStep={
+                    askState ? (
+                      <div className="sgn-stack mt-2 w-full">
+                        <div className="sgn-field">
+                          <label
+                            className="sgn-label"
+                            htmlFor="signup-gst-state"
+                          >
+                            {SIGNUP_STATE.stateLabel}
+                          </label>
+                          <select
+                            id="signup-gst-state"
+                            className="sgn-input"
+                            value={gstinState ?? gstState}
+                            disabled={busy || gstinState !== null}
+                            aria-describedby="signup-gst-state-hint"
+                            onChange={(e) => {
+                              setGstState(e.target.value);
+                              setError("");
+                            }}
+                          >
+                            <option value="">
+                              {BILLING_DETAILS.fields.state.placeholder}
+                            </option>
+                            {gstStateOptions(gstinState ?? gstState).map(
+                              (s) => (
+                                <option key={s.code} value={s.code}>
+                                  {s.name}
+                                </option>
+                              ),
+                            )}
+                          </select>
+                          <p
+                            id="signup-gst-state-hint"
+                            className="sgn-hint neutral"
+                          >
+                            {SIGNUP_STATE.stateHint}
+                          </p>
+                        </div>
+                        <div className="sgn-field">
+                          <label className="sgn-label" htmlFor="signup-gstin">
+                            {SIGNUP_STATE.gstinLabel}
+                          </label>
+                          <input
+                            id="signup-gstin"
+                            className="sgn-input"
+                            value={gstin}
+                            maxLength={20}
+                            autoComplete="off"
+                            autoCapitalize="characters"
+                            spellCheck={false}
+                            disabled={busy}
+                            aria-invalid={gstinInvalid || undefined}
+                            aria-describedby="signup-gstin-hint"
+                            onChange={(e) => {
+                              setGstin(e.target.value.toUpperCase());
+                              setGstinBlurred(false);
+                              setError("");
+                            }}
+                            onBlur={() => setGstinBlurred(true)}
+                          />
+                          <p
+                            id="signup-gstin-hint"
+                            className={`sgn-hint ${gstinInvalid ? "bad" : "neutral"}`}
+                          >
+                            {gstinInvalid
+                              ? SIGNUP_STATE.invalidGstin
+                              : SIGNUP_STATE.gstinHint}
+                          </p>
+                        </div>
+                      </div>
+                    ) : undefined
+                  }
                   onPlanChange={choosePlan}
                   onPeriodChange={choosePeriod}
                   onMandateMethodChange={setMandateMethod}
@@ -1409,8 +1707,14 @@ export default function SignupPage() {
               {quote && !quote.paidCheckout && (
                 <p className="sgn-help sgn-plan-help">
                   Paid plans can&apos;t be bought during signup right now. Your
-                  store starts on Free, and you can upgrade from Plans &amp;
-                  billing in your dashboard.
+                  store starts on Free, and you can upgrade from {BILLING_PAGE}{" "}
+                  in your dashboard.
+                </p>
+              )}
+
+              {quote && quote.paidCheckout && lockedOutside && (
+                <p className="sgn-help sgn-plan-help">
+                  {SIGNUP_STATE.outsideIndia}
                 </p>
               )}
 
@@ -1423,7 +1727,8 @@ export default function SignupPage() {
                   disabled={
                     busy ||
                     quoteState.status === "idle" ||
-                    quoteState.status === "loading"
+                    quoteState.status === "loading" ||
+                    !stateReady
                   }
                   className="sgn-btn sgn-btn-primary"
                 >
@@ -1441,7 +1746,7 @@ export default function SignupPage() {
                 </button>
                 {/* Skip is always one tap away while a paid plan is chosen:
                     the store starts on Free and can upgrade from Plans &
-                    billing at any time. */}
+                    Billing at any time. */}
                 {paidSelected && (
                   <button
                     type="button"
@@ -1501,8 +1806,41 @@ export default function SignupPage() {
                 <p>{paymentIssue}</p>
               </div>
               <p className="sgn-sub">
-                Your store is ready. Please don&apos;t pay again from here:
-                Plans &amp; billing in your dashboard shows what happened.
+                Your store is ready. Please don&apos;t pay again from here:{" "}
+                {BILLING_PAGE} in your dashboard shows what happened.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!store) return;
+                  setBusy(true);
+                  window.location.href = dashboardUrl(store.slug);
+                }}
+                disabled={busy || !store}
+                className="sgn-btn sgn-btn-primary"
+              >
+                {busy ? (
+                  <Loader2
+                    className="h-5 w-5 animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  "Open your dashboard"
+                )}
+              </button>
+            </div>
+          )}
+
+          {/* ── Plan: a payment that went through, plan switching shortly ── */}
+          {step === "plan" && planPhase === "payment-waiting" && (
+            <div className="sgn-step">
+              <h1 className="sgn-title">Your payment went through</h1>
+              <div role="status" className="sgn-note is-info">
+                <p>{paymentIssue}</p>
+              </div>
+              <p className="sgn-sub">
+                Your store is ready. {BILLING_PAGE} in your dashboard shows your
+                plan once it switches on.
               </p>
               <button
                 type="button"

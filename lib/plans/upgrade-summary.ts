@@ -3,15 +3,14 @@
 // from PLAN_LIMITS so the dashboard's plan card can never advertise something
 // enforcement does not deliver (the same rule that makes the public pricing
 // page derive its table from the catalogue). Pure and client-safe.
+//
+// ★ NO PRICES HERE (GST design 14). This module used to quote a plan's price
+// from the compiled PLAN_META, which knows neither the operator's price nor
+// GST. A price is shown only where it is worked out from the live catalogue
+// and the GST terms: Plans & Billing, signup and the public pricing pages.
 // ---------------------------------------------------------------------------
 
-import {
-  PLAN_IDS,
-  PLAN_LIMITS,
-  PLAN_META,
-  type Plan,
-  type PlanLimits,
-} from "@/lib/plans";
+import { PLAN_IDS, PLAN_LIMITS, type Plan, type PlanLimits } from "@/lib/plans";
 
 type BooleanFeature = {
   [K in keyof PlanLimits]: PlanLimits[K] extends boolean ? K : never;
@@ -90,10 +89,4 @@ export function upgradeUnlocks(from: Plan, to: Plan): string[] {
     if (!a[key] && b[key]) lines.push(FEATURE_LABELS[key]);
   }
   return lines;
-}
-
-export function planPriceLine(plan: Plan): string {
-  const meta = PLAN_META[plan];
-  if (meta.monthlyInr === 0) return "₹0/month";
-  return `₹${meta.monthlyInr.toLocaleString("en-IN")}/month`;
 }

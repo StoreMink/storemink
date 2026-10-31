@@ -443,11 +443,29 @@ function revalidateProduct(slug?: string) {
 // Nudge search engines to (re)crawl a product page after it goes live. No-op
 // for drafts — a draft URL isn't publicly indexable. Best-effort and off the
 // response path; the helper derives the canonical origin from the store id.
+//
+// ★ A product StoreMink blocked stays off the storefront even when its status
+//   says published, so its URL answers 404: it is left out of the ping, and
+//   when every product published here is blocked nothing is sent at all.
+//   One rule with the blog publishes (discoverableSlugs in blog-actions.ts):
+//   the row's own moderation_blocked_at decides, which a block sets whether
+//   or not the store was told. A ping is invisible to the merchant, so
+//   leaving an untold block out shows them nothing (D21). The call sites
+//   pass the flag from their own UPDATE ... RETURNING, so this costs no
+//   statement; a product created a moment ago passes none, since the 0269
+//   guard never lets a new row arrive blocked.
 async function notifyProductsPublished(
-  slugs: (string | null | undefined)[],
+  items: { slug: string | null | undefined; blocked_at?: string | null }[],
   published: boolean,
 ) {
-  const live = [...new Set(slugs.filter((slug): slug is string => !!slug))];
+  const live = [
+    ...new Set(
+      items
+        .filter((item) => !item.blocked_at)
+        .map((item) => item.slug)
+        .filter((slug): slug is string => !!slug),
+    ),
+  ];
   if (!published || live.length === 0) return;
   // Swallow everything: this runs after the product is already saved, and a
   // search-engine ping must never turn a successful save into an error the
@@ -690,7 +708,7 @@ export async function createProduct(
     }
 
     revalidateProduct(slug);
-    await notifyProductsPublished([slug], formData.status === "published");
+    await notifyProductsPublished([{ slug }], formData.status === "published");
     emitEvent({
       type: "product.created",
       storeId,
@@ -805,6 +823,9 @@ export async function updateProduct(
   if (foreignImage) return { error: FOREIGN_IMAGE_ERROR };
 
   for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
+    // The saved row's StoreMink block flag, read from the same UPDATE, so the
+    // discovery ping can leave a blocked product out with no extra statement.
+    let blockedAt: string | null = null;
     try {
       // Product options and their complete variant matrix are one transaction:
       // a refused deletion or failed insert leaves both exactly as they were.
@@ -813,7 +834,10 @@ export async function updateProduct(
           .update(products)
           .set(row(slug))
           .where(and(eq(products.id, id), eq(products.storeId, storeId)))
-          .returning({ id: products.id });
+          .returning({
+            id: products.id,
+            blocked_at: products.moderationBlockedAt,
+          });
         if (saved.length > 0) {
           await replaceVariantsWithDb(
             db,
@@ -826,6 +850,7 @@ export async function updateProduct(
         return saved;
       });
       if (updated.length === 0) return { error: "Product not found." };
+      blockedAt = updated[0].blocked_at ?? null;
     } catch (err) {
       if (err instanceof VariantWriteError) {
         console.error("updateProduct variants error:", err.message);
@@ -862,7 +887,10 @@ export async function updateProduct(
     );
 
     revalidateProduct(slug);
-    await notifyProductsPublished([slug], formData.status === "published");
+    await notifyProductsPublished(
+      [{ slug, blocked_at: blockedAt }],
+      formData.status === "published",
+    );
     emitEvent({
       type: "product.updated",
       storeId,
@@ -958,7 +986,7 @@ export async function toggleProductPublish(
   if (!admin) return { error: "Not authenticated" };
   const userId = admin.uid;
 
-  let updated: { slug: string } | undefined;
+  let updated: { slug: string; blocked_at: string | null } | undefined;
   try {
     [updated] = await withUser(admin, (db) =>
       db
@@ -969,7 +997,10 @@ export async function toggleProductPublish(
           updatedBy: userId,
         })
         .where(eq(products.id, id))
-        .returning({ slug: products.slug }),
+        .returning({
+          slug: products.slug,
+          blocked_at: products.moderationBlockedAt,
+        }),
     );
   } catch (err) {
     console.error("toggleProductPublish error:", err);
@@ -978,7 +1009,7 @@ export async function toggleProductPublish(
   if (!updated) return { error: "Product not found." };
 
   revalidateProduct(updated.slug);
-  await notifyProductsPublished([updated.slug], publish);
+  await notifyProductsPublished([updated], publish);
   return { success: true };
 }
 
@@ -996,7 +1027,7 @@ export async function bulkToggleProductPublish(
   const userId = admin.uid;
   if (ids.length === 0) return { error: "Nothing selected." };
 
-  let touched: { slug: string }[] = [];
+  let touched: { slug: string; blocked_at: string | null }[] = [];
   try {
     touched = await withUser(admin, (db) =>
       db
@@ -1007,7 +1038,10 @@ export async function bulkToggleProductPublish(
           updatedBy: userId,
         })
         .where(inArray(products.id, ids))
-        .returning({ slug: products.slug }),
+        .returning({
+          slug: products.slug,
+          blocked_at: products.moderationBlockedAt,
+        }),
     );
   } catch (err) {
     console.error("bulkToggleProductPublish error:", err);
@@ -1015,10 +1049,7 @@ export async function bulkToggleProductPublish(
   }
   revalidateProduct();
   if (publish) {
-    await notifyProductsPublished(
-      touched.map((product) => product.slug),
-      true,
-    );
+    await notifyProductsPublished(touched, true);
   }
   return { success: true };
 }

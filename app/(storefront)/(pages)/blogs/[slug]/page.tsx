@@ -3,9 +3,9 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { and, arrayOverlaps, desc, eq, ne } from "drizzle-orm";
-import { withAnon, withUser, type Db } from "@/lib/db/client";
-import { blogComments, blogs } from "@/drizzle/schema";
+import { and, arrayOverlaps, desc, eq, isNull, ne } from "drizzle-orm";
+import { withAnon, withService, withUser, type Db } from "@/lib/db/client";
+import { blogComments, blogs, contentBlocks } from "@/drizzle/schema";
 import { getServerUser } from "@/lib/auth/server-user";
 import { requireStorefrontStoreId } from "@/lib/store/resolve";
 import { getStoreBrand } from "@/lib/store/brand";
@@ -21,6 +21,9 @@ import { ShareButtons } from "@/app/(storefront)/components/share-buttons";
 import { getBlogReactionCounts } from "@/app/actions/blog-social";
 import { BlogReactions } from "./blog-reactions";
 import { BlogComments, type BlogComment } from "./blog-comments";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
+import { SHOPPER } from "@/lib/moderation/copy";
 import "../blogs.css";
 
 // Stays dynamic: getBlog has NO status filter and leans on RLS so admins and a
@@ -47,6 +50,11 @@ interface Blog {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Set when StoreMink has blocked the post (takedown). RLS shows a blocked
+   *  post only to its author and the store's admins. */
+  moderation_blocked_at?: string | null;
+  /** True when the signed-in reader is the shopper who submitted the post. */
+  viewer_is_author?: boolean;
 }
 
 type Props = {
@@ -83,6 +91,9 @@ const getBlog = cache(
             published_at: blogs.publishedAt,
             created_at: blogs.createdAt,
             updated_at: blogs.updatedAt,
+            moderation_blocked_at: blogs.moderationBlockedAt,
+            submitted_by: blogs.submittedBy,
+            is_customer_submission: blogs.isCustomerSubmission,
           })
           .from(blogs)
           .where(and(eq(blogs.storeId, storeId), eq(blogs.slug, slug)))
@@ -93,7 +104,15 @@ const getBlog = cache(
         : await withAnon(run);
       const row = rows[0];
       if (!row) return null;
-      return { ...row, tags: row.tags ?? [] } as Blog;
+      const { submitted_by, is_customer_submission, ...fields } = row;
+      // The takedown page swap runs after the read scope has closed (it may
+      // open its own service scope to reload the blocked set).
+      return await maskBlockedMedia({
+        ...fields,
+        tags: fields.tags ?? [],
+        viewer_is_author:
+          !!user && is_customer_submission === true && submitted_by === user.id,
+      } as Blog);
     } catch (err) {
       console.error("getBlog:", err instanceof Error ? err.message : err);
       return null;
@@ -154,7 +173,7 @@ async function getRelatedBlogs(blog: Blog, storeId: string): Promise<Blog[]> {
       related.push(b);
       if (related.length >= 3) break;
     }
-    return related;
+    return await maskBlockedMedia(related);
   } catch (err) {
     console.error("getRelatedBlogs:", err instanceof Error ? err.message : err);
     return [];
@@ -167,7 +186,7 @@ async function getComments(
   storeId: string,
 ): Promise<BlogComment[]> {
   try {
-    return await withAnon((db) =>
+    const comments = await withAnon((db) =>
       db
         .select({
           id: blogComments.id,
@@ -185,9 +204,53 @@ async function getComments(
         )
         .orderBy(desc(blogComments.createdAt)),
     );
+    return await maskBlockedMedia(comments);
   } catch (err) {
     console.error("getComments:", err instanceof Error ? err.message : err);
     return [];
+  }
+}
+
+/** True for a cover that names a real picture: not empty, and not the
+ *  placeholder the takedown page swap puts where a blocked image was. */
+function isShownImage(url: string | null | undefined): url is string {
+  return !!url && !url.includes(PLACEHOLDER_URL_PATH);
+}
+
+/**
+ * Whether StoreMink told the store about the live block on this post. An
+ * admin sees the removed-post notice only for a block the store was told of:
+ * a block kept from the store under a court or government order shows the
+ * merchant nothing (decision D21). The author always sees it (design 7.4 has
+ * no untold variant for a shopper). A read that fails answers false, so an
+ * untold block is never revealed by an error.
+ */
+async function blockToldToStore(
+  blogId: string,
+  storeId: string,
+): Promise<boolean> {
+  try {
+    const rows = await withService((db) =>
+      db
+        .select({ tellStore: contentBlocks.tellStore })
+        .from(contentBlocks)
+        .where(
+          and(
+            eq(contentBlocks.itemKind, "blog_post"),
+            eq(contentBlocks.itemId, blogId),
+            eq(contentBlocks.storeId, storeId),
+            isNull(contentBlocks.liftedAt),
+          ),
+        )
+        .limit(1),
+    );
+    return rows[0]?.tellStore === true;
+  } catch (err) {
+    console.error(
+      "blockToldToStore:",
+      err instanceof Error ? err.message : err,
+    );
+    return false;
   }
 }
 
@@ -208,7 +271,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     blog.excerpt ||
     `Read this article on the ${brand.name} blog.`;
 
-  const ogImageUrl = getOgImageUrl(blog.cover_image_url);
+  // A taken-down cover arrives as the placeholder path; the share card then
+  // carries no image rather than "Image not available".
+  const ogImageUrl = getOgImageUrl(
+    isShownImage(blog.cover_image_url) ? blog.cover_image_url : null,
+  );
 
   return {
     // Layout templates as "%s | {brand}", so pass the bare article title.
@@ -282,6 +349,10 @@ export default async function BlogDetailPage({ params }: Props) {
     notFound();
   }
 
+  // A blocked post reaches here only for its author or the store's admins
+  // (RLS hides it from everyone else, who get the ordinary 404).
+  const blocked = !!blog.moderation_blocked_at;
+
   const [
     relatedBlogs,
     reactionCounts,
@@ -290,6 +361,7 @@ export default async function BlogDetailPage({ params }: Props) {
     brand,
     siteUrl,
     layout,
+    toldToStore,
   ] = await Promise.all([
     getRelatedBlogs(blog, storeId),
     getBlogReactionCounts(blog.id),
@@ -298,7 +370,11 @@ export default async function BlogDetailPage({ params }: Props) {
     getStoreBrand(),
     getStoreUrl(),
     getStorefrontLayout(),
+    blocked && !blog.viewer_is_author
+      ? blockToldToStore(blog.id, storeId)
+      : Promise.resolve(false),
   ]);
+  const showRemovedNotice = blocked && (!!blog.viewer_is_author || toldToStore);
   // The blog template's article layout (plan Phase 2e): the reading column
   // as it was, a wider one, or the column with an aside of related posts.
   const article = layout.templates.blog.article;
@@ -311,29 +387,34 @@ export default async function BlogDetailPage({ params }: Props) {
   // we got a non-published row here it's a preview, not a public view.
   const isPreview = blog.status !== "published";
 
-  // Structured data only for the public (published) view — never for drafts/
-  // previews (which are force-dynamic and not indexed anyway).
-  const articleLd = isPreview
-    ? null
-    : articleSchema({
-        siteUrl,
-        brandName: brand.name,
-        logoUrl: brand.logoUrl,
-        title: blog.seo_title || blog.title,
-        slug: blog.slug,
-        description: blog.seo_description || blog.excerpt,
-        image: blog.cover_image_url,
-        authorName: blog.author,
-        publishedAt: blog.published_at,
-        updatedAt: blog.updated_at,
-      });
-  const breadcrumbLd = isPreview
-    ? null
-    : breadcrumbSchema(siteUrl, [
-        { name: "Home", path: "/" },
-        { name: "Blog", path: "/blogs" },
-        { name: blog.title, path: `/blogs/${blog.slug}` },
-      ]);
+  // Structured data only for the public (published) view: never for drafts or
+  // previews (which are force-dynamic and not indexed anyway), nor for a post
+  // StoreMink has blocked, which only its author and admins can open.
+  const articleLd =
+    isPreview || blocked
+      ? null
+      : articleSchema({
+          siteUrl,
+          brandName: brand.name,
+          logoUrl: brand.logoUrl,
+          title: blog.seo_title || blog.title,
+          slug: blog.slug,
+          description: blog.seo_description || blog.excerpt,
+          image: isShownImage(blog.cover_image_url)
+            ? blog.cover_image_url
+            : null,
+          authorName: blog.author,
+          publishedAt: blog.published_at,
+          updatedAt: blog.updated_at,
+        });
+  const breadcrumbLd =
+    isPreview || blocked
+      ? null
+      : breadcrumbSchema(siteUrl, [
+          { name: "Home", path: "/" },
+          { name: "Blog", path: "/blogs" },
+          { name: blog.title, path: `/blogs/${blog.slug}` },
+        ]);
 
   return (
     <main>
@@ -352,28 +433,48 @@ export default async function BlogDetailPage({ params }: Props) {
               </ul>
             </aside>
           )}
-          {isPreview && (
+          {showRemovedNotice ? (
             <div
+              role="status"
+              id="blog-removed-notice"
               style={{
-                background: "#fef3c7",
-                border: "1px solid #fcd34d",
-                color: "#92400e",
+                background: "var(--sm-surface)",
+                border: "1px solid var(--sm-border)",
+                color: "var(--sm-ink)",
                 padding: "12px 16px",
                 borderRadius: 8,
                 marginBottom: 24,
                 fontSize: 14,
-                fontWeight: 500,
+                fontWeight: 600,
                 textAlign: "center",
               }}
             >
-              👁 Preview - this post is{" "}
-              <strong>
-                {blog.status === "pending_review"
-                  ? "pending review"
-                  : "a draft"}
-              </strong>{" "}
-              and is not publicly visible yet.
+              {SHOPPER.postRemoved}
             </div>
+          ) : (
+            isPreview && (
+              <div
+                style={{
+                  background: "#fef3c7",
+                  border: "1px solid #fcd34d",
+                  color: "#92400e",
+                  padding: "12px 16px",
+                  borderRadius: 8,
+                  marginBottom: 24,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  textAlign: "center",
+                }}
+              >
+                👁 Preview - this post is{" "}
+                <strong>
+                  {blog.status === "pending_review"
+                    ? "pending review"
+                    : "a draft"}
+                </strong>{" "}
+                and is not publicly visible yet.
+              </div>
+            )
           )}
 
           <div className="blog-detail-toolbar">

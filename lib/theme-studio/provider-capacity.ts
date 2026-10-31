@@ -31,17 +31,26 @@ export interface ProviderPacing {
 }
 
 /**
- * Start-time pacing stays between 10 and 45 seconds. A new key starts at
- * 40 seconds and a success gradually probes faster capacity. A 429 widens
- * to at least 40 seconds, then holds that floor for ten minutes after the
- * shared cooldown ends. The database's epoch/pause_until keep this memory
- * across processes and restarts. A success from before the refusal is stale.
- * The floor is a conservative policy based on historical samples, not a
- * provider guarantee. It must be measured with the real image request.
+ * Start-time pacing stays between 31 and 45 seconds. A new key starts at
+ * 40 seconds and a success gradually probes faster capacity down to the
+ * floor. A 429 widens to at least 40 seconds, then holds that floor for ten
+ * minutes after the shared cooldown ends. The database's epoch/pause_until
+ * keep this memory across processes and restarts. A success from before the
+ * refusal is stale.
+ * ★★ THE FLOOR IS THE PROVIDER'S OWN LIMIT, NOT A GUESS (read in the Quotas
+ *   console on 2026-10-28): "Generate content with image generation
+ *   requests" is a SYSTEM LIMIT of 2 per minute per project per base model
+ *   on the global endpoint, and 2 per minute per region, and the console
+ *   says it is not adjustable. The old 10 s floor let the pacer probe to six
+ *   starts a minute, and the 28% of nano-banana draws refused last week
+ *   were exactly that probing. 31 s, not 30, so that no sixty-second window
+ *   can hold a third start when two land on its edges. Every image caller
+ *   (a redesign's photos, Theme Studio's) shares the one key per project,
+ *   location and model, so the floor bounds the project, not a caller.
  */
 export const IMAGE_START_PACING: ProviderPacing = Object.freeze({
   initialGapMs: 40_000,
-  minGapMs: 10_000,
+  minGapMs: 31_000,
   maxGapMs: 45_000,
   successFactor: 0.9,
   rateLimitFactor: 1.5,

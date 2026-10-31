@@ -6,6 +6,10 @@ import { serializeJsonLd } from "@/lib/seo/json-ld";
 import { PLATFORM_URL, POS_URL } from "@/lib/site";
 import { PLAN_LIMITS, PLAN_META } from "@/lib/plans";
 import { getPlanPricing, inr } from "@/lib/plans/pricing";
+import { getPublicTaxSource } from "@/lib/billing/public-tax";
+import { posPriceBoxNote, valueAddedTaxIncluded } from "@/lib/billing/tax-copy";
+import { termsAt } from "@/lib/billing/tax-terms";
+import { logError } from "@/lib/observability/logger";
 import { BrandMark } from "../brand-mark";
 import { RegisterArt } from "../product-art";
 import { buildPosStructuredData } from "./structured-data";
@@ -375,9 +379,23 @@ function FulfilmentPreview() {
 }
 
 export default async function PosMarketingPage() {
-  const pricing = await getPlanPricing();
+  // ★ GST (design 7.1, 8): the price box says "billed yearly" plus the GST
+  // words of THIS render (`termsAt` on the cached public source, 300 s, as
+  // the prices). A failed read keeps "billed yearly" alone, with no GST words
+  // at all, never as "GST is off".
+  const [pricing, taxSource] = await Promise.all([
+    getPlanPricing(),
+    getPublicTaxSource().catch((error: unknown) => {
+      logError("billing.public_tax.read_failed", error, { page: "pos" });
+      return null;
+    }),
+  ]);
+  const terms = taxSource ? termsAt(taxSource, new Date()) : null;
   const proMonthlyEquivalentInr = Math.round(pricing.pro.yearlyInr / 12);
-  const jsonLd = buildPosStructuredData({ proMonthlyEquivalentInr });
+  const jsonLd = buildPosStructuredData({
+    proMonthlyEquivalentInr,
+    vatIncluded: terms ? valueAddedTaxIncluded(terms) : undefined,
+  });
 
   return (
     <div className="stq posx">
@@ -668,7 +686,7 @@ export default async function PosMarketingPage() {
                 {inr(proMonthlyEquivalentInr)}
                 <small>/month</small>
               </strong>
-              <p>billed yearly</p>
+              <p>{terms ? posPriceBoxNote(terms) : "billed yearly"}</p>
               <ul>
                 <li>
                   <Check size={16} /> 2 locations included

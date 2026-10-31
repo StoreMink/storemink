@@ -825,6 +825,18 @@
   background: var(--dash-red-soft);
   color: var(--dash-red);
 }
+/* StoreMink's takedown marks only ("Blocked by StoreMink", "Removed by
+   StoreMink", the notices list's "Blocked", and the operator console's
+   Blocked and Suspended badges on complaints, blocks and the block form).
+   The red tint of dash-badge-red
+   with darker words: --dash-red on that tint is about 4:1 for 11.5px text,
+   under the 4.5:1 small text needs, and some marks sit on a red-tinted row.
+   dash-badge-red stays as it is for everything else. The ratio is measured
+   from these tokens in takedown-badge-css.test.ts. */
+.dashboard-shell .dash-badge-storemink {
+  background: var(--dash-red-soft);
+  color: #991b1b;
+}
 .dashboard-shell .dash-badge-blue {
   background: var(--dash-accent-soft);
   color: var(--dash-accent);
@@ -5446,6 +5458,13 @@ a.customer-detail-field:hover {
 
 .dashboard-shell .dash-insights-ask svg {
   color: var(--dash-accent);
+}
+
+/* The Mink face keeps its own size: the 15px icon rule above it
+   (.dash-an-btn svg) would shrink its eyes past reading. */
+.dashboard-shell .dash-an-btn svg[data-mink-face] {
+  width: 18px;
+  height: 18px;
 }
 
 @media (max-width: 760px) {

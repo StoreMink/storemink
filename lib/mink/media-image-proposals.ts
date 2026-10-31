@@ -5,12 +5,11 @@ import { and, eq } from "drizzle-orm";
 import { mediaAssets, minkActionToolAccess } from "@/drizzle/schema";
 import { can } from "@/app/dashboard/lib/permissions";
 import { withService } from "@/lib/db/client";
+import { uploadRefusal } from "@/lib/moderation/copy";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 import { logError } from "@/lib/observability/logger";
-import {
-  gcsConfigured,
-  gcsDeletePaths,
-  gcsUploadObject,
-} from "@/lib/storage/gcs";
+import { gcsConfigured, gcsDeletePaths } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { createMinkDraftProposal } from "./drafts";
 import {
   MinkRequestError,
@@ -138,20 +137,23 @@ export async function createMinkMediaImageProposal(
   );
   if (request.purpose === "product") {
     // ★★ A PRODUCT PHOTO STARTS FROM A REAL PHOTO OF THE ITEM, or it is a
-    //    picture of goods that may not exist. The product's own image or one
-    //    the merchant attached (a Media row) qualifies; a category image, a
-    //    picture Mink drew earlier, or nothing does not. An earlier AI photo
-    //    may come along to continue its scene, but never instead of the real
-    //    one. Refused BEFORE the spend ceiling and the charge.
+    //    picture of goods that may not exist. The product's own image, one
+    //    the merchant attached (a Media row) or a picture attached in this
+    //    chat (read privately, source `attachment`) qualifies; a category
+    //    image, a picture Mink drew earlier, or nothing does not. An earlier
+    //    AI photo may come along to continue its scene, but never instead of
+    //    the real one. Refused BEFORE the spend ceiling and the charge.
     if (
       !references.some(
         (reference) =>
-          (reference.source === "product" || reference.source === "media") &&
+          (reference.source === "product" ||
+            reference.source === "media" ||
+            reference.source === "attachment") &&
           !isMinkAiMadePhotoUrl(reference.url),
       )
     ) {
       throw new MinkToolInputError(
-        "A product photo must start from a real photo of the item. Pass the product's own image URL from search_products or get_current_product, or the exact Media URL of a photo the merchant attached, as a reference; to change a photo Mink made, pass that photo AND the real one. Mink does not invent a product from a description.",
+        "A product photo must start from a real photo of the item. Pass the product's own image URL from search_products or get_current_product, or the exact address of a photo the merchant attached, as a reference; to change a photo Mink made, pass that photo AND the real one. Mink does not invent a product from a description.",
       );
     }
     // The card shape is the store's, read here so the model cannot choose it.
@@ -211,8 +213,23 @@ export async function createMinkMediaImageProposal(
   const path = `stores/${input.actor.storeId}/${folder}/${crypto.randomUUID()}.${extension}`;
   let url: string;
   try {
-    url = await gcsUploadObject(path, image.bytes, image.mimeType);
+    // ★ Through the store's one writer (takedown design 5.7): bytes StoreMink
+    //   has blocked on this store are refused and nothing is written.
+    url = await writeStoreObject(path, image.bytes, image.mimeType, {
+      storeId: input.actor.storeId,
+      via: "mink_media_image",
+      actor: input.actor.adminId,
+    });
   } catch (error) {
+    if (isBlockedUploadError(error)) {
+      // The design's own sentence (7.4), named or nameless as the block is;
+      // the picture was drawn, so the allowance stays spent.
+      throw new MinkRequestError(
+        "image_blocked",
+        uploadRefusal({ told: error.told, kindWord: error.kindWord }),
+        409,
+      );
+    }
     logError("mink generated image upload failed", error, { path });
     throw new MinkRequestError(
       "image_storage_failed",

@@ -11,6 +11,7 @@ import {
 } from "@/lib/plans";
 import { getPlanAllowancesLive } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
+import type { NextInvoiceView } from "@/lib/billing/invoice-types";
 
 // ---------------------------------------------------------------------------
 // Everything an operator needs to know about ONE store, on one screen.
@@ -105,6 +106,18 @@ export interface StoreDetail {
     billedLocations: number;
     cancelAtPeriodEnd: boolean;
     graceEndsAt: string | null;
+    /** When the cancellation that stands was asked for (renewal-cancel). */
+    cancelRequestedAt: string | null;
+    /**
+     * Who asked for it: the merchant by kind only (their user id is never
+     * shown), an operator by email. Null when not cancelling or not recorded.
+     */
+    cancelRequestedBy:
+      | { kind: "merchant" }
+      | { kind: "operator"; email: string | null }
+      | null;
+    /** The next cycle's subscription invoice (`cycle_seq = current + 1`). */
+    nextInvoice: NextInvoiceView | null;
   } | null;
 }
 
@@ -115,6 +128,33 @@ function num(value: unknown): number {
 
 function str(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
+}
+
+/**
+ * `billing_subscriptions.cancel_requested_by` for the console: "merchant:<id>"
+ * reads as the merchant (never the id), "operator:<email>" as that email.
+ */
+function cancelRequester(
+  value: unknown,
+): NonNullable<StoreDetail["subscription"]>["cancelRequestedBy"] {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  if (!raw.startsWith("operator")) return { kind: "merchant" };
+  const email = raw.startsWith("operator:") ? raw.slice(9).trim() : "";
+  return { kind: "operator", email: email || null };
+}
+
+function nextInvoiceOf(value: unknown): NextInvoiceView | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== "string") return null;
+  return {
+    id: row.id,
+    status: String(row.status ?? ""),
+    totalPaise: num(row.total_paise),
+    invoiceRef: str(row.invoice_ref),
+    inFlight: row.in_flight === true,
+  };
 }
 
 /**
@@ -188,7 +228,22 @@ export async function loadStoreDetail(
              'current_period_end', bs.current_period_end,
              'billed_locations', bs.billed_locations,
              'cancel_at_period_end', bs.cancel_at_period_end,
-             'grace_ends_at', bs.grace_ends_at)
+             'grace_ends_at', bs.grace_ends_at,
+             'cancel_requested_at', bs.cancel_requested_at,
+             'cancel_requested_by', bs.cancel_requested_by,
+             'next_invoice', (
+               select json_build_object(
+                 'id', ni.id, 'status', ni.status,
+                 'total_paise', ni.total_paise, 'invoice_ref', ni.invoice_ref,
+                 'in_flight', exists (
+                   select 1 from billing_payment_attempts na
+                    where na.invoice_id = ni.id
+                      and na.state in ('created', 'processing', 'authorized', 'unknown')))
+                 from billing_invoices ni
+                where ni.store_id = bs.store_id
+                  and ni.kind = 'subscription'
+                  and ni.cycle_seq = bs.current_cycle_seq + 1
+                limit 1))
              from billing_subscriptions bs where bs.store_id = s.id) as subscription
         from stores s
         where s.id = ${storeId}
@@ -302,6 +357,9 @@ export async function loadStoreDetail(
               billedLocations: num(sub.billed_locations),
               cancelAtPeriodEnd: sub.cancel_at_period_end === true,
               graceEndsAt: str(sub.grace_ends_at),
+              cancelRequestedAt: str(sub.cancel_requested_at),
+              cancelRequestedBy: cancelRequester(sub.cancel_requested_by),
+              nextInvoice: nextInvoiceOf(sub.next_invoice),
             }
           : null,
       };

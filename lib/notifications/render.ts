@@ -12,6 +12,20 @@
 
 import { getEventDef, type Audience } from "./events";
 import { refundCopy } from "./refund-copy";
+import {
+  blockedBell,
+  liftedBell,
+  replyBell,
+  STORE_EVENTS,
+} from "@/lib/moderation/copy";
+import {
+  BLOCK_KINDS,
+  COMPLAINT_KINDS,
+  complaintKindLabel,
+  isOneOf,
+  parseComplaintRef,
+} from "@/lib/moderation/kinds";
+import { deadlineLabel, type DeadlineStage } from "@/lib/moderation/deadlines";
 
 export interface RenderableEvent {
   type: string;
@@ -80,6 +94,75 @@ function themeStudioUrl(e: RenderableEvent): string {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
     ? `/dashboard/themes/studio/${id.toLowerCase()}`
     : "/dashboard/themes/studio";
+}
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A takedown notice on the store's own dashboard: the subject is the
+ *  block, and anything that is not a block id falls back to the list. */
+function storeNoticeUrl(e: RenderableEvent): string {
+  const id = str(e.subjectId);
+  return id && UUID_RE.test(id)
+    ? `/dashboard/settings/notices/${id.toLowerCase()}`
+    : "/dashboard/settings/notices";
+}
+
+/** A complaint in the operator console, by its reference ("SM-000123"). */
+function complaintUrl(ref: string | null): string {
+  return ref ? `/dashboard/complaints/${ref}` : "/dashboard/complaints";
+}
+
+/** A block in the operator console. */
+function consoleBlockUrl(e: RenderableEvent): string {
+  const id = str(e.subjectId);
+  return id && UUID_RE.test(id)
+    ? `/dashboard/complaints/blocks/${id.toLowerCase()}`
+    : "/dashboard/complaints";
+}
+
+/** A complaint reference as the console prints it, or null. */
+function complaintRefOf(value: unknown): string | null {
+  const ref = str(value);
+  return ref && parseComplaintRef(ref) !== null ? ref.toUpperCase() : null;
+}
+
+const DEADLINE_STAGES: readonly DeadlineStage[] = [
+  "acknowledge",
+  "act",
+  "resolve",
+];
+
+/** "30 Oct, 14:05 IST": operators read deadlines in India time, whatever
+ *  zone the server renders in (Cloud Run is UTC). */
+function istTime(value: unknown): string | null {
+  const text = str(value);
+  if (!text) return null;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return null;
+  const day = date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kolkata",
+  });
+  const time = date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Kolkata",
+  });
+  return `${day}, ${time} IST`;
+}
+
+/** "30 min", "2 h", "1 h 10 min": a whole number of minutes, read aloud. */
+function minutesWords(value: unknown): string | null {
+  const n = num(value);
+  if (n === null || n < 0) return null;
+  const total = Math.max(1, Math.round(n));
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  if (hours === 0) return `${minutes} min`;
+  return minutes ? `${hours} h ${minutes} min` : `${hours} h`;
 }
 
 function safeDashboardUrl(value: unknown): string {
@@ -379,7 +462,7 @@ export function renderNotification(
         url: "/dashboard/settings/account",
       };
 
-    // ── Plan & billing ────────────────────────────────────────────────────
+    // ── Plans & Billing ───────────────────────────────────────────────────
     case "plan.changed":
       return {
         title: `Plan changed${str(p.plan) ? ` · ${str(p.plan)}` : ""}`,
@@ -610,6 +693,93 @@ export function renderNotification(
         body: "Theme Studio needs a few answers before it can design this theme. Open it to reply.",
         url: themeStudioUrl(event),
       };
+
+    // ── Takedowns: StoreMink to the store (design 7.5) ─────────────────────
+    // The words are copy.ts's; the subject is the block, the label its item.
+    case "store.content_blocked":
+    case "store.content_block_lifted":
+    case "store.content_block_reply": {
+      const kind = p.kind;
+      const url = storeNoticeUrl(event);
+      if (!isOneOf(BLOCK_KINDS, kind)) {
+        const words =
+          event.type === "store.content_blocked"
+            ? STORE_EVENTS.contentBlocked
+            : event.type === "store.content_block_lifted"
+              ? STORE_EVENTS.blockLifted
+              : STORE_EVENTS.reply;
+        return { title: words.label, body: null, url };
+      }
+      const facts = {
+        kind,
+        contentType: str(p.contentType),
+        itemLabel: subject,
+      };
+      const bell =
+        event.type === "store.content_blocked"
+          ? blockedBell(facts)
+          : event.type === "store.content_block_lifted"
+            ? liftedBell(facts)
+            : replyBell(facts);
+      return { title: bell.title, body: bell.body, url };
+    }
+
+    // ── Complaints and takedowns: the operators (design 7.5) ──────────────
+    // Emitted with storeId null (lib/moderation/notify.ts); the store, if
+    // any, is named in the payload, never carried as the event's store.
+    case "platform.complaint_urgent": {
+      const ref = complaintRefOf(subject);
+      const kind = isOneOf(COMPLAINT_KINDS, p.kind) ? p.kind : null;
+      const stage = isOneOf(DEADLINE_STAGES, p.stage) ? p.stage : "act";
+      const due = istTime(p.dueAt);
+      return {
+        title: kind
+          ? `Urgent: ${complaintKindLabel(kind)}${ref ? ` ${ref}` : ""}`
+          : `Urgent complaint${ref ? ` ${ref}` : ""}`,
+        body: kind && due ? `${deadlineLabel(kind, stage)} ${due}.` : null,
+        url: complaintUrl(ref),
+      };
+    }
+
+    case "platform.complaint_due": {
+      const ref = complaintRefOf(subject);
+      const kind = isOneOf(COMPLAINT_KINDS, p.kind) ? p.kind : null;
+      const stage = isOneOf(DEADLINE_STAGES, p.stage) ? p.stage : null;
+      const when = minutesWords(p.minutes);
+      const what =
+        kind && stage
+          ? deadlineLabel(kind, stage).replace(/ by$/, "")
+          : "A deadline";
+      const timing = !when
+        ? "due soon"
+        : str(p.phase) === "overdue"
+          ? `overdue by ${when}`
+          : `due in ${when}`;
+      const title = `${ref ? `${ref}: ` : ""}${what} ${timing}`;
+      const store = str(p.storeName);
+      return {
+        title,
+        body:
+          [kind && `${complaintKindLabel(kind)}.`, store && `${store}.`]
+            .filter(Boolean)
+            .join(" ") || null,
+        url: complaintUrl(ref),
+      };
+    }
+
+    case "platform.takedown_reply": {
+      const store = str(p.storeName);
+      return {
+        title:
+          store && subject
+            ? `${store} replied about ${subject}`
+            : store
+              ? `${store} replied about a block`
+              : "A store replied about a block",
+        body: p.askedForReview === true ? "They ask for a review." : null,
+        url: consoleBlockUrl(event),
+      };
+    }
 
     default:
       return fallback;

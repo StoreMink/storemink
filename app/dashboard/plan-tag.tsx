@@ -1,16 +1,13 @@
 import Link from "next/link";
 import { ArrowUpRight, Sparkles } from "lucide-react";
 import { PLAN_META, type Plan } from "@/lib/plans";
-import {
-  nextPlan,
-  planPriceLine,
-  upgradeUnlocks,
-} from "@/lib/plans/upgrade-summary";
+import { nextPlan, upgradeUnlocks } from "@/lib/plans/upgrade-summary";
 
 /**
  * One line, not a card: the plan the store is on and the way up. The hover
- * title names what the next plan unlocks, derived from PLAN_LIMITS so it can
- * never promise what enforcement withholds (lib/plans/upgrade-summary.ts).
+ * title names the next plan and what it unlocks, derived from PLAN_LIMITS so it
+ * can never promise what enforcement withholds (lib/plans/upgrade-summary.ts).
+ * No price: Plans & Billing shows it, worked out with GST (GST design 14).
  */
 export function PlanTag({ plan }: { plan: Plan }) {
   const next = nextPlan(plan);
@@ -26,7 +23,7 @@ export function PlanTag({ plan }: { plan: Plan }) {
           href="/dashboard/plans"
           title={
             unlocks.length
-              ? `${PLAN_META[next].name} · ${planPriceLine(next)}: ${unlocks.join(", ")}`
+              ? `${PLAN_META[next].name}: ${unlocks.join(", ")}`
               : undefined
           }
           className="dash-btn dash-btn-primary dash-btn-sm !rounded-full"

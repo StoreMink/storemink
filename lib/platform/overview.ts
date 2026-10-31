@@ -3,6 +3,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
+import { moderationQueueSql } from "@/lib/moderation/console-read";
 import { MERCHANT_STORES_CTE } from "./merchant-stores";
 import type { Plan } from "@/lib/plans";
 
@@ -45,6 +46,21 @@ export interface AttentionCounts {
   emailFailures24h: number;
   smsFailures24h: number;
   openReconciliation: number;
+  /**
+   * Complaints whose next unmet deadline is within 6 hours or has passed
+   * (takedown design 6.1). A resolved complaint has no deadline left, so it
+   * never counts.
+   */
+  complaintsDue: number;
+  /** Live blocks whose store sent the newest message: waiting for an answer. */
+  storeReplies: number;
+  /**
+   * Live blocks with a file still in storage (copy or replacement pending or
+   * failed) or one that must be removed by hand.
+   */
+  filesToFinish: number;
+  /** Active store holds whose review date (India time) has been reached. */
+  holdsToReview: number;
 }
 
 export interface RecentStore {
@@ -93,6 +109,10 @@ const EMPTY: PlatformInsights = {
     emailFailures24h: 0,
     smsFailures24h: 0,
     openReconciliation: 0,
+    complaintsDue: 0,
+    storeReplies: 0,
+    filesToFinish: 0,
+    holdsToReview: 0,
   },
   recent: [],
 };
@@ -122,6 +142,10 @@ export async function getPlatformInsights(): Promise<PlatformInsights> {
       // agreeing here is load-bearing: if this screen counted stored plans
       // while the gates read effective ones, the console would report revenue
       // the product is not actually delivering.
+      //
+      // The four takedown queues are console-read.ts's own subqueries, so each
+      // counts exactly what its Complaints tab lists (design 6.1).
+      const queues = moderationQueueSql();
       const summary = await db.execute(sql`
         ${MERCHANT_STORES}
         select
@@ -158,7 +182,11 @@ export async function getPlatformInsights(): Promise<PlatformInsights> {
             where status = 'failed'
               and created_at >= now() - interval '24 hours') as sms_failures,
           (select count(*)::int from billing_reconciliation_items
-            where status = 'open') as open_reconciliation
+            where status = 'open') as open_reconciliation,
+          ${queues.complaintsDue} as complaints_due,
+          ${queues.storeReplies} as store_replies,
+          ${queues.filesToFinish} as files_to_finish,
+          ${queues.holdsToReview} as holds_to_review
       `);
 
       const row = (summary.rows[0] ?? {}) as Record<string, unknown>;
@@ -223,6 +251,10 @@ export async function getPlatformInsights(): Promise<PlatformInsights> {
           emailFailures24h: num(row.email_failures),
           smsFailures24h: num(row.sms_failures),
           openReconciliation: num(row.open_reconciliation),
+          complaintsDue: num(row.complaints_due),
+          storeReplies: num(row.store_replies),
+          filesToFinish: num(row.files_to_finish),
+          holdsToReview: num(row.holds_to_review),
         },
         recent: recentRows.rows.map((r) => {
           const s = r as Record<string, unknown>;

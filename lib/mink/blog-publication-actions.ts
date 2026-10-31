@@ -11,6 +11,7 @@ import {
   minkDrafts,
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
+import { minkBlockedSentence } from "@/lib/moderation/copy";
 import { hashMinkActionPayload } from "./action-integrity";
 import {
   minkBlogReadingTime,
@@ -102,6 +103,7 @@ export async function previewMinkBlogPublication(input: {
       input.actor.storeId,
       content.cover_image_url,
     );
+    await assertNotBlockedPost(db, input.actor.storeId, content.title);
     const before = values(content, null);
     const after = values(content, timing);
     return createApproval(db, {
@@ -184,6 +186,7 @@ export async function executeMinkBlogPublication(input: {
       input.actor.storeId,
       content.cover_image_url,
     );
+    await assertNotBlockedPost(db, input.actor.storeId, content.title);
     const approvedBefore = valuesFromJson(approval.beforeJson);
     const approvedAfter = valuesFromJson(approval.afterJson);
     const timing = timingFromApproval(approval, approvedAfter);
@@ -538,6 +541,46 @@ async function assertOwnedBlogCover(
       "The selected cover image is no longer available in this store. Choose a current Media Library or catalogue image and review again.",
     );
   }
+}
+
+/**
+ * ★ A POST STOREMINK BLOCKED IS NOT PUBLISHED AGAIN (takedown design 5.7,
+ *   plan A18). A proposal with the title or the web address of a post
+ *   StoreMink blocked and told the store about is refused, at review and
+ *   again at the write, with the sentence Mink's read tools carry for that
+ *   post, so Mink can say why. A block kept from the store (decision D21)
+ *   changes nothing here: like any proposal whose address is taken, the post
+ *   gets an address of its own, and nothing hints at the block.
+ * ★ Read on the caller's connection, inside the same transaction as the
+ *   write, so it never opens a scope of its own.
+ */
+async function assertNotBlockedPost(
+  db: Db,
+  storeId: string,
+  title: string,
+): Promise<void> {
+  const result = await db.execute(sql`
+    select blog.title
+      from public.blogs blog
+      join public.content_blocks block
+        on block.item_kind = 'blog_post'
+       and block.item_id = blog.id
+       and block.store_id = blog.store_id
+       and block.tell_store
+       and block.lifted_at is null
+       and block.erased_at is null
+     where blog.store_id = ${storeId}::uuid
+       and blog.moderation_blocked_at is not null
+       and (blog.slug = ${blogSlug(title)}
+            or lower(btrim(blog.title)) = lower(btrim(${title})))
+     limit 1
+  `);
+  const row = result.rows[0] as { title?: unknown } | undefined;
+  if (!row) return;
+  throw conflict(
+    "mink_blog_blocked",
+    minkBlockedSentence(typeof row.title === "string" ? row.title : title),
+  );
 }
 
 function timingForRequest(mode: unknown, scheduledFor: unknown) {

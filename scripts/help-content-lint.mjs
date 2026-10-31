@@ -687,8 +687,8 @@ export const GRANDFATHERED_LONG_DASH = new Set([
  * HTML entity (&mdash; &ndash; &#8212; &#8211; &#x2014; &#x2013;). They render
  * as the dashes the owner's rule forbids, but a pattern written for the em dash
  * character let 0008 (en dashes in ranges) and 0079 and 0080 (five &mdash; in
- * the plan guide) through. 20261026_0254 rewrote 0008's; the plan guide's are
- * removed by the Help edit that rewrites its billing paragraphs. So every Help
+ * the plan guide) through. 20261026_0254 rewrote 0008's and
+ * 20261028_0265_cancel_and_refund_help the plan guide's. So every Help
  * migration AFTER 0254 may not PUBLISH these spellings, while quoting one as
  * text to remove ($old$) stays legal until none is left; the audit reads the
  * served rows for all of them.

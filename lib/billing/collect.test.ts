@@ -19,7 +19,9 @@
 // conflict as "already collecting" instead of as an error.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
+import { billingInvoices, billingPaymentAttempts } from "@/drizzle/schema";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -35,14 +37,29 @@ vi.mock("@/lib/db/client", () => ({
   withService: vi.fn(async (fn: any) => fn(dbHolder.current.db)),
 }));
 
+// The order read is the only gateway call these helpers make on their own;
+// the payment matcher stays real.
+const rzpOrder = vi.hoisted(() => ({ rzpFetchOrder: vi.fn() }));
+vi.mock("@/lib/payments/razorpay", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/payments/razorpay")>()),
+  rzpFetchOrder: rzpOrder.rzpFetchOrder,
+}));
+
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import {
   beginAttempt,
+  capturedAttemptForInvoice,
+  capturedDraftPurchases,
   collectInvoice,
+  fileRecoveredPurchase,
   mapGatewayStatus,
+  readAddonOrderTarget,
   settleAttempt,
+  verifyRecoveredCapture,
   type ChargeFn,
 } from "./collect";
 import { AFA_EXEMPT_LIMIT_PAISE } from "./cycle";
+import type { PaymentState } from "./payment-state";
 
 const INVOICE = "inv-1";
 const STORE = "store-1";
@@ -295,12 +312,37 @@ describe("settleAttempt", () => {
     expect(dbHolder.current.calls.set).toHaveLength(0);
   });
 
-  it("treats a duplicate webhook as a no-op", async () => {
+  it("treats a duplicate in-flight update as a no-op", async () => {
     seed({
-      selects: [[{ id: ATTEMPT, state: "captured", invoiceId: INVOICE }]],
+      selects: [[{ id: ATTEMPT, state: "processing", invoiceId: INVOICE }]],
+    });
+    expect(await settleAttempt(ATTEMPT, "processing")).toBe("processing");
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+    // Only the attempt read: no invoice sync for anything but a capture.
+    expect(dbHolder.current.calls.select).toHaveLength(1);
+  });
+
+  it("treats a duplicate failure as a no-op", async () => {
+    seed({
+      selects: [[{ id: ATTEMPT, state: "failed", invoiceId: INVOICE }]],
+    });
+    expect(await settleAttempt(ATTEMPT, "failed")).toBe("failed");
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+    expect(dbHolder.current.calls.select).toHaveLength(1);
+  });
+
+  it("a duplicate capture writes nothing to the attempt", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ id: ATTEMPT, state: "captured", invoiceId: INVOICE }],
+        [{ state: "captured" }],
+      ],
+      returningQueue: [[{ id: INVOICE }]],
     });
     expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
-    expect(dbHolder.current.calls.set).toHaveLength(0);
+    for (const set of dbHolder.current.calls.set) {
+      expect(set).not.toHaveProperty("state");
+    }
   });
 
   it("returns null when a concurrent settle won the claim", async () => {
@@ -314,6 +356,368 @@ describe("settleAttempt", () => {
   it("returns null for an unknown attempt", async () => {
     seed({ selects: [[]] });
     expect(await settleAttempt(ATTEMPT, "captured")).toBeNull();
+  });
+});
+
+describe("syncInvoiceStatus, through settleAttempt (defect D9)", () => {
+  // `syncInvoiceStatus` is private, so it is driven through `settleAttempt`:
+  // the attempt read, the attempt claim, the attempt-state read, the invoice
+  // claim and, when that claim finds nothing on a move to paid, the re-read.
+  //
+  // ⚠ The db mock does not evaluate a WHERE, so which statuses the invoice
+  // claim admits is pinned by RENDERING it with the real dialect. That is the
+  // only assertion that sees a status added to the list, and it is the one the
+  // mutations named in the design ("let syncInvoiceStatus claim void", and the
+  // D9 regression of admitting `paid` again) turn red.
+
+  const ISSUED_AT = "2026-09-01T00:00:00.000Z";
+
+  function settleScenario(opts: {
+    from: PaymentState;
+    attemptsAfter: PaymentState[];
+    invoiceClaim: unknown[];
+    invoiceRow?: { status: string; finalizedAt: string | null };
+  }) {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [{ id: ATTEMPT, state: opts.from, invoiceId: INVOICE, storeId: STORE }],
+        opts.attemptsAfter.map((state) => ({ state })),
+        opts.invoiceRow ? [opts.invoiceRow] : [],
+      ],
+      // The attempt claim wins; the invoice claim returns what the case says.
+      returningQueue: [[{ state: "claimed" }], opts.invoiceClaim],
+    });
+  }
+
+  /** The invoice claim's WHERE, rendered by the real Postgres dialect. */
+  function invoiceClaimWhere() {
+    const rendered = dbHolder.current.calls.where
+      .map((clause: unknown) => new PgDialect().sqlToQuery(clause as never))
+      .filter((q: { sql: string }) =>
+        q.sql.includes('"billing_invoices"."status" in'),
+      );
+    expect(rendered).toHaveLength(1);
+    return rendered[0] as { sql: string; params: unknown[] };
+  }
+
+  function invoiceWrites(): number {
+    return dbHolder.current.calls.update.filter(
+      (t: unknown) => t === billingInvoices,
+    ).length;
+  }
+
+  it.each([
+    ["failed", "open"],
+    ["unknown", "processing"],
+    ["captured", "paid"],
+  ] as const)(
+    "★★ the invoice claim admits only open and processing when a %s attempt derives %s",
+    async (incoming, derived) => {
+      settleScenario({
+        from: "processing",
+        attemptsAfter: [incoming],
+        invoiceClaim: [{ id: INVOICE }],
+      });
+      expect(await settleAttempt(ATTEMPT, incoming)).toBe(incoming);
+      expect(dbHolder.current.calls.set[1].status).toBe(derived);
+
+      // Never `paid` (a paid invoice is never moved back) and never `void` or
+      // `uncollectible` (a closed invoice is never revived), whichever status
+      // the attempts derive.
+      const where = invoiceClaimWhere();
+      expect(where.sql).toContain('"billing_invoices"."id" = $1');
+      expect(where.sql).toContain('"billing_invoices"."status" in ($2, $3)');
+      expect(where.params).toEqual([INVOICE, "open", "processing"]);
+    },
+  );
+
+  it("★★ refunded counts as settled: a refund on a paid invoice writes paid, never reopens it", async () => {
+    // Before D9 a lone `refunded` attempt derived `open`, and the claim's list
+    // still held `paid` for a move to open, so the paid invoice went back to
+    // open and could be paid a second time.
+    settleScenario({
+      from: "captured",
+      attemptsAfter: ["refunded"],
+      invoiceClaim: [], // a paid invoice is outside the claim, so nothing moves
+      invoiceRow: { status: "paid", finalizedAt: ISSUED_AT },
+    });
+
+    expect(await settleAttempt(ATTEMPT, "refunded")).toBe("refunded");
+    expect(dbHolder.current.calls.set[1].status).toBe("paid");
+    for (const set of dbHolder.current.calls.set) {
+      expect(set.status).not.toBe("open");
+    }
+    // Already paid is the benign race: nothing logged, no second receipt.
+    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
+    expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+  });
+
+  it.each(["void", "uncollectible"])(
+    "★ a capture on an ISSUED %s invoice logs info and does not touch the row",
+    async (status) => {
+      settleScenario({
+        from: "processing",
+        attemptsAfter: ["captured"],
+        invoiceClaim: [],
+        invoiceRow: { status, finalizedAt: ISSUED_AT },
+      });
+
+      expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+      expect(logInfo).toHaveBeenCalledWith(
+        "billing.payment_on_closed_invoice",
+        {
+          invoiceId: INVOICE,
+          invoiceStatus: status,
+        },
+      );
+      expect(logError).not.toHaveBeenCalled();
+      // The conditional claim is the only invoice write, and it matched
+      // nothing: no reopen, no second write, no receipt.
+      expect(invoiceWrites()).toBe(1);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["a draft", "draft"],
+    ["a closed draft (void)", "void"],
+    ["a closed draft (uncollectible)", "uncollectible"],
+  ])(
+    "★★ a capture on an UNISSUED invoice, %s, logs an error",
+    async (_label, status) => {
+      // The refund guard refuses an unissued invoice, so only a person can
+      // return this money: it must reach Error Reporting.
+      settleScenario({
+        from: "processing",
+        attemptsAfter: ["captured"],
+        invoiceClaim: [],
+        invoiceRow: { status, finalizedAt: null },
+      });
+
+      expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+      expect(logError).toHaveBeenCalledWith(
+        "billing.invoice_paid_claim_missed",
+        expect.any(Error),
+        { invoiceId: INVOICE, invoiceStatus: status, issued: false },
+      );
+      expect(logInfo).not.toHaveBeenCalled();
+      expect(invoiceWrites()).toBe(1);
+      expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an issued invoice in any other unclaimable status still logs an error", async () => {
+    settleScenario({
+      from: "processing",
+      attemptsAfter: ["captured"],
+      invoiceClaim: [],
+      invoiceRow: { status: "refunded", finalizedAt: ISSUED_AT },
+    });
+
+    await settleAttempt(ATTEMPT, "captured");
+    expect(logError).toHaveBeenCalledWith(
+      "billing.invoice_paid_claim_missed",
+      expect.any(Error),
+      { invoiceId: INVOICE, invoiceStatus: "refunded", issued: true },
+    );
+    expect(logInfo).not.toHaveBeenCalled();
+  });
+
+  it("re-reads the invoice's status AND finalized_at on a missed paid claim", async () => {
+    settleScenario({
+      from: "processing",
+      attemptsAfter: ["captured"],
+      invoiceClaim: [],
+      invoiceRow: { status: "void", finalizedAt: ISSUED_AT },
+    });
+
+    await settleAttempt(ATTEMPT, "captured");
+    const reread = dbHolder.current.calls.select.at(-1);
+    expect(Object.keys(reread).sort()).toEqual(["finalizedAt", "status"]);
+  });
+
+  it("does not re-read when the paid claim landed", async () => {
+    settleScenario({
+      from: "processing",
+      attemptsAfter: ["captured"],
+      invoiceClaim: [{ id: INVOICE }],
+    });
+
+    await settleAttempt(ATTEMPT, "captured");
+    // attempt read + attempt-state read, and no third select.
+    expect(dbHolder.current.calls.select).toHaveLength(2);
+    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
+  });
+});
+
+describe("a capture seen again re-syncs its invoice (finding F1)", () => {
+  // Reconciliation can capture an enrolment, plan-change or location attempt
+  // while its invoice is still a draft, so the paid claim matches nothing. The
+  // confirm path then finalizes the draft to `open` and settles the same
+  // attempt `captured` again. That second settle must bring the invoice in
+  // line, or it stays `open` behind captured money and Plans & Billing offers
+  // it for payment a second time.
+  //
+  // The order of statements on this path: the attempt read, the attempt-state
+  // read, the invoice claim, and (only when that claim finds nothing) the
+  // re-read. There is NO attempt claim: the attempt does not move.
+
+  const ISSUED_AT = "2026-09-01T00:00:00.000Z";
+
+  function duplicateCapture(opts: {
+    storeId?: string | null;
+    invoiceClaim: unknown[];
+    invoiceRow?: { status: string; finalizedAt: string | null };
+  }) {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: ATTEMPT,
+            state: "captured",
+            invoiceId: INVOICE,
+            storeId: opts.storeId === undefined ? STORE : opts.storeId,
+          },
+        ],
+        [{ state: "captured" }],
+        opts.invoiceRow ? [opts.invoiceRow] : [],
+      ],
+      returningQueue: [opts.invoiceClaim],
+    });
+  }
+
+  function writesTo(table: unknown): number {
+    return dbHolder.current.calls.update.filter((t: unknown) => t === table)
+      .length;
+  }
+
+  it("★★ an invoice finalized after the capture becomes paid, and the receipt goes out once", async () => {
+    duplicateCapture({ invoiceClaim: [{ id: INVOICE }] });
+
+    expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+
+    // The invoice moved to paid; the attempt did not move at all.
+    expect(writesTo(billingInvoices)).toBe(1);
+    expect(writesTo(billingPaymentAttempts)).toBe(0);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({ status: "paid" });
+    expect(dbHolder.current.calls.set[0].paidAt).toEqual(expect.any(String));
+    expect(receipts.notifyInvoicePaid).toHaveBeenCalledTimes(1);
+    expect(receipts.notifyInvoicePaid).toHaveBeenCalledWith(STORE, INVOICE);
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("★★ R1-04: `notify: false` makes the invoice paid with NO receipt (the repair pass's issue-alone)", async () => {
+    duplicateCapture({ invoiceClaim: [{ id: INVOICE }] });
+
+    expect(await settleAttempt(ATTEMPT, "captured", { notify: false })).toBe(
+      "captured",
+    );
+
+    // The invoice still becomes paid: only the email is withheld.
+    expect(writesTo(billingInvoices)).toBe(1);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({ status: "paid" });
+    expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+  });
+
+  it("★ `notify: true` (or absent) keeps the receipt: only an explicit false withholds it", async () => {
+    duplicateCapture({ invoiceClaim: [{ id: INVOICE }] });
+    await settleAttempt(ATTEMPT, "captured", { notify: true });
+    expect(receipts.notifyInvoicePaid).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ the re-sync claims only an open or processing invoice (defect D9)", async () => {
+    duplicateCapture({ invoiceClaim: [{ id: INVOICE }] });
+    await settleAttempt(ATTEMPT, "captured");
+
+    // Rendered with the real dialect: the mock does not evaluate a WHERE, and
+    // this is the assertion that sees `void`, `uncollectible`, `draft` or
+    // `paid` added to the statuses a re-sync may move.
+    const rendered = dbHolder.current.calls.where
+      .map((clause: unknown) => new PgDialect().sqlToQuery(clause as never))
+      .filter((q: { sql: string }) =>
+        q.sql.includes('"billing_invoices"."status" in'),
+      );
+    expect(rendered).toHaveLength(1);
+    expect(rendered[0].sql).toContain('"billing_invoices"."id" = $1');
+    expect(rendered[0].sql).toContain(
+      '"billing_invoices"."status" in ($2, $3)',
+    );
+    expect(rendered[0].params).toEqual([INVOICE, "open", "processing"]);
+  });
+
+  it("★ an invoice already paid (a double-submitted confirm) is left alone, with no second receipt", async () => {
+    duplicateCapture({
+      invoiceClaim: [],
+      invoiceRow: { status: "paid", finalizedAt: ISSUED_AT },
+    });
+
+    expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+    expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
+    expect(logInfo).not.toHaveBeenCalled();
+  });
+
+  it.each(["void", "uncollectible"])(
+    "★★ an ISSUED %s invoice is never revived: it logs info and the claim is the only write",
+    async (status) => {
+      duplicateCapture({
+        invoiceClaim: [],
+        invoiceRow: { status, finalizedAt: ISSUED_AT },
+      });
+
+      expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+      expect(logInfo).toHaveBeenCalledWith(
+        "billing.payment_on_closed_invoice",
+        {
+          invoiceId: INVOICE,
+          invoiceStatus: status,
+        },
+      );
+      expect(logError).not.toHaveBeenCalled();
+      expect(writesTo(billingInvoices)).toBe(1);
+      expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+    },
+  );
+
+  it("★★ a draft is never made paid: no number is spent, and the missed claim is an error", async () => {
+    duplicateCapture({
+      invoiceClaim: [],
+      invoiceRow: { status: "draft", finalizedAt: null },
+    });
+
+    expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+    expect(logError).toHaveBeenCalledWith(
+      "billing.invoice_paid_claim_missed",
+      expect.any(Error),
+      { invoiceId: INVOICE, invoiceStatus: "draft", issued: false },
+    );
+    // The conditional claim is the only invoice write, and nothing here
+    // finalizes: `finalizedAt` is never set on this path.
+    expect(writesTo(billingInvoices)).toBe(1);
+    for (const set of dbHolder.current.calls.set) {
+      expect(set).not.toHaveProperty("finalizedAt");
+    }
+    expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+  });
+
+  it("a deleted store's invoice can become paid, but there is nobody to send a receipt to", async () => {
+    duplicateCapture({ storeId: null, invoiceClaim: [{ id: INVOICE }] });
+
+    expect(await settleAttempt(ATTEMPT, "captured")).toBe("captured");
+    expect(dbHolder.current.calls.set[0]).toMatchObject({ status: "paid" });
+    expect(receipts.notifyInvoicePaid).not.toHaveBeenCalled();
+  });
+
+  it("★ only a capture seen again re-syncs: a late capture on a refunded attempt is ignored, unsynced", async () => {
+    seed({
+      selects: [[{ id: ATTEMPT, state: "refunded", invoiceId: INVOICE }]],
+    });
+    expect(await settleAttempt(ATTEMPT, "captured")).toBe("refunded");
+    expect(dbHolder.current.calls.select).toHaveLength(1);
+    expect(dbHolder.current.calls.update).toHaveLength(0);
   });
 });
 
@@ -547,5 +951,288 @@ describe("collectInvoice — ordering and outcomes", () => {
     });
     const res = await collectInvoice({ ...base, charge: chargeOk("whatever") });
     expect(res).toMatchObject({ status: "pending_reconcile" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recovered purchases (RC-F1b): the helpers the three purchase kinds share.
+// ---------------------------------------------------------------------------
+
+describe("★★ recovered purchases (RC-F1b)", () => {
+  const CREDS = { keyId: "rzp_1", keySecret: "secret" };
+  const render = (clause: unknown) => {
+    const q = new PgDialect().sqlToQuery(clause as never);
+    return { sql: q.sql.replace(/\s+/g, " "), params: q.params };
+  };
+
+  describe("capturedDraftPurchases", () => {
+    const row = {
+      attemptId: "att-9",
+      invoiceId: "inv-9",
+      storeId: STORE,
+      kind: "addon",
+      providerOrderId: "order_9",
+      providerPaymentId: "pay_9",
+      amountPaise: 50_000,
+      currency: "INR",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    };
+
+    it("★★ finds a CAPTURED attempt on a DRAFT invoice of the same store", async () => {
+      seed({ selects: [[row]] });
+      const found = await capturedDraftPurchases({ storeId: STORE });
+      expect(found).toEqual([row]);
+      const where = render(dbHolder.current.calls.where[0]);
+      expect(where.sql).toContain('"billing_payment_attempts"."state" = $');
+      expect(where.sql).toContain('"billing_invoices"."status" = $');
+      expect(where.sql).toContain(
+        '"billing_invoices"."store_id" = "billing_payment_attempts"."store_id"',
+      );
+      expect(where.params).toEqual(
+        expect.arrayContaining([
+          "captured",
+          "draft",
+          "subscription",
+          "addon",
+          STORE,
+        ]),
+      );
+      expect(dbHolder.current.calls.innerJoin).toHaveLength(1);
+      expect(dbHolder.current.calls.limit).toEqual([50]);
+    });
+
+    it("★ the hourly pass skips what a person already holds, and what is too fresh", async () => {
+      seed({ selects: [[]] });
+      await capturedDraftPurchases({
+        createdBefore: "2026-09-01T00:00:00.000Z",
+        excludeHeld: true,
+        limit: 7,
+      });
+      const where = render(dbHolder.current.calls.where[0]);
+      expect(where.sql).toContain('"billing_payment_attempts"."created_at" <');
+      expect(where.sql).toContain("billing_reconciliation_items");
+      expect(where.sql).toContain("'purchase_refused:'");
+      expect(where.sql).toContain("'purchase_unapplied:'");
+      expect(where.sql).toContain("('open', 'manual_review')");
+      expect(dbHolder.current.calls.limit).toEqual([7]);
+    });
+
+    it("★ narrows to one kind when asked", async () => {
+      seed({ selects: [[]] });
+      await capturedDraftPurchases({ storeId: STORE, kind: "subscription" });
+      const where = render(dbHolder.current.calls.where[0]);
+      expect(where.params).not.toContain("addon");
+    });
+
+    it("★★ a read failure is NULL, never an empty list", async () => {
+      seed({ selects: [new Error("db down") as any] });
+      expect(await capturedDraftPurchases({ storeId: STORE })).toBeNull();
+      expect(logError).toHaveBeenCalledWith(
+        "billing.recovery.scan",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+  });
+
+  describe("capturedAttemptForInvoice", () => {
+    it("returns the captured attempt on this store's invoice", async () => {
+      seed({ selects: [[{ id: "att-1", providerPaymentId: "pay_1" }]] });
+      expect(await capturedAttemptForInvoice("inv-1", STORE)).toEqual({
+        id: "att-1",
+        providerPaymentId: "pay_1",
+      });
+      const where = render(dbHolder.current.calls.where[0]);
+      expect(where.params).toEqual(["inv-1", STORE, "captured"]);
+    });
+
+    it("null when there is none; undefined when it could not be read", async () => {
+      seed({ selects: [[]] });
+      expect(await capturedAttemptForInvoice("inv-1", STORE)).toBeNull();
+      seed({ selects: [new Error("db down") as any] });
+      expect(await capturedAttemptForInvoice("inv-1", STORE)).toBeUndefined();
+    });
+  });
+
+  describe("verifyRecoveredCapture", () => {
+    const base = {
+      creds: CREDS,
+      providerOrderId: "order_1",
+      providerPaymentId: "pay_1",
+      amountPaise: 50_000,
+      currency: "INR",
+    };
+    const payments = (list: any[]) =>
+      vi.fn(async () => ({ ok: true as const, data: list })) as any;
+
+    it("★ ok when the same payment was captured for the same amount and currency", async () => {
+      const res = await verifyRecoveredCapture({
+        ...base,
+        fetchOrderPayments: payments([
+          { id: "pay_1", status: "captured", amount: 50_000, currency: "INR" },
+        ]),
+      });
+      expect(res).toEqual({ status: "ok", paymentId: "pay_1" });
+    });
+
+    it("★★ a different AMOUNT is a mismatch, with what was seen", async () => {
+      const res = await verifyRecoveredCapture({
+        ...base,
+        fetchOrderPayments: payments([
+          { id: "pay_1", status: "captured", amount: 40_000, currency: "INR" },
+        ]),
+      });
+      expect(res).toEqual({
+        status: "mismatch",
+        reason: "the captured amount or currency differs from the attempt",
+        paymentId: "pay_1",
+        observedPaise: 40_000,
+      });
+    });
+
+    it("★★ a different CURRENCY is a mismatch", async () => {
+      const res = await verifyRecoveredCapture({
+        ...base,
+        fetchOrderPayments: payments([
+          { id: "pay_1", status: "captured", amount: 50_000, currency: "USD" },
+        ]),
+      });
+      expect(res.status).toBe("mismatch");
+    });
+
+    it("★ a different payment than the one recorded is a mismatch", async () => {
+      const res = await verifyRecoveredCapture({
+        ...base,
+        fetchOrderPayments: payments([
+          { id: "pay_2", status: "captured", amount: 50_000, currency: "INR" },
+        ]),
+      });
+      expect(res).toMatchObject({
+        status: "mismatch",
+        reason: "the gateway's captured payment is not the one recorded",
+      });
+    });
+
+    it("★ no captured payment at all is a mismatch", async () => {
+      const res = await verifyRecoveredCapture({
+        ...base,
+        fetchOrderPayments: payments([
+          { id: "pay_1", status: "failed", amount: 50_000, currency: "INR" },
+        ]),
+      });
+      expect(res).toMatchObject({
+        status: "mismatch",
+        reason: "the gateway shows no captured payment on this order",
+      });
+    });
+
+    it("★★ an unreadable gateway is not a verdict", async () => {
+      expect(
+        await verifyRecoveredCapture({
+          ...base,
+          fetchOrderPayments: vi.fn(async () => ({
+            ok: false as const,
+            error: "timeout",
+            outcome: "unknown" as const,
+          })) as any,
+        }),
+      ).toEqual({ status: "unreadable" });
+      expect(
+        await verifyRecoveredCapture({
+          ...base,
+          fetchOrderPayments: vi.fn(async () => {
+            throw new Error("network");
+          }) as any,
+        }),
+      ).toEqual({ status: "unreadable" });
+    });
+  });
+
+  describe("readAddonOrderTarget", () => {
+    it("★ a plan change is named by the plan and period WE wrote", async () => {
+      rzpOrder.rzpFetchOrder.mockResolvedValue({
+        ok: true,
+        data: { id: "order_1", notes: { plan: "pro", period: "yearly" } },
+      });
+      expect(await readAddonOrderTarget(CREDS, "order_1")).toEqual({
+        kind: "plan_change",
+        plan: "pro",
+        period: "yearly",
+      });
+    });
+
+    it("★ a location purchase is named by its count", async () => {
+      rzpOrder.rzpFetchOrder.mockResolvedValue({
+        ok: true,
+        data: { id: "order_1", notes: { locations: "3" } },
+      });
+      expect(await readAddonOrderTarget(CREDS, "order_1")).toEqual({
+        kind: "locations",
+        count: 3,
+      });
+    });
+
+    it("anything else is unknown; an unreadable order is null", async () => {
+      rzpOrder.rzpFetchOrder.mockResolvedValue({
+        ok: true,
+        data: { id: "order_1", notes: { sm_billing_key: "k" } },
+      });
+      expect(await readAddonOrderTarget(CREDS, "order_1")).toEqual({
+        kind: "unknown",
+      });
+      rzpOrder.rzpFetchOrder.mockResolvedValue({
+        ok: false,
+        error: "down",
+        outcome: "unknown",
+      });
+      expect(await readAddonOrderTarget(CREDS, "order_1")).toBeNull();
+    });
+  });
+
+  describe("fileRecoveredPurchase", () => {
+    const input = {
+      storeId: STORE,
+      kind: "state_conflict" as const,
+      repairKey: "purchase_refused:att-1",
+      note: "A note for a person.",
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+      providerPaymentId: "pay_1",
+      providerOrderId: "order_1",
+      expectedPaise: 50_000,
+      purchase: "enrolment" as const,
+      now: new Date("2026-09-01T00:00:00.000Z"),
+    };
+
+    it("★★ files an OPEN item carrying the repair key, the note and the purchase", async () => {
+      seed({ returning: [{ id: "item-1" }] });
+      expect(await fileRecoveredPurchase(input)).toBe(true);
+      expect(dbHolder.current.calls.values[0]).toMatchObject({
+        storeId: STORE,
+        kind: "state_conflict",
+        status: "open",
+        invoiceId: "inv-1",
+        attemptId: "att-1",
+        providerPaymentId: "pay_1",
+        expectedPaise: 50_000,
+        observedPaise: null,
+        detail: {
+          repair_key: "purchase_refused:att-1",
+          note: "A note for a person.",
+          purchase: "enrolment",
+        },
+      });
+      expect(dbHolder.current.calls.onConflict).toHaveLength(1);
+      expect(logWarn).toHaveBeenCalledWith(
+        "billing.recovery.filed",
+        expect.objectContaining({ repairKey: "purchase_refused:att-1" }),
+      );
+    });
+
+    it("★ filed once: a second filing of the same key writes nothing new", async () => {
+      seed({ returning: [] });
+      expect(await fileRecoveredPurchase(input)).toBe(false);
+      expect(logWarn).not.toHaveBeenCalled();
+    });
   });
 });

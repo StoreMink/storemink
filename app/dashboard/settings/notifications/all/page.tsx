@@ -1,6 +1,7 @@
 import { requireSectionAccess } from "../../../lib/access";
 import { pickParam } from "../../../lib/list-params";
 import { getNotificationConsole } from "@/app/actions/notification-actions";
+import { canonicalEventGroup } from "@/lib/notifications/events";
 import { NotificationConsole } from "./notification-console";
 
 // The FULL notification matrix — every notification, every filter. Reached from
@@ -25,7 +26,9 @@ export default async function NotificationConsolePage({
   await requireSectionAccess("notifications", "view");
 
   const sp = await searchParams;
-  const category = pickParam(sp.category);
+  // A tab link saved before a group was renamed carries the old name; read it
+  // as today's so the tab it names is still the one selected.
+  const category = canonicalEventGroup(pickParam(sp.category));
   const audience = pickParam(sp.audience);
   const channel = pickParam(sp.channel);
   const q = pickParam(sp.q);

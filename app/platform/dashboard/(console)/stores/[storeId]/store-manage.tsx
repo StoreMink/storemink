@@ -11,6 +11,7 @@ import {
   setStoreStatus,
 } from "@/app/actions/platform";
 import { PLAN_IDS, PLAN_META, normalizePlan, type Plan } from "@/lib/plans";
+import { SuspendStoreDialog } from "./suspend-store-dialog";
 
 // ---------------------------------------------------------------------------
 // The four things an operator can DO to a store, on the store's own page.
@@ -23,7 +24,32 @@ import { PLAN_IDS, PLAN_META, normalizePlan, type Plan } from "@/lib/plans";
 // `setStoreStatus` / `setStorePlan` / `grantAiCredits` / `deleteStore` each
 // check `role === "superadmin"` for themselves. A hidden button is not a
 // permission.
+//
+// ★ StoreMink's holds and blocks (takedown design 6.7). Suspend asks why
+// (`SuspendStoreDialog`); Activate and Delete are disabled, with the reason
+// written under them, while a block keeps the store suspended or the store
+// cannot be deleted. The server refuses either way, and a refusal it gives
+// is shown as an error toast in its own words.
 // ---------------------------------------------------------------------------
+
+/**
+ * Why Delete is off (design 6.7), or why we could not tell: the store page's
+ * moderation read failed, so the button fails closed.
+ */
+export type DeleteBlocker = "hold" | "archive" | "unchecked";
+
+export const STORE_MANAGE_TEXT = {
+  deleteBlocked: {
+    hold: "This store is on hold for an investigation. Release the hold first.",
+    archive:
+      "StoreMink is still keeping a copy of something blocked on this store. Try again in a few minutes.",
+    /** Added: the page's read of holds and blocks failed. */
+    unchecked:
+      "StoreMink couldn't check whether this store can be deleted. Refresh the page to try again.",
+  } satisfies Record<DeleteBlocker, string>,
+  suspendedByBlock:
+    "This store is suspended by a block on a complaint. Lift the block in Complaints.",
+} as const;
 
 const DURATIONS = [
   { id: "indefinite", label: "Indefinite" },
@@ -67,6 +93,8 @@ export function StoreManageBar({
   status,
   plan,
   canManage,
+  suspendedByBlock = false,
+  deleteBlocker = null,
 }: {
   storeId: string;
   slug: string;
@@ -74,6 +102,9 @@ export function StoreManageBar({
   status: string;
   plan: Plan;
   canManage: boolean;
+  /** A live whole-store block keeps the store suspended (Activate is off). */
+  suspendedByBlock?: boolean;
+  deleteBlocker?: DeleteBlocker | null;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -91,6 +122,8 @@ export function StoreManageBar({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
 
+  const [suspendOpen, setSuspendOpen] = useState(false);
+
   if (!canManage) return null;
 
   function done(message: string) {
@@ -98,14 +131,21 @@ export function StoreManageBar({
     startTransition(() => router.refresh());
   }
 
-  async function toggleStatus() {
-    const next = status === "active" ? "suspended" : "active";
+  /** Activate: the plain reactivation; a suspension asks why first. */
+  async function activate() {
     setBusy(true);
-    const res = await setStoreStatus(storeId, next);
-    setBusy(false);
-    if (res.error) return void toast.error(res.error);
-    done(next === "suspended" ? "Store suspended." : "Store reactivated.");
+    try {
+      const res = await setStoreStatus(storeId, "active");
+      if (res.error) return void toast.error(res.error);
+      done("Store reactivated.");
+    } catch {
+      toast.error("Could not update the store. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   }
+
+  const activateOff = status !== "active" && suspendedByBlock;
 
   /** The expiry the current selection resolves to, or an error to show. */
   function selectedExpiry(): { expiresAt: string | null } | { error: string } {
@@ -155,8 +195,16 @@ export function StoreManageBar({
 
   async function confirmDelete() {
     setBusy(true);
-    const res = await deleteStore(storeId);
+    let res: Awaited<ReturnType<typeof deleteStore>>;
+    try {
+      res = await deleteStore(storeId);
+    } catch {
+      setBusy(false);
+      return void toast.error("Could not delete the store. Please try again.");
+    }
     setBusy(false);
+    // A hold set, or a copy started, since this page was drawn: the server's
+    // own sentence (design 6.7).
     if (res.error) return void toast.error(res.error);
     if (res.warning) toast.warning(res.warning);
     else toast.success(`${name} deleted.`);
@@ -180,9 +228,12 @@ export function StoreManageBar({
           <Coins className="h-4 w-4" /> Credits
         </button>
         <button
-          onClick={toggleStatus}
-          disabled={busy}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+          onClick={() =>
+            status === "active" ? setSuspendOpen(true) : void activate()
+          }
+          disabled={busy || activateOff}
+          aria-describedby={activateOff ? "store-activate-off" : undefined}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Power className="h-4 w-4" />
           {status === "active" ? "Suspend" : "Activate"}
@@ -192,11 +243,37 @@ export function StoreManageBar({
             setConfirmText("");
             setDeleteOpen(true);
           }}
-          className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+          disabled={!!deleteBlocker}
+          aria-describedby={deleteBlocker ? "store-delete-off" : undefined}
+          className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
         >
           <Trash2 className="h-4 w-4" /> Delete
         </button>
       </div>
+      {activateOff || deleteBlocker ? (
+        <div className="mt-2 max-w-md space-y-1 text-xs text-slate-600">
+          {activateOff ? (
+            <p id="store-activate-off">{STORE_MANAGE_TEXT.suspendedByBlock}</p>
+          ) : null}
+          {deleteBlocker ? (
+            <p id="store-delete-off">
+              {STORE_MANAGE_TEXT.deleteBlocked[deleteBlocker]}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {suspendOpen ? (
+        <SuspendStoreDialog
+          storeId={storeId}
+          storeName={name}
+          onClose={() => setSuspendOpen(false)}
+          onSuspended={() => {
+            setSuspendOpen(false);
+            startTransition(() => router.refresh());
+          }}
+        />
+      ) : null}
 
       {planOpen && (
         <Modal

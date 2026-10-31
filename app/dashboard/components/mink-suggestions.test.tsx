@@ -72,6 +72,11 @@ describe("MinkSuggestions", () => {
 
     const buttons = screen.getAllByRole("button", { name: /Ask Mink/ });
     expect(buttons).toHaveLength(2);
+    // Mink's face, not a generic sparkle, and hidden from screen readers.
+    const face = buttons[0].querySelector("svg[data-mink-face]");
+    expect(face?.getAttribute("width")).toBe("18");
+    expect(face?.getAttribute("aria-hidden")).toBe("true");
+    expect(buttons[0].querySelector(".lucide-sparkles")).toBeNull();
     fireEvent.click(buttons[1]);
     expect(startExpandedChat).toHaveBeenCalledTimes(1);
     expect(startExpandedChat).toHaveBeenCalledWith(

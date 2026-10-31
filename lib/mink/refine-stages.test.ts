@@ -14,7 +14,11 @@ const state = vi.hoisted(() => ({
   listed: [] as { name: string; createdAt: number | null }[],
   listCalls: [] as { kind: string; prefix: string; max: number }[],
   uploads: [] as { path: string; bytes: Uint8Array; type: string }[],
+  /** The options each write was given, in order (the store's writer). */
+  uploadOptions: [] as unknown[],
   uploadFailures: 0,
+  /** Thrown by every write while set (bytes StoreMink has blocked). */
+  uploadError: null as Error | null,
   downloads: [] as { path: string; max: number; kind: string }[],
   deletes: [] as { paths: string[]; kind: string }[],
   deleteLeft: [] as string[],
@@ -37,17 +41,6 @@ vi.mock("@/lib/storage/gcs", () => ({
     state.events.push("list");
     return state.listed;
   }),
-  gcsUploadObject: vi.fn(
-    async (path: string, bytes: Uint8Array, type: string) => {
-      state.events.push("upload");
-      if (state.uploadFailures > 0) {
-        state.uploadFailures -= 1;
-        throw new Error("upload failed");
-      }
-      state.uploads.push({ path, bytes, type });
-      return `https://storage.googleapis.com/bucket/${path}`;
-    },
-  ),
   gcsDownloadObject: vi.fn(async (path: string, max: number, kind: string) => {
     state.downloads.push({ path, max, kind });
     state.events.push("download");
@@ -58,6 +51,22 @@ vi.mock("@/lib/storage/gcs", () => ({
     state.events.push("delete");
     return state.deleteLeft;
   }),
+}));
+// ★ The public copy goes through the store's one writer (takedown design 5.7).
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: vi.fn(
+    async (path: string, bytes: Uint8Array, type: string, options: unknown) => {
+      state.events.push("upload");
+      state.uploadOptions.push(options);
+      if (state.uploadError) throw state.uploadError;
+      if (state.uploadFailures > 0) {
+        state.uploadFailures -= 1;
+        throw new Error("upload failed");
+      }
+      state.uploads.push({ path, bytes, type });
+      return `https://storage.googleapis.com/bucket/${path}`;
+    },
+  ),
 }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn(
@@ -86,7 +95,9 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
-import { gcsListObjects, gcsUploadObject } from "@/lib/storage/gcs";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
+import { gcsListObjects } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { abandonRefineStage } from "./refine-stop";
 import {
   REFINE_STAGE_SWEEP_AGE_MS,
@@ -121,7 +132,9 @@ beforeEach(() => {
   state.listed = [];
   state.listCalls = [];
   state.uploads = [];
+  state.uploadOptions = [];
   state.uploadFailures = 0;
+  state.uploadError = null;
   state.downloads = [];
   state.deletes = [];
   state.deleteLeft = [];
@@ -172,6 +185,10 @@ describe("★★ publishRefinedCopy: three tries, never a throw", () => {
         type: "image/webp",
       },
     ]);
+    // ★ Through the store's one writer, for the store the path names.
+    expect(state.uploadOptions).toEqual([
+      { storeId: STORE, via: "mink_refine" },
+    ]);
   });
 
   it("★ retries after the given waits, true on a later success", async () => {
@@ -202,6 +219,30 @@ describe("★★ publishRefinedCopy: three tries, never a throw", () => {
       "mink.image-refine: publish failed",
       expect.any(Error),
       { path: "p.webp" },
+    );
+  });
+});
+
+describe("★★ publishRefinedCopy: bytes StoreMink has blocked", () => {
+  it("is false at once, never tried again, and warned rather than errored", async () => {
+    state.uploadError = new BlockedUploadError({
+      told: true,
+      kindWord: "image",
+      blockId: "33333333-3333-4333-8333-333333333333",
+    });
+    await expect(
+      publishRefinedCopy(
+        `stores/${STORE}/refined/${REFINE}.webp`,
+        new Uint8Array([1]),
+        { waitsMs: [0, 0, 0] },
+      ),
+    ).resolves.toBe(false);
+    expect(state.uploadOptions).toHaveLength(1);
+    expect(state.uploads).toHaveLength(0);
+    expect(logError).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith(
+      "mink.image-refine: publish refused, blocked by StoreMink",
+      { path: `stores/${STORE}/refined/${REFINE}.webp` },
     );
   });
 });
@@ -355,6 +396,34 @@ describe("★★ sweepRefineStages", () => {
     );
   });
 
+  it("★★ a paid stage whose bytes StoreMink has blocked is deleted, not kept for every pass", async () => {
+    state.listed = [stage()];
+    state.uploadError = new BlockedUploadError({
+      told: false,
+      kindWord: "image",
+      blockId: "33333333-3333-4333-8333-333333333333",
+    });
+    const publicPath = refinePublicPath(STORE, REFINE);
+    vi.mocked(abandonRefineStage).mockResolvedValueOnce({
+      publish: publicPath,
+    });
+    await expect(sweepRefineStages()).resolves.toEqual({
+      published: 0,
+      deleted: 1,
+      failed: 0,
+    });
+    expect(state.uploadOptions).toEqual([
+      { storeId: STORE, via: "mink_refine_sweep" },
+    ]);
+    expect(state.uploads).toEqual([]);
+    expect(state.deletes).toEqual([{ paths: [stage().name], kind: "private" }]);
+    expect(logError).not.toHaveBeenCalled();
+    expect(logWarn).toHaveBeenCalledWith(
+      "mink.image-refine: stage blocked by StoreMink, deleted",
+      { path: stage().name },
+    );
+  });
+
   it("★★ a paid photo deleted from the Media Library since is not published again: its stage goes", async () => {
     state.listed = [stage()];
     state.inLibrary = false;
@@ -489,7 +558,7 @@ describe("★★ sweepRefineStages", () => {
       }),
     );
     // An upload has no timeout of its own: this one never answers.
-    vi.mocked(gcsUploadObject).mockImplementationOnce(
+    vi.mocked(writeStoreObject).mockImplementationOnce(
       () => new Promise<string>(() => {}),
     );
     let swept: unknown = null;

@@ -5,6 +5,7 @@ import {
   Boxes,
   CreditCard,
   ExternalLink,
+  Flag,
   MapPin,
   Package,
   Receipt,
@@ -13,7 +14,12 @@ import {
   Users,
 } from "lucide-react";
 import { getStoreAudit } from "@/app/actions/platform";
+import { listStoreBilling } from "@/app/actions/platform-billing";
 import { PLAN_META } from "@/lib/plans";
+import {
+  storeModerationSummary,
+  type StoreModerationSummary,
+} from "@/lib/moderation/console-read";
 import {
   loadStoreDetail,
   loadStorePeople,
@@ -21,8 +27,10 @@ import {
   type StoreDetail,
 } from "@/lib/platform/store-detail";
 import { canManage, requireOperator } from "../../require-operator";
-import { StoreManageBar } from "./store-manage";
+import { StoreManageBar, type DeleteBlocker } from "./store-manage";
+import { HoldBanner, ModerationCard } from "./moderation-card";
 import { CompGrantCard } from "./comp-grant";
+import { StoreBillingTools, StoreRefundsList } from "./billing-actions";
 
 const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN ?? "storemink.com";
 
@@ -156,6 +164,28 @@ function ChannelRow({ label, state }: { label: string; state: ChannelState }) {
   );
 }
 
+/** "SM/2026-27/000124 · ₹2,400 · open", for the next cycle's invoice. */
+function nextInvoiceWords(
+  next: NonNullable<StoreDetail["subscription"]>["nextInvoice"],
+): React.ReactNode {
+  if (!next) {
+    return <span className="text-[var(--dash-text-2)]">Not issued yet</span>;
+  }
+  const amount = `₹${(next.totalPaise / 100).toLocaleString("en-IN", {
+    maximumFractionDigits: 2,
+  })}`;
+  return (
+    <span>
+      {next.invoiceRef ?? "Draft"} · {amount} · {next.status}
+      {next.inFlight ? (
+        <span className="ml-1 text-xs font-normal text-[var(--dash-text-2)]">
+          (payment in progress)
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /** The plan line, which is two facts whenever a timed grant has lapsed. */
 function PlanSummary({ store }: { store: StoreDetail }) {
   const lapsed = store.effective !== store.plan;
@@ -176,11 +206,16 @@ function PlanSummary({ store }: { store: StoreDetail }) {
 
 export default async function StoreDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ storeId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const viewer = await requireOperator();
   const { storeId } = await params;
+  const sp = await searchParams;
+  // The invoice a reconciliation item sent the operator here to refund.
+  const refundFor = Array.isArray(sp.refund) ? sp.refund[0] : sp.refund;
 
   const store = await loadStoreDetail(storeId);
   if (!store) notFound();
@@ -188,10 +223,23 @@ export default async function StoreDetailPage({
   // People and history are separate reads because they are separate questions
   // and one of them is superadmin-only — folding them into loadStoreDetail
   // would mean a member's page paying for a query whose result they cannot see.
-  const [people, audit] = await Promise.all([
+  // The billing tools' read is its own too (renewal-cancel, design 7.3): a
+  // failure there must not take the rest of the page down.
+  const [people, audit, billing, moderation] = await Promise.all([
     loadStorePeople(store.id),
     canManage(viewer) ? getStoreAudit(store.id) : Promise.resolve(null),
+    listStoreBilling(store.id),
+    // Complaints and holds (takedown design 6.7). A failed read is logged by
+    // the reader and shown as such; it also keeps Delete off, because the
+    // card is what says whether the store may be deleted (fail closed).
+    storeModerationSummary(store.id).catch(
+      (): StoreModerationSummary | null => null,
+    ),
   ]);
+  const deleteBlocker: DeleteBlocker | null =
+    moderation === null
+      ? "unchecked"
+      : (moderation.deleteRefusal?.reason ?? null);
 
   const address = store.customDomain ?? `${store.slug}.${ROOT_DOMAIN}`;
   const origin = `https://${address}`;
@@ -206,6 +254,14 @@ export default async function StoreDetailPage({
       >
         <ArrowLeft className="h-4 w-4" /> All stores
       </Link>
+
+      {moderation?.hold ? (
+        <HoldBanner
+          storeName={store.name}
+          hold={moderation.hold}
+          canManage={canManage(viewer)}
+        />
+      ) : null}
 
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
@@ -265,6 +321,8 @@ export default async function StoreDetailPage({
             status={store.status}
             plan={store.plan}
             canManage={canManage(viewer)}
+            suspendedByBlock={Boolean(moderation?.storeBlock)}
+            deleteBlocker={deleteBlocker}
           />
         </div>
       </header>
@@ -307,7 +365,7 @@ export default async function StoreDetailPage({
 
       <div className="grid gap-5 lg:grid-cols-2">
         <div className="space-y-5">
-          <Card title="Plan & billing" icon={<Receipt className="h-4 w-4" />}>
+          <Card title="Plans & Billing" icon={<Receipt className="h-4 w-4" />}>
             <Facts
               rows={[
                 ["Plan", <PlanSummary key="p" store={store} />],
@@ -342,16 +400,10 @@ export default async function StoreDetailPage({
                             ],
                           ] as [string, React.ReactNode][])
                         : []),
-                      ...(store.subscription.cancelAtPeriodEnd
-                        ? ([
-                            [
-                              "Cancelling",
-                              <span key="c" className="text-amber-700">
-                                at period end
-                              </span>,
-                            ],
-                          ] as [string, React.ReactNode][])
-                        : []),
+                      [
+                        "Next invoice",
+                        nextInvoiceWords(store.subscription.nextInvoice),
+                      ],
                     ] as [string, React.ReactNode][])
                   : ([
                       [
@@ -363,6 +415,36 @@ export default async function StoreDetailPage({
                     ] as [string, React.ReactNode][])),
               ]}
             />
+            {/* ★ The cancelling line and the refunds list for everyone who can
+                open the page; the four billing tools for a superadmin only
+                (renewal-cancel, design 7.3). A billing read that failed says
+                so instead of hiding the tools without a word. */}
+            <div className="mt-4 space-y-4 border-t border-[var(--dash-border)] pt-4">
+              {billing ? (
+                <>
+                  <StoreBillingTools
+                    billing={billing}
+                    planName={
+                      PLAN_META[
+                        (billing.subscription?.plan ??
+                          store.effective) as keyof typeof PLAN_META
+                      ]?.name ??
+                      billing.subscription?.plan ??
+                      store.effective
+                    }
+                    canManage={canManage(viewer)}
+                    openRefundFor={refundFor ?? null}
+                  />
+                  <StoreRefundsList billing={billing} />
+                </>
+              ) : (
+                <p role="status" className="text-sm text-[var(--dash-text-2)]">
+                  This store&apos;s billing couldn&apos;t be read just now, so
+                  its refunds and billing tools aren&apos;t shown. Refresh the
+                  page to try again.
+                </p>
+              )}
+            </div>
             {/* A comp sits BELOW the billing facts, because it is not one: it
                 changes nothing about what this store is charged, only what it
                 can do (docs/comped-plans-spec.md). */}
@@ -408,6 +490,18 @@ export default async function StoreDetailPage({
         </div>
 
         <div className="space-y-5">
+          <Card
+            title="Complaints and holds"
+            icon={<Flag className="h-4 w-4" />}
+          >
+            <ModerationCard
+              storeId={store.id}
+              storeName={store.name}
+              summary={moderation}
+              canManage={canManage(viewer)}
+            />
+          </Card>
+
           <Card title="Details" icon={<Truck className="h-4 w-4" />}>
             <Facts
               rows={[

@@ -1612,6 +1612,7 @@ describe.skipIf(!enabled)("Mink AI chat history, on local Postgres", () => {
       "mink_action_approvals_source_store_fkey mink_action_approvals -> mink_action_approvals c",
       "mink_action_approvals_store_id_fkey mink_action_approvals -> stores c",
       "mink_action_audit_approval_store_fkey mink_action_audit -> mink_action_approvals c",
+      "mink_attachments_conversation_fkey mink_attachments -> mink_conversations n",
       "mink_blog_publications_approval_store_fkey mink_blog_publications -> mink_action_approvals a",
       "mink_blog_publications_blog_store_fkey mink_blog_publications -> blogs c",
       "mink_blog_publications_draft_store_fkey mink_blog_publications -> mink_drafts a",

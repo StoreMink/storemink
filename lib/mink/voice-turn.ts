@@ -45,10 +45,16 @@ export async function transcribeMinkRecording(
   recording: File,
   signal?: AbortSignal,
   onLanguage?: (languageCode: string | null) => void,
+  /**
+   * The transcription route. The dashboard's (the default) needs a signed-in
+   * merchant; the Help Centre's public assistant posts to `/api/help/voice`,
+   * which has its own per-visitor limits.
+   */
+  endpoint = "/api/mink/voice",
 ): Promise<string> {
   let response: Response;
   try {
-    response = await fetch("/api/mink/voice", {
+    response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "audio/wav",

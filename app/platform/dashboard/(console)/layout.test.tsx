@@ -117,6 +117,39 @@ describe("the console navigation", () => {
     );
   });
 
+  it("puts Complaints right after People in Operations, with its icon and aliases", async () => {
+    const { sidebar } = await nav();
+    const operations = sidebar.find((group) => group.group === "OPERATIONS")!;
+    const at = operations.items.findIndex(
+      (item) => item.href === "/dashboard/complaints",
+    );
+    expect(at).toBeGreaterThan(0);
+    expect(operations.items[at - 1].href).toBe("/dashboard/people");
+    const complaints = operations.items[at] as {
+      label: string;
+      icon?: string;
+      searchAliases?: string[];
+    };
+    expect(complaints.label).toBe("Complaints");
+    expect(complaints.icon).toBe("complaints");
+    expect(complaints.searchAliases).toEqual([
+      "Takedowns",
+      "Blocks",
+      "Grievance",
+      "Legal orders",
+    ]);
+  });
+
+  it("gives Complaints to a member as well as a superadmin (D1)", async () => {
+    const asSuperadmin = await nav();
+    expect(hrefs(asSuperadmin.sidebar)).toContain("/dashboard/complaints");
+    expect(hrefs(asSuperadmin.search)).toContain("/dashboard/complaints");
+    data.viewer = { email: "m@storemink.com", role: "member" };
+    const asMember = await nav();
+    expect(hrefs(asMember.sidebar)).toContain("/dashboard/complaints");
+    expect(hrefs(asMember.search)).toContain("/dashboard/complaints");
+  });
+
   it("sends someone who is not an operator to sign in", async () => {
     data.viewer = null;
     await expect(PlatformDashboardLayout({ children: null })).rejects.toThrow(

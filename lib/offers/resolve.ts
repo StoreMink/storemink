@@ -24,6 +24,7 @@ import {
   inventoryLevels,
   offers,
   orders,
+  products,
   stores,
   userGroupMembers,
 } from "@/drizzle/schema";
@@ -46,6 +47,16 @@ import { effectivePlan, limitsFor } from "@/lib/plans";
  *  active offers must not turn one checkout into a 500-row join. */
 const OFFER_FETCH_LIMIT = MAX_EVALUATED_OFFERS * 3;
 
+/** How `loadLiveOffers` answers for the channel that asks. */
+export interface LiveOfferOptions {
+  /**
+   * Whether a free gift StoreMink has blocked is unavailable. True when
+   * absent: the website never promises a blocked gift (takedown design 5.7).
+   * The POS passes false (decision D18).
+   */
+  blockedGiftsUnavailable?: boolean;
+}
+
 /**
  * Every offer that is worth handing to the engine for this store.
  *
@@ -54,11 +65,18 @@ const OFFER_FETCH_LIMIT = MAX_EVALUATED_OFFERS * 3;
  * the offers the cart just failed to qualify for. Filtering them out here would
  * make the engine's `skipped` list — the thing that answers "why did this
  * customer not get that offer?" at a counter — silently incomplete.
+ *
+ * ★ ONE CALLER IS THE POS. `options.blockedGiftsUnavailable` (default true,
+ * the website's answer and the safe one) decides whether a free gift
+ * StoreMink has blocked counts as unavailable; the POS passes false, because
+ * an item block leaves the POS selling the product, its gift included
+ * (takedown decision D18). See `resolveGiftAvailability`.
  */
 export async function loadLiveOffers(
   db: Db,
   storeId: string,
   customerId: string | null,
+  options: LiveOfferOptions = {},
 ): Promise<Offer[]> {
   const rows = await db
     .select({
@@ -178,11 +196,18 @@ export async function loadLiveOffers(
     usedBy.set(r.offerId, (usedBy.get(r.offerId) ?? 0) + 1);
   }
 
-  // ★★ ONE QUERY FOR EVERY GIFT, not one per offer. A cart must not cost N
-  // round trips at ~46ms each — the same rule the scope and usage reads follow.
+  // ★★ ONE STOCK QUERY AND ONE FLAG QUERY FOR EVERY GIFT, not one per offer
+  // (the flag query on the website only: the POS does not read it). A cart
+  // must not cost N round trips at ~46ms each: the same rule the scope and
+  // usage reads follow.
   // Resolved BEFORE the map so the engine can withdraw a gift it cannot
   // deliver rather than promising it and failing at reserve time (plan §12).
-  const giftStock = await resolveGiftAvailability(db, storeId, rows);
+  const giftStock = await resolveGiftAvailability(
+    db,
+    storeId,
+    rows,
+    options.blockedGiftsUnavailable ?? true,
+  );
 
   return rows.map((r) => {
     const reward = (r.rewardConfig ?? {}) as Record<string, unknown>;
@@ -329,15 +354,30 @@ export async function loadFirstOrderState(
  * reservation at order time is the authoritative check; this is the
  * don't-advertise-what-you-haven't-got filter in front of it.
  *
- * ★ FAILS OPEN. An unreadable stock table returns an empty map, so
- * `giftAvailable` is `undefined` and the engine treats the gift as unchecked
- * rather than unavailable — a blip must not cancel every gift offer in the
- * store. The reservation still refuses at order time.
+ * ★ ON THE WEBSITE, A GIFT STOREMINK HAS BLOCKED IS UNAVAILABLE, whatever its
+ * stock (takedown design 5.7, review finding F5). One more query reads the
+ * gift products' moderation flags, by the same ids, so the engine never
+ * offers a blocked gift; `placeOrder` would drop it anyway (`readGiftProduct`
+ * leaves it out), but a shopper must not be promised a gift that then
+ * vanishes.
+ *
+ * ★ AT THE POS IT IS NOT: `blockedGiftsUnavailable` is false there, the flag
+ * query is skipped, and a blocked gift is judged on its stock alone. An item
+ * block leaves the POS selling the product (decision D18), and
+ * `placePosSale` reads its gift without the flag, so withdrawing it here
+ * would refuse at the counter what the sale itself allows.
+ *
+ * ★ FAILS OPEN. An unreadable stock table or flag read returns an empty map,
+ * so `giftAvailable` is `undefined` and the engine treats the gift as
+ * unchecked rather than unavailable: a blip must not cancel every gift offer
+ * in the store. The reservation still refuses at order time, and
+ * `readGiftProduct` still drops a blocked gift there.
  */
 async function resolveGiftAvailability(
   db: Db,
   storeId: string,
   rows: readonly { id: string; rewardType: string; rewardConfig: unknown }[],
+  blockedGiftsUnavailable: boolean,
 ): Promise<Map<string, boolean>> {
   const out = new Map<string, boolean>();
   const wanted = rows
@@ -353,6 +393,23 @@ async function resolveGiftAvailability(
     const productIds = [
       ...new Set(wanted.map((w) => w.reward.giftProductId as string)),
     ];
+    const flags = blockedGiftsUnavailable
+      ? await db
+          .select({
+            id: products.id,
+            blockedAt: products.moderationBlockedAt,
+          })
+          .from(products)
+          .where(
+            and(
+              eq(products.storeId, storeId),
+              inArray(products.id, productIds),
+            ),
+          )
+      : [];
+    const blocked = new Set(
+      flags.filter((f) => f.blockedAt !== null).map((f) => f.id),
+    );
     const levels = await db
       .select({
         productId: inventoryLevels.productId,
@@ -378,7 +435,11 @@ async function resolveGiftAvailability(
     for (const w of wanted) {
       const key = `${w.reward.giftProductId}:${w.reward.giftVariantId ?? ""}`;
       const need = Math.max(1, Math.trunc(w.reward.giftQuantity ?? 1));
-      out.set(w.id, (availableBy.get(key) ?? 0) >= need);
+      out.set(
+        w.id,
+        !blocked.has(w.reward.giftProductId as string) &&
+          (availableBy.get(key) ?? 0) >= need,
+      );
     }
   } catch {
     return new Map();

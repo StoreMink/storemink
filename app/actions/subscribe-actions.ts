@@ -13,21 +13,23 @@
  * plan (which is the call that never worked on UPI or e-mandate).
  */
 
-import { revalidateTag, updateTag } from "next/cache";
+import { refresh, revalidatePath, revalidateTag, updateTag } from "next/cache";
 import { eq } from "drizzle-orm";
 import { getActingStoreId, getManagerUserId } from "@/app/dashboard/lib/access";
 import { getServerUser } from "@/lib/auth/server-user";
 import { withService } from "@/lib/db/client";
-import { admins, stores } from "@/drizzle/schema";
-import { logError } from "@/lib/observability/logger";
+import { admins, billingSubscriptions } from "@/drizzle/schema";
+import { logError, logWarn } from "@/lib/observability/logger";
+import { rateLimit } from "@/lib/rate-limit";
 import { getCurrentStore, STORE_TAG } from "@/lib/store/resolve";
 import {
   getExtraLocationPricingLive,
   getPlanPricingLive,
 } from "@/lib/plans/pricing";
-import { PLAN_IDS, PLAN_META, type Plan } from "@/lib/plans";
+import { PLAN_IDS, PLAN_META, normalizePlan, type Plan } from "@/lib/plans";
 import type {
   LocationBillingState,
+  NextInvoiceView,
   PayableInvoice,
   SubscriptionView,
 } from "@/lib/billing/invoice-types";
@@ -42,31 +44,76 @@ import {
   getSubscriptionView,
   resumeSubscription,
 } from "@/lib/billing/cancel";
-import { confirmPlanChange, startPlanChange } from "@/lib/billing/plan-change";
+import {
+  confirmPlanChange,
+  PLAN_CHANGE_RECOVERY_WAITING_MESSAGE,
+  startPlanChange,
+} from "@/lib/billing/plan-change";
 import {
   confirmLocationPurchase,
   getLocationBillingState as readLocationBillingState,
+  LOCATIONS_RECOVERED_MESSAGE,
+  LOCATIONS_RECOVERY_WAITING_MESSAGE,
   releaseLocations,
   startLocationPurchase,
 } from "@/lib/billing/locations";
 import {
-  auditEnrolment,
   confirmEnrolment,
+  ENROLMENT_PAID_NOT_SWITCHED_MESSAGE,
   ensureBillingAccount,
   startEnrolment,
   type EnrolmentStart,
 } from "@/lib/billing/enrol";
 import { normalizeMandateMethod } from "@/lib/billing/mandate-types";
+import { quoteCheckoutFor, quoteNextRenewal } from "@/lib/billing/quote";
+import {
+  getBillingDetails,
+  saveBillingDetails,
+} from "@/lib/billing/billing-details";
+import type {
+  BillingDetailsInput,
+  BillingDetailsView,
+  CheckoutQuoteResult,
+  RenewalQuote,
+  SaveBillingDetailsResult,
+} from "@/lib/billing/quote-types";
+import { BILLING_DETAILS, SIGNUP_STATE } from "@/lib/billing/tax-copy";
 
 type BillingPeriod = "monthly" | "yearly";
 
+// ---------------------------------------------------------------------------
+// An EARLIER purchase whose payment was already captured (the merchant closed
+// the tab before the confirm) is finished by the next Subscribe, plan change
+// or location purchase instead of opening a second payment (RC-F1b). The
+// results below carry the two outcomes so a screen cannot mistake them:
+//
+// ★ `completedEarlier: true` is a SUCCESS. The plan (or the locations) moved;
+//   there is nothing to pay. It used to travel on the error arm, so Plans &
+//   Billing showed "Your earlier payment went through, and your plan is now
+//   active." in error styling and signup showed it as an error banner.
+// ★ `waiting: true` is neither a success nor a failure to retry: the money is
+//   in and the plan has not switched yet. The screen shows the message as an
+//   information notice and offers no way to pay again.
+// ---------------------------------------------------------------------------
+
 export type SubscribeStart =
-  | ({ ok: true } & EnrolmentStart)
-  | { ok: false; error: string };
+  | ({ ok: true; completedEarlier?: false } & EnrolmentStart)
+  | {
+      ok: true;
+      completedEarlier: true;
+      /** "Your earlier payment went through, and your plan is now active." */
+      message: string;
+    }
+  | { ok: false; error: string; waiting?: true };
 
 export type SubscribeConfirm =
   | { ok: true; plan: Plan; periodEnd: string; autopay: boolean }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /** The payment went through and the plan will switch on shortly. */
+      waiting?: true;
+    };
 
 /**
  * Prices, read LIVE.
@@ -158,7 +205,18 @@ async function startSubscribeForStore(
     mandateMethod: normalizeMandateMethod(mandateMethod),
     priceFor,
   });
-  if (!started.ok) return { ok: false, error: started.error };
+  if (!started.ok) {
+    if (started.recovered === "completed") {
+      // ★ The plan just moved: every plan gate reads the cached store row, and
+      // the screen showing this answer should show the new plan too.
+      updateTag(STORE_TAG);
+      refresh();
+      return { ok: true, completedEarlier: true, message: started.error };
+    }
+    return started.recovered === "waiting"
+      ? { ok: false, error: started.error, waiting: true }
+      : { ok: false, error: started.error };
+  }
   return { ok: true, ...started.data };
 }
 
@@ -203,39 +261,21 @@ async function confirmSubscribeForStore(
     return { ok: false, error: "That payment couldn't be confirmed." };
   }
 
-  // Read the plan BEFORE activation so the audit row can name what it moved
-  // from. Best-effort: a missing `from` is a worse audit row, not a reason to
-  // refuse a payment that has already happened.
-  let fromPlan: string | null = null;
-  try {
-    fromPlan = await withService(async (db) => {
-      const [row] = await db
-        .select({ plan: stores.plan })
-        .from(stores)
-        .where(eq(stores.id, storeId))
-        .limit(1);
-      return row?.plan ?? null;
-    });
-  } catch {
-    fromPlan = null;
-  }
-
   const confirmed = await confirmEnrolment({
     storeId,
     invoiceId,
     providerPaymentId,
     signature,
   });
-  if (!confirmed.ok) return { ok: false, error: confirmed.error };
+  if (!confirmed.ok) {
+    return confirmed.error === ENROLMENT_PAID_NOT_SWITCHED_MESSAGE
+      ? { ok: false, error: confirmed.error, waiting: true }
+      : { ok: false, error: confirmed.error };
+  }
 
-  // ★ Audit in its own transaction, with source:"billing" — see auditEnrolment
-  // for why the wrong value once rolled back the plan a merchant had paid for.
-  await auditEnrolment({
-    storeId,
-    fromPlan,
-    toPlan: confirmed.data.plan,
-    note: `subscribed (${confirmed.data.mandateActivated ? "autopay" : "manual renewal"})`,
-  });
+  // ★ The audit row is written by the completion itself (RC-F1b), only by the
+  // caller that actually moved the plan, so a late confirm after the hourly
+  // check finished the purchase writes no second row.
 
   // Every plan gate reads the cached store row.
   revalidateTag(STORE_TAG, "max");
@@ -263,20 +303,34 @@ async function confirmSubscribeForStore(
 // a superadmin row counts — buying a plan is the owner's decision, the same
 // rule the old gate applied — and an unreadable row refuses rather than
 // authorises.
+//
+// ★ A SUSPENDED OWNER IS NOT A SIGNUP OWNER (review R3-10): suspension means
+// no access everywhere (`getViewerContext`, §41), so these actions refuse it
+// too, the same truthiness access.ts reads.
 // ---------------------------------------------------------------------------
 
-async function signupOwnerStoreId(): Promise<string | null> {
+/** The signed-in owner's store and their uid, or null. */
+async function signupOwner(): Promise<{
+  storeId: string;
+  userId: string;
+} | null> {
   const user = await getServerUser();
   if (!user) return null;
   try {
     const rows = await withService((db) =>
       db
-        .select({ storeId: admins.storeId, role: admins.role })
+        .select({
+          storeId: admins.storeId,
+          role: admins.role,
+          isSuspended: admins.isSuspended,
+        })
         .from(admins)
         .where(eq(admins.id, user.id))
         .limit(1),
     );
-    return rows[0]?.role === "superadmin" ? rows[0].storeId : null;
+    const row = rows[0];
+    if (row?.role !== "superadmin" || row.isSuspended) return null;
+    return { storeId: row.storeId, userId: user.id };
   } catch (err) {
     logError("billing.signup_owner_store", err, { uid: user.id });
     return null;
@@ -289,10 +343,10 @@ export async function startSignupSubscribe(
   period: unknown,
   mandateMethod?: unknown,
 ): Promise<SubscribeStart> {
-  const storeId = await signupOwnerStoreId();
-  if (!storeId)
+  const owner = await signupOwner();
+  if (!owner)
     return { ok: false, error: "You don't have permission to do this." };
-  return startSubscribeForStore(storeId, plan, period, mandateMethod);
+  return startSubscribeForStore(owner.storeId, plan, period, mandateMethod);
 }
 
 /** Settle it. */
@@ -301,11 +355,11 @@ export async function confirmSignupSubscribe(
   providerPaymentId: unknown,
   signature: unknown,
 ): Promise<SubscribeConfirm> {
-  const storeId = await signupOwnerStoreId();
-  if (!storeId)
+  const owner = await signupOwner();
+  if (!owner)
     return { ok: false, error: "You don't have permission to do this." };
   const result = await confirmSubscribeForStore(
-    storeId,
+    owner.storeId,
     invoiceId,
     providerPaymentId,
     signature,
@@ -420,13 +474,20 @@ export async function getLocationBilling(): Promise<LocationBillingState | null>
 export type LocationPurchaseResult =
   | {
       ok: true;
+      completedEarlier?: false;
       invoiceId: string;
       providerOrderId: string;
       keyId: string;
       amountPaise: number;
       targetCount: number;
     }
-  | { ok: false; error: string };
+  | {
+      ok: true;
+      /** An earlier, already paid purchase was finished instead (RC-F1b). */
+      completedEarlier: true;
+      message: string;
+    }
+  | { ok: false; error: string; waiting?: true };
 
 /**
  * Begin buying extra locations.
@@ -456,7 +517,18 @@ export async function startBuyLocations(
     requested,
     locationPrice,
   });
-  if (!started.ok) return { ok: false, error: started.error };
+  if (!started.ok) {
+    // An earlier, already paid purchase was finished instead (RC-F1b): the
+    // allowance is a plan gate, so every reader must see the new number. The
+    // library answers it on its error arm; here it becomes the success it is.
+    if (started.error === LOCATIONS_RECOVERED_MESSAGE) {
+      revalidateTag(STORE_TAG, "max");
+      return { ok: true, completedEarlier: true, message: started.error };
+    }
+    return started.error === LOCATIONS_RECOVERY_WAITING_MESSAGE
+      ? { ok: false, error: started.error, waiting: true }
+      : { ok: false, error: started.error };
+  }
   return { ok: true, ...started.data };
 }
 
@@ -567,60 +639,264 @@ export async function getMySubscription(): Promise<SubscriptionView> {
       scheduledLocations: null,
       autopay: false,
       active: false,
+      nextInvoice: null,
+      graceEndsAt: null,
+      cancelRequestedBy: null,
+      cancelRequestedAt: null,
     };
   }
   return getSubscriptionView(storeId);
 }
 
 export type CancelActionResult =
-  | { ok: true; message: string }
+  | {
+      ok: true;
+      message: string;
+      /** Keep my plan only: true when the cycle advanced at once, because the
+       *  renewal had been paid while the cancellation stood. The plan is
+       *  active on its new cycle now. */
+      advanced?: boolean;
+    }
   | { ok: false; error: string };
 
+// ---------------------------------------------------------------------------
+// What the merchant is told after cancelling or keeping their plan
+// (renewal-cancel design 8.2 and Table B).
+//
+// ★ EVERY SENTENCE MUST STAY TRUE. Cancelling never keeps money for a cycle
+// the plan does not reach: an unpaid renewal invoice is closed when the plan
+// ends, and a renewal payment that arrives is refunded. The refund timing is
+// the billing emails' own (lib/email/billing-emails.ts, REFUND_TIMING): while
+// automatic sending is off a refund may be sent by hand, so the sentence
+// promises the usual time rather than the moment the plan ends.
+// ---------------------------------------------------------------------------
+
+const REFUND_TIMING = "after your plan ends, usually within 5 working days";
+
+/** A date in India time: "30 Oct 2026", or "1 Nov 2026, 14:00 IST" with the
+ *  time, the shape the billing emails print. */
+function istDay(iso: string, opts: { time?: boolean } = {}): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const day = date.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+  if (!opts.time) return day;
+  const time = date.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone: "Asia/Kolkata",
+  });
+  return `${day}, ${time} IST`;
+}
+
+/** "₹2,400", or to the paisa when there is one ("₹1,234.50"). */
+function rupees(paise: number): string {
+  const amount = paise / 100;
+  const whole = Number.isInteger(amount);
+  return `₹${amount.toLocaleString("en-IN", {
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: whole ? 0 : 2,
+  })}`;
+}
+
+/** In grace the plan ends when grace ends, so that date carries its time. */
+function inGrace(state: string | null): boolean {
+  return state === "past_due" || state === "grace";
+}
+
+/**
+ * What the next cycle's invoice means for the merchant, read the way the
+ * cancellation email reads it so the toast and the email agree. A draft was
+ * never issued to them and a closed invoice is owed by nobody: nothing is
+ * said about either.
+ */
+function nextInvoiceCase(
+  next: NextInvoiceView | null,
+): "none" | "open" | "in_flight" | "paid" {
+  if (!next) return "none";
+  if (next.status === "paid") return "paid";
+  if (next.inFlight || next.status === "processing") return "in_flight";
+  if (next.status === "open") return "open";
+  return "none";
+}
+
+/** The plan being cancelled, by its display name ("Pro"); null when it
+ *  cannot be read, and the sentence then says "your plan". */
+async function subscriptionPlanName(storeId: string): Promise<string | null> {
+  try {
+    const plan = await withService(async (db) => {
+      const [row] = await db
+        .select({ plan: billingSubscriptions.plan })
+        .from(billingSubscriptions)
+        .where(eq(billingSubscriptions.storeId, storeId))
+        .limit(1);
+      return row?.plan ?? null;
+    });
+    const known = normalizePlan(plan);
+    return known === "free" ? null : PLAN_META[known].name;
+  } catch {
+    return null;
+  }
+}
+
+/** Design 8.2, with the grace case of a renewal already paid added. */
+function cancelledMessage(d: {
+  planName: string | null;
+  state: string;
+  accessUntil: string | null;
+  graceEndsAt: string | null;
+  nextInvoice: NextInvoiceView | null;
+}): string {
+  const grace = inGrace(d.state);
+  const endsAt = grace ? d.graceEndsAt : d.accessUntil;
+  // ★ Access runs to the end of a cycle only if there IS one: between
+  // authorising and the first charge there isn't, and promising a plan they
+  // were never charged for sets up the wrong expectation.
+  if (!endsAt) return "Cancelled. No further payments will be taken.";
+  const plan = d.planName ? `${d.planName} plan` : "plan";
+  const next = nextInvoiceCase(d.nextInvoice);
+  const amount = d.nextInvoice ? rupees(d.nextInvoice.totalPaise) : "";
+
+  if (grace) {
+    const head = `Cancelled. Your ${plan} ends on ${istDay(endsAt, { time: true })}, then your store moves to Free.`;
+    if (next === "in_flight") {
+      return `${head} A renewal payment of ${amount} is still going through. If it completes, we refund it.`;
+    }
+    if (next === "paid") {
+      return `${head} We'll refund your renewal payment of ${amount} ${REFUND_TIMING}.`;
+    }
+    if (next === "open") return `${head} Your unpaid invoice won't be charged.`;
+    return head;
+  }
+
+  const head = `Cancelled. You keep your ${plan} until ${istDay(endsAt)}, then move to Free.`;
+  if (next === "open") return `${head} Your renewal invoice won't be charged.`;
+  if (next === "in_flight") {
+    return `${head} A renewal payment of ${amount} is still going through. If it completes, we refund it ${REFUND_TIMING}.`;
+  }
+  if (next === "paid") {
+    return `${head} We'll refund your renewal payment of ${amount} ${REFUND_TIMING}.`;
+  }
+  return head;
+}
+
+/**
+ * Design Table B. ★ `advanced` is the only thing that may say the plan
+ * continues on a renewal paid in grace: false means the advance has not
+ * happened (it ran too early, or failed), and the downgrade pass's safety net
+ * applies it when grace ends, never sooner, so the sentence names that time.
+ * ⚠ Autopay is NOT restored: the mandate was withdrawn on cancel and only the
+ * merchant can authorise a new one. Saying otherwise has them expect a charge
+ * that never comes, and be downgraded for it.
+ */
+function resumedMessage(d: {
+  autopay: boolean;
+  advanced: boolean;
+  state: string;
+  graceEndsAt: string | null;
+  currentEnd: string | null;
+  nextInvoice: NextInvoiceView | null;
+}): string {
+  if (d.advanced) {
+    return "Resumed. Your renewal is already paid, so your plan continues.";
+  }
+  const grace = inGrace(d.state);
+  const next = nextInvoiceCase(d.nextInvoice);
+  const amount = d.nextInvoice ? rupees(d.nextInvoice.totalPaise) : null;
+
+  if (next === "paid") {
+    if (grace) {
+      return d.graceEndsAt
+        ? `Resumed. Your renewal is already paid, so your plan continues. We'll finish renewing it when grace ends on ${istDay(d.graceEndsAt, { time: true })}.`
+        : "Resumed. Your renewal is already paid, so your plan continues. We'll finish renewing it when grace ends.";
+    }
+    return d.currentEnd
+      ? `Resumed. Your renewal is already paid, so your plan continues after ${istDay(d.currentEnd)}.`
+      : "Resumed. Your renewal is already paid, so your plan continues.";
+  }
+  if (next === "in_flight") {
+    return `Resumed. Your renewal payment of ${amount} is still going through.`;
+  }
+  if (grace) {
+    const invoice = amount ? `renewal invoice of ${amount}` : "renewal invoice";
+    return d.graceEndsAt
+      ? `Resumed. Pay your ${invoice} by ${istDay(d.graceEndsAt, { time: true })} to keep your plan.`
+      : `Resumed. Pay your ${invoice} to keep your plan.`;
+  }
+  if (d.autopay) return "Resumed. Your plan will renew as normal.";
+  if (next === "open") {
+    return d.currentEnd
+      ? `Resumed. Autopay is off, so pay your renewal invoice of ${amount} by ${istDay(d.currentEnd)} to keep your plan.`
+      : `Resumed. Autopay is off, so pay your renewal invoice of ${amount} to keep your plan.`;
+  }
+  return "Resumed. Autopay is off, so we'll ask you to pay each renewal.";
+}
+
+/**
+ * Cancel at the end of the cycle (or when grace ends, for a merchant who
+ * cancels in grace). Never refused for timing (rule R1).
+ *
+ * ★ WHO ASKED is recorded with the claim as "merchant:<user id>", from the
+ * SESSION: the console records "operator:<email>" for a cancellation an
+ * operator makes at the merchant's request, and the banner tells the two
+ * apart by kind only.
+ */
 export async function cancelMySubscription(): Promise<CancelActionResult> {
   const userId = await getManagerUserId("ai");
   if (!userId)
     return { ok: false, error: "You don't have permission to do this." };
 
   const storeId = await getActingStoreId();
-  const done = await cancelAtPeriodEnd({ storeId });
+  // The plan name is read beside the claim, not after it: cancelling never
+  // changes which plan the subscription is on.
+  const [done, planName] = await Promise.all([
+    cancelAtPeriodEnd({ storeId, requestedBy: `merchant:${userId}` }),
+    subscriptionPlanName(storeId),
+  ]);
   if (!done.ok) return { ok: false, error: done.error };
 
-  const until = done.data.accessUntil
-    ? new Date(done.data.accessUntil).toLocaleDateString("en-GB", {
-        day: "2-digit",
-        month: "short",
-        year: "numeric",
-        timeZone: "Asia/Kolkata",
-      })
-    : null;
   return {
     ok: true,
-    // ★ The promise has to match what will happen. Access runs to the end of the
-    // cycle only if there IS one — between authorising and the first charge there
-    // isn't, and promising a plan they were never charged for sets up the wrong
-    // expectation.
-    message: until
-      ? `Cancelled. You keep your plan until ${until}, then move to Free.`
-      : "Cancelled. No further payments will be taken.",
+    message: cancelledMessage({
+      planName,
+      state: done.data.state,
+      accessUntil: done.data.accessUntil,
+      graceEndsAt: done.data.graceEndsAt,
+      nextInvoice: done.data.nextInvoice,
+    }),
   };
 }
 
+/**
+ * Keep my plan: clear the cancellation before the plan ends, in grace too
+ * (rule R2, decision D4). A renewal paid while the cancellation stood is
+ * applied at once when the cycle has ended (`advanced`).
+ */
 export async function resumeMySubscription(): Promise<CancelActionResult> {
   const userId = await getManagerUserId("ai");
   if (!userId)
     return { ok: false, error: "You don't have permission to do this." };
 
   const storeId = await getActingStoreId();
-  const done = await resumeSubscription({ storeId });
+  const done = await resumeSubscription({
+    storeId,
+    requestedBy: `merchant:${userId}`,
+  });
   if (!done.ok) return { ok: false, error: done.error };
+
+  // An advanced cycle changes entitlement (the plan is active on its new
+  // cycle), so every plan gate must see it. Nothing else here does.
+  if (done.data.advanced) revalidateTag(STORE_TAG, "max");
+
   return {
     ok: true,
-    // ⚠ Autopay is NOT restored — the mandate was withdrawn on cancel and only
-    // the merchant can authorise a new one. Saying otherwise has them expect a
-    // charge that never comes, and be downgraded for it.
-    message: done.data.autopay
-      ? "Resumed. Your plan will renew as normal."
-      : "Resumed. Autopay is off, so we'll ask you to pay each renewal.",
+    message: resumedMessage(done.data),
+    advanced: done.data.advanced,
   };
 }
 
@@ -636,8 +912,10 @@ export type PlanChangeActionResult =
       };
       scheduled: boolean;
       message: string;
+      /** An earlier, already paid change was finished instead (RC-F1b). */
+      completedEarlier?: true;
     }
-  | { ok: false; error: string };
+  | { ok: false; error: string; waiting?: true };
 
 /**
  * Move to a different plan or billing period.
@@ -670,7 +948,24 @@ export async function changeMyPlan(
     priceFor,
     locationPrice,
   });
-  if (!started.ok) return { ok: false, error: started.error };
+  if (!started.ok) {
+    return started.error === PLAN_CHANGE_RECOVERY_WAITING_MESSAGE
+      ? { ok: false, error: started.error, waiting: true }
+      : { ok: false, error: started.error };
+  }
+
+  // ★ An EARLIER change whose payment was captured was finished instead of
+  // opening a second payment (RC-F1b). It names the plan that payment bought,
+  // which may not be the one just picked.
+  if (started.data.recovered) {
+    revalidateTag(STORE_TAG, "max");
+    return {
+      ok: true,
+      scheduled: false,
+      completedEarlier: true,
+      message: `Your earlier payment went through, and you're now on ${PLAN_META[started.data.plan].name}.`,
+    };
+  }
 
   const name = PLAN_META[plan].name;
   if (started.data.payment) {
@@ -744,4 +1039,202 @@ export async function confirmMyPlanChange(
 
   revalidateTag(STORE_TAG, "max");
   return { ok: true, plan: done.data.plan };
+}
+
+// ---------------------------------------------------------------------------
+// What a merchant is shown before they pay, and their Billing details (GST
+// design 5.6, 5.7).
+//
+// ★ The quote runs the same reads and builders as the payment it describes
+// (lib/billing/quote.ts), so the figure on the dialog is the figure charged.
+// ★ The shapes are in lib/billing/quote-types.ts: every export of this file is
+// a public endpoint, so it exports these actions and nothing else new.
+// ---------------------------------------------------------------------------
+
+const NO_PERMISSION = "You don't have permission to do this.";
+
+// ★ THROTTLED PER STORE AND PERSON (review R3-07). The quote can reach
+// StoreMink's own Razorpay account (an add-on order read) and two live price
+// reads on every change in the checkout dialog, and the saves write the
+// billing account, so a script on a merchant's session could otherwise spend
+// the Razorpay allowance enrolment and the hourly reconcile share. The quote
+// and the next-renewal read share one bucket; the two saves share a smaller
+// one. The limiter fails open (lib/rate-limit.ts), as a throttle may.
+const QUOTE_LIMIT = { max: 60, windowSeconds: 60 } as const;
+const DETAILS_SAVE_LIMIT = { max: 10, windowSeconds: 60 } as const;
+const QUOTE_RATE_LIMITED =
+  "Too many price checks. Please wait a moment and try again.";
+const SAVE_RATE_LIMITED =
+  "Too many attempts. Please wait a moment and try again.";
+
+/** Whether this store and person may ask again; logs a refusal. */
+async function withinLimit(
+  bucket: "billing-quote" | "billing-details",
+  action: string,
+  storeId: string,
+  userId: string,
+  limit: { max: number; windowSeconds: number },
+): Promise<boolean> {
+  const { allowed } = await rateLimit(`${bucket}:${storeId}:${userId}`, limit);
+  if (!allowed) logWarn("billing.rate_limited", { action, storeId });
+  return allowed;
+}
+
+/**
+ * The checkout dialog's summary for a plan and period, and a Mink credit pack
+ * bought with it (`packId`, or null for none).
+ */
+export async function quoteCheckout(
+  plan: unknown,
+  period: unknown,
+  packId: unknown,
+): Promise<CheckoutQuoteResult> {
+  const userId = await getManagerUserId("ai");
+  if (!userId) return { ok: false, error: NO_PERMISSION };
+  if (!isPaidPlan(plan) || !PLAN_IDS.includes(plan)) {
+    return { ok: false, error: "Choose a paid plan." };
+  }
+  const billingPeriod: BillingPeriod =
+    period === "yearly" ? "yearly" : "monthly";
+  const pack =
+    typeof packId === "string" && packId.trim() ? packId.trim() : null;
+
+  const storeId = await getActingStoreId();
+  if (
+    !(await withinLimit(
+      "billing-quote",
+      "quote_checkout",
+      storeId,
+      userId,
+      QUOTE_LIMIT,
+    ))
+  ) {
+    return { ok: false, error: QUOTE_RATE_LIMITED };
+  }
+  const locationPrice = await getExtraLocationPricingLive();
+  return quoteCheckoutFor({
+    storeId,
+    plan,
+    period: billingPeriod,
+    packId: pack,
+    priceFor,
+    locationPrice,
+  });
+}
+
+/**
+ * The store's next renewal, as it will be invoiced; null when there is none,
+ * when it cannot be read, and past the quote limit (the Plans page then shows
+ * no renewal line, as it does on a failed read).
+ */
+export async function getMyNextRenewal(): Promise<RenewalQuote | null> {
+  const userId = await getManagerUserId("ai");
+  if (!userId) return null;
+  const storeId = await getActingStoreId();
+  if (
+    !(await withinLimit(
+      "billing-quote",
+      "next_renewal",
+      storeId,
+      userId,
+      QUOTE_LIMIT,
+    ))
+  ) {
+    return null;
+  }
+  return quoteNextRenewal({ storeId, priceFor });
+}
+
+/** The Billing details form, prefilled while nothing is saved. */
+export async function getMyBillingDetails(): Promise<BillingDetailsView | null> {
+  const userId = await getManagerUserId("ai");
+  if (!userId) return null;
+  const storeId = await getActingStoreId();
+  return getBillingDetails(storeId);
+}
+
+/** The text fields a Billing details save may carry; anything else is ignored. */
+const DETAIL_FIELDS = [
+  "country",
+  "countryName",
+  "legalName",
+  "gstin",
+  "stateCode",
+  "addressLine1",
+  "addressLine2",
+  "city",
+  "postalCode",
+] as const satisfies ReadonlyArray<keyof BillingDetailsInput>;
+
+function detailsInputOf(input: unknown): BillingDetailsInput {
+  const picked: BillingDetailsInput = {};
+  if (!input || typeof input !== "object") return picked;
+  const raw = input as Record<string, unknown>;
+  for (const key of DETAIL_FIELDS) {
+    const value = raw[key];
+    if (typeof value === "string") picked[key] = value;
+  }
+  return picked;
+}
+
+/** Save the store's Billing details from Plans & Billing. */
+export async function saveMyBillingDetails(
+  input: unknown,
+): Promise<SaveBillingDetailsResult> {
+  const userId = await getManagerUserId("ai");
+  if (!userId) return { ok: false, error: NO_PERMISSION };
+  const storeId = await getActingStoreId();
+  if (
+    !(await withinLimit(
+      "billing-details",
+      "save_billing_details",
+      storeId,
+      userId,
+      DETAILS_SAVE_LIMIT,
+    ))
+  ) {
+    return { ok: false, error: SAVE_RATE_LIMITED };
+  }
+  const result = await saveBillingDetails(storeId, detailsInputOf(input));
+  if (result.ok) revalidatePath("/dashboard/plans");
+  return result;
+}
+
+/**
+ * Save the state (and a GSTIN) the signup Plan step asks for before a paid
+ * plan. ★ The store is the signed-in owner's (`signupOwner`), never one
+ * named in the request; only an Indian state and GSTIN are taken here.
+ */
+export async function saveSignupBillingDetails(
+  input: unknown,
+): Promise<SaveBillingDetailsResult> {
+  const owner = await signupOwner();
+  if (!owner) return { ok: false, error: NO_PERMISSION };
+  const { storeId } = owner;
+  if (
+    !(await withinLimit(
+      "billing-details",
+      "save_signup_billing_details",
+      storeId,
+      owner.userId,
+      DETAILS_SAVE_LIMIT,
+    ))
+  ) {
+    return { ok: false, error: SAVE_RATE_LIMITED };
+  }
+  const raw =
+    input && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
+  const stateCode = typeof raw.stateCode === "string" ? raw.stateCode : "";
+  const gstin = typeof raw.gstin === "string" ? raw.gstin : "";
+  const result = await saveBillingDetails(storeId, {
+    stateCode,
+    gstin,
+    country: "IN",
+  });
+  if (!result.ok && result.error === BILLING_DETAILS.errors.failed) {
+    return { ok: false, error: SIGNUP_STATE.saveFailed, field: result.field };
+  }
+  return result;
 }

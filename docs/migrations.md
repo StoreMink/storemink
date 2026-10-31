@@ -58,7 +58,7 @@ Consequences worth knowing:
 
 One new file in `drizzle/migrations/sql/`, named `YYYYMMDD_NNNN_short_name.sql`.
 
-> **The next free sequence number is `0262`** (0261 adds the Mink voice controls Help edit; 0260 is held for the separate redesign recovery work) (0256 and 0257 remain reserved for the paused release; owner approved 0258 for the redesign preview Help edit and 0259 for its deadline guard). Previously: **0256** (26 Oct 2026: `0237` is the
+> **The next free sequence number is `0271`** (0269 adds the content takedown schema: the complaints log, blocks, their messages, write-once archives, store holds and the append-only moderation record, `moderation_blocked_at` on six content tables with its guard triggers and narrowed public read policies, and the two store triggers; it retires 0243's verify query "every other direct store foreign key cascades on deletion", see below; 0270 its Help guide "If StoreMink blocks something on your store" and the reviews guide's contact-support step). Previously: **0269** (0266 adds GST on StoreMink's own fees: the scheduled GST change and StoreMink's SAC code, LLPIN and registered office on `platform_billing_settings`, the GSTIN checks on `billing_accounts`, `ai_credit_purchases.amount_paise`, and `sac_code`, `tax_inclusive`, `place_of_supply_basis` and the issuing trigger on `billing_invoices`; 0267 its Help edit to the plan and signup guides; 0268 renames the billing page to "Plans & Billing" in six guides). Previously: **0266** (0264 adds StoreMink's refunds and credit notes: `billing_refunds`, `billing_credit_notes`, `billing_credit_note_counters`, the cancel request columns and the refund switch; 0265 their cancel and refund Help edit). Previously: **0264** (0262 adds the private Mink AI chat attachments schema, 0263 its Help edit). Previously: **0262** (0261 adds the Mink voice controls Help edit; 0260 is held for the separate redesign recovery work) (0256 and 0257 remain reserved for the paused release; owner approved 0258 for the redesign preview Help edit and 0259 for its deadline guard). Previously: **0256** (26 Oct 2026: `0237` is the
 > Generate with AI credit refund, `0238` its Help edit, `0239` the storefront
 > redesign's Help edit after the robustness fixes, `0240` the release's
 > indexes and `app_service` grants, `0241` the Privacy Policy v3 publish,
@@ -212,6 +212,23 @@ omit only that query. Cloud Build's read-only `status` preflight also recognizes
 a healthy pending retirement so the stale query cannot block the migration
 that retires it; `apply` rechecks after recording the new migration. The later
 entry, including this field, is checksummed and becomes immutable itself.
+
+Often the cheaper answer is not to meet the query at all. 0243's durable verify
+held that every other direct `stores(id)` foreign key cascades on deletion, so
+a new table with a store key that must outlive the store would fail it. 0264's
+`billing_refunds` and `billing_credit_notes` carry no store column: they reach
+their store through the invoice, a row that already has one, so the query still
+held and nothing had to be retired.
+
+`20261030_0269_content_takedown` did need to retire it: a complaint, a block,
+an archive and a hold must outlive the store they name, so their four store keys
+are ON DELETE SET NULL. 0269's `supersedesVerifyQueries` retires 0243's query
+"every other direct store foreign key cascades on deletion" and its own
+verify says instead that every direct store foreign key other than the kept
+invoices, payment attempts and moderation records cascades on deletion, and that
+deleting a store keeps its complaints, blocks, archives and holds and blanks
+their store (four keys). The next store key that must outlive its store needs a
+migration that supersedes 0269's query in turn, by its exact name.
 
 ### Test it locally
 

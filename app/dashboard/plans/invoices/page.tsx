@@ -4,11 +4,22 @@ import { ChevronLeft, FileText } from "lucide-react";
 import { requireSectionAccess } from "../../lib/access";
 import { getActingStoreId } from "../../lib/access";
 import { listInvoices } from "@/lib/billing/invoice-history";
+import { listCreditNotes } from "@/lib/billing/credit-note-store";
+import type { InvoiceSummary } from "@/lib/billing/invoice-types";
+import { invoiceListName } from "@/lib/billing/tax-copy";
 
 export const metadata = { title: "Invoices" };
 
-const inr = (paise: number) =>
-  `₹${(paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+// Whole rupees print without decimals; anything else prints both paise
+// digits ("₹500.50", never "₹500.5").
+const inr = (paise: number) => {
+  const rupees = paise / 100;
+  const digits = Number.isInteger(rupees) ? 0 : 2;
+  return `₹${rupees.toLocaleString("en-IN", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })}`;
+};
 
 const fmtDate = (iso: string | null) =>
   iso
@@ -27,13 +38,53 @@ const STATUS: Record<string, { label: string; cls: string }> = {
   processing: { label: "Processing", cls: "bg-blue-50 text-blue-700" },
   uncollectible: { label: "Unpaid", cls: "bg-red-50 text-red-700" },
   void: { label: "Cancelled", cls: "bg-gray-100 text-gray-600" },
+  // Labels only: a refund never changes its invoice's status (renewal-cancel
+  // rule R9), so nothing writes these. A status set by hand still reads in
+  // words; the refund itself shows as the line under the pill.
+  refunded: { label: "Refunded", cls: "bg-gray-100 text-gray-600" },
+  partially_refunded: {
+    label: "Partly refunded",
+    cls: "bg-gray-100 text-gray-600",
+  },
 };
+
+/**
+ * The one line under the status pill that says what happened to the money
+ * (design 8.5), first match wins: a refund still moving matters more than
+ * one that finished.
+ */
+/**
+ * What the document is called before its number: "Tax invoice" when GST was
+ * charged, else "Invoice" (`invoiceListName`, design 7.6). Only the number is
+ * the link, so the link's name stays the number a merchant quotes.
+ */
+function documentWord(ref: string, taxPaise: number): string {
+  const name = invoiceListName(ref, taxPaise);
+  return name.slice(0, name.length - ref.length).trim();
+}
+
+function refundLine(inv: InvoiceSummary): string | null {
+  const r = inv.refunds;
+  if (r.inProgress) return "Refund on its way";
+  if (r.delayed) return "Refund delayed";
+  if (r.refundedPaise > 0 && r.refundedPaise >= inv.totalPaise) {
+    return "Refunded in full";
+  }
+  if (r.refundedPaise > 0) return `Refunded ${inr(r.refundedPaise)}`;
+  if (r.extraReturnedPaise > 0) {
+    return `Extra payment of ${inr(r.extraReturnedPaise)} returned`;
+  }
+  return null;
+}
 
 export default async function InvoicesPage() {
   // Same section as the rest of billing. A read, so VIEW is enough.
   await requireSectionAccess("ai", "view");
   const storeId = await getActingStoreId();
-  const invoices = await listInvoices(storeId);
+  const [invoices, creditNotes] = await Promise.all([
+    listInvoices(storeId),
+    listCreditNotes(storeId),
+  ]);
 
   return (
     <div className="dash-page-enter mx-auto w-full max-w-4xl">
@@ -47,8 +98,8 @@ export default async function InvoicesPage() {
 
       <h1 className="text-2xl font-bold text-[#111827]">Invoices</h1>
       <p className="mt-1 mb-6 text-sm text-[#5b6472]">
-        Every subscription invoice StoreMink has issued to this store. Open one
-        to print it or save it as a PDF.
+        Every subscription invoice and credit note StoreMink has issued to this
+        store. Open one to print it or save it as a PDF.
       </p>
 
       {invoices.length === 0 ? (
@@ -84,14 +135,19 @@ export default async function InvoicesPage() {
                   label: inv.status,
                   cls: "bg-gray-100 text-gray-600",
                 };
+                const refund = refundLine(inv);
+                const ref = inv.invoiceRef ?? inv.id.slice(0, 8);
                 return (
                   <tr key={inv.id}>
                     <td>
+                      <span className="text-sm text-[#5b6472]">
+                        {documentWord(ref, inv.taxPaise)}
+                      </span>{" "}
                       <Link
                         href={`/dashboard/plans/invoices/${inv.id}`}
                         className="font-mono text-sm font-medium text-[#111827] hover:underline"
                       >
-                        {inv.invoiceRef ?? inv.id.slice(0, 8)}
+                        {ref}
                       </Link>
                     </td>
                     <td className="text-sm text-[#5b6472]">
@@ -111,6 +167,9 @@ export default async function InvoicesPage() {
                       >
                         {s.label}
                       </span>
+                      {refund && (
+                        <p className="mt-1 text-xs text-[#5b6472]">{refund}</p>
+                      )}
                     </td>
                   </tr>
                 );
@@ -118,6 +177,63 @@ export default async function InvoicesPage() {
             </tbody>
           </ResponsiveTable>
         </div>
+      )}
+
+      {creditNotes.length > 0 && (
+        // ★ Only when there is one: an empty "Credit notes" table on a store
+        // that has never been refunded reads as something missing.
+        <section className="mt-8" aria-labelledby="credit-notes-heading">
+          <h2
+            id="credit-notes-heading"
+            className="mb-3 text-lg font-semibold text-[#111827]"
+          >
+            Credit notes
+          </h2>
+          <div className="dash-card overflow-hidden">
+            <ResponsiveTable className="dash-table w-full">
+              <thead>
+                <tr>
+                  <th>Credit note</th>
+                  <th>Issued</th>
+                  <th>For invoice</th>
+                  <th className="text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {creditNotes.map((note) => (
+                  <tr key={note.id}>
+                    <td>
+                      <Link
+                        href={`/dashboard/plans/credit-notes/${note.id}`}
+                        className="font-mono text-sm font-medium text-[#111827] hover:underline"
+                      >
+                        {note.creditNoteRef}
+                      </Link>
+                    </td>
+                    <td className="text-sm text-[#5b6472]">
+                      {fmtDate(note.issuedAt)}
+                    </td>
+                    <td className="text-sm text-[#5b6472]">
+                      {note.invoiceRef ? (
+                        <Link
+                          href={`/dashboard/plans/invoices/${note.invoiceId}`}
+                          className="font-mono hover:underline"
+                        >
+                          {note.invoiceRef}
+                        </Link>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td className="text-right text-sm font-medium text-[#111827]">
+                      {inr(note.totalPaise)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </ResponsiveTable>
+          </div>
+        </section>
       )}
     </div>
   );

@@ -62,6 +62,10 @@ import { MinkFeedbackControls } from "./mink-feedback";
 import { readMinkCsvReference } from "@/lib/mink/csv-input";
 import { readReviewedMinkDocument } from "@/lib/mink/document-input";
 import { readSavedMinkMediaReference } from "@/lib/mink/media-attachment";
+import {
+  minkAttachmentIdOf,
+  minkAttachmentUrl,
+} from "@/lib/mink/attachment-ref";
 import { MINK_MESSAGE_MAX_CHARS } from "@/lib/mink/input-policy";
 import { MINK_NEW_CHAT_TITLE } from "@/lib/mink/chat-session";
 import { BrandMark } from "@/app/platform/brand-mark";
@@ -998,7 +1002,7 @@ export function DashboardChat({
                           </div>
                         ) : null}
                         <div className="flex items-center gap-2.5 py-2 text-sm text-[#5c5f62]">
-                          <MinkMark size="sm" />
+                          <MinkMark size="sm" state="thinking" animated />
                           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#6d4dff]" />
                           {statusText ?? "Thinking…"}
                         </div>
@@ -1829,6 +1833,16 @@ function MinkUserMessage({
     filename: string;
     src: string;
   } | null>(null);
+  // Pictures whose load failed (a chat attachment already purged, or one the
+  // viewer may no longer read): the tile keeps its place and the file name
+  // and says so, instead of a broken image.
+  const [unavailable, setUnavailable] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const markUnavailable = (src: string) =>
+    setUnavailable((current) =>
+      current.has(src) ? current : new Set(current).add(src),
+    );
   let visibleText = text;
   const attachments: Array<
     | { kind: "media"; filename: string; src: string }
@@ -1886,11 +1900,18 @@ function MinkUserMessage({
       if (media) {
         visibleText = media.message;
         const local = localPreviews?.[`url:${media.asset.url}`];
+        // ★ A picture kept privately with the chat is read from its own
+        //   route on this origin (which answers only the person who attached
+        //   it); a Media Library URL from before the change still goes
+        //   through the proxy.
+        const attachmentId = minkAttachmentIdOf(media.asset.url);
         const src =
           local ??
-          (isRenderableMinkMediaUrl(media.asset.url)
-            ? `/api/og-image?url=${encodeURIComponent(media.asset.url)}`
-            : "");
+          (attachmentId
+            ? minkAttachmentUrl(attachmentId)
+            : isRenderableMinkMediaUrl(media.asset.url)
+              ? `/api/og-image?url=${encodeURIComponent(media.asset.url)}`
+              : "");
         attachments.unshift({
           kind: "media",
           filename: media.asset.filename,
@@ -1927,7 +1948,11 @@ function MinkUserMessage({
                   key={`${attachment.filename}:${index}`}
                   className="min-w-0 overflow-hidden rounded-xl border border-black/10 bg-white/80"
                 >
-                  {attachment.src && (
+                  {attachment.src && unavailable.has(attachment.src) ? (
+                    <p className="flex h-28 w-44 max-w-full items-center justify-center px-3 text-center text-xs text-[#777]">
+                      {MINK_IMAGE_UNAVAILABLE}
+                    </p>
+                  ) : attachment.src ? (
                     <button
                       type="button"
                       aria-label={`View ${attachment.filename || "attached image"}`}
@@ -1939,9 +1964,10 @@ function MinkUserMessage({
                         src={attachment.src}
                         alt={attachment.filename || "Attached storefront image"}
                         className="h-28 w-44 max-w-full object-cover"
+                        onError={() => markUnavailable(attachment.src)}
                       />
                     </button>
-                  )}
+                  ) : null}
                   <div className="max-w-44 truncate px-2.5 py-2 text-xs font-medium">
                     {attachment.filename || "Storefront image"}
                   </div>
@@ -1992,12 +2018,24 @@ function MinkUserMessage({
             >
               <X className="h-5 w-5" aria-hidden="true" />
             </button>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={viewingImage.src}
-              alt={viewingImage.filename || "Attached image"}
-              className="max-h-[82dvh] max-w-full rounded-xl object-contain"
-            />
+            {unavailable.has(viewingImage.src) ? (
+              <div className="flex min-h-52 min-w-64 flex-col items-center justify-center gap-2 rounded-xl bg-[#f6f4fb] p-8 text-center">
+                <p className="text-sm font-medium text-[#252525]">
+                  {MINK_IMAGE_UNAVAILABLE}
+                </p>
+                <p className="max-w-sm break-all text-xs text-[#777]">
+                  {viewingImage.filename || "Attached image"}
+                </p>
+              </div>
+            ) : (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={viewingImage.src}
+                alt={viewingImage.filename || "Attached image"}
+                className="max-h-[82dvh] max-w-full rounded-xl object-contain"
+                onError={() => markUnavailable(viewingImage.src)}
+              />
+            )}
           </div>
         </div>
       )}
@@ -2005,9 +2043,17 @@ function MinkUserMessage({
   );
 }
 
+/** What a tile and the viewer say in place of a picture that failed to load. */
+const MINK_IMAGE_UNAVAILABLE = "This image is no longer available.";
+
 function isRenderableMinkMediaUrl(value: string) {
-  // The browser fetches only our same-origin proxy. Its server-side bucket pin
-  // rejects a hand-authored marker pointing at someone else's GCS object.
+  // A chat attachment's own address (`/api/mink/attachments/{id}`, with or
+  // without a host) is read from its route, which answers only the person
+  // who attached it, so it is rendered directly and never through the proxy.
+  if (minkAttachmentIdOf(value)) return true;
+  // Otherwise the browser fetches only our same-origin proxy. Its server-side
+  // bucket pin rejects a hand-authored marker pointing at someone else's GCS
+  // object.
   try {
     const url = new URL(value);
     return (

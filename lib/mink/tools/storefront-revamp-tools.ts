@@ -283,6 +283,10 @@ const startStorefrontRevamp: MinkTool = {
   // ★ Its write is the job insert (`context.commit`), after a budget read the
   //   run's stop should still be able to win.
   effect: "commit",
+  // A product's photo_url may be an attachment: the registry hands this tool
+  // its Media Library copy, which readPhotoUrl's https rule and the
+  // ownership check then accept as a Library image (registry.ts).
+  attachmentArgs: ["products"],
   artifact: revampArtifact,
   modelOutput: withoutArtifact,
   async execute(actor, args, context) {
@@ -378,6 +382,7 @@ const refineStorefrontRevamp: MinkTool = {
   available,
   timeoutMs: 30_000,
   effect: "commit",
+  attachmentArgs: ["products"],
   artifact: revampArtifact,
   modelOutput: withoutArtifact,
   async execute(actor, args, context) {

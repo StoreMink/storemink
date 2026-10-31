@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import Image from "next/image";
 import { canOptimizeImage } from "@/lib/media/image-hosts";
 import {
+  Ban,
   Eye,
   ImageIcon,
   Lightbulb,
@@ -18,6 +19,7 @@ import {
   Plus,
   Search,
   Send,
+  ShieldAlert,
   Star,
   Trash2,
   Undo2,
@@ -54,6 +56,8 @@ import {
 import { ListPagination } from "@/app/dashboard/components/list-pagination";
 import { ImportExportMenu } from "@/app/dashboard/components/import-export-menu";
 import { effectivePricing, formatPrice } from "@/lib/pricing";
+import { ITEM } from "@/lib/moderation/copy";
+import { STORE_NOTICES_HREF } from "@/app/dashboard/components/unread-counts-context";
 import type {
   ProductListItem,
   CategoryOption,
@@ -76,7 +80,20 @@ type Props = {
   missingCostCount?: number;
   canCreateProduct?: boolean;
   productLimit?: number | null;
+  /**
+   * Products StoreMink blocked and told the store about, product id to block
+   * id (takedown design 7.3). A block kept from the store is not in here, so
+   * the product shows nothing (D21).
+   */
+  blockedByStoreMink?: Record<string, string>;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 };
+
+/** Where "See why" goes for a blocked product: its notice. */
+function noticeHref(blockId: string): string {
+  return `${STORE_NOTICES_HREF}/${blockId}`;
+}
 
 export function ProductsManagementView({
   products,
@@ -93,9 +110,15 @@ export function ProductsManagementView({
   missingCostCount = 0,
   canCreateProduct = true,
   productLimit = null,
+  blockedByStoreMink,
+  canSeeNotices = false,
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  // The notice a blocked product's "See why" opens, or null when the product
+  // has no block the store was told about.
+  const blockIdOf = (productId: string): string | null =>
+    blockedByStoreMink?.[productId] ?? null;
   const [isPending, startTransition] = useTransition();
   const [navigating, startNavigation] = useTransition();
   const [search, setSearch] = useState(query);
@@ -143,6 +166,11 @@ export function ProductsManagementView({
   const visibleIds = useMemo(() => products.map((p) => p.id), [products]);
   const selection = useRowSelection(visibleIds);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  // Publishing or unpublishing a blocked product changes nothing a shopper
+  // sees (design 7.3), so the bulk buttons wait while one is selected.
+  const selectionBlocked = selection.selectedIds.some(
+    (id) => blockIdOf(id) !== null,
+  );
 
   const runBulk = (
     action: () => Promise<{
@@ -494,15 +522,23 @@ export function ProductsManagementView({
                     )}
                   </td>
                   <td>
-                    <span
-                      className={`dash-badge ${
-                        p.status === "published"
-                          ? "dash-badge-green"
-                          : "dash-badge-amber"
-                      }`}
-                    >
-                      {p.status === "published" ? "Published" : "Draft"}
-                    </span>
+                    {blockIdOf(p.id) ? (
+                      // A product StoreMink blocked is hidden whatever its
+                      // own status says (takedown design 7.3).
+                      <span className="dash-badge dash-badge-storemink">
+                        {ITEM.blocked}
+                      </span>
+                    ) : (
+                      <span
+                        className={`dash-badge ${
+                          p.status === "published"
+                            ? "dash-badge-green"
+                            : "dash-badge-amber"
+                        }`}
+                      >
+                        {p.status === "published" ? "Published" : "Draft"}
+                      </span>
+                    )}
                   </td>
                   {canManage && (
                     <td
@@ -525,32 +561,60 @@ export function ProductsManagementView({
                             <Pencil className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="cursor-pointer"
-                            onClick={() => handleTogglePublish(p)}
-                            disabled={isPending}
-                          >
-                            {p.status === "published" ? (
-                              <>
-                                <Undo2 className="mr-2 h-4 w-4" />
-                                Unpublish
-                              </>
-                            ) : (
-                              <>
-                                <Send className="mr-2 h-4 w-4" />
-                                Publish
-                              </>
-                            )}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="cursor-pointer"
-                            onClick={() =>
-                              window.open(`/shop/${p.slug}`, "_blank")
+                          {blockIdOf(p.id) ? (
+                            // Publishing or unpublishing changes nothing a
+                            // shopper sees while StoreMink's block stands
+                            // (design 7.3). Editing and deleting stay open.
+                            <DropdownMenuItem disabled>
+                              <Ban className="mr-2 h-4 w-4" />
+                              {ITEM.blocked}
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              className="cursor-pointer"
+                              onClick={() => handleTogglePublish(p)}
+                              disabled={isPending}
+                            >
+                              {p.status === "published" ? (
+                                <>
+                                  <Undo2 className="mr-2 h-4 w-4" />
+                                  Unpublish
+                                </>
+                              ) : (
+                                <>
+                                  <Send className="mr-2 h-4 w-4" />
+                                  Publish
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                          )}
+                          {(() => {
+                            const blockId = blockIdOf(p.id);
+                            if (!blockId) {
+                              return (
+                                <DropdownMenuItem
+                                  className="cursor-pointer"
+                                  onClick={() =>
+                                    window.open(`/shop/${p.slug}`, "_blank")
+                                  }
+                                >
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  Preview
+                                </DropdownMenuItem>
+                              );
                             }
-                          >
-                            <Eye className="mr-2 h-4 w-4" />
-                            Preview
-                          </DropdownMenuItem>
+                            // A blocked product's page is not found for
+                            // shoppers, so Preview gives way to the notice.
+                            return canSeeNotices ? (
+                              <DropdownMenuItem
+                                className="cursor-pointer"
+                                onClick={() => router.push(noticeHref(blockId))}
+                              >
+                                <ShieldAlert className="mr-2 h-4 w-4" />
+                                {ITEM.seeWhyItIsBlocked}
+                              </DropdownMenuItem>
+                            ) : null;
+                          })()}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             variant="destructive"
@@ -589,7 +653,7 @@ export function ProductsManagementView({
           <button
             type="button"
             className="dash-bulk-btn"
-            disabled={isPending}
+            disabled={isPending || selectionBlocked}
             onClick={() =>
               runBulk(
                 () => bulkToggleProductPublish(selection.selectedIds, true),
@@ -598,12 +662,12 @@ export function ProductsManagementView({
             }
           >
             <Send className="h-4 w-4" />
-            Publish
+            <BulkLabel blocked={selectionBlocked}>Publish</BulkLabel>
           </button>
           <button
             type="button"
             className="dash-bulk-btn"
-            disabled={isPending}
+            disabled={isPending || selectionBlocked}
             onClick={() =>
               runBulk(
                 () => bulkToggleProductPublish(selection.selectedIds, false),
@@ -612,7 +676,7 @@ export function ProductsManagementView({
             }
           >
             <Undo2 className="h-4 w-4" />
-            Unpublish
+            <BulkLabel blocked={selectionBlocked}>Unpublish</BulkLabel>
           </button>
           <button
             type="button"
@@ -730,5 +794,26 @@ export function ProductsManagementView({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * A bulk Publish or Unpublish label, with the reason it waits written under
+ * it when a selected product is blocked by StoreMink (never a tooltip:
+ * tooltips do not open on touch).
+ */
+function BulkLabel({
+  blocked,
+  children,
+}: {
+  blocked: boolean;
+  children: string;
+}) {
+  if (!blocked) return <>{children}</>;
+  return (
+    <span className="flex flex-col items-start leading-tight">
+      <span>{children}</span>
+      <span className="text-[11px] font-medium">{ITEM.blocked}</span>
+    </span>
   );
 }

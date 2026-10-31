@@ -31,7 +31,7 @@ import "server-only";
  * on its ceiling would be refused a location it owns and has paid for.
  */
 
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray, lt } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import {
   billingInvoices,
@@ -39,15 +39,23 @@ import {
   billingPaymentAttempts,
   billingSubscriptions,
   storeLocations,
+  stores,
 } from "@/drizzle/schema";
-import { logError } from "@/lib/observability/logger";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
   rzpCreateOrder,
+  rzpFetchOrderPayments,
   verifyCapturedCheckoutPayment,
   verifyCheckoutSignature,
 } from "@/lib/payments/razorpay";
-import { effectivePlan, limitsFor, PLAN_META, type Plan } from "@/lib/plans";
+import {
+  effectivePlan,
+  limitsFor,
+  normalizePlan,
+  PLAN_META,
+  type Plan,
+} from "@/lib/plans";
 import { getPlanPricingLive } from "@/lib/plans/pricing";
 import {
   extraLocationPaise,
@@ -60,7 +68,7 @@ import {
   type LocationPrice,
 } from "@/lib/plans/location-billing";
 import type { LocationBillingState } from "./invoice-types";
-import { PERIOD_DAYS } from "./cycle";
+import { collectionStartsAt, PERIOD_DAYS } from "./cycle";
 import {
   buildAddonInvoice,
   buildSubscriptionInvoice,
@@ -71,10 +79,28 @@ import {
   amountDueForInvoice,
   createAddonInvoice,
   finalizeInvoice,
-  loadInvoiceParties,
-  loadTaxContext,
+  getInvoice,
+  loadTaxSnapshot,
 } from "./invoice-store";
-import { beginAttempt, settleAttempt } from "./collect";
+import {
+  paymentCapturedAt,
+  paymentTaxRefusal,
+  readTaxForPayment,
+} from "./payment-tax";
+import { quoteLocationRenewal, quoteOf } from "./quote";
+import type { QuotePriceFor } from "./quote-types";
+import { PAYMENT_REFUSAL } from "./tax-copy";
+import type { TaxSnapshot } from "./tax-snapshot";
+import { taxContextFor, termsLater, type TaxTerms } from "./tax-terms";
+import {
+  beginAttempt,
+  capturedDraftPurchases,
+  fileRecoveredPurchase,
+  readAddonOrderTarget,
+  settleAttempt,
+  verifyRecoveredCapture,
+  type PurchaseCompletion,
+} from "./collect";
 
 export type { LocationBillingState };
 
@@ -94,6 +120,18 @@ export type LocationResult<T> =
 
 /** States in which a subscription can be changed at all. */
 const LIVE_STATES = ["active", "past_due", "grace"];
+
+/** A repeated purchase that finished the earlier, already paid one (RC-F1b). */
+export const LOCATIONS_RECOVERED_MESSAGE =
+  "Your earlier payment went through, and your extra locations are now added.";
+
+/** A repeated purchase whose earlier, already paid one could not be finished yet. */
+export const LOCATIONS_RECOVERY_WAITING_MESSAGE =
+  "Your earlier payment went through, and we'll add your locations shortly. Please don't pay again. If they haven't been added within a day, write to support@storemink.com.";
+
+/** A confirm whose payment is in but whose locations could not be added yet. */
+export const LOCATIONS_PAID_NOT_ADDED_MESSAGE =
+  "Your payment went through, and we'll add your locations shortly. Please don't pay again. If they haven't been added within a day, write to support@storemink.com.";
 
 interface SubRow {
   plan: string;
@@ -153,6 +191,22 @@ async function countLocations(storeId: string): Promise<number | null> {
  *
  * Read-only, so it is gated by the caller on VIEW of the section the merchant is
  * looking at — not on billing permissions.
+ *
+ * ★★ GST design 7.5: every amount the card shows comes from the invoice that
+ * would carry it. `perPeriod` and `nextPurchase` are built by the same
+ * `buildAddonInvoice` call as the charge, under ONE tax reading at `now` (the
+ * reading `startLocationPurchase` takes); `nextRenewal` is
+ * `quoteLocationRenewal`'s, priced under the terms in force when the next
+ * renewal's invoice is issued, four days before the cycle, which can fall on
+ * either side of a scheduled GST start. The reads run one after another, each
+ * in its own service scope.
+ *
+ * A tax reading that fails is a read failure (null, as for the subscription).
+ * Incomplete GST settings refuse every payment, so buying is not offered and
+ * the card says why. The flags follow `quote.ts`: the state is needed now when
+ * a payment is due now under GST with only StoreMink's own state known, and
+ * later when the renewal is invoiced under GST and the store has no state;
+ * outside India refuses a payment due now under GST.
  */
 export async function getLocationBillingState(input: {
   storeId: string;
@@ -184,7 +238,17 @@ export async function getLocationBillingState(input: {
     blockedReason = "Your billing cycle hasn't started yet. Try again shortly.";
   }
 
-  return {
+  // The part period of ONE more location: the charge's own arithmetic.
+  const purchasePaise = prorationFor({
+    from: billed,
+    to: billed + 1,
+    period,
+    periodEnd: sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : now,
+    now,
+    locationPrice: input.locationPrice,
+  });
+
+  const state: LocationBillingState = {
     included: limitsFor(plan).posLocationsIncluded,
     billed,
     existing,
@@ -198,18 +262,106 @@ export async function getLocationBillingState(input: {
         ? input.locationPrice.yearlyInr
         : input.locationPrice.monthlyInr,
     period,
-    nextPurchaseInr: Math.round(
-      prorationFor({
-        from: billed,
-        to: billed + 1,
-        period,
-        periodEnd: sub?.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : now,
-        now,
-        locationPrice: input.locationPrice,
-      }) / 100,
-    ),
+    nextPurchaseInr: Math.round(purchasePaise / 100),
     canBuy: !blockedReason,
     blockedReason,
+  };
+
+  // ★ ONE TAX READING, the one a purchase now would take.
+  let snap: TaxSnapshot;
+  try {
+    snap = await loadTaxSnapshot(input.storeId, now);
+  } catch (err) {
+    logError("billing.locations.state_tax_snapshot", err, {
+      storeId: input.storeId,
+    });
+    return null;
+  }
+  if (!snap.ok) {
+    logWarn("billing.locations.state_tax_settings_incomplete", {
+      storeId: input.storeId,
+      reason: snap.reason,
+    });
+    if (blockedReason) return state;
+    return {
+      ...state,
+      canBuy: false,
+      blockedReason: PAYMENT_REFUSAL.settingsIncomplete,
+    };
+  }
+
+  const perPeriod = quoteOf(
+    buildAddonInvoice({
+      description: "Extra location",
+      amountPaise: extraLocationPaise(period, input.locationPrice),
+      tax: snap.tax,
+    }),
+  );
+  // A payment is due now only when buying is open and the part period is
+  // worth something; at a cycle's very end it rounds to nothing and the
+  // location is billed from the next renewal instead (`startLocationPurchase`).
+  const paying = !blockedReason && purchasePaise > 0;
+  const nextPurchase = paying
+    ? quoteOf(
+        buildAddonInvoice({
+          description: "Extra location · part period",
+          amountPaise: purchasePaise,
+          tax: snap.tax,
+        }),
+      )
+    : null;
+
+  // Only a store that can buy has a renewal worth quoting here.
+  const renewal = blockedReason
+    ? null
+    : await quoteLocationRenewal({
+        storeId: input.storeId,
+        locationPrice: input.locationPrice,
+        priceFor: livePriceFor(input.locationPrice),
+        now,
+      });
+
+  const basis = snap.placeOfSupply.basis;
+  // ★ The payment's own rule (`paymentTaxRefusal`), asked only when a
+  // payment is due now: the card cannot offer what the start refuses.
+  const refusalNow = paying ? paymentTaxRefusal(snap) : null;
+  const needsStateNow = refusalNow === "needsState";
+  const needsStateLater =
+    renewal !== null &&
+    renewal.terms.active &&
+    (basis === "supplier_state" || basis === "unknown");
+
+  return {
+    ...state,
+    perPeriod,
+    nextPurchase,
+    nextRenewal: renewal
+      ? { perLocation: renewal.perLocation, issuedAt: renewal.issuedAt }
+      : null,
+    terms: snap.terms,
+    needsState: needsStateNow || needsStateLater,
+    outsideIndia: refusalNow === "outsideIndia",
+  };
+}
+
+/**
+ * Prices as the renewal worker reads them (`priceFor` in the subscribe
+ * actions): the base plan from the live plan prices, the location from the
+ * price the caller passes. The per-location renewal line is the difference of
+ * two renewal invoices built with it (R1-02), so it needs the plan's price as
+ * well as the location's. A price read that fails throws, and
+ * `quoteLocationRenewal` answers null for it (no renewal line, never a guess).
+ */
+function livePriceFor(locationPrice: LocationPrice): QuotePriceFor {
+  return async (plan, period) => {
+    const pricing = await getPlanPricingLive();
+    const row = pricing[plan];
+    return {
+      planPaise: Math.round(
+        (period === "yearly" ? row.yearlyInr : row.monthlyInr) * 100,
+      ),
+      locationPaise: extraLocationPaise(period, locationPrice),
+    };
   };
 }
 
@@ -272,6 +424,15 @@ export async function startLocationPurchase(input: {
   const now = input.now ?? new Date();
   const creds = getPlatformRazorpayCreds();
   if (!creds) return { ok: false, error: "Payments aren't available now." };
+
+  // ★★ AN EARLIER PURCHASE WHOSE PAYMENT WAS CAPTURED IS FINISHED, NOT SOLD
+  // AGAIN (RC-F1b). A merchant who paid for locations and closed the tab before
+  // the confirm has a captured payment on a draft add-on invoice; opening
+  // another order would charge them twice. The answer travels on the error arm,
+  // which the screen already shows and follows with a refresh (the "Added"
+  // case below). A failed read refuses.
+  const earlier = await finishEarlierLocationPurchase(input.storeId, now);
+  if (earlier) return earlier;
 
   const [sub, existing] = await Promise.all([
     loadSub(input.storeId),
@@ -336,38 +497,47 @@ export async function startLocationPurchase(input: {
   // automatically against a ceiling fixed when the merchant authorised autopay,
   // and it cannot be raised without them re-authorising. Selling a location that
   // makes the next renewal undebitable is how a paying merchant is downgraded.
-  // Reuse this exact tax snapshot for both the future-renewal ceiling and the
+  // Reuse this exact tax reading for both the future-renewal ceiling and the
   // part-period invoice. Otherwise a configuration change between two reads
   // could approve one total and charge another.
-  const tax = await loadTaxContext(input.storeId);
+  // ★★ ONE TAX READING FOR THIS PAYMENT (GST design 5.2), whose refusals come
+  // before anything is written.
+  const reading = await readTaxForPayment(
+    input.storeId,
+    now,
+    "billing.locations",
+  );
+  if (!reading.ok) return { ok: false, error: reading.error };
+  const snap = reading.snap;
   const ceiling = await mandateCeilingRefusal({
     mandateId: sub.mandateId,
     plan: plan as Plan,
     period,
     targetCount: check.count,
     locationPrice: input.locationPrice,
-    tax,
+    terms: snap.terms,
+    tax: snap.tax,
+    periodEnd: new Date(sub.currentPeriodEnd),
   });
   if (ceiling) return { ok: false, error: ceiling };
 
   const built = buildAddonInvoice({
     description: `Extra ${check.count - current === 1 ? "location" : "locations"} · part period to ${new Date(sub.currentPeriodEnd).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })}`,
     amountPaise,
-    tax,
+    tax: snap.tax,
   });
 
   // ★ NOT finalized here — the enrolment rule (§34). An addon invoice is an
   // OFFER until it is paid, and finalizing would burn a number in the gapless
   // GST series for a document nobody received, and put "you owe this" on
   // /dashboard/plans for a location that was never granted.
-  const parties = await loadInvoiceParties(input.storeId);
   const invoice = await createAddonInvoice({
-    ...parties,
     storeId: input.storeId,
     built,
     // What this payment buys, so confirm cannot be talked into a different
     // number by a client that reports one.
     targetCount: check.count,
+    stamp: snap.stamp,
   });
   if (!invoice) return { ok: false, error: "Couldn't prepare your invoice." };
 
@@ -430,6 +600,12 @@ export async function startLocationPurchase(input: {
  *
  * Returns a message when it would, null when it is fine. No mandate means manual
  * renewal, which has no ceiling — so this is silent rather than refusing.
+ *
+ * ★★ THE RENEWAL IS PRICED UNDER THE TERMS IN FORCE WHEN IT IS COLLECTED, from
+ * four days before `periodEnd`. The ceiling protects THAT debit, which may fall
+ * after a scheduled GST start: an exclusive start adds 18% to it, and a
+ * location that fits today's untaxed total can push the taxed one past the
+ * mandate. The place of supply is today's reading's (`tax`).
  */
 async function mandateCeilingRefusal(input: {
   mandateId: string | null;
@@ -437,7 +613,12 @@ async function mandateCeilingRefusal(input: {
   period: BillingPeriod;
   targetCount: number;
   locationPrice: LocationPrice;
+  /** The tax terms read for this purchase. */
+  terms: TaxTerms;
+  /** This purchase's tax context: StoreMink's state and the place of supply. */
   tax: TaxContext;
+  /** The current cycle's end, where the renewal this protects begins. */
+  periodEnd: Date;
 }): Promise<string | null> {
   if (!input.mandateId) return null;
   let maxPaise: number | null = null;
@@ -493,7 +674,11 @@ async function mandateCeilingRefusal(input: {
       count: input.targetCount,
       unitPaise: extraLocationPaise(input.period, input.locationPrice),
     },
-    tax: input.tax,
+    tax: taxContextFor(
+      termsLater(input.terms, collectionStartsAt(input.periodEnd)),
+      input.tax.supplierStateCode,
+      input.tax.placeOfSupply,
+    ),
   }).totalPaise;
 
   // Keep this assertion close to the money calculation. If invoice assembly
@@ -636,27 +821,453 @@ export async function confirmLocationPurchase(input: {
   // that was really paid" (§34): both the checkout signature and
   // `verifyCapturedCheckoutPayment` have already passed above, so the money is
   // confirmed captured at the gateway before this line runs.
-  await finalizeInvoice(input.invoiceId, now);
-
-  const settled = await settleAttempt(found.attemptId, "captured", {
+  //
+  // ★ Reconciliation may have captured this attempt while the invoice was
+  // still a draft (finding F1). The settle below then changes nothing on the
+  // attempt but re-runs the invoice sync, so the invoice finalized here still
+  // becomes paid and the receipt goes out once.
+  // ★ The add-on invoice's time of supply is the payment's, not the confirm's
+  // (R1-07). Best-effort: a time that cannot be read leaves it at now.
+  const paidAt = observedPayment.gatewayRead
+    ? await paymentCapturedAt(
+        creds,
+        input.providerPaymentId,
+        "billing.locations",
+      )
+    : undefined;
+  // ★★ ONE COMPLETION, WHOEVER ARRIVES (RC-F1b): the browser confirm, the
+  // hourly reconcile and a repeated purchase all finish through
+  // `completeLocationPurchase`, so the count moves once and the receipt goes
+  // out once.
+  const outcome = await completeLocationPurchase({
+    storeId: input.storeId,
+    invoiceId: input.invoiceId,
+    attemptId: found.attemptId,
     providerPaymentId: input.providerPaymentId,
+    source: "confirm",
+    verifyCapture: false,
+    paidAt,
     now,
   });
-  if (settled && settled !== "captured") {
-    return { ok: false, error: "That payment didn't complete." };
+  switch (outcome.status) {
+    case "completed":
+    case "already_complete":
+      return { ok: true, data: outcome.data };
+    case "not_captured":
+      return { ok: false, error: "That payment didn't complete." };
+    case "not_ready":
+      return { ok: false, error: LOCATIONS_PAID_NOT_ADDED_MESSAGE };
+    case "refused":
+      // ★ The money is IN. Never a bare failure: the entitlement is the part
+      // that did not move, and it is filed for a person already.
+      return {
+        ok: false,
+        error:
+          "Your payment went through but we couldn't add the location. Contact support, and please don't pay again.",
+      };
   }
+}
 
-  const written = await writeBilledLocations(input.storeId, found.target, now);
-  if (!written) {
-    // ★ The money is IN. Never a bare failure — say what happened, because the
-    // merchant has paid and the entitlement is the part that did not move.
+/**
+ * Finish a paid location purchase: issue the add-on invoice, record the
+ * payment, raise `billed_locations` to the count the INVOICE carries (RC-F1b).
+ *
+ * ★★ THE COUNT IS THE INVOICE'S `addon_target_count`, written by the server
+ * when it priced the purchase, never a number from the browser.
+ *
+ * ★★ WHOEVER ARRIVES SECOND CHANGES NOTHING AND SENDS NOTHING: finalize claims
+ * a draft, the paid move claims an open invoice (its winner sends the
+ * receipt), and the raise below claims a live subscription in the same cycle
+ * that is still below the target.
+ *
+ * ★ STILL APPLICABLE OR FILED FOR A PERSON: the subscription is live, its plan
+ * still includes locations, the purchase was made in its current cycle, and
+ * (while the invoice is still a draft) the count is not already there through
+ * another purchase. Anything else is filed with a note; nothing is applied or
+ * refunded automatically.
+ */
+export async function completeLocationPurchase(input: {
+  storeId: string;
+  invoiceId: string;
+  attemptId: string;
+  providerPaymentId: string | null;
+  source: "confirm" | "recovery" | "start";
+  verifyCapture: boolean;
+  fetchOrderPayments?: typeof rzpFetchOrderPayments;
+  /** When the gateway captured the payment; the issue reads its tax terms then. */
+  paidAt?: Date;
+  now: Date;
+}): Promise<PurchaseCompletion<{ billedLocations: number }>> {
+  const now = input.now;
+  const creds = getPlatformRazorpayCreds();
+  if (!creds) return { status: "not_ready", reason: "no gateway credentials" };
+
+  let facts: Awaited<ReturnType<typeof readLocationPurchaseFacts>>;
+  try {
+    facts = await readLocationPurchaseFacts(input);
+  } catch (err) {
+    logError("billing.locations.complete_read", err, {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+    });
+    return { status: "not_ready", reason: "the purchase could not be read" };
+  }
+  const { invoice, attempt, storeExists, sub } = facts;
+  if (
+    !attempt ||
+    attempt.invoiceId !== input.invoiceId ||
+    attempt.storeId !== input.storeId
+  ) {
     return {
-      ok: false,
-      error:
-        "Your payment went through but we couldn't add the location. Contact support, and please don't pay again.",
+      status: "refused",
+      reason: "the payment does not belong to this store and invoice",
     };
   }
-  return { ok: true, data: { billedLocations: found.target } };
+
+  type Done = PurchaseCompletion<{ billedLocations: number }>;
+  const file = async (
+    reason: string,
+    note: string,
+    extra: {
+      unapplied?: boolean;
+      kind?: "state_conflict" | "amount_mismatch";
+      observedPaise?: number | null;
+      paymentId?: string | null;
+    } = {},
+  ): Promise<Done> => {
+    await fileRecoveredPurchase({
+      storeId: input.storeId,
+      kind: extra.kind ?? "state_conflict",
+      repairKey: `${extra.unapplied ? "purchase_unapplied" : "purchase_refused"}:${attempt.id}`,
+      note,
+      invoiceId: input.invoiceId,
+      attemptId: attempt.id,
+      providerPaymentId:
+        extra.paymentId ??
+        attempt.providerPaymentId ??
+        input.providerPaymentId ??
+        null,
+      providerOrderId: attempt.providerOrderId,
+      expectedPaise: attempt.amountPaise,
+      observedPaise: extra.observedPaise ?? null,
+      purchase: "locations",
+      now,
+    });
+    return { status: "refused", reason };
+  };
+
+  if (
+    !invoice ||
+    invoice.storeId !== input.storeId ||
+    invoice.kind !== "addon" ||
+    invoice.addonTargetCount === null
+  ) {
+    return file(
+      "the invoice is not this store's add-on invoice",
+      "Location payment captured, but its invoice is not this store's add-on invoice. Check the payment and refund it or apply it by hand.",
+    );
+  }
+  const target = invoice.addonTargetCount;
+  if (!storeExists) {
+    return file(
+      "the store no longer exists",
+      "Location payment captured for a store that no longer exists. Decide whether to refund it.",
+    );
+  }
+  if (attempt.state !== "captured" && input.source !== "confirm") {
+    return { status: "not_ready", reason: "the payment is not captured" };
+  }
+
+  let paymentId = input.providerPaymentId ?? attempt.providerPaymentId;
+  if (input.verifyCapture) {
+    if (!attempt.providerOrderId) {
+      return file(
+        "the payment has no order",
+        "Location payment marked captured with no Razorpay order. Check it by hand.",
+      );
+    }
+    const checked = await verifyRecoveredCapture({
+      creds,
+      providerOrderId: attempt.providerOrderId,
+      providerPaymentId: attempt.providerPaymentId,
+      amountPaise: attempt.amountPaise,
+      currency: attempt.currency,
+      fetchOrderPayments: input.fetchOrderPayments,
+    });
+    if (checked.status === "unreadable") {
+      return { status: "not_ready", reason: "the gateway could not be read" };
+    }
+    if (checked.status === "mismatch") {
+      return file(
+        `the gateway disagrees: ${checked.reason}`,
+        `Location payment captured, but ${checked.reason}. No location was added. Decide whether to refund the payment or add the locations by hand.`,
+        {
+          kind: "amount_mismatch",
+          observedPaise: checked.observedPaise,
+          paymentId: checked.paymentId,
+        },
+      );
+    }
+    paymentId = checked.paymentId;
+  }
+
+  if (!["draft", "open", "processing", "paid"].includes(invoice.status)) {
+    return file(
+      `the invoice is ${invoice.status}`,
+      `Location payment captured on an invoice that is ${invoice.status}. No location was added. Decide whether to refund the payment.`,
+    );
+  }
+
+  // ── Still applicable? ────────────────────────────────────────────────────
+  if (!sub || !LIVE_STATES.includes(sub.state)) {
+    return file(
+      "there is no live subscription to add locations to",
+      "Location payment captured, but the store's subscription is no longer live. Decide whether to refund the payment.",
+    );
+  }
+  if (limitsFor(normalizePlan(sub.plan)).posLocationsIncluded <= 0) {
+    return file(
+      "the plan no longer includes locations",
+      "Location payment captured, but the store's plan no longer includes extra locations. Decide whether to refund the payment.",
+    );
+  }
+  if (
+    !sub.currentPeriodStart ||
+    Date.parse(invoice.createdAt) < Date.parse(sub.currentPeriodStart)
+  ) {
+    return file(
+      "the cycle these locations were paid for has ended",
+      "Location payment captured for a cycle that has since ended, so the part period it paid for is over. Decide whether to refund the payment.",
+    );
+  }
+  if (invoice.status === "draft" && sub.billedLocations >= target) {
+    return file(
+      "the locations are already billed through another purchase",
+      `Location payment captured for ${target} extra location${target === 1 ? "" : "s"}, but the subscription already bills ${sub.billedLocations} through another purchase. Decide whether to refund this payment.`,
+    );
+  }
+
+  // ── Issue the invoice, then record the payment ───────────────────────────
+  // ★★ FINALIZE BEFORE SETTLING (see confirmEnrolment): a draft settled first
+  // stays unpaid behind captured money.
+  if (invoice.status === "draft") {
+    const issued = await finalizeInvoice(input.invoiceId, now, input.paidAt);
+    if (!issued) {
+      // ★ Captured money, a draft still: nothing settled or applied. Logged
+      // so a run of these is visible; `issueInvoice` already logged why.
+      logWarn("billing.confirm_issue_failed", {
+        purchase: "locations",
+        source: input.source,
+        storeId: input.storeId,
+        invoiceId: input.invoiceId,
+        attemptId: input.attemptId,
+      });
+      return { status: "not_ready", reason: "the invoice could not be issued" };
+    }
+    if (
+      !issued.finalizedAt ||
+      !["open", "processing", "paid"].includes(issued.status)
+    ) {
+      return file(
+        "the invoice was closed before it could be issued",
+        "Location payment captured, but its draft invoice was closed before it could be issued. Decide whether to refund the payment.",
+      );
+    }
+  }
+  const settled = await settleAttempt(attempt.id, "captured", {
+    providerPaymentId: paymentId,
+    now,
+  });
+  if (settled && settled !== "captured") return { status: "not_captured" };
+  const paidNow = await getInvoice(input.invoiceId);
+  if (paidNow?.status !== "paid") {
+    return file(
+      "the invoice did not become paid",
+      "Location payment captured and its invoice issued, but the invoice did not become paid. Check the invoice, then add the locations by hand.",
+      { unapplied: true },
+    );
+  }
+
+  // ── Apply: a claim, so it happens once ───────────────────────────────────
+  const raised = await claimBilledLocations(input.storeId, {
+    target,
+    cycleSeq: sub.currentCycleSeq,
+    now,
+  });
+  if (raised !== true) {
+    const current = await loadSub(input.storeId);
+    if (
+      current &&
+      LIVE_STATES.includes(current.state) &&
+      current.billedLocations >= target
+    ) {
+      return {
+        status: "already_complete",
+        data: { billedLocations: current.billedLocations },
+      };
+    }
+    return file(
+      "the locations could not be added",
+      "Location payment captured and its invoice paid, but the locations could not be added. Add them by hand; the merchant was told not to pay again.",
+      { unapplied: true },
+    );
+  }
+  logInfo("billing.purchase_completed", {
+    purchase: "locations",
+    source: input.source,
+    storeId: input.storeId,
+    invoiceId: input.invoiceId,
+    attemptId: attempt.id,
+  });
+  return { status: "completed", data: { billedLocations: target } };
+}
+
+/** Everything a location purchase's guards read, in one scope. */
+async function readLocationPurchaseFacts(input: {
+  storeId: string;
+  invoiceId: string;
+  attemptId: string;
+}) {
+  return withService(async (db) => {
+    const [invoice] = await db
+      .select({
+        storeId: billingInvoices.storeId,
+        kind: billingInvoices.kind,
+        status: billingInvoices.status,
+        addonTargetCount: billingInvoices.addonTargetCount,
+        createdAt: billingInvoices.createdAt,
+      })
+      .from(billingInvoices)
+      .where(eq(billingInvoices.id, input.invoiceId))
+      .limit(1);
+    const [attempt] = await db
+      .select({
+        id: billingPaymentAttempts.id,
+        invoiceId: billingPaymentAttempts.invoiceId,
+        storeId: billingPaymentAttempts.storeId,
+        state: billingPaymentAttempts.state,
+        amountPaise: billingPaymentAttempts.amountPaise,
+        currency: billingPaymentAttempts.currency,
+        providerOrderId: billingPaymentAttempts.providerOrderId,
+        providerPaymentId: billingPaymentAttempts.providerPaymentId,
+      })
+      .from(billingPaymentAttempts)
+      .where(eq(billingPaymentAttempts.id, input.attemptId))
+      .limit(1);
+    const [store] = await db
+      .select({ id: stores.id })
+      .from(stores)
+      .where(eq(stores.id, input.storeId))
+      .limit(1);
+    const [sub] = await db
+      .select({
+        state: billingSubscriptions.state,
+        plan: billingSubscriptions.plan,
+        billedLocations: billingSubscriptions.billedLocations,
+        currentCycleSeq: billingSubscriptions.currentCycleSeq,
+        currentPeriodStart: billingSubscriptions.currentPeriodStart,
+      })
+      .from(billingSubscriptions)
+      .where(eq(billingSubscriptions.storeId, input.storeId))
+      .limit(1);
+    return {
+      invoice: invoice ?? null,
+      attempt: attempt ?? null,
+      storeExists: !!store,
+      sub: sub ?? null,
+    };
+  });
+}
+
+/**
+ * Raise the paid count, as a claim: only a live subscription in the purchase's
+ * cycle that is still below the target, so a confirm and the hourly reconcile
+ * arriving together raise it once. True when this call raised it.
+ */
+async function claimBilledLocations(
+  storeId: string,
+  input: { target: number; cycleSeq: number; now: Date },
+): Promise<boolean | null> {
+  try {
+    const rows = await withService(async (db) =>
+      db
+        .update(billingSubscriptions)
+        .set({
+          billedLocations: input.target,
+          // Buying supersedes a booked release: they clearly want the shops.
+          scheduledLocations: null,
+          updatedAt: input.now.toISOString(),
+        })
+        .where(
+          and(
+            eq(billingSubscriptions.storeId, storeId),
+            inArray(billingSubscriptions.state, LIVE_STATES),
+            eq(billingSubscriptions.currentCycleSeq, input.cycleSeq),
+            lt(billingSubscriptions.billedLocations, input.target),
+          ),
+        )
+        .returning({ storeId: billingSubscriptions.storeId }),
+    );
+    return rows.length > 0;
+  } catch (err) {
+    logError("billing.locations.claim", err, { storeId, count: input.target });
+    return null;
+  }
+}
+
+/**
+ * Finish an earlier location purchase whose payment was captured, before
+ * opening a new one (RC-F1b). Null when there is none; otherwise the answer,
+ * on the error arm the screen already shows.
+ */
+async function finishEarlierLocationPurchase(
+  storeId: string,
+  now: Date,
+): Promise<LocationResult<LocationPurchaseStart> | null> {
+  const found = await capturedDraftPurchases({
+    storeId,
+    kind: "addon",
+    limit: 10,
+  });
+  if (found === null) {
+    return { ok: false, error: "Couldn't check your subscription. Try again." };
+  }
+  if (found.length === 0) return null;
+  const creds = getPlatformRazorpayCreds();
+  if (!creds) return { ok: false, error: "Payments aren't available now." };
+  for (const purchase of found) {
+    const read = await readAddonOrderTarget(creds, purchase.providerOrderId);
+    if (!read) {
+      return {
+        ok: false,
+        error: "Couldn't check your subscription. Try again.",
+      };
+    }
+    if (read.kind !== "locations") continue;
+    const outcome = await completeLocationPurchase({
+      storeId,
+      invoiceId: purchase.invoiceId,
+      attemptId: purchase.attemptId,
+      providerPaymentId: null,
+      source: "start",
+      verifyCapture: true,
+      now,
+    });
+    if (
+      outcome.status === "completed" ||
+      outcome.status === "already_complete"
+    ) {
+      return { ok: false, error: LOCATIONS_RECOVERED_MESSAGE };
+    }
+    logWarn("billing.locations.earlier_purchase_waiting", {
+      storeId,
+      invoiceId: purchase.invoiceId,
+      attemptId: purchase.attemptId,
+      outcome: outcome.status,
+    });
+    return { ok: false, error: LOCATIONS_RECOVERY_WAITING_MESSAGE };
+  }
+  return null;
 }
 
 /**

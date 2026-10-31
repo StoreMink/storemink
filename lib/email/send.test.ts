@@ -44,6 +44,7 @@ vi.mock("resend", () => ({
 
 import { sendEmail, emailConfigured } from "./send";
 import { REDACTED } from "./mailers";
+import { sendComplainantEmail } from "./takedown-emails";
 
 /** The values handed to the email_logs insert on the last write. */
 function loggedRow(): any {
@@ -164,6 +165,49 @@ describe("sendEmail", () => {
     });
     // And the real email still went out with the real credential in it.
     expect(resendHolder.calls[0].html).toContain("hunter2");
+  });
+
+  // Takedown design F9: an email to a complainant is platform mail. Store
+  // staff read their store's log, so a complaint about store X must never be
+  // logged under X, and its words are redacted with a label that says why.
+  it("logs a complaint reply about a store as redacted platform mail", async () => {
+    const result = await sendComplainantEmail({
+      to: "asha@example.com",
+      email: {
+        subject: "We received your complaint (reference SM-000123)",
+        html: "<p>Hello Asha, the listing at acme uses my photo.</p>",
+      },
+      complaint: { id: "complaint-1", storeId: "store-x" },
+    });
+
+    expect(result.sent).toBe(true);
+    const row = loggedRow();
+    expect(row.storeId).toBeNull();
+    expect(row.subject).toBe("[redacted - a complaint to StoreMink]");
+    expect(row.bodyHtml).toBeNull();
+    expect(row).toMatchObject({
+      toEmail: "asha@example.com",
+      mailer: "complaint_reply",
+      status: "sent",
+    });
+    // The complainant still gets the real words.
+    expect(resendHolder.calls[0].subject).toBe(
+      "We received your complaint (reference SM-000123)",
+    );
+  });
+
+  it("keeps a store's takedown notice in full, under the store", async () => {
+    await sendEmail({
+      ...base,
+      subject: "StoreMink has blocked a product on Acme",
+      html: "<p>We blocked this product.</p>",
+      mailer: "takedown_notice",
+    });
+    expect(loggedRow()).toMatchObject({
+      storeId: "store-1",
+      subject: "StoreMink has blocked a product on Acme",
+      bodyHtml: "<p>We blocked this product.</p>",
+    });
   });
 
   // Owner's explicit decision: operator sign-in codes are stored in full, so a

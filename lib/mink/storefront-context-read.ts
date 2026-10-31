@@ -4,6 +4,9 @@ import { sql } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import { DEFAULT_CHROME, sanitizeChromeForSave } from "@/lib/chrome/types";
 import { withService } from "@/lib/db/client";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { minkBlockedSentence, type ItemKind } from "@/lib/moderation/copy";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 import { resolveStoreSettings } from "@/lib/settings/registry";
 import {
   summarizeSection,
@@ -32,6 +35,7 @@ const MAX_SUMMARY_CHARS = 240;
 const MAX_CODE_OFFSET = 64 * 1024;
 
 type PageRow = {
+  id: string;
   slug: string;
   title: string;
   status: string;
@@ -46,7 +50,7 @@ type PageRow = {
 
 type PageListRow = Pick<
   PageRow,
-  "slug" | "title" | "status" | "published_at" | "updated_at"
+  "id" | "slug" | "title" | "status" | "published_at" | "updated_at"
 > & {
   draft_section_count: number | null;
   published_section_count: number | null;
@@ -74,11 +78,58 @@ export interface MinkStorefrontSectionSummary {
   };
 }
 
+/** What a read adds to an item StoreMink blocked and told the store about. */
+export type StoreMinkMark = {
+  blockedByStoreMink: true;
+  /** The design 7.4 sentence, naming the item, for Mink to say as it is. */
+  storeMinkNotice: string;
+};
+
+/** The mark for one item, or nothing at all. */
+export type StoreMinkMarkFor = (
+  id: string,
+  name: string | null | undefined,
+) => StoreMinkMark | Record<string, never>;
+
+/**
+ * Takedown (design 3.4 and 5.7, plan A18), one call per read: `build` gets
+ * `markFor`, which marks an item blocked with `tell_store` and returns nothing
+ * for any other, so a block kept from the store (decision D21) is never named
+ * or hinted at; then every blocked file's address in the result is swapped for
+ * the placeholder, as the storefront shows it (`maskBlockedMedia`), so a
+ * blocked picture reaches Mink only masked. Call it once the read's own scope
+ * has closed: both lookups may open a scope of their own. A failed mark read
+ * marks nothing; neither lookup throws.
+ */
+export async function withStoreMinkBlocks<R>(
+  storeId: string,
+  kind: Extract<ItemKind, "product" | "page" | "blog_post" | "collection">,
+  ids: readonly string[],
+  build: (markFor: StoreMinkMarkFor) => R,
+): Promise<R> {
+  const marks =
+    ids.length > 0
+      ? await blockedItemIds(storeId, kind)
+      : new Map<string, string>();
+  const markFor: StoreMinkMarkFor = (id, name) => {
+    if (!marks.has(String(id).toLowerCase())) return NO_MARK;
+    return {
+      blockedByStoreMink: true,
+      storeMinkNotice: minkBlockedSentence(name),
+    };
+  };
+  return maskBlockedMedia(build(markFor));
+}
+
+/** An item with no mark carries no extra field at all. */
+const NO_MARK: Record<string, never> = {};
+
 export async function readMinkStorefrontPages(actor: MinkActorContext) {
   assertBuilderView(actor);
   const result = await withService((db) =>
     db.execute(sql`
       select
+        id,
         slug,
         title,
         status,
@@ -104,32 +155,39 @@ export async function readMinkStorefrontPages(actor: MinkActorContext) {
     `),
   );
   const rows = result.rows as PageListRow[];
-  const pages = rows.slice(0, MAX_PAGES).map((row) => {
-    const sectionArraysValid =
-      row.draft_section_count !== null && row.published_section_count !== null;
-    return {
-      pageSlug: publicPageSlug(row.slug),
-      title: boundedText(row.title, 120),
-      status: boundedText(row.status, 30),
-      draftSectionCount: row.draft_section_count,
-      publishedSectionCount: row.published_section_count,
-      hasUnpublishedChanges: sectionArraysValid
-        ? row.has_unpublished_changes
-        : null,
-      requiresRepair: !sectionArraysValid,
-      updatedAt: row.updated_at,
-      publishedAt: row.published_at,
-      dashboardPath: `/dashboard/builder?page=${encodeURIComponent(publicPageSlug(row.slug))}`,
-    };
-  });
-  return {
-    pages,
-    truncated: rows.length > MAX_PAGES,
-    contentTrust: "untrusted_storefront_data" as const,
-    scope: "current_store" as const,
-    dataAsOf: new Date().toISOString(),
-    dashboardPath: "/dashboard/builder",
-  };
+  const listed = rows.slice(0, MAX_PAGES);
+  return withStoreMinkBlocks(
+    actor.storeId,
+    "page",
+    listed.map((row) => row.id),
+    (markFor) => ({
+      pages: listed.map((row) => {
+        const sectionArraysValid =
+          row.draft_section_count !== null &&
+          row.published_section_count !== null;
+        return {
+          pageSlug: publicPageSlug(row.slug),
+          title: boundedText(row.title, 120),
+          status: boundedText(row.status, 30),
+          draftSectionCount: row.draft_section_count,
+          publishedSectionCount: row.published_section_count,
+          hasUnpublishedChanges: sectionArraysValid
+            ? row.has_unpublished_changes
+            : null,
+          requiresRepair: !sectionArraysValid,
+          updatedAt: row.updated_at,
+          publishedAt: row.published_at,
+          dashboardPath: `/dashboard/builder?page=${encodeURIComponent(publicPageSlug(row.slug))}`,
+          ...markFor(row.id, row.title),
+        };
+      }),
+      truncated: rows.length > MAX_PAGES,
+      contentTrust: "untrusted_storefront_data" as const,
+      scope: "current_store" as const,
+      dataAsOf: new Date().toISOString(),
+      dashboardPath: "/dashboard/builder",
+    }),
+  );
 }
 
 export async function readMinkStorefrontPageContext(
@@ -145,7 +203,7 @@ export async function readMinkStorefrontPageContext(
     pageSlug,
     "published",
   );
-  return {
+  return withStoreMinkBlocks(actor.storeId, "page", [row.id], (markFor) => ({
     page: {
       pageSlug,
       title: boundedText(row.title, 120),
@@ -172,16 +230,31 @@ export async function readMinkStorefrontPageContext(
        * the proposal would silently delete it.
        */
       sectionsDigest: digestMinkStorefrontValue(sections),
+      ...markFor(row.id, row.title),
     },
     sections: sections.map(sectionSummary),
     contentTrust: "untrusted_storefront_data" as const,
     scope: "current_store" as const,
     dataAsOf: new Date().toISOString(),
     dashboardPath: `/dashboard/builder?page=${encodeURIComponent(pageSlug)}`,
-  };
+  }));
 }
 
 export async function readMinkStorefrontSectionContext(
+  actor: MinkActorContext,
+  input: {
+    pageSlug: unknown;
+    sectionId: unknown;
+    codeField?: unknown;
+    codeOffset?: unknown;
+  },
+) {
+  // A picture StoreMink blocked reaches Mink as the placeholder, as shoppers
+  // see it (takedown design 5.7): read after the page's scope has closed.
+  return maskBlockedMedia(await readSectionContext(actor, input));
+}
+
+async function readSectionContext(
   actor: MinkActorContext,
   input: {
     pageSlug: unknown;
@@ -398,6 +471,7 @@ async function readPage(storeId: string, slug: string): Promise<PageRow> {
   const result = await withService((db) =>
     db.execute(sql`
       select
+        id,
         slug,
         title,
         status,

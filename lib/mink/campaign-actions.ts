@@ -46,6 +46,7 @@ import {
 } from "./campaign-policy";
 import { normalizeMinkDraftContent } from "./draft-types";
 import { MinkRequestError } from "./errors";
+import { selectBlockedImageUrls } from "./storefront-media-read";
 import type { MinkActorContext } from "./types";
 
 const APPROVAL_TTL_MS = 5 * 60 * 1_000;
@@ -713,8 +714,15 @@ async function readCoupon(db: Db, storeId: string, couponId: string) {
  * `senderAddress`), which is what the worker sends with, and the checkpoint
  * hash re-compares this brand against the previewed one, so drift becomes a
  * conflict rather than a surprise. Don't reintroduce the lock.
+ *
+ * ★ A LOGO STOREMINK BLOCKED IS NO LOGO (takedown design 5.6, the rule the
+ * storefront brand and the invoice settings follow): the snapshot a campaign
+ * is sent with carries a null logo, so the email prints the store's name
+ * instead, for a block kept from the store too. Looked up on this
+ * transaction's own connection, so it never opens a scope inside another.
+ * Exported for its test.
  */
-async function readBrand(db: Db, storeId: string) {
+export async function readBrand(db: Db, storeId: string) {
   const rows = await db
     .select({
       name: stores.name,
@@ -731,7 +739,7 @@ async function readBrand(db: Db, storeId: string) {
       "Store unavailable.",
       404,
     );
-  return brandFromSettings(
+  const brand = brandFromSettings(
     store.settings as Record<string, unknown>,
     store.name,
     senderDomainFor({
@@ -739,6 +747,10 @@ async function readBrand(db: Db, storeId: string) {
       settings: store.settings as Record<string, unknown>,
     }),
   );
+  const logo = brand.logoUrl?.trim();
+  if (!logo) return brand;
+  const blocked = await selectBlockedImageUrls(db, [logo]);
+  return blocked.has(logo) ? { ...brand, logoUrl: null } : brand;
 }
 
 function assertCouponSendable(

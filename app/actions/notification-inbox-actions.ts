@@ -29,6 +29,27 @@ export interface InboxResult {
   error?: string;
 }
 
+/** The bell's poll answer (takedown design 5.7, plan A14). */
+export interface UnreadCounts {
+  /** Every unread notification in this scope: the bell's number. */
+  total: number;
+  /**
+   * The unread notices from StoreMink about a block on this store: the badge
+   * on Settings, Notices from StoreMink. Never more than `total`.
+   */
+  storemink: number;
+}
+
+/**
+ * The bell events the Notices badge counts: a new block and StoreMink's reply
+ * about one. "Block lifted" is news, not something to act on, so it rings the
+ * bell and leaves the badge alone (design 5.7).
+ */
+const STOREMINK_NOTICE_TYPES = [
+  "store.content_blocked",
+  "store.content_block_reply",
+];
+
 /** The ids this viewer's notifications can be addressed to (uid, or an
  *  operator's email). Null when signed out. */
 async function currentRecipient(): Promise<{
@@ -114,16 +135,36 @@ export async function getMyNotifications(
   }
 }
 
-/** Just the badge — what the bell polls. Cheap: hits the partial unread index. */
-export async function getUnreadNotificationCount(): Promise<number> {
+/** A count as a whole number of zero or more (pg sends bigint as text). */
+function countOf(value: unknown): number {
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Just the badges: what the bell polls. Cheap: hits the partial unread index.
+ *
+ * ★ ONE QUERY GIVES BOTH NUMBERS. The StoreMink count is a FILTER on the same
+ * unread rows, so the Notices badge costs no read of its own and the
+ * dashboard layout gains none: the bell already polls this, and hands both
+ * numbers to the sidebar through `unread-counts-context.tsx`. A failed read is
+ * zero for both, so a blip hides the badges rather than breaking the page.
+ */
+export async function getUnreadNotificationCount(): Promise<UnreadCounts> {
   const me = await currentRecipient();
-  if (!me) return 0;
+  if (!me) return { total: 0, storemink: 0 };
   const { storeId } = await currentScope();
 
   try {
     return await withUser(me.identity, async (db) => {
       const rows = await db
-        .select({ n: count() })
+        .select({
+          total: count(),
+          storemink: sql<number>`count(*) filter (where ${inArray(
+            notifications.type,
+            STOREMINK_NOTICE_TYPES,
+          )})`.mapWith(Number),
+        })
         .from(notifications)
         .where(
           and(
@@ -133,11 +174,12 @@ export async function getUnreadNotificationCount(): Promise<number> {
             isNull(notifications.readAt),
           ),
         );
-      return rows[0]?.n ?? 0;
+      const total = countOf(rows[0]?.total);
+      return { total, storemink: Math.min(total, countOf(rows[0]?.storemink)) };
     });
   } catch (error) {
     logError("notifications: unread count failed", error);
-    return 0;
+    return { total: 0, storemink: 0 };
   }
 }
 

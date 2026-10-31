@@ -57,4 +57,31 @@ describe("HelpSearchBox", () => {
       "/help/search?q=how%20to%20add%20GA4%20Measurement%20IDs",
     );
   });
+
+  it("clears the box with one tap and keeps the cursor in it", async () => {
+    render(<HelpSearchBox compact initialQuery="domain" />);
+    const box = screen.getByRole("searchbox");
+    expect(box).toHaveValue("domain");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+
+    expect(box).toHaveValue("");
+    expect(box).toHaveFocus();
+    expect(
+      screen.queryByRole("button", { name: "Clear search" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no clear button while the box is empty", () => {
+    render(<HelpSearchBox compact />);
+    expect(
+      screen.queryByRole("button", { name: "Clear search" }),
+    ).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: "g" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Clear search" }),
+    ).toBeInTheDocument();
+  });
 });

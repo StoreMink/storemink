@@ -5,6 +5,8 @@ import {
   getMailer,
   mailerLabel,
   isSensitiveMailer,
+  redactedLabelFor,
+  REDACTED,
 } from "./mailers";
 
 describe("mailer catalog", () => {
@@ -46,6 +48,26 @@ describe("mailer catalog", () => {
     expect(isSensitiveMailer("coupon_campaign")).toBe(false);
     expect(isSensitiveMailer("enquiry_notification")).toBe(false);
     expect(isSensitiveMailer("billing")).toBe(false);
+  });
+
+  // Takedown design 7.6 and F9: a store's own notice is kept in full under
+  // the store; a complaint is platform mail, redacted with its own words (it
+  // carries a complainant's name, address and complaint, not a sign-in code).
+  it("keeps a takedown notice, and redacts a complaint reply with its own label", () => {
+    expect(isSensitiveMailer("takedown_notice")).toBe(false);
+    expect(isSensitiveMailer("complaint_reply")).toBe(true);
+    expect(getMailer("complaint_reply")?.redactedLabel).toBe(
+      "[redacted - a complaint to StoreMink]",
+    );
+    expect(redactedLabelFor("complaint_reply")).toBe(
+      "[redacted - a complaint to StoreMink]",
+    );
+    // Every other mailer keeps the sign-in placeholder.
+    expect(redactedLabelFor("staff_invite")).toBe(REDACTED);
+    expect(redactedLabelFor("nope")).toBe(REDACTED);
+    for (const m of MAILERS) {
+      if (m.redactedLabel !== undefined) expect(m.sensitive, m.key).toBe(true);
+    }
   });
 
   it("treats an unknown mailer as non-sensitive but still labels it", () => {

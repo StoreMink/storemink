@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import {
   suggestHelpArticles,
   type HelpSuggestion,
@@ -12,10 +12,13 @@ export function HelpSearchBox({
   autoFocus = false,
   initialQuery = "",
   compact = false,
+  placeholder,
 }: {
   autoFocus?: boolean;
   initialQuery?: string;
   compact?: boolean;
+  /** Overrides the default hint in the box. */
+  placeholder?: string;
 }) {
   const router = useRouter();
   const [q, setQ] = useState(initialQuery);
@@ -29,6 +32,7 @@ export function HelpSearchBox({
     !initialQuery.trim(),
   );
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const seq = useRef(0);
 
   // Debounced suggestions. All state updates happen inside the timeout (async),
@@ -98,14 +102,29 @@ export function HelpSearchBox({
     }
   }
 
+  function clear() {
+    ++seq.current;
+    setQ("");
+    setSuggestions([]);
+    setOpen(false);
+    setSuggestionsEnabled(true);
+    inputRef.current?.focus();
+  }
+
+  const clearable = q.length > 0;
+
   return (
     <div
-      className={`hc-search${compact ? " hc-search-compact" : ""}`}
+      className={`hc-search${compact ? " hc-search-compact" : ""}${
+        clearable ? " is-clearable" : ""
+      }`}
       ref={boxRef}
     >
       <Search className="icon" size={20} aria-hidden />
       <input
+        ref={inputRef}
         type="search"
+        name="q"
         autoFocus={autoFocus}
         value={q}
         onChange={(e) => {
@@ -115,13 +134,24 @@ export function HelpSearchBox({
         onKeyDown={onKeyDown}
         onFocus={() => suggestions.length > 0 && setOpen(true)}
         placeholder={
-          compact
+          placeholder ??
+          (compact
             ? "Search help or ask a question…"
-            : "Ask in any language - payments, domains, products…"
+            : "Ask in any language - payments, domains, products…")
         }
         aria-label="Search the help centre"
         enterKeyHint="search"
       />
+      {clearable && (
+        <button
+          type="button"
+          className="hc-search-clear"
+          aria-label="Clear search"
+          onClick={clear}
+        >
+          <X size={15} aria-hidden />
+        </button>
+      )}
       <button type="button" className="hc-search-submit" onClick={submit}>
         Search
       </button>

@@ -24,6 +24,8 @@ import {
 import { withService, type Db } from "@/lib/db/client";
 import { loggableError } from "@/lib/db/errors";
 import { logError, logWarn } from "@/lib/observability/logger";
+import { minkAttachmentIdsIn } from "./attachment-ref";
+import { linkMinkAttachmentsSql } from "./attachments";
 import { basePromptTokens, cachedPromptTokens, estimateMinkCost } from "./cost";
 import { historyWithCompaction } from "./compaction";
 import { provisionalMinkConversationTitle } from "./conversation-title";
@@ -185,10 +187,10 @@ export async function startMinkRun(input: {
         model,
         thinkingLevel: input.thinkingLevel ?? "low",
         promptVersion: actor.draftingEnabled
-          ? "draft-action-beta-v66"
-          : "read-beta-v43",
+          ? "draft-action-beta-v67"
+          : "read-beta-v44",
         toolRegistryVersion: actor.draftingEnabled
-          ? "draft-beta-v49"
+          ? "draft-beta-v50"
           : "read-beta-v29",
         riskTier: actor.draftingEnabled ? "R1" : "R0",
         currentPath: actor.currentPath ?? null,
@@ -207,6 +209,20 @@ export async function startMinkRun(input: {
       contentJson: { text: message },
       model: null,
     });
+    // ★ The pictures the message names (`/api/mink/attachments/{id}`) are
+    //   linked to this chat here, in the same transaction and under the same
+    //   advisory lock (lib/mink/attachments.ts): a run start that rolls back
+    //   links nothing, and a retry links again. One statement, only when the
+    //   message carries a reference; a forged id, another admin's picture or
+    //   one already sent or marked links nothing (the statement's own
+    //   predicate).
+    const link = linkMinkAttachmentsSql({
+      storeId: actor.storeId,
+      adminId: actor.adminId,
+      conversationId,
+      ids: minkAttachmentIdsIn(message),
+    });
+    if (link) await db.execute(link);
     // ★ Sending a message is using the chat: it is kept 90 days from now
     //   (conversation-history.ts). The answer landing minutes later is not a
     //   separate use (completeMinkRun leaves the expiry alone).

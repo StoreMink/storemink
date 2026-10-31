@@ -16,6 +16,7 @@ vi.mock("@/lib/storage/upload-owner", () => ({
   resolveUploadOwner: vi.fn(async () => ({
     kind: "store",
     storeId: "store-1",
+    staff: true,
   })),
 }));
 
@@ -37,6 +38,7 @@ describe("POST /api/upload/sign-video storage ownership", () => {
     vi.mocked(resolveUploadOwner).mockResolvedValue({
       kind: "store",
       storeId: "store-1",
+      staff: true,
     });
   });
 

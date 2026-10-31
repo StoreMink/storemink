@@ -5,10 +5,13 @@
 //
 // Before migration 0211's release, inbound photos, voice notes and PDFs (and
 // files staff sent from the inbox) were stored in the public media bucket
-// under stores/{store}/whatsapp/{conversation}/. That bucket grants allUsers
-// objectViewer, which includes LISTING, so anyone could enumerate and
-// download them. New files go to the private bucket; this moves the old ones,
-// keeping the same path, so the inbox's media route finds them there and
+// under stores/{store}/whatsapp/{conversation}/. That bucket granted allUsers
+// objectViewer, which included LISTING, so anyone could enumerate and
+// download them. Since the storage release (owner step P1) it grants
+// roles/storage.legacyObjectReader (get, no list), so a file can no longer be
+// found by listing, but anyone holding its URL can still read it. New files
+// go to the private bucket; this moves the old ones, keeping the same path,
+// so the inbox's media route finds them there and
 // whatsapp_messages.media_path needs no rewrite.
 //
 // Dry run by default (lists what it would move). `--commit` copies each

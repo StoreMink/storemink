@@ -18,28 +18,37 @@ vi.mock("@/lib/observability/logger", () => ({
   logWarn: h.logWarn,
   logInfo: vi.fn(),
 }));
-vi.mock("./resolve", () => ({
-  loadCustomerGroupIds: vi.fn(async () => []),
-  loadFirstOrderState: vi.fn(async () => null),
-  loadLiveOffers: vi.fn(async () => []),
-  loadOfferPolicy: vi.fn(async () => ({
-    onSalePrice: "best",
-    maxTotalDiscountPercent: 50,
-    autoApply: true,
-  })),
-}));
+vi.mock("./resolve", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./resolve")>();
+  return {
+    loadCustomerGroupIds: vi.fn(async () => []),
+    loadFirstOrderState: vi.fn(async () => null),
+    // REAL: the blocked-gift tests below price through it over a db mock.
+    // The failure-log tests never reach it (their `withService` throws).
+    loadLiveOffers: vi.fn(actual.loadLiveOffers),
+    loadOfferPolicy: vi.fn(async () => ({
+      onSalePrice: "best",
+      maxTotalDiscountPercent: 50,
+      autoApply: true,
+    })),
+  };
+});
 vi.mock("@/lib/settings/resolve", () => ({
   getStoreSettings: vi.fn(async () => ({})),
 }));
+// The real resolve module imports it (the store timezone); never called here.
+vi.mock("@/lib/store/resolve", () => ({ getCurrentStore: vi.fn() }));
 
 import {
   loadOffersForRegister,
+  loadOffersForStorefront,
   recordOfferRedemptions,
   releaseOfferUses,
   reserveOfferUses,
   resolveOffersForCart,
 } from "./cart";
 import type { AppliedOffer, OfferResult } from "./apply";
+import { makeDbMock } from "@/app/actions/_test-helpers";
 
 const STORE = "11111111-1111-4111-8111-111111111111";
 const OFFER = "22222222-2222-4222-8222-222222222222";
@@ -198,5 +207,106 @@ describe("★ the offers failure logs (B22)", () => {
     await loadOffersForRegister(STORE);
     expect(h.logError).not.toHaveBeenCalled();
     expect(h.logWarn).toHaveBeenCalled();
+  });
+});
+
+// Decision D18: an item block leaves the POS selling the product, so a free
+// gift StoreMink has blocked is withdrawn on the website and kept at the POS.
+// `loadLiveOffers` is real here (see the mock above); only the database is
+// faked.
+describe("★★ a gift StoreMink has blocked, by channel (D18)", () => {
+  const GIFT = "44444444-4444-4444-8444-444444444444";
+
+  function giftOffer() {
+    return {
+      id: OFFER,
+      name: "Free tumbler",
+      status: "active",
+      delivery: "automatic",
+      code: null,
+      priority: 0,
+      createdAt: "2026-10-01 00:00:00+00",
+      validFrom: null,
+      validUntil: null,
+      channels: [],
+      triggerType: "always",
+      triggerConfig: {},
+      conditions: [],
+      rewardType: "free_item",
+      rewardConfig: { giftProductId: GIFT, giftQuantity: 1 },
+      maxRedemptions: null,
+      maxPerCustomer: null,
+      budgetPaise: null,
+      redemptionCount: 0,
+      spentPaise: 0,
+    };
+  }
+
+  /** One store whose only offer gives GIFT, which StoreMink has blocked and
+   *  which has 50 on the shelf. */
+  function seedBlockedGift() {
+    const mock = makeDbMock({
+      selectByTable: {
+        offers: [[giftOffer()]],
+        offer_products: [[]],
+        offer_locations: [[]],
+        offer_user_groups: [[]],
+        products: [[{ id: GIFT, blockedAt: "2026-10-14 06:00:00+00" }]],
+        inventory_levels: [
+          [{ productId: GIFT, variantId: null, onHand: 50, reserved: 0 }],
+        ],
+      },
+    });
+    h.withService.mockImplementation(async (fn: (db: unknown) => unknown) =>
+      fn(mock.db),
+    );
+    return mock;
+  }
+
+  const line = {
+    id: "l1",
+    productId: "p1",
+    variantId: null,
+    categoryId: null,
+    quantity: 1,
+    unitPrice: 100,
+  };
+
+  it("is kept when a POS sale is priced", async () => {
+    seedBlockedGift();
+    const result = await resolveOffersForCart({
+      storeId: STORE,
+      lines: [line],
+      channel: "pos",
+    });
+    expect(result?.gift).toMatchObject({ offerId: OFFER, productId: GIFT });
+  });
+
+  it("is withdrawn when a website order is priced", async () => {
+    seedBlockedGift();
+    const result = await resolveOffersForCart({
+      storeId: STORE,
+      lines: [line],
+      channel: "storefront",
+    });
+    expect(result?.gift).toBeNull();
+    expect(result?.skipped).toContainEqual({
+      offerId: OFFER,
+      reason: "gift_unavailable",
+    });
+  });
+
+  it("is offered when the POS opens", async () => {
+    seedBlockedGift();
+    const { offers } = await loadOffersForRegister(STORE);
+    expect(offers.map((o) => [o.id, o.giftAvailable])).toEqual([[OFFER, true]]);
+  });
+
+  it("is not offered to the storefront's own pricing", async () => {
+    seedBlockedGift();
+    const { offers } = await loadOffersForStorefront(STORE, null, []);
+    expect(offers.map((o) => [o.id, o.giftAvailable])).toEqual([
+      [OFFER, false],
+    ]);
   });
 });

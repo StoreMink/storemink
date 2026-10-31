@@ -9,6 +9,20 @@ import {
 } from "@/lib/store/host";
 import { canonicalHostForSlug } from "@/lib/store/canonical";
 import { logError } from "@/lib/observability/logger";
+import {
+  blockedMedia,
+  isBlockedAddressIn,
+  type BlockedMediaSet,
+} from "@/lib/moderation/blocked-objects";
+import {
+  isInvalidMediaAddress,
+  mediaKeyFromUrl,
+} from "@/lib/moderation/media-key";
+import {
+  PLACEHOLDER_CONTENT_TYPE,
+  placeholderWebp,
+} from "@/lib/moderation/placeholder";
+import { GCS_BUCKET_NAME } from "@/lib/storage/gcs";
 import { SESSION_COOKIE, verifySessionCookie } from "@/lib/auth/session-cookie";
 import {
   POS_DEVICE_COOKIE,
@@ -26,8 +40,234 @@ const POS_PUBLIC_PATHS = ["/pos/login", "/pos/register", "/pos/reset"];
 const ASSET_EXTENSION =
   /\.(?:avif|css|eot|gif|ico|jpe?g|js|json|map|mp4|otf|pdf|png|svg|ttf|txt|webm|webp|woff2?|xml|zip)$/i;
 
+// ---------------------------------------------------------------------------
+// Blocked media (takedown design 3.3 steps 3 and 4, 5.7).
+//
+// When StoreMink blocks a file, every page swaps its address for the
+// placeholder (maskBlockedMedia), but two doors still lead to the file itself:
+//
+//   1. The image optimiser, `/_next/image?url=...`. It caches what it fetches
+//      (4 hours by default), so it must never see a blocked address: the second
+//      matcher entry runs this proxy on it, and a blocked `url` is answered here
+//      with the placeholder's bytes, before the optimiser or its cache is
+//      consulted. Bytes rather than a rewrite, so `Cache-Control: no-store` is
+//      certainly the header that goes out and no cache keeps the placeholder
+//      past a lift.
+//   2. A file built into the app, `public/themes/...`. Next serves it on every
+//      host, so the check runs before the host read and before the
+//      ASSET_EXTENSION exit below, which would otherwise wave it through.
+//
+// ★ ONE KEY PER FILE. Every spelling is judged by mediaKeyFromUrl's key
+// (`%2E`, `%2F`, a virtual-hosted bucket, `http`, a wrapper), so an encoded
+// spelling of a blocked object is caught too. An address that cannot be read
+// safely is answered 400 rather than passed on. Next also reads a request path
+// the WHATWG way (dot segments, `%2e%2e`) and its static file server tries the
+// path decoded once (`/%74hemes/...`), so those spellings are judged as well:
+// this proxy is the only backstop for them (the page swap never sees them).
+//
+// ★ CHEAP. Only `/_next/image` and paths under `/themes/` read the blocked set,
+// an in-memory copy reloaded at most every 30 seconds (a request waits for a
+// reload at most 2 seconds, then the last good set decides). Pages never read
+// it, so the storefront path gains no database work. The set never throws: a
+// failed reload keeps the last good set, which is how a database outage fails
+// open for pages while a file blocked before it stays blocked.
+// ---------------------------------------------------------------------------
+
+/** The image optimiser's path. Next serves it at exactly this path. */
+const OPTIMIZER_PATH = "/_next/image";
+
+/** Public files built into the app's themes (`public/themes/`). */
+const THEMES_DIR = "/themes/";
+
+/** Any spelling of the themes folder a static file server could read. */
+const THEMES_PREFIX = /^\/themes\//i;
+
+/** Nothing on this path may be kept by a browser or a CDN. */
+const NO_STORE = "no-store";
+
+function decodedOnce(text: string): string | null {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether this request is for the image optimiser. A trailing slash and a
+ * percent-encoded spelling count too: whatever reaches the optimiser must
+ * pass through here, and anything else that matches is answered 404 by Next.
+ */
+function isOptimizerPath(pathname: string): boolean {
+  const path =
+    pathname.length > 1 && pathname.endsWith("/")
+      ? pathname.slice(0, -1)
+      : pathname;
+  return path === OPTIMIZER_PATH || decodedOnce(path) === OPTIMIZER_PATH;
+}
+
+/**
+ * The spellings under which Next's static file server could answer this
+ * path from `public/themes/`: the path as sent and the path decoded once
+ * (it tries both), each with the folder name in its own case. Empty when the
+ * path cannot be a themes file.
+ */
+function themesSpellings(path: string): string[] {
+  const spellings: string[] = [];
+  for (const candidate of [path, decodedOnce(path)]) {
+    if (candidate === null || !THEMES_PREFIX.test(candidate)) continue;
+    const spelling = `${THEMES_DIR}${candidate.slice(THEMES_DIR.length)}`;
+    if (!spellings.includes(spelling)) spellings.push(spelling);
+  }
+  return spellings;
+}
+
+/**
+ * Every spelling of an optimiser `url` worth judging: as given, as Next's
+ * router reads a relative one (dot segments and `%2e%2e` resolved, which is
+ * what the optimiser's internal fetch asks for), as the WHATWG URL parser
+ * writes an absolute one (what the optimiser fetches), and any themes file
+ * the relative one could reach.
+ */
+function optimizerUrlSpellings(url: string): string[] {
+  const spellings = [url];
+  const text = url.replace(/[\t\n\r]/g, "").trim();
+  try {
+    if (text.startsWith("/") && !text.startsWith("//")) {
+      const parsed = new URL(text, "http://n");
+      spellings.push(`${parsed.pathname}${parsed.search}`);
+      spellings.push(...themesSpellings(parsed.pathname));
+    } else if (/^https?:\/\//i.test(text)) {
+      spellings.push(new URL(text).href);
+    }
+  } catch {
+    // Unreadable as a URL: the spelling as given decides.
+  }
+  return spellings;
+}
+
+/** The placeholder's bytes, never cached by anyone. */
+async function placeholderAnswer(): Promise<NextResponse> {
+  try {
+    const bytes = await placeholderWebp();
+    return new NextResponse(new Uint8Array(bytes), {
+      status: 200,
+      headers: {
+        "content-type": PLACEHOLDER_CONTENT_TYPE,
+        "cache-control": NO_STORE,
+      },
+    });
+  } catch (error) {
+    logError("proxy: placeholder image could not be read", error);
+    return imageUnavailable();
+  }
+}
+
+/**
+ * The answer when a blocked file cannot be swapped: nothing is served, and
+ * nothing is kept.
+ */
+function imageUnavailable(): NextResponse {
+  return new NextResponse("Image not available", {
+    status: 503,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": NO_STORE,
+    },
+  });
+}
+
+/** An optimiser `url` that cannot be read safely (Next's own wording). */
+function invalidImageAddress(): NextResponse {
+  return new NextResponse('"url" parameter is invalid', {
+    status: 400,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": NO_STORE,
+    },
+  });
+}
+
+/**
+ * `/_next/image`: 400 for an unreadable `url`, the placeholder for a blocked
+ * one, and otherwise straight on to the optimiser. Every `url` is judged (Next
+ * refuses more than one, but never let that be the only guard).
+ */
+async function optimizerAnswer(
+  searchParams: URLSearchParams,
+  read: (set: BlockedMediaSet) => void,
+): Promise<NextResponse> {
+  const urls = searchParams.getAll("url");
+  const config = { bucket: GCS_BUCKET_NAME };
+  if (urls.some((url) => isInvalidMediaAddress(mediaKeyFromUrl(url, config)))) {
+    return invalidImageAddress();
+  }
+  if (urls.length === 0) return NextResponse.next();
+  const set = await blockedMedia();
+  read(set);
+  if (set.size === 0) return NextResponse.next();
+  const blocked = urls.some((url) =>
+    optimizerUrlSpellings(url).some((spelling) =>
+      isBlockedAddressIn(set, spelling),
+    ),
+  );
+  return blocked ? placeholderAnswer() : NextResponse.next();
+}
+
+/** A blocked file under `public/themes/`: the placeholder; else null. */
+async function themesFileAnswer(
+  pathname: string,
+  read: (set: BlockedMediaSet) => void,
+): Promise<NextResponse | null> {
+  const spellings = themesSpellings(pathname);
+  if (spellings.length === 0) return null;
+  const set = await blockedMedia();
+  read(set);
+  if (set.sourceCounts.bundled === 0) return null;
+  const blocked = spellings.some((spelling) =>
+    isBlockedAddressIn(set, spelling),
+  );
+  return blocked ? placeholderAnswer() : null;
+}
+
+/**
+ * The takedown check: a response to send now, or null to carry on with the
+ * host and session logic. For `/_next/image` it always answers (that path
+ * never needs the host logic, and never had it before it was matched).
+ */
+async function blockedMediaAnswer(
+  request: NextRequest,
+): Promise<NextResponse | null> {
+  const { pathname, searchParams } = request.nextUrl;
+  const optimizer = isOptimizerPath(pathname);
+  let set: BlockedMediaSet | null = null;
+  const read = (loaded: BlockedMediaSet) => {
+    set = loaded;
+  };
+  try {
+    return optimizer
+      ? await optimizerAnswer(searchParams, read)
+      : await themesFileAnswer(pathname, read);
+  } catch (error) {
+    // Not expected: every step above is total and the set never throws. An
+    // image that could not be judged is not served while anything is blocked;
+    // with nothing blocked there is nothing to hide, so it goes on as before.
+    logError("proxy: blocked media check failed", error, { path: pathname });
+    const nothingBlocked = (set as BlockedMediaSet | null)?.size === 0;
+    if (nothingBlocked) return optimizer ? NextResponse.next() : null;
+    return imageUnavailable();
+  }
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+
+  // --- Blocked media: before the host read and the ASSET_EXTENSION exit ---
+  // See "Blocked media" above. Pages that are neither `/_next/image` nor under
+  // `/themes/` leave without touching the blocked set.
+  const blockedAnswer = await blockedMediaAnswer(request);
+  if (blockedAnswer) return blockedAnswer;
+
   const host =
     request.headers.get("x-forwarded-host") || request.headers.get("host");
 
@@ -340,6 +580,13 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Run on everything except Next internals, static files, and API routes.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/).*)"],
+  // Run on everything except Next internals, static files, and API routes,
+  // plus the image optimiser itself, so a blocked image is answered with the
+  // placeholder before the optimiser fetches or caches it (takedown design
+  // 3.3 step 3; see "Blocked media" above). `/api/og-image` stays excluded: it
+  // checks the same blocked set itself.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|api/).*)",
+    "/_next/image",
+  ],
 };

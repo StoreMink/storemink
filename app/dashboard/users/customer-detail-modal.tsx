@@ -22,9 +22,12 @@ import {
 export function CustomerDetailModal({
   customer,
   canManage,
+  canSeeNotices = false,
 }: {
   customer: CustomerDetailType;
   canManage: boolean;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 }) {
   const router = useRouter();
   return (
@@ -41,7 +44,11 @@ export function CustomerDetailModal({
             User since {formatDateTime(customer.created_at)}
           </DialogDescription>
         </DialogHeader>
-        <CustomerDetail customer={customer} canManage={canManage} />
+        <CustomerDetail
+          customer={customer}
+          canManage={canManage}
+          canSeeNotices={canSeeNotices}
+        />
       </DialogContent>
     </Dialog>
   );

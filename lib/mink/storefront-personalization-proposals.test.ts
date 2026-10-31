@@ -64,8 +64,11 @@ vi.mock("@/lib/db/client", () => ({
 }));
 vi.mock("@/lib/storage/gcs", () => ({
   gcsConfigured: true,
-  gcsUploadObject: holder.upload,
   gcsDeletePaths: holder.deletePaths,
+}));
+// ★ The store's one writer (takedown design 5.7) is the upload seam.
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: holder.upload,
 }));
 vi.mock("@/lib/observability/logger", () => ({
   logInfo: vi.fn(),
@@ -143,6 +146,7 @@ import {
   MinkToolInputError,
 } from "./errors";
 import { MinkImageNotSentError } from "./media-generation";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
 
 const actor: MinkActorContext = {
   storeId: STORE,
@@ -650,6 +654,68 @@ describe("a storefront personalisation proposal", () => {
     expect(
       plan.skipped.some((note: { reason: string }) =>
         /Nothing was charged/.test(note.reason),
+      ),
+    ).toBe(true);
+  });
+
+  it("writes every photo through the store's one writer, for this store", async () => {
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    expect(holder.upload).toHaveBeenCalledTimes(2);
+    for (const call of holder.upload.mock.calls) {
+      expect(call[0]).toMatch(
+        new RegExp(`^stores/${STORE}/mink-generated/.+\\.jpg$`),
+      );
+      expect(call[2]).toBe("image/jpeg");
+      expect(call[3]).toEqual({
+        storeId: STORE,
+        via: "mink_personalization",
+        actor: "owner",
+      });
+    }
+  });
+
+  // ★★ A photo whose bytes StoreMink has blocked keeps the theme's picture,
+  //    is not charged, and the card says why in the design's own words.
+  it("a blocked photo keeps the theme's picture and says so in the design's words", async () => {
+    holder.upload
+      .mockImplementationOnce(async (path: string) => `${BUCKET}/${path}`)
+      .mockRejectedValueOnce(
+        new BlockedUploadError({
+          told: true,
+          kindWord: "image",
+          blockId: "33333333-3333-4333-8333-333333333333",
+        }),
+      );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    const { plan } = storedPlan();
+    expect(plan.credits.photos).toBe(3);
+    expect(holder.inserted).toHaveLength(1);
+    expect(
+      plan.skipped.some(
+        (note: { reason: string }) =>
+          note.reason ===
+          "StoreMink has blocked this image, so it can't be uploaded again. See Settings, Notices from StoreMink.",
+      ),
+    ).toBe(true);
+  });
+
+  it("a block kept from the store names nothing", async () => {
+    holder.upload
+      .mockImplementationOnce(async (path: string) => `${BUCKET}/${path}`)
+      .mockRejectedValueOnce(
+        new BlockedUploadError({
+          told: false,
+          kindWord: "image",
+          blockId: "33333333-3333-4333-8333-333333333333",
+        }),
+      );
+    await createMinkStorefrontPersonalizationProposal({ actor, args: args() });
+    const { plan } = storedPlan();
+    expect(
+      plan.skipped.some(
+        (note: { reason: string }) =>
+          note.reason ===
+          "This file can't be uploaded. If you need help, write to support@storemink.com.",
       ),
     ).toBe(true);
   });

@@ -4,6 +4,7 @@ import { productGallery } from "@/lib/products/gallery";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
 import { isStorefrontGated } from "@/lib/store/launch-state";
 import { storefrontAccess } from "@/lib/store/storefront-access";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import {
   getActiveCategories,
   getPublishedProducts,
@@ -28,10 +29,18 @@ import {
 // answers with nothing — the same rule the storefront pages follow. `/api`
 // bypasses proxy.ts, so this route resolves the store itself.
 //
-// ★ IT READS THE SAME CACHED CATALOGUE THE SHOP GRID RENDERS
-// (getPublishedProducts), and matches it with the grid's own rule, so a
-// suggestion is always something /shop?q= will show. A keystroke therefore
-// costs a cache hit, not a query.
+// ★ IT READS THE SAME CATALOGUE THE SHOP GRID RENDERS (getPublishedProducts),
+// and matches it with the grid's own rule, so a suggestion is always something
+// /shop?q= will show. That read is memoized for ONE request only (React.cache:
+// lib/storefront/queries.ts says why nothing is kept between requests), so
+// every keystroke that reaches the server reads Postgres again; the browser's
+// 30 s private cache below and the client's own memory of recent answers are
+// what keep repeated keystrokes cheap.
+//
+// ★ THE ANSWER IS MASKED (takedown, design 5.6). The catalogue reader already
+// swaps a blocked photo for the placeholder; the response body goes through
+// maskBlockedMedia once more, so a thumbnail taken from anywhere else can
+// never carry a blocked address either.
 // ---------------------------------------------------------------------------
 
 export const runtime = "nodejs";
@@ -95,5 +104,5 @@ export async function GET(request: Request): Promise<Response> {
       href: collectionPath(category.slug),
     })),
   };
-  return json(body, 30);
+  return json(await maskBlockedMedia(body), 30);
 }

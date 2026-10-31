@@ -33,8 +33,9 @@ export type { MandateMethod } from "./mandate-types";
  * bill.
  */
 
-import { and, desc, eq, gt, notInArray } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
+import { and, desc, eq, gt, isNull, notInArray } from "drizzle-orm";
+import { withService, type Db } from "@/lib/db/client";
+import { loggableError, pgConstraint, pgErrorCode } from "@/lib/db/errors";
 import {
   billingAccounts,
   billingInvoices,
@@ -44,7 +45,7 @@ import {
   planEvents,
   stores,
 } from "@/drizzle/schema";
-import { logError, logWarn } from "@/lib/observability/logger";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
   rzpCreateAuthorizationOrder,
@@ -58,7 +59,12 @@ import {
 } from "@/lib/payments/razorpay";
 import { billingMayApplyPlan } from "@/lib/payments/plan-change";
 import { PLAN_META, limitsFor, type Plan } from "@/lib/plans";
-import { cycleFrom, mandateFitsGateway, mandateSizePaise } from "./cycle";
+import {
+  collectionStartsAt,
+  cycleFrom,
+  mandateFitsGateway,
+  mandateSizePaise,
+} from "./cycle";
 
 /**
  * How long a mandate stays authorised.
@@ -71,17 +77,31 @@ import { cycleFrom, mandateFitsGateway, mandateSizePaise } from "./cycle";
 const MANDATE_YEARS = 5;
 import { RECURRING_CHARGE_VERIFIED } from "./gateway";
 import { resolveBillingEmail } from "@/lib/email/billing-emails";
-import { buildSubscriptionInvoice } from "./invoice";
+import {
+  buildSubscriptionInvoice,
+  INVOICE_BODY_KINDS,
+  type BuiltInvoice,
+} from "./invoice";
 import {
   amountDueForInvoice,
   ensureRenewalInvoice,
   finalizeInvoice,
-  loadInvoiceParties,
+  getInvoice,
   getCycleInvoice,
-  loadTaxContext,
   reshapeDraftSubscriptionInvoice,
+  type InvoiceRow,
 } from "./invoice-store";
-import { beginAttempt, settleAttempt } from "./collect";
+import { paymentCapturedAt, readTaxForPayment } from "./payment-tax";
+import { taxContextFor, termsLater } from "./tax-terms";
+import {
+  beginAttempt,
+  capturedAttemptForInvoice,
+  capturedDraftPurchases,
+  fileRecoveredPurchase,
+  settleAttempt,
+  verifyRecoveredCapture,
+  type PurchaseCompletion,
+} from "./collect";
 import { notifyPlanActivated } from "./receipts";
 
 type BillingPeriod = "monthly" | "yearly";
@@ -120,7 +140,30 @@ export interface EnrolmentStart {
 
 export type EnrolmentResult<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /**
+       * Set when starting found an EARLIER purchase whose payment was already
+       * captured (the merchant closed the tab before the confirm) and finished
+       * it instead of opening a second payment: `completed` when the plan is
+       * now active, `waiting` when it is left for a person or the next pass.
+       * The error text says which, in the merchant's words.
+       */
+      recovered?: "completed" | "waiting";
+    };
+
+/** A repeated Subscribe that finished the earlier, already paid purchase. */
+export const ENROLMENT_RECOVERED_MESSAGE =
+  "Your earlier payment went through, and your plan is now active.";
+
+/** A repeated Subscribe whose earlier, already paid purchase could not be finished yet. */
+export const ENROLMENT_RECOVERY_WAITING_MESSAGE =
+  "Your earlier payment went through, and we'll switch your plan on shortly. Please don't pay again. If it hasn't changed within a day, write to support@storemink.com.";
+
+/** A confirm whose payment is in but whose plan could not be switched yet. */
+export const ENROLMENT_PAID_NOT_SWITCHED_MESSAGE =
+  "Your payment went through, and we'll switch your plan on shortly. Please don't pay again. If it hasn't changed within a day, write to support@storemink.com.";
 
 /**
  * Create or update the party the invoice is addressed to.
@@ -175,7 +218,16 @@ export async function ensureBillingAccount(
     });
     return true;
   } catch (err) {
-    logError("billing.ensure_account", err, { storeId });
+    // ★ NEVER THE RAW ERROR (R3-03). A failed insert's message is Drizzle's
+    // "Failed query: ... params: ...", and the params here are the merchant's
+    // legal name, GSTIN and address: personal data that must not reach Cloud
+    // Logging. The database's own reason, its code and the constraint are
+    // enough to act on.
+    logError("billing.ensure_account", loggableError(err), {
+      storeId,
+      code: pgErrorCode(err),
+      constraint: pgConstraint(err),
+    });
     return false;
   }
 }
@@ -208,6 +260,16 @@ export async function startEnrolment(input: {
     return { ok: false, error: "Subscriptions aren't available right now." };
   }
 
+  // ★★ AN EARLIER PURCHASE WHOSE PAYMENT WAS CAPTURED IS FINISHED, NOT SOLD
+  // AGAIN (RC-F1b). A merchant who paid and closed the tab before the confirm
+  // has a captured payment on a draft invoice. Going on from here would reuse
+  // that draft with a NEW order (a second charge), or reshape it for another
+  // period despite the money on it. Finish the purchase they already paid for
+  // and tell them; a failed read refuses, because "we could not check" is not
+  // "nothing was paid".
+  const earlier = await finishEarlierEnrolment(input.storeId, now);
+  if (earlier) return earlier;
+
   // ★★ REFUSE IF THIS STORE IS ALREADY ON A PAID CYCLE. Without this,
   // `seedSubscription`'s upsert rewrites `plan`/`period` on a LIVE subscription
   // before anything is paid — a merchant on Basic could point their record at
@@ -228,7 +290,14 @@ export async function startEnrolment(input: {
   }
 
   const price = await input.priceFor(input.plan, input.period);
-  const tax = await loadTaxContext(input.storeId);
+
+  // ★★ ONE TAX READING FOR THIS PAYMENT (GST design 5.2): the terms in force
+  // now, the merchant's place of supply and the particulars stamped on the
+  // invoice, read together. It refuses, in the merchant's words, a payment the
+  // invoice could not describe correctly; nothing has been written yet.
+  const reading = await readTaxForPayment(input.storeId, now, "billing.enrol");
+  if (!reading.ok) return { ok: false, error: reading.error };
+  const snap = reading.snap;
   // ★★ CAPPED AT THE AFA LIMIT, because authority above it can never be
   // exercised on card or UPI. The 1.18 × 1.5 provision exists so a REPRICE does
   // not lock a subscriber out of their own renewal — real headroom while both
@@ -242,10 +311,15 @@ export async function startEnrolment(input: {
   const mandateMax = Math.min(
     mandateSizePaise({
       planPaise: price.planPaise,
-      taxInclusive: tax.inclusive,
+      taxInclusive: snap.terms.inclusive,
     }),
     AFA_EXEMPT_PAISE,
   );
+
+  // The cycle comes first now: the rail is decided by the FIRST RENEWAL's
+  // charge, and that renewal is collected from four days before this cycle
+  // ends.
+  const cycle = cycleFrom(now, input.period, existing.enrolCycleSeq);
 
   // ★★ CAN THIS PLAN BE COLLECTED AUTOMATICALLY AT ALL? Decided from the
   // RECURRING charge, not cycle 1's amount: the mandate exists to carry future
@@ -255,11 +329,22 @@ export async function startEnrolment(input: {
   // ₹24,000 can never be auto-debited without the merchant authenticating every
   // single renewal. We used to register a ₹43,000 mandate for it anyway —
   // authority we ask for on the Razorpay screen and can never exercise.
+  //
+  // ★★ PRICED UNDER THE TERMS IN FORCE WHEN THAT RENEWAL IS COLLECTED. A
+  // merchant subscribing during the notice period for an exclusive GST start
+  // pays cycle 1 without GST, but their first renewal carries it: Basic yearly
+  // is then ₹17,700, above the AFA limit, so no mandate could ever take it.
+  // Deciding the rail from today's terms would set one up anyway.
+  const renewalTerms = termsLater(snap.terms, collectionStartsAt(cycle.end));
   const recurringPaise = buildSubscriptionInvoice({
     planLabel: PLAN_META[input.plan].name,
     period: input.period,
     planPaise: price.planPaise,
-    tax,
+    tax: taxContextFor(
+      renewalTerms,
+      snap.tax.supplierStateCode,
+      snap.tax.placeOfSupply,
+    ),
   }).totalPaise;
   const autopayRail = autopayRailFor(recurringPaise);
 
@@ -318,15 +403,14 @@ export async function startEnrolment(input: {
   }
   const customerId = customer.id;
 
-  const cycle = cycleFrom(now, input.period, existing.enrolCycleSeq);
-
   // ★ No locations on a first cycle. Extra shops are bought AFTER a plan is
   // live, so billing for them here would charge for something nobody has.
+  // Cycle 1 is built under the terms in force NOW.
   const built = buildSubscriptionInvoice({
     planLabel: PLAN_META[input.plan].name,
     period: input.period,
     planPaise: price.planPaise,
-    tax,
+    tax: snap.tax,
   });
 
   // ★★ CYCLE 1's INVOICE IS RAISED BEFORE THE MERCHANT HAS FINISHED CHOOSING.
@@ -344,7 +428,88 @@ export async function startEnrolment(input: {
   // bill for is exactly how the two halves came apart. Nothing records the new
   // choice until we know the invoice can carry it.
   const stale = await staleEnrolmentInvoice(input.storeId, built, cycle);
-  if (stale) {
+  if (stale?.cause === "tax") {
+    // ★★ ONLY GST CHANGED (it started, or its rate moved): the merchant is
+    // buying the same plan for the same period. The "earlier plan choice"
+    // refusal below is for a CHANGED CHOICE and is never shown for this.
+    //
+    // RC-F1b's rule first: a draft holding a captured payment is the earlier
+    // purchase, finished at the top or waiting for the hourly check, and is
+    // never rewritten.
+    const captured = await capturedAttemptForInvoice(stale.id, input.storeId);
+    if (captured === undefined) {
+      return {
+        ok: false,
+        error: "Couldn't check your subscription. Try again.",
+      };
+    }
+    if (captured) {
+      return {
+        ok: false,
+        error: ENROLMENT_RECOVERY_WAITING_MESSAGE,
+        recovered: "waiting",
+      };
+    }
+    // ★★ AN ORDER NOBODY TOUCHED IS ABANDONED, ANY OTHER IS RESUMED (R1-03).
+    // A touched order may still be paid, so it is resumed at the draft's
+    // total and `issueInvoice` carves the GST out of what is paid (or, when
+    // no reading reproduces that total, files it for a person). An order the
+    // gateway says nobody has touched is freed first, on the shape branch's
+    // own proof (`inspectResumable`), and the draft is rebuilt at the GST in
+    // force: otherwise a merchant who closed Checkout before a rate cut or a
+    // switch-off is still asked for the old, higher amount. An unreadable
+    // order is never untouched. With no order on it at all, the draft is
+    // simply rebuilt.
+    const order = await taxDraftOrder(creds, stale.id, input.storeId);
+    if (order === undefined) {
+      return {
+        ok: false,
+        error: "Couldn't check your subscription. Try again.",
+      };
+    }
+    let rebuild = order.kind === "none";
+    if (order.kind === "abandon") {
+      const dropped = await settleAttempt(order.attemptId, "failed", {
+        providerOrderId: order.providerOrderId,
+        failureCode: "tax_changed",
+        failureReason:
+          "Abandoned an unpaid order whose GST no longer applies; the draft is rebuilt at the GST in force.",
+        now,
+      });
+      // Only a settled attempt frees the order. A claim that lost a race
+      // leaves it as it is, and the resume below hands it back unchanged.
+      if (dropped === "failed") {
+        // The shape branch's re-check: the hourly reconcile may have recorded
+        // a capture since the check at the top.
+        const again = await capturedAttemptForInvoice(stale.id, input.storeId);
+        if (again === undefined) {
+          return {
+            ok: false,
+            error: "Couldn't check your subscription. Try again.",
+          };
+        }
+        if (again) {
+          return {
+            ok: false,
+            error: ENROLMENT_RECOVERY_WAITING_MESSAGE,
+            recovered: "waiting",
+          };
+        }
+        rebuild = true;
+      }
+    }
+    if (rebuild) {
+      await reshapeDraftSubscriptionInvoice({
+        invoiceId: stale.id,
+        storeId: input.storeId,
+        periodStart: cycle.start,
+        periodEnd: cycle.end,
+        dueAt: now,
+        built,
+        stamp: snap.stamp,
+      });
+    }
+  } else if (stale) {
     const inFlight = await inspectResumable(creds, stale.id, input.storeId);
     // The old amount may already be at the gateway. Free it FIRST, on the same
     // untouched-order proof the rail replacement uses — rewriting the invoice
@@ -372,6 +537,25 @@ export async function startEnrolment(input: {
       };
     }
 
+    // ★★ NEVER RESHAPE A DRAFT THAT HOLDS A CAPTURED PAYMENT (RC-F1b). The
+    // check at the top found none, but the hourly reconcile may have recorded
+    // one since; rewriting the invoice would let money paid for one shape
+    // settle another.
+    const captured = await capturedAttemptForInvoice(stale.id, input.storeId);
+    if (captured === undefined) {
+      return {
+        ok: false,
+        error: "Couldn't check your subscription. Try again.",
+      };
+    }
+    if (captured) {
+      return {
+        ok: false,
+        error: ENROLMENT_RECOVERY_WAITING_MESSAGE,
+        recovered: "waiting",
+      };
+    }
+
     // ★ A refusal here is not a failure: it means the invoice is no longer a
     // plain draft, so it is a document or a debt and the merchant finishes what
     // they started rather than being blocked.
@@ -382,6 +566,7 @@ export async function startEnrolment(input: {
       periodEnd: cycle.end,
       dueAt: now,
       built,
+      stamp: snap.stamp,
     });
   }
 
@@ -397,16 +582,17 @@ export async function startEnrolment(input: {
   });
   if (!seeded) return { ok: false, error: "Couldn't start the subscription." };
 
-  // ★ Stamp the tax identifiers, so the document is fixed at issue time.
-  const parties = await loadInvoiceParties(input.storeId);
+  // ★ Stamp the reading's particulars. An existing draft keeps its own;
+  // `issueInvoice` restamps whatever it issues, so a GSTIN saved since is
+  // printed without rewriting the draft here.
   const invoice = await ensureRenewalInvoice({
-    ...parties,
     storeId: input.storeId,
     cycleSeq: cycle.seq,
     periodStart: cycle.start,
     periodEnd: cycle.end,
     dueAt: now,
     built,
+    stamp: snap.stamp,
   });
   if (!invoice) return { ok: false, error: "Couldn't prepare your invoice." };
 
@@ -639,15 +825,127 @@ const RESUMABLE_STATE = "processing";
  */
 async function staleEnrolmentInvoice(
   storeId: string,
-  built: { totalPaise: number },
+  built: Pick<BuiltInvoice, "lines" | "totalPaise">,
   cycle: { start: Date; end: Date; seq: number },
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; cause: EnrolmentDraftChange } | null> {
   const existing = await getCycleInvoice(storeId, cycle.seq);
-  if (!existing || existing.status !== "draft") return null;
-  const matches =
-    existing.totalPaise === built.totalPaise &&
-    sameLength(existing, cycle.end.getTime() - cycle.start.getTime());
-  return matches ? null : { id: existing.id };
+  if (!existing) return null;
+  const cause = enrolmentDraftChange(
+    existing,
+    built,
+    cycle.end.getTime() - cycle.start.getTime(),
+  );
+  return cause ? { id: existing.id, cause } : null;
+}
+
+/** Why an enrolment's existing draft no longer matches what is being bought. */
+export type EnrolmentDraftChange = "shape" | "tax";
+
+/**
+ * Has the merchant's choice changed since the cycle's draft was built, or only
+ * the GST on it? (GST design 5.3; PURE.)
+ *
+ * - `"shape"`: the draft's body (the sum of its `INVOICE_BODY_KINDS` lines,
+ *   before discount and GST) or its cycle length differs: a plan or period
+ *   change. Today's path, including the "earlier plan choice" refusal while
+ *   an order for the old shape is genuinely in flight.
+ * - `"tax"`: the body and length match and only the total differs: GST
+ *   started, stopped or changed its rate.
+ * - `null`: nothing to rewrite. A difference in the stamp alone (an inclusive
+ *   start, a GSTIN saved since) is not stale: `issueInvoice` restamps at
+ *   issue.
+ *
+ * Only a plain draft can be stale; anything else is a document or a debt and
+ * is left alone. Exported because the subscribe quote (Stage 12) must apply
+ * the same rule from the same facts, so it shows the order the merchant will
+ * really resume.
+ */
+export function enrolmentDraftChange(
+  draft: Pick<
+    InvoiceRow,
+    "status" | "totalPaise" | "bodyTotalPaise" | "periodStart" | "periodEnd"
+  >,
+  built: Pick<BuiltInvoice, "lines" | "totalPaise">,
+  lengthMs: number,
+): EnrolmentDraftChange | null {
+  if (draft.status !== "draft") return null;
+  const builtBody = built.lines
+    .filter((line) => INVOICE_BODY_KINDS.includes(line.kind))
+    .reduce((sum, line) => sum + line.amountPaise, 0);
+  if (draft.bodyTotalPaise !== builtBody || !sameLength(draft, lengthMs)) {
+    return "shape";
+  }
+  return draft.totalPaise === built.totalPaise ? null : "tax";
+}
+
+/**
+ * Does this invoice have a payment attempt that is not failed or cancelled?
+ * Undefined when it cannot be read: the caller refuses rather than guess.
+ *
+ * ★ The same set `issueInvoice` treats as frozen (any attempt not `failed` or
+ * `cancelled`), so an enrolment that keeps a draft for its order and the
+ * issue that later carves GST out of that order agree on which drafts those
+ * are. Scoped by store as well as invoice, like every attempt read here.
+ */
+async function liveAttemptOn(
+  invoiceId: string,
+  storeId: string,
+): Promise<boolean | undefined> {
+  try {
+    return await withService(async (db) => {
+      const [row] = await db
+        .select({ id: billingPaymentAttempts.id })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, invoiceId),
+            eq(billingPaymentAttempts.storeId, storeId),
+            notInArray(billingPaymentAttempts.state, ["failed", "cancelled"]),
+          ),
+        )
+        .limit(1);
+      return !!row;
+    });
+  } catch (err) {
+    logError("billing.enrol.live_attempt", err, { invoiceId });
+    return undefined;
+  }
+}
+
+/**
+ * What a cycle draft whose only change is GST does with an order on it.
+ *
+ * - `none`: no attempt is in flight on it; the draft is rebuilt.
+ * - `abandon`: the in-flight order is one the gateway says nobody has touched
+ *   (`inspectResumable`); it may be freed and the draft rebuilt.
+ * - `resume`: an order somebody touched, or one we could not read, or an
+ *   attempt with no order to read yet: the draft is kept as it is and the
+ *   order resumed at its total.
+ *
+ * Undefined when the attempts cannot be read: the caller refuses rather than
+ * guess. READ ONLY (the start does the freeing), so the subscribe quote asks
+ * the same question and quotes what the start will charge.
+ */
+export type TaxDraftOrder =
+  | { kind: "none" }
+  | { kind: "abandon"; attemptId: string; providerOrderId: string }
+  | { kind: "resume" };
+
+export async function taxDraftOrder(
+  creds: Parameters<typeof rzpFetchOrder>[0],
+  invoiceId: string,
+  storeId: string,
+): Promise<TaxDraftOrder | undefined> {
+  const live = await liveAttemptOn(invoiceId, storeId);
+  if (live === undefined) return undefined;
+  if (!live) return { kind: "none" };
+  const found = await inspectResumable(creds, invoiceId, storeId);
+  if (!found?.untouched) return { kind: "resume" };
+  return {
+    kind: "abandon",
+    attemptId: found.resumable.id,
+    providerOrderId: found.resumable.providerOrderId,
+  };
 }
 
 /**
@@ -813,34 +1111,54 @@ async function currentSubscription(
         .where(eq(billingSubscriptions.storeId, storeId))
         .limit(1);
       const state = row?.state ?? "";
-      if (!ENDED_STATES.includes(state as (typeof ENDED_STATES)[number])) {
-        return { state, enrolCycleSeq: FIRST_CYCLE };
-      }
-      const activated = row?.cycleSeq ?? 0;
-      const later = await db
-        .select({
-          seq: billingInvoices.cycleSeq,
-          status: billingInvoices.status,
-        })
-        .from(billingInvoices)
-        .where(
-          and(
-            eq(billingInvoices.storeId, storeId),
-            eq(billingInvoices.kind, "subscription"),
-            gt(billingInvoices.cycleSeq, activated),
-          ),
-        );
-      const paid = later.find((i) => i.status === "paid" && i.seq !== null);
-      if (paid?.seq) return { state, enrolCycleSeq: paid.seq };
-      const issued = later
-        .filter((i) => i.status !== "draft" && i.seq !== null)
-        .map((i) => i.seq as number);
-      return { state, enrolCycleSeq: Math.max(activated, ...issued) + 1 };
+      const enrolCycleSeq = await enrolCycleSeqWith(db, storeId, {
+        state,
+        activated: row?.cycleSeq ?? 0,
+      });
+      return { state, enrolCycleSeq };
     });
   } catch (err) {
     logError("billing.current_state", err, { storeId });
     return null;
   }
+}
+
+/**
+ * The cycle an enrolment bills, from the subscription row already read
+ * (`currentSubscription`'s rule above), on the caller's own scope.
+ *
+ * ★ ONE COPY (R1-01). The subscribe quote reads the subscription and its
+ * mandate in one scope and asks this with the same `db`, so the quote and the
+ * start cannot disagree about which cycle (and so which draft) a Subscribe
+ * reaches. Throws on a read failure; both callers turn that into a refusal.
+ */
+export async function enrolCycleSeqWith(
+  db: Db,
+  storeId: string,
+  row: { state: string; activated: number },
+): Promise<number> {
+  if (!ENDED_STATES.includes(row.state as (typeof ENDED_STATES)[number])) {
+    return FIRST_CYCLE;
+  }
+  const later = await db
+    .select({
+      seq: billingInvoices.cycleSeq,
+      status: billingInvoices.status,
+    })
+    .from(billingInvoices)
+    .where(
+      and(
+        eq(billingInvoices.storeId, storeId),
+        eq(billingInvoices.kind, "subscription"),
+        gt(billingInvoices.cycleSeq, row.activated),
+      ),
+    );
+  const paid = later.find((i) => i.status === "paid" && i.seq !== null);
+  if (paid?.seq) return paid.seq;
+  const issued = later
+    .filter((i) => i.status !== "draft" && i.seq !== null)
+    .map((i) => i.seq as number);
+  return Math.max(row.activated, ...issued) + 1;
 }
 
 /** Create the subscription row in a state that grants NOTHING. */
@@ -996,149 +1314,540 @@ export async function confirmEnrolment(input: {
     return { ok: false, error: observedPayment.error };
   }
 
-  // ★★ FINALIZE BEFORE SETTLING. THE ORDER IS LOAD-BEARING, AND GETTING IT
-  // WRONG BILLS A MERCHANT FOR MONEY THEY HAVE ALREADY PAID.
-  //
-  // `settleAttempt` → `syncInvoiceStatus` claims the move to paid with
-  // `inArray(status, ["open", "processing"])`. A draft invoice is in NEITHER
-  // list, so settling first claims ZERO rows: the attempt goes `captured`, the
-  // invoice stays unpaid, `paid_at` stays null and NO receipt is sent — all
-  // silently, because a zero-row claim is indistinguishable from "already done".
-  // `finalizeInvoice` then sets `status: "open"`, producing an OPEN invoice
-  // standing behind a CAPTURED payment: phantom debt that dunning chases and the
-  // downgrade clock runs against.
-  //
-  // MEASURED ON PRODUCTION (2026-09-06). Store `echos` paid ₹15 on
-  // 2026-08-16 16:50:11Z (attempt captured, pay_TQVs5DiqE6giOW). The invoice's
-  // `paid_at` was 2026-09-05 21:15:41Z — a lag of **20 days 4 hours** — because
-  // it was only claimed when the merchant clicked "Pay now" on a bill they did
-  // not owe, and `syncInvoiceStatus` recomputed over the old captured attempt.
-  // That click also fired the receipt, so they received "Payment received" for a
-  // payment they had just CANCELLED. Had they completed it, they would have paid
-  // twice.
-  //
-  // ⚠ Finalizing first does NOT weaken "a number is spent only on an invoice
-  // that was really paid" (§34): both the checkout signature and
-  // `verifyCapturedCheckoutPayment` have already passed above, so the money is
-  // confirmed captured at the gateway before this line runs.
-  await finalizeInvoice(input.invoiceId, now);
+  // ★ The invoice's time of supply is the payment's, not the confirm's
+  // (R1-07): a payment made just before a scheduled GST change and confirmed
+  // just after is issued under the terms it was paid under, as the hourly
+  // checks already do. Best-effort: a time that cannot be read leaves it at
+  // now, and the plan is switched on either way.
+  const paidAt = observedPayment.gatewayRead
+    ? await paymentCapturedAt(creds, input.providerPaymentId, "billing.enrol")
+    : undefined;
 
-  const settled = await settleAttempt(attempt.id, "captured", {
+  // ★★ ONE COMPLETION, WHOEVER ARRIVES (RC-F1b). The browser confirm, the
+  // hourly reconcile (a merchant who closed the tab) and a repeated Subscribe
+  // all finish a paid enrolment through `completeEnrolmentPurchase`, so the
+  // invoice is issued once, the receipt and the welcome go out once, and the
+  // plan moves once, whichever of them gets there first.
+  const outcome = await completeEnrolmentPurchase({
+    storeId: input.storeId,
+    invoiceId: input.invoiceId,
+    attemptId: attempt.id,
     providerPaymentId: input.providerPaymentId,
+    source: "confirm",
+    // Checked above, against the payment the browser named.
+    verifyCapture: false,
+    mandate: input.mandate,
+    paidAt,
     now,
   });
-  // null means a concurrent settle won, or the attempt was already terminal.
-  // Either way the money is accounted for; carry on and make the plan match.
-  if (settled && settled !== "captured") {
-    return { ok: false, error: "That payment didn't complete." };
+  switch (outcome.status) {
+    case "completed":
+    case "already_complete":
+      return { ok: true, data: outcome.data };
+    case "not_captured":
+      return { ok: false, error: "That payment didn't complete." };
+    case "not_ready":
+      // Nothing changed yet; the hourly check records the capture and
+      // finishes it, so the honest answer is "soon", not "failed".
+      return { ok: false, error: ENROLMENT_PAID_NOT_SWITCHED_MESSAGE };
+    case "refused":
+      // ★ The money is IN. Never report a bare failure here: say what
+      // happened, because the merchant has paid and support needs to know the
+      // plan is the part that did not move (the §15 rule). It is filed for a
+      // person already.
+      return {
+        ok: false,
+        error:
+          "Your payment went through but we couldn't switch your plan over. Contact support, and please don't pay again.",
+      };
+  }
+}
+
+type MandateInput = {
+  providerTokenId: string;
+  providerCustomerId?: string | null;
+  method: "card" | "upi" | "emandate" | "nach" | "unknown";
+  maxAmountPaise?: number | null;
+};
+
+/**
+ * Finish a paid enrolment: issue the invoice, record the payment, move the
+ * merchant onto the plan, then the welcome and the audit row.
+ *
+ * ★★ THE SAME CODE FOR EVERY CALLER (RC-F1b). The browser confirm used to be
+ * the only thing that did this, so a merchant who paid and closed the tab
+ * before it ran was left with a captured payment on a draft invoice: no
+ * document, no plan, no email, and a second charge offered next time they
+ * pressed Subscribe. The hourly reconcile and a repeated Subscribe now call
+ * this too.
+ *
+ * ★★ WHOEVER ARRIVES SECOND CHANGES NOTHING AND SENDS NOTHING. Every step is a
+ * claim: finalize claims only a draft, the paid move claims only an open or
+ * processing invoice (and only its winner sends the receipt), and the
+ * activation below claims a subscription that is not live and sits exactly one
+ * cycle before the invoice. Only that claim's winner records the mandate,
+ * sends the welcome and writes the audit row.
+ *
+ * ★ THE GUARDS RUN FIRST, before anything is written: the attempt is this
+ * store's and this invoice's, the store still exists, the invoice is this
+ * store's next subscription cycle, the plan period on file matches the
+ * invoice, and (when `verifyCapture`) the gateway's captured amount and
+ * currency equal the attempt's. A failed guard files the purchase for a
+ * person with a note, and nothing is applied or refunded automatically.
+ */
+export async function completeEnrolmentPurchase(input: {
+  storeId: string;
+  invoiceId: string;
+  attemptId: string;
+  /** The payment named by the browser, or null to use the recorded one. */
+  providerPaymentId: string | null;
+  source: "confirm" | "recovery" | "start";
+  /** Ask the gateway again what was captured (recovery and a repeated start). */
+  verifyCapture: boolean;
+  /** Tests only: the mandate the checkout registered. */
+  mandate?: MandateInput;
+  /** Injected by reconcile so a test needs no gateway. */
+  fetchOrderPayments?: typeof rzpFetchOrderPayments;
+  /**
+   * When the gateway captured the payment (its `created_at`), if a caller
+   * read it. A draft issued here reads its tax terms at this instant
+   * (`issueInvoice`); absent, they are read now.
+   */
+  paidAt?: Date;
+  now: Date;
+}): Promise<PurchaseCompletion<ConfirmedEnrolment>> {
+  const now = input.now;
+  const creds = getPlatformRazorpayCreds();
+  if (!creds) return { status: "not_ready", reason: "no gateway credentials" };
+
+  let facts: Awaited<ReturnType<typeof readEnrolmentFacts>>;
+  try {
+    facts = await readEnrolmentFacts(input);
+  } catch (err) {
+    logError("billing.enrol.complete_read", err, {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+    });
+    return { status: "not_ready", reason: "the purchase could not be read" };
+  }
+  const { invoice, attempt, storeExists, sub } = facts;
+
+  // ── Guards: nothing has been written yet ─────────────────────────────────
+  if (
+    !attempt ||
+    attempt.invoiceId !== input.invoiceId ||
+    attempt.storeId !== input.storeId
+  ) {
+    logWarn("billing.enrol.complete_mismatch", {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+      attemptId: input.attemptId,
+    });
+    return {
+      status: "refused",
+      reason: "the payment does not belong to this store and invoice",
+    };
   }
 
-  // Returns the id, so activateSubscription does not have to look up the row it
-  // just created — one fewer query, and no reliance on the one-active-mandate
-  // index being the thing that makes a re-read correct.
-  // ★★ THE MANDATE IS READ FROM THE PAYMENT, NEVER FROM THE CALLER.
-  //
-  // Razorpay Checkout hands the browser a payment id, an order id and a
-  // signature — not a token. So a caller-supplied `token_id` would be a value
-  // the BROWSER chose, and attaching a mandate is standing permission to debit
-  // this merchant every cycle. We have just verified this payment's signature,
-  // so asking the gateway what it registered removes the question entirely.
-  //
-  // `input.mandate` is still honoured when passed (it is what the tests drive,
-  // and it keeps the older call shape working), but nothing in the product
-  // supplies it any more.
+  const file = async (
+    reason: string,
+    note: string,
+    extra: {
+      unapplied?: boolean;
+      kind?: "state_conflict" | "amount_mismatch";
+      observedPaise?: number | null;
+      paymentId?: string | null;
+    } = {},
+  ): Promise<PurchaseCompletion<ConfirmedEnrolment>> => {
+    await fileRecoveredPurchase({
+      storeId: input.storeId,
+      kind: extra.kind ?? "state_conflict",
+      repairKey: `${extra.unapplied ? "purchase_unapplied" : "purchase_refused"}:${attempt.id}`,
+      note,
+      invoiceId: input.invoiceId,
+      attemptId: attempt.id,
+      providerPaymentId:
+        extra.paymentId ??
+        attempt.providerPaymentId ??
+        input.providerPaymentId ??
+        null,
+      providerOrderId: attempt.providerOrderId,
+      expectedPaise: attempt.amountPaise,
+      observedPaise: extra.observedPaise ?? null,
+      purchase: "enrolment",
+      now,
+    });
+    return { status: "refused", reason };
+  };
+
+  if (
+    !invoice ||
+    invoice.storeId !== input.storeId ||
+    invoice.kind !== "subscription" ||
+    invoice.cycleSeq === null
+  ) {
+    return file(
+      "the invoice is not this store's subscription invoice",
+      "Subscription payment captured, but its invoice is not this store's subscription invoice. Check the payment and refund it or attach it by hand.",
+    );
+  }
+  if (!storeExists) {
+    return file(
+      "the store no longer exists",
+      "Subscription payment captured for a store that no longer exists. Decide whether to refund it.",
+    );
+  }
+  if (attempt.state !== "captured" && input.source !== "confirm") {
+    // A recovered purchase is found BY its capture; anything else changed
+    // under us. Nothing written: look again next pass.
+    return { status: "not_ready", reason: "the payment is not captured" };
+  }
+
+  let paymentId = input.providerPaymentId ?? attempt.providerPaymentId;
+  if (input.verifyCapture) {
+    if (!attempt.providerOrderId) {
+      return file(
+        "the payment has no order",
+        "Subscription payment marked captured with no Razorpay order. Check it by hand.",
+      );
+    }
+    const checked = await verifyRecoveredCapture({
+      creds,
+      providerOrderId: attempt.providerOrderId,
+      providerPaymentId: attempt.providerPaymentId,
+      amountPaise: attempt.amountPaise,
+      currency: attempt.currency,
+      fetchOrderPayments: input.fetchOrderPayments,
+    });
+    if (checked.status === "unreadable") {
+      return { status: "not_ready", reason: "the gateway could not be read" };
+    }
+    if (checked.status === "mismatch") {
+      return file(
+        `the gateway disagrees: ${checked.reason}`,
+        `Subscription payment captured, but ${checked.reason}. The plan was not switched on. Decide whether to refund the payment or switch the plan on by hand.`,
+        {
+          kind: "amount_mismatch",
+          observedPaise: checked.observedPaise,
+          paymentId: checked.paymentId,
+        },
+      );
+    }
+    paymentId = checked.paymentId;
+  }
+
+  if (!["draft", "open", "processing", "paid"].includes(invoice.status)) {
+    return file(
+      `the invoice is ${invoice.status}`,
+      `Subscription payment captured on an invoice that is ${invoice.status}. The plan was not switched on. Decide whether to refund the payment.`,
+    );
+  }
+
+  const live =
+    !!sub && LIVE_STATES.includes(sub.state as (typeof LIVE_STATES)[number]);
+  if (!sub) {
+    return file(
+      "there is no subscription on file",
+      "Subscription payment captured, but the store has no subscription on file. Switch the plan on by hand or refund the payment.",
+    );
+  }
+  if (live && sub.currentCycleSeq > invoice.cycleSeq) {
+    return file(
+      "the subscription is already live on a later cycle",
+      `Subscription payment captured for cycle ${invoice.cycleSeq}, but the subscription is already live on cycle ${sub.currentCycleSeq}. Decide whether to refund the payment.`,
+    );
+  }
+  if (live && sub.currentCycleSeq < invoice.cycleSeq) {
+    return file(
+      "the subscription is live on an earlier cycle",
+      `Subscription payment captured for cycle ${invoice.cycleSeq} while the subscription is live on cycle ${sub.currentCycleSeq}. Check which cycle the payment covers.`,
+    );
+  }
+  if (!live && sub.currentCycleSeq !== invoice.cycleSeq - 1) {
+    return file(
+      "the invoice is not the next cycle's",
+      `Subscription payment captured for cycle ${invoice.cycleSeq}, but the next cycle on file is ${sub.currentCycleSeq + 1}. Decide whether to switch the plan on by hand or refund the payment.`,
+    );
+  }
+  const period: BillingPeriod = sub.period === "yearly" ? "yearly" : "monthly";
+  if (!live) {
+    const probe = cycleFrom(now, period, invoice.cycleSeq);
+    if (!sameLength(invoice, probe.end.getTime() - probe.start.getTime())) {
+      return file(
+        "the plan period on file does not match the invoice",
+        `Subscription payment captured, but the ${period} period on file does not match the invoice's period. Decide which plan the payment bought.`,
+      );
+    }
+  }
+
+  // ── Issue the invoice, then record the payment ───────────────────────────
+  // ★★ FINALIZE BEFORE SETTLING. `settleAttempt` claims the move to paid only
+  // from `open` or `processing`, so settling a draft claims nothing and leaves
+  // an invoice unpaid behind captured money (measured on production,
+  // 2026-09-06: store `echos`, paid_at 20 days late). Finalizing first is safe:
+  // the payment is proven captured before this line runs.
+  if (invoice.status === "draft") {
+    const issued = await finalizeInvoice(input.invoiceId, now, input.paidAt);
+    if (!issued) {
+      // ★ The money is captured and the invoice is still a draft. Nothing is
+      // settled or applied: the browser is told it is not ready, and the
+      // hourly check (or the repair pass beside it) tries again. Logged so a
+      // run of these is visible: `issueInvoice` already logged WHY.
+      logWarn("billing.confirm_issue_failed", {
+        purchase: "enrolment",
+        source: input.source,
+        storeId: input.storeId,
+        invoiceId: input.invoiceId,
+        attemptId: input.attemptId,
+      });
+      return { status: "not_ready", reason: "the invoice could not be issued" };
+    }
+    if (
+      !issued.finalizedAt ||
+      !["open", "processing", "paid"].includes(issued.status)
+    ) {
+      return file(
+        "the invoice was closed before it could be issued",
+        "Subscription payment captured, but its draft invoice was closed before it could be issued. Decide whether to refund the payment.",
+      );
+    }
+  }
+
+  // ★ A capture reconcile already recorded settles again here: that changes
+  // nothing on the attempt and re-runs the invoice sync (finding F1), so the
+  // invoice becomes paid and the receipt goes out once.
+  const settled = await settleAttempt(attempt.id, "captured", {
+    providerPaymentId: paymentId,
+    now,
+  });
+  if (settled && settled !== "captured") return { status: "not_captured" };
+
+  const paidNow = await getInvoice(input.invoiceId);
+  if (paidNow?.status !== "paid") {
+    return file(
+      "the invoice did not become paid",
+      "Subscription payment captured and its invoice issued, but the invoice did not become paid. Check the invoice, then switch the plan on by hand.",
+      { unapplied: true },
+    );
+  }
+
+  // ── Move the plan: a claim, so it happens once ───────────────────────────
+  const activated = await claimEnrolmentActivation({
+    storeId: input.storeId,
+    cycleSeq: invoice.cycleSeq,
+    period,
+    now,
+  });
+  if (activated === "error" || activated === null) {
+    const current = await readSubscriptionState(input.storeId);
+    if (
+      current &&
+      LIVE_STATES.includes(current.state as (typeof LIVE_STATES)[number]) &&
+      current.currentCycleSeq >= invoice.cycleSeq &&
+      current.currentPeriodEnd
+    ) {
+      // ★ Another caller got here first (or an older confirm already did):
+      // nothing to change, nothing to send.
+      return {
+        status: "already_complete",
+        data: {
+          plan: current.storePlan ?? (current.plan as Plan),
+          periodEnd: current.currentPeriodEnd,
+          mandateActivated: current.mandateId !== null,
+        },
+      };
+    }
+    return file(
+      "the plan could not be switched on",
+      "Subscription payment captured and its invoice paid, but the plan could not be switched on. Switch it on by hand; the merchant was told not to pay again.",
+      { unapplied: true },
+    );
+  }
+
+  // ── Only the claim's winner: the mandate, the welcome, the audit row ─────
+  // ★★ THE MANDATE IS READ FROM THE PAYMENT, NEVER FROM THE CALLER. Checkout
+  // hands the browser a payment id and a signature, not a token, so a
+  // caller-supplied token would be a value the browser chose. `input.mandate`
+  // is still honoured because the tests drive it; nothing in the product
+  // supplies it. The ceiling is the one stored on the attempt before checkout,
+  // never recomputed after a reprice.
   const observedFromGateway =
     input.mandate ??
-    (await readMandateFromPayment(creds, input.providerPaymentId));
-  // The browser never names the ceiling, and a catalog reprice between start
-  // and confirm must not change what was authorised. The attempt was written
-  // before checkout with the exact token.max_amount sent to Razorpay.
+    (paymentId ? await readMandateFromPayment(creds, paymentId) : null);
   const observed =
     observedFromGateway && attempt.mandateMaxPaise
-      ? {
-          ...observedFromGateway,
-          maxAmountPaise: attempt.mandateMaxPaise,
-        }
+      ? { ...observedFromGateway, maxAmountPaise: attempt.mandateMaxPaise }
       : null;
   const mandateId = observed
     ? await activateMandate({ storeId: input.storeId, ...observed, now })
     : null;
-
-  const activated = await activateSubscription({
-    storeId: input.storeId,
-    now,
-    mandateId,
-  });
-  if (!activated) {
-    // ★ The money is IN. Never report a bare failure here — say what happened,
-    // because the merchant has paid and support needs to know the plan is the
-    // part that did not move (the §15 rule).
-    return {
-      ok: false,
-      error:
-        "Your payment went through but we couldn't switch your plan over. Contact support, and please don't pay again.",
-    };
-  }
+  const attached = mandateId
+    ? await attachMandate({
+        storeId: input.storeId,
+        cycleSeq: invoice.cycleSeq,
+        mandateId,
+        now,
+      })
+    : false;
 
   // ★ AFTER the plan has actually moved, and best-effort: a merchant who has
-  // paid must not have their activation fail over an email. The old path sent
-  // this from `confirmSubscription`; deleting that took it with it, so for a few
-  // days subscribing was met with silence.
+  // paid must not have their activation fail over an email.
   await notifyPlanActivated({
     storeId: input.storeId,
     invoiceId: input.invoiceId,
-    autopay: mandateId !== null,
+    autopay: attached,
+  });
+  await auditEnrolment({
+    storeId: input.storeId,
+    fromPlan: activated.fromPlan,
+    toPlan: activated.plan,
+    note: `subscribed (${attached ? "autopay" : "manual renewal"})${
+      input.source === "recovery"
+        ? ", finished by the hourly check after the payment window closed"
+        : input.source === "start"
+          ? ", finished when the merchant tried to subscribe again"
+          : ""
+    }`,
+  });
+  logInfo("billing.purchase_completed", {
+    purchase: "enrolment",
+    source: input.source,
+    storeId: input.storeId,
+    invoiceId: input.invoiceId,
+    attemptId: attempt.id,
   });
 
   return {
-    ok: true,
-    data: { ...activated, mandateActivated: mandateId !== null },
+    status: "completed",
+    data: {
+      plan: activated.plan,
+      periodEnd: activated.periodEnd,
+      mandateActivated: attached,
+    },
   };
 }
 
-/**
- * Move the merchant onto the plan they paid for — in BOTH places.
- *
- * ★ `billingMayApplyPlan` is honoured, and this is not theoretical: the old
- * `confirmSubscription` wrote `stores.plan` unconditionally, so a store on an
- * operator comp could have it overwritten DOWNWARD by subscribing to a cheaper
- * tier. A comp is a floor.
- */
-async function activateSubscription(input: {
+/** Everything the completion's guards read, in one scope. */
+async function readEnrolmentFacts(input: {
   storeId: string;
-  now: Date;
+  invoiceId: string;
+  attemptId: string;
+}) {
+  return withService(async (db) => {
+    const [invoice] = await db
+      .select({
+        storeId: billingInvoices.storeId,
+        kind: billingInvoices.kind,
+        status: billingInvoices.status,
+        cycleSeq: billingInvoices.cycleSeq,
+        periodStart: billingInvoices.periodStart,
+        periodEnd: billingInvoices.periodEnd,
+      })
+      .from(billingInvoices)
+      .where(eq(billingInvoices.id, input.invoiceId))
+      .limit(1);
+    const [attempt] = await db
+      .select({
+        id: billingPaymentAttempts.id,
+        invoiceId: billingPaymentAttempts.invoiceId,
+        storeId: billingPaymentAttempts.storeId,
+        state: billingPaymentAttempts.state,
+        amountPaise: billingPaymentAttempts.amountPaise,
+        currency: billingPaymentAttempts.currency,
+        providerOrderId: billingPaymentAttempts.providerOrderId,
+        providerPaymentId: billingPaymentAttempts.providerPaymentId,
+        mandateMaxPaise: billingPaymentAttempts.mandateMaxPaise,
+      })
+      .from(billingPaymentAttempts)
+      .where(eq(billingPaymentAttempts.id, input.attemptId))
+      .limit(1);
+    const [store] = await db
+      .select({ id: stores.id })
+      .from(stores)
+      .where(eq(stores.id, input.storeId))
+      .limit(1);
+    const [sub] = await db
+      .select({
+        state: billingSubscriptions.state,
+        period: billingSubscriptions.period,
+        currentCycleSeq: billingSubscriptions.currentCycleSeq,
+      })
+      .from(billingSubscriptions)
+      .where(eq(billingSubscriptions.storeId, input.storeId))
+      .limit(1);
+    return {
+      invoice: invoice ?? null,
+      attempt: attempt ?? null,
+      storeExists: !!store,
+      sub: sub ?? null,
+    };
+  });
+}
+
+/** The subscription as it stands, for a caller that lost the activation claim. */
+async function readSubscriptionState(storeId: string): Promise<{
+  state: string;
+  plan: string;
+  currentCycleSeq: number;
+  currentPeriodEnd: string | null;
   mandateId: string | null;
-}): Promise<{ plan: Plan; periodEnd: string } | null> {
+  storePlan: Plan | null;
+} | null> {
   try {
     return await withService(async (db) => {
       const [sub] = await db
         .select({
-          plan: billingSubscriptions.plan,
-          period: billingSubscriptions.period,
           state: billingSubscriptions.state,
-          currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+          plan: billingSubscriptions.plan,
           currentCycleSeq: billingSubscriptions.currentCycleSeq,
+          currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+          mandateId: billingSubscriptions.mandateId,
         })
         .from(billingSubscriptions)
-        .where(eq(billingSubscriptions.storeId, input.storeId))
+        .where(eq(billingSubscriptions.storeId, storeId))
         .limit(1);
       if (!sub) return null;
+      const [store] = await db
+        .select({ plan: stores.plan })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      return { ...sub, storePlan: (store?.plan as Plan | undefined) ?? null };
+    });
+  } catch (err) {
+    logError("billing.enrol.read_state", err, { storeId });
+    return null;
+  }
+}
 
-      const plan = sub.plan as Plan;
-      const period: BillingPeriod =
-        sub.period === "yearly" ? "yearly" : "monthly";
-
-      // Already live — a re-confirmed callback. Report the existing cycle.
-      if (sub.state === "active" && sub.currentPeriodEnd) {
-        return { plan, periodEnd: sub.currentPeriodEnd };
-      }
-
-      // The enrolled cycle. `seedSubscription` stored the one before it, so
-      // this is 1 for a first subscription and the next unused cycle for one
-      // that ended.
-      const cycle = cycleFrom(input.now, period, sub.currentCycleSeq + 1);
-
-      await db
+/**
+ * Move the merchant onto the plan they paid for, in BOTH places, as a claim.
+ *
+ * ★★ A CLAIM, so it happens once. The UPDATE admits only a subscription that is
+ * not live and sits exactly one cycle before the invoice, so a browser confirm
+ * and the hourly reconcile arriving together cannot both activate it: the
+ * second waits for the first's row lock, re-reads the row and matches nothing.
+ * Null means another caller won; "error" means the write failed and nothing
+ * changed.
+ *
+ * ★ `billingMayApplyPlan` is honoured: an operator comp is a floor, so
+ * subscribing to a cheaper tier never lowers `stores.plan`.
+ *
+ * ★★ NO `plan_expires_at`. A paid plan is kept and taken away by the renewal
+ * worker; that column is an operator grant's end.
+ */
+async function claimEnrolmentActivation(input: {
+  storeId: string;
+  cycleSeq: number;
+  period: BillingPeriod;
+  now: Date;
+}): Promise<
+  { plan: Plan; periodEnd: string; fromPlan: string | null } | null | "error"
+> {
+  const cycle = cycleFrom(input.now, input.period, input.cycleSeq);
+  try {
+    return await withService(async (db) => {
+      const claimed = await db
         .update(billingSubscriptions)
         .set({
           state: "active",
@@ -1146,13 +1855,22 @@ async function activateSubscription(input: {
           currentPeriodStart: cycle.start.toISOString(),
           currentPeriodEnd: cycle.end.toISOString(),
           planSource: "paid",
-          mandateId: input.mandateId,
+          mandateId: null,
           graceStartedAt: null,
           graceEndsAt: null,
           downgradedAt: null,
           updatedAt: input.now.toISOString(),
         })
-        .where(eq(billingSubscriptions.storeId, input.storeId));
+        .where(
+          and(
+            eq(billingSubscriptions.storeId, input.storeId),
+            notInArray(billingSubscriptions.state, [...LIVE_STATES]),
+            eq(billingSubscriptions.currentCycleSeq, input.cycleSeq - 1),
+          ),
+        )
+        .returning({ plan: billingSubscriptions.plan });
+      if (claimed.length === 0) return null;
+      const paidPlan = claimed[0].plan as Plan;
 
       // ── The entitlement half ──
       const [store] = await db
@@ -1160,39 +1878,120 @@ async function activateSubscription(input: {
         .from(stores)
         .where(eq(stores.id, input.storeId))
         .limit(1);
-      if (!store) return null;
+      // Throwing rolls the claim back: a subscription made live for a store
+      // that vanished would bill nobody for nothing.
+      if (!store) throw new Error("store vanished during activation");
 
-      if (!billingMayApplyPlan(store.plan, store.planSource, plan)) {
-        // An operator gave them something at least as good. Leave it, and leave
-        // the subscription active — they are paying, and the comp is the floor.
+      if (!billingMayApplyPlan(store.plan, store.planSource, paidPlan)) {
+        // An operator gave them something at least as good. Leave it, and
+        // leave the subscription active: they are paying, and the comp is the
+        // floor.
         logWarn("billing.enrol_comp_floor", {
           storeId: input.storeId,
           compPlan: store.plan,
-          paidPlan: plan,
+          paidPlan,
         });
-        return { plan: store.plan as Plan, periodEnd: cycle.end.toISOString() };
+        return {
+          plan: store.plan as Plan,
+          periodEnd: cycle.end.toISOString(),
+          fromPlan: store.plan,
+        };
       }
 
-      // ★★ NO `plan_expires_at`. It used to be stamped with the FIRST cycle's
-      // end, and nothing ever moved it, so every paying store read as Free
-      // after 30 or 365 days and the daily plan-expiry job then downgraded it —
-      // renewal paid or not. That column is an operator grant's end; a
-      // subscription's plan is kept and taken away by the renewal worker.
       await db
         .update(stores)
-        .set({
-          plan,
-          planSource: "paid",
-          planExpiresAt: null,
-        })
+        .set({ plan: paidPlan, planSource: "paid", planExpiresAt: null })
         .where(eq(stores.id, input.storeId));
-
-      return { plan, periodEnd: cycle.end.toISOString() };
+      return {
+        plan: paidPlan,
+        periodEnd: cycle.end.toISOString(),
+        fromPlan: store.plan,
+      };
     });
   } catch (err) {
     logError("billing.activate_subscription", err, { storeId: input.storeId });
-    return null;
+    return "error";
   }
+}
+
+/**
+ * Attach the mandate to the subscription the claim just activated.
+ *
+ * ★ Its own write, best-effort: a mandate is for FUTURE cycles, so failing to
+ * attach one costs automatic renewal, never the plan the merchant paid for.
+ */
+async function attachMandate(input: {
+  storeId: string;
+  cycleSeq: number;
+  mandateId: string;
+  now: Date;
+}): Promise<boolean> {
+  try {
+    const rows = await withService(async (db) =>
+      db
+        .update(billingSubscriptions)
+        .set({ mandateId: input.mandateId, updatedAt: input.now.toISOString() })
+        .where(
+          and(
+            eq(billingSubscriptions.storeId, input.storeId),
+            eq(billingSubscriptions.currentCycleSeq, input.cycleSeq),
+            isNull(billingSubscriptions.mandateId),
+          ),
+        )
+        .returning({ id: billingSubscriptions.storeId }),
+    );
+    return rows.length > 0;
+  } catch (err) {
+    logError("billing.enrol.attach_mandate", err, { storeId: input.storeId });
+    return false;
+  }
+}
+
+/**
+ * Finish an earlier enrolment whose payment was captured, before opening a new
+ * one (RC-F1b). Null when there is none; otherwise the answer for the screen.
+ */
+async function finishEarlierEnrolment(
+  storeId: string,
+  now: Date,
+): Promise<EnrolmentResult<EnrolmentStart> | null> {
+  const found = await capturedDraftPurchases({
+    storeId,
+    kind: "subscription",
+    limit: 1,
+  });
+  if (found === null) {
+    return { ok: false, error: "Couldn't check your subscription. Try again." };
+  }
+  const purchase = found[0];
+  if (!purchase) return null;
+  const outcome = await completeEnrolmentPurchase({
+    storeId,
+    invoiceId: purchase.invoiceId,
+    attemptId: purchase.attemptId,
+    providerPaymentId: null,
+    source: "start",
+    verifyCapture: true,
+    now,
+  });
+  if (outcome.status === "completed" || outcome.status === "already_complete") {
+    return {
+      ok: false,
+      error: ENROLMENT_RECOVERED_MESSAGE,
+      recovered: "completed",
+    };
+  }
+  logWarn("billing.enrol.earlier_purchase_waiting", {
+    storeId,
+    invoiceId: purchase.invoiceId,
+    attemptId: purchase.attemptId,
+    outcome: outcome.status,
+  });
+  return {
+    ok: false,
+    error: ENROLMENT_RECOVERY_WAITING_MESSAGE,
+    recovered: "waiting",
+  };
 }
 
 /**

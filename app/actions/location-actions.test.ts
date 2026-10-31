@@ -25,6 +25,31 @@ vi.mock("@/lib/pos/locations", async (importOriginal) => {
   return { ...actual, getStoreLocations: vi.fn(async () => []) };
 });
 
+// The GST terms the limit refusal reads (GST design 7.5). GST not charged
+// unless a test says otherwise: the state every existing test was written under.
+const OFF_TERMS = {
+  active: false,
+  inclusive: false,
+  rateBps: 0,
+  upcoming: null,
+};
+const taxTerms = vi.hoisted(() => ({
+  getTaxTermsLive: vi.fn(
+    async (): Promise<unknown> => ({
+      active: false,
+      inclusive: false,
+      rateBps: 0,
+      upcoming: null,
+    }),
+  ),
+}));
+vi.mock("@/lib/billing/platform-settings", () => taxTerms);
+
+vi.mock("@/lib/observability/logger", async (importOriginal) => ({
+  ...(await importOriginal<any>()),
+  logWarn: vi.fn(),
+}));
+
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withUser: vi.fn((_identity: any, fn: any) =>
@@ -41,6 +66,7 @@ import {
 } from "@/app/dashboard/lib/access";
 import { getViewerLocations } from "@/lib/locations/scope";
 import { getStoreLocations } from "@/lib/pos/locations";
+import { logWarn } from "@/lib/observability/logger";
 import {
   enablePos,
   disablePos,
@@ -180,6 +206,100 @@ describe("location-actions", () => {
       const r = await createLocation({ name: "Delhi" });
       expect(r.error).toMatch(/using all 3 of your locations/i);
       expect(dbHolder.current.calls.insert).toHaveLength(0);
+    });
+
+    // ★ GST design 7.5: the limit refusal's list price says whether GST is
+    // added to it or included in it, read live; unchanged while GST is not
+    // charged, a scheduled start included.
+    describe("the limit refusal's GST words", () => {
+      const UPCOMING_EX = {
+        enabled: true,
+        inclusive: false,
+        rateBps: 1800,
+        startsAt: "2026-12-01T00:00:00.000Z",
+      };
+
+      it("says nothing about GST while it is not charged", async () => {
+        useSelects([[PRO_ON], [{ n: 2 }], [{ billed_locations: 0 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBe(
+          "Your plan includes 2 locations. Additional locations are ₹1,000/month - add one from Locations → Billing.",
+        );
+        expect(taxTerms.getTaxTermsLive).toHaveBeenCalledTimes(1);
+      });
+
+      it("says nothing while GST is only scheduled (SCHED-EX)", async () => {
+        taxTerms.getTaxTermsLive.mockResolvedValueOnce({
+          ...OFF_TERMS,
+          upcoming: UPCOMING_EX,
+        });
+        useSelects([[PRO_ON], [{ n: 3 }], [{ billed_locations: 1 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBe(
+          "You're using all 3 of your locations. Add another for ₹1,000/month from Locations → Billing.",
+        );
+      });
+
+      it("adds 'including GST' while prices include it (ON-IN)", async () => {
+        taxTerms.getTaxTermsLive.mockResolvedValueOnce({
+          active: true,
+          inclusive: true,
+          rateBps: 1800,
+          upcoming: null,
+        });
+        useSelects([[PRO_ON], [{ n: 3 }], [{ billed_locations: 1 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBe(
+          "You're using all 3 of your locations. Add another for ₹1,000/month including GST from Locations → Billing.",
+        );
+        expect(dbHolder.current.calls.insert).toHaveLength(0);
+      });
+
+      it("adds 'plus GST' while GST is added on top (ON-EX)", async () => {
+        taxTerms.getTaxTermsLive.mockResolvedValueOnce({
+          active: true,
+          inclusive: false,
+          rateBps: 1800,
+          upcoming: null,
+        });
+        useSelects([[PRO_ON], [{ n: 2 }], [{ billed_locations: 0 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBe(
+          "Your plan includes 2 locations. Additional locations are ₹1,000/month plus GST - add one from Locations → Billing.",
+        );
+        expect(dbHolder.current.calls.insert).toHaveLength(0);
+      });
+
+      it("★ quotes no price when the terms cannot be read, and still refuses", async () => {
+        taxTerms.getTaxTermsLive.mockRejectedValueOnce(new Error("db down"));
+        useSelects([[PRO_ON], [{ n: 3 }], [{ billed_locations: 1 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBe(
+          "You're using all 3 of your locations. Add another from Locations → Billing.",
+        );
+        expect(r.error).not.toMatch(/₹/);
+        expect(dbHolder.current.calls.insert).toHaveLength(0);
+        expect(logWarn).toHaveBeenCalledWith(
+          "locations.limit_refusal_tax_terms",
+          expect.objectContaining({ storeId: "store-1", error: "db down" }),
+        );
+      });
+
+      it("★ quotes no price for a plan's own allowance either, on a failed read", async () => {
+        taxTerms.getTaxTermsLive.mockRejectedValueOnce(new Error("db down"));
+        useSelects([[PRO_ON], [{ n: 2 }], [{ billed_locations: 0 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBe(
+          "Your plan includes 2 locations. Add more from Locations → Billing.",
+        );
+      });
+
+      it("reads no terms when the location fits", async () => {
+        useSelects([[PRO_ON], [{ n: 2 }], [{ billed_locations: 1 }]]);
+        const r = await createLocation({ name: "Delhi" });
+        expect(r.error).toBeUndefined();
+        expect(taxTerms.getTaxTermsLive).not.toHaveBeenCalled();
+      });
     });
 
     // ★ The count comes from the subscription row, never the caller. A client

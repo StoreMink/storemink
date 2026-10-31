@@ -3,25 +3,29 @@ import "server-only";
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { loggableError } from "@/lib/db/errors";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 import {
   gcsConfigured,
   gcsDeletePaths,
   gcsDownloadObject,
   gcsListObjects,
   gcsPrivateConfigured,
-  gcsUploadObject,
 } from "@/lib/storage/gcs";
 import { storeStoragePrefix } from "@/lib/storage/paths";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { abandonRefineStage } from "./refine-stop";
 
 // ---------------------------------------------------------------------------
-// ★★ NOTHING UNPAID IS EVER PUBLIC (26 Oct 2026). The public bucket can be
-// listed by anyone (lib/storage/gcs.ts), so a refined photo that was uploaded
-// there before its charge, and deleted when the merchant left or could not
-// pay, was a free picture for whoever listed it first. A refine now writes its
-// result to the PRIVATE bucket (a stage), charges, and only then publishes the
-// same bytes to `stores/{id}/refined/`.
+// ★★ NOTHING UNPAID IS EVER PUBLIC (26 Oct 2026). The public bucket could
+// then be listed by anyone, so a refined photo that was uploaded there before
+// its charge, and deleted when the merchant left or could not pay, was a free
+// picture for whoever listed it first. Since the storage release (owner step
+// P1) the bucket grants `allUsers` `roles/storage.legacyObjectReader` (get,
+// no list; lib/storage/gcs.ts), but an object is still readable by anyone
+// holding its URL, so the rule stands: nothing unpaid goes there. A refine now
+// writes its result to the PRIVATE bucket (a stage), charges, and only then
+// publishes the same bytes to `stores/{id}/refined/`.
 //
 // ★★ A PAID PICTURE IS NEVER LOST. A publish that fails, or a process that
 // dies after the charge, leaves the stage; the per-minute workflow heartbeat
@@ -35,7 +39,10 @@ import { abandonRefineStage } from "./refine-stop";
 // share theirs, and local development uses that same bucket with
 // storemink_local, which is rebuilt from staging and so holds the same store
 // ids). Each sweep lists only its own database's prefix, so no environment
-// ever decides, publishes or deletes a stage another one wrote.
+// ever decides, publishes or deletes a stage another one wrote. The private
+// bucket also holds Mink AI chat attachments (lib/mink/attachments.ts), under
+// `stores/{store}/mink-attachments/{DB_NAME}/`, filed by database for the same
+// reason.
 // ---------------------------------------------------------------------------
 
 export const REFINE_STAGE_ROOT = "refine-stage/";
@@ -78,24 +85,51 @@ export function refinePublicPath(
 const PUBLISH_WAITS_MS = [0, 300, 1_000] as const;
 
 /**
+ * The store a refined copy's path belongs to: `stores/{id}/refined/...`, the
+ * shape `refinePublicPath` builds. Null for any other path, which the store's
+ * writer then refuses.
+ */
+function refinedCopyStoreId(publicPath: string): string | null {
+  const match = new RegExp(`^stores/(${UUID})/${REFINED_FOLDER}/`, "i").exec(
+    publicPath,
+  );
+  return match ? match[1] : null;
+}
+
+/**
  * Publish a paid refined photo: up to three uploads, after the given waits.
  * True on the first success; false after the third failure (logged once,
  * with the path). ★ Never throws: the refine's success path after the charge
  * may end only in success or "still being saved", so the route's catch-all
  * ("Nothing was charged") stays true.
+ *
+ * ★ Through the store's one writer (takedown design 5.7). Bytes StoreMink has
+ *   blocked on this store are refused and never tried again (each try would
+ *   record another refusal): false at once, and the stage sweep then deletes
+ *   the stage, since those bytes can never be published.
  */
 export async function publishRefinedCopy(
   publicPath: string,
   bytes: Uint8Array,
   options: { waitsMs?: readonly number[] } = {},
 ): Promise<boolean> {
+  const storeId = refinedCopyStoreId(publicPath);
   let lastError: unknown;
   for (const wait of options.waitsMs ?? PUBLISH_WAITS_MS) {
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     try {
-      await gcsUploadObject(publicPath, bytes, "image/webp");
+      await writeStoreObject(publicPath, bytes, "image/webp", {
+        storeId,
+        via: "mink_refine",
+      });
       return true;
     } catch (error) {
+      if (isBlockedUploadError(error)) {
+        logWarn("mink.image-refine: publish refused, blocked by StoreMink", {
+          path: publicPath,
+        });
+        return false;
+      }
       lastError = error;
     }
   }
@@ -217,10 +251,26 @@ export async function sweepRefineStages(): Promise<{
       );
       // ★★ Published BEFORE the stage is deleted: an upload that fails keeps
       //   the stage for the next pass, so a paid photo is never lost.
-      await withinBudget(
-        () => gcsUploadObject(decision.publish, bytes, "image/webp"),
-        remaining(),
-      );
+      try {
+        await withinBudget(
+          () =>
+            writeStoreObject(decision.publish, bytes, "image/webp", {
+              storeId,
+              via: "mink_refine_sweep",
+            }),
+          remaining(),
+        );
+      } catch (error) {
+        if (!isBlockedUploadError(error)) throw error;
+        // ★ StoreMink has blocked these bytes on this store (takedown design
+        //   5.7): they can never be published, so the stage goes now rather
+        //   than being refused (and recorded) again every minute.
+        logWarn("mink.image-refine: stage blocked by StoreMink, deleted", {
+          path: stage.name,
+        });
+        await deleteStage(stage.name);
+        continue;
+      }
       counts.published += 1;
       // Best effort: a stage left behind is published again (the same bytes)
       // and deleted by the next pass.

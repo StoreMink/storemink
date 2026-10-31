@@ -37,6 +37,9 @@ import { STORE_TAG } from "@/lib/store/resolve";
 import { FEATURES_KEY } from "@/lib/settings/registry";
 import { effectivePlan, limitsFor, type Plan } from "@/lib/plans";
 import { getExtraLocationPricing } from "@/lib/plans/pricing";
+import { getTaxTermsLive } from "@/lib/billing/platform-settings";
+import { priceGstSuffix } from "@/lib/billing/tax-copy";
+import { logWarn } from "@/lib/observability/logger";
 import {
   canAddLocation,
   locationAllowance,
@@ -249,11 +252,30 @@ export async function createLocation(
     const price = (await getExtraLocationPricing()).monthlyInr.toLocaleString(
       "en-IN",
     );
+    // ★ GST design 7.5: the list price says whether GST is added to it or
+    // included in it (" plus GST", " including GST"; nothing while GST is not
+    // charged), read LIVE like the rest of the dashboard. A read that fails
+    // quotes no price at all rather than one that may leave GST out.
+    let gst: string;
+    try {
+      gst = priceGstSuffix(await getTaxTermsLive());
+    } catch (err) {
+      logWarn("locations.limit_refusal_tax_terms", {
+        storeId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return {
+        error:
+          billed > 0
+            ? `You're using all ${allowance} of your locations. Add another from Locations → Billing.`
+            : `Your plan includes ${allowance} locations. Add more from Locations → Billing.`,
+      };
+    }
     return {
       error:
         billed > 0
-          ? `You're using all ${allowance} of your locations. Add another for ₹${price}/month from Locations → Billing.`
-          : `Your plan includes ${allowance} locations. Additional locations are ₹${price}/month - add one from Locations → Billing.`,
+          ? `You're using all ${allowance} of your locations. Add another for ₹${price}/month${gst} from Locations → Billing.`
+          : `Your plan includes ${allowance} locations. Additional locations are ₹${price}/month${gst} - add one from Locations → Billing.`,
     };
   }
 

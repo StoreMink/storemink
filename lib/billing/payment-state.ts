@@ -169,11 +169,19 @@ export type InvoiceStatus =
  * A failed attempt does NOT make the invoice failed — the invoice returns to
  * `open` and is retried with a new attempt. There is no `failed` invoice status
  * for exactly this reason.
+ *
+ * ★★ A REFUNDED ATTEMPT STILL MEANS THE INVOICE WAS PAID (defect D9). Money
+ * moved and a refund later returned it, which `isSettled` above already says.
+ * Reading `refunded` as anything but paid would derive `open` for an invoice
+ * whose only payment was refunded, and `syncInvoiceStatus` would then offer a
+ * paid invoice for payment again. A refund never changes its invoice's status.
  */
 export function invoiceStatusForAttempts(
   attemptStates: readonly PaymentState[],
 ): Extract<InvoiceStatus, "open" | "processing" | "paid"> {
-  if (attemptStates.some((s) => s === "captured")) return "paid";
+  if (attemptStates.some((s) => s === "captured" || s === "refunded")) {
+    return "paid";
+  }
   if (attemptStates.some(isInFlight)) return "processing";
   return "open";
 }

@@ -198,6 +198,18 @@ mail (`store_id NULL`), so it only shows on the storemink.com console, never in
 a merchant's log — but any operator can read another operator's live code.
 Set `sensitive: true` on that entry to reverse it.
 
+**A complaint to StoreMink is redacted, and never logged under a store.** The
+takedown build's `complaint_reply` mailer (the acknowledgement and the outcome
+email to a person who complained) is sensitive with its own
+`redactedLabel`, "[redacted - a complaint to StoreMink]", which `writeLog`
+stores in place of the subject (`redactedLabelFor`), and it is always platform
+mail (`store_id NULL`), even when the complaint is about a store: that store's
+log must never show who complained. Its sibling `takedown_notice` (StoreMink
+telling a store it blocked, lifted or replied about something) is not
+sensitive: it is the store's own notice, logged under that store. Both are sent
+from `StoreMink <support@...>` (`lib/email/takedown-emails.ts`), so a reply
+reaches the support mailbox.
+
 **Adding a new kind of email:** add an entry to `MAILERS`, then call
 `sendEmail({ ..., mailer: "your_key" })`. The log's Type filter and label come
 from the registry, and the coverage test makes sure you didn't bypass it.
@@ -330,6 +342,54 @@ the queue's ordinary `notification` mail carrying the in-app copy, so the
 long-dash guard covers it. `notify.ts` records after the caller's
 transaction commits (`sendThemeStudioNotice`), never inside it.
 
+### StoreMink's takedowns: three events for operators, three for the store
+
+The content takedown build (CODEBASE.md §5 convention 45) adds six events, all
+`configurable: false`, all emitted only from `lib/moderation/notify.ts`:
+
+| Event                        | Audience                      | Sent when                                                                                            |
+| ---------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `platform.complaint_urgent`  | operators, bell and email     | a court, government or information order, or an intimate-image or impersonation complaint, is logged |
+| `platform.complaint_due`     | operators, bell and email     | a complaint deadline is 30 minutes away (a 2 or 3 hour one), 2 hours away (any other) or has passed  |
+| `platform.takedown_reply`    | operators, bell and email     | a store replied about a block (from its dashboard)                                                   |
+| `store.content_blocked`      | the store's admins, bell only | StoreMink blocked something on the store and told it                                                 |
+| `store.content_block_lifted` | the store's admins, bell only | StoreMink lifted a block the store was told about                                                    |
+| `store.content_block_reply`  | the store's admins, bell only | StoreMink replied about a block                                                                      |
+
+**★ The operator events always carry `storeId: null`** (one wrapper,
+`notifyOperators`). The notification worker logs an event's emails under the
+event's store, so an alert about a complaint against a store would otherwise
+appear in that very store's email log, and could reach its bell: the store
+complained about must never learn who complained, or that anyone did, from
+StoreMink's own alerts. They are group "Platform", section `activity`, because
+`notifications.test.ts` requires every operator event to be. A complaint
+deadline alert is claimed before it is sent and recorded once sent, so two
+overlapping runs send it once (it may come twice after a crash, never not at
+all); the same moment writes the WARNING log line Cloud Monitoring alerts on
+(`docs/monitoring.md` 25).
+
+**The store events** are group "Content", section `settings` (anyone who can
+view Settings reads Notices from StoreMink), in-app only: the email goes to
+every owner of the store from `lib/email/takedown-emails.ts` (the
+`takedown_notice` mailer), one message per action. They are in
+`PLATFORM_VOICE_EVENTS`, so they are written in StoreMink's voice and a store's
+saved wording never rides along. None is emitted for a block kept from the store
+under a court or government order (decision D21): the store sees nothing until a
+superadmin tells it. An image blocked with its item is told with its parent, one
+notice per action. A retried notice email never rings the bell twice.
+
+**The Notices badge.** `getUnreadNotificationCount()` returns
+`{ total, storemink }` from its one query (`count(*) filter (where type in
+('store.content_blocked', 'store.content_block_reply'))`); the bell reads it and
+hands the second number to the sidebar (`unread-counts-context.tsx`), which
+badges Settings, Notices from StoreMink. The badge counts the viewer's own
+unread rows; a lift rings the bell but is not counted (it asks for nothing).
+The Dashboard Home banner ("StoreMink has blocked 1 item on your store.") is
+different: it follows the store-wide seen mark (`content_blocks.merchant_seen_at`,
+set when any of the store's staff opens the notice), so it goes for everyone
+once someone opens the notice, while each person's badge stays until they read
+their own bell row or open the notice.
+
 ---
 
 ## 7. Where to look when something's wrong
@@ -385,6 +445,8 @@ through it.
 | `lib/email/notification-worker.ts`             | Drains the email queue, groups digests         |
 | `app/actions/notification-actions.ts`          | Console + staff inbox                          |
 | `app/actions/customer-notification-actions.ts` | Shopper inbox                                  |
+| `lib/moderation/notify.ts`                     | The six takedown events and their emails       |
+| `lib/email/takedown-emails.ts`                 | Takedown emails to stores and complainants     |
 
 SQL: `notifications_01_schema.sql` (events, inbox, preferences),
 `_02_email_queue.sql`, `_03_console.sql` (definitions + store settings),

@@ -480,6 +480,14 @@
   color: #000;
 }
 
+/* Mink's reply carries the Mink face, as the product's chat does: face and
+   words side by side, so a wrapped line lines up with the first. */
+.smh-mega-tile-chat span + span:has(svg[data-mink-face]) {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
 /* The tile's own title and line only (direct children): the drawn POS in the
    tile's picture has <b> labels of its own. */
 .smh-mega-tile > b {
@@ -2375,14 +2383,10 @@
 .smh-mink-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: #fff;
   font-size: 13px;
   font-weight: 800;
-}
-
-.smh-mink-badge svg {
-  color: #c9bdff;
 }
 
 .smh-mink-bar em {

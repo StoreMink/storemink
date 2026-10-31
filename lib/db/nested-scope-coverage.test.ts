@@ -154,27 +154,34 @@ describe("database scopes are never nested", () => {
     expect(nested).toEqual(["sample.ts:3->5 withUser->withService"]);
   });
 
-  it("no source file opens a scope inside another scope's callback", () => {
-    let scopeCalls = 0;
-    const nested: string[] = [];
-    for (const dir of SCANNED_DIRS) {
-      for (const file of sourceFiles(join(ROOT, dir))) {
-        const text = readFileSync(file, "utf8");
-        if (!/with(Service|User|Anon)/.test(text)) continue;
-        const found = nestedScopeCalls(relative(ROOT, file), text);
-        scopeCalls += found.scopeCalls;
-        nested.push(...found.nested);
+  // Parses every file that opens a scope, so it grows with the codebase: about
+  // 1s alone, but past vitest's 5s default under the full suite's load (28 Oct
+  // 2026, both orders). The same limit as the other source-scanning guards.
+  it(
+    "no source file opens a scope inside another scope's callback",
+    { timeout: 30_000 },
+    () => {
+      let scopeCalls = 0;
+      const nested: string[] = [];
+      for (const dir of SCANNED_DIRS) {
+        for (const file of sourceFiles(join(ROOT, dir))) {
+          const text = readFileSync(file, "utf8");
+          if (!/with(Service|User|Anon)/.test(text)) continue;
+          const found = nestedScopeCalls(relative(ROOT, file), text);
+          scopeCalls += found.scopeCalls;
+          nested.push(...found.nested);
+        }
       }
-    }
 
-    // A scan that silently stopped matching would pass for ever. Hundreds of
-    // scope calls exist; finding almost none means the scan is broken.
-    expect(scopeCalls).toBeGreaterThan(200);
+      // A scan that silently stopped matching would pass for ever. Hundreds of
+      // scope calls exist; finding almost none means the scan is broken.
+      expect(scopeCalls).toBeGreaterThan(200);
 
-    const allowed = new Set(ALLOWED.map((entry) => entry.site));
-    const unexpected = nested.filter(
-      (site) => !allowed.has(site.split(" ")[0]),
-    );
-    expect(unexpected).toEqual([]);
-  });
+      const allowed = new Set(ALLOWED.map((entry) => entry.site));
+      const unexpected = nested.filter(
+        (site) => !allowed.has(site.split(" ")[0]),
+      );
+      expect(unexpected).toEqual([]);
+    },
+  );
 });

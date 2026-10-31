@@ -110,6 +110,46 @@ vi.mock("@/lib/db/client", () => ({
   ),
   withAnon: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
+// The takedown page swap (getCartStock's images), real (the pure half) over a
+// set this file chooses: outside addresses only, so no bucket configuration
+// is involved. Mocked so the real loader never opens a scope of its own
+// against the db mock below. The T8b pattern.
+const blocked = vi.hoisted(() => ({ addresses: [] as string[] }));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  return {
+    ...actual,
+    maskBlockedMedia: vi.fn(async (value: unknown) =>
+      actual.maskBlockedMediaWith(
+        value,
+        actual.buildBlockedMediaSet(
+          blocked.addresses.map((objectPath, i) => ({
+            id: `block-${i}`,
+            objectPath,
+            fileSource: "external",
+            storeId: STORE,
+            objectMd5: null,
+            tellStore: true,
+          })),
+          { bucket: null, loadedAt: Date.now() },
+        ),
+      ),
+    ),
+  };
+});
+// The shopper reads, REAL (they build the WHERE these tests compile), wrapped
+// so a test can say which of them a path went through. `vi.fn(impl)` keeps
+// the implementation across `mockReset`.
+vi.mock("@/lib/checkout/product-reads", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/checkout/product-reads")>();
+  return {
+    ...actual,
+    readCartProducts: vi.fn(actual.readCartProducts),
+    readGiftProduct: vi.fn(actual.readGiftProduct),
+  };
+});
 // Fulfilment routing is mocked at its own seam (its ranking is tested in
 // lib/fulfilment/strategies.test.ts). Left real it would consume entries from
 // the shared db mock queue and shift every later read.
@@ -201,8 +241,22 @@ import { orders, orderItems, productVariants } from "@/drizzle/schema";
 import { emitEvent } from "@/lib/notifications/record";
 import type { CartItem } from "@/app/(storefront)/components/cart/CartProvider";
 import { quoteShippingForOrder } from "@/lib/shipping/quote";
+import {
+  readCartProducts,
+  readGiftProduct,
+} from "@/lib/checkout/product-reads";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 const STORE = "a0000000-0000-4000-8000-000000000001";
+
+/** Every recorded WHERE, as Postgres receives it. */
+const compiledWheres = (): string[] =>
+  dbHolder.current.calls.where.map(
+    (w: any) => new PgDialect().sqlToQuery(w).sql,
+  );
+const FLAG_FILTER = '"products"."moderation_blocked_at" is null';
 
 const validForm: CheckoutFormData = {
   firstName: "Ada",
@@ -258,6 +312,7 @@ const findRpc = (name: string) =>
 // order. A top-level hook runs before every describe's own, so restoring the
 // file default here means a block added later cannot reintroduce this.
 beforeEach(() => {
+  blocked.addresses = [];
   vi.mocked(resolveOffersForCart).mockResolvedValue(null);
   vi.mocked(reserveOfferUses).mockResolvedValue({ ok: true, reserved: [] });
   vi.mocked(releaseOfferUses).mockResolvedValue(undefined);
@@ -850,8 +905,211 @@ describe("getCartStock", () => {
         trackInventory: true,
         stock: 3,
         allowBackorder: false,
+        image: null,
       },
     ]);
+  });
+
+  it("★ reads the cart's products through readCartProducts, whose WHERE carries the takedown flag", async () => {
+    await getCartStock([{ productId: "p1", variantId: null }]);
+    expect(readCartProducts).toHaveBeenCalledWith(expect.anything(), STORE, [
+      "p1",
+    ]);
+    // The mock returns its rows whatever the WHERE says, so the filter is
+    // checked as SQL here and against real rows in
+    // lib/moderation/shopper-reads.local.test.ts.
+    expect(compiledWheres()[0]).toContain(FLAG_FILTER);
+  });
+
+  it("★★ returns each line's current image, through the page swap", async () => {
+    const BLOCKED = "https://cdn.example.com/blocked-lead.jpg";
+    const OWN = "https://cdn.example.com/variant-own.jpg";
+    blocked.addresses = [BLOCKED];
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: "p1",
+            track_inventory: true,
+            stock: 3,
+            allow_backorder: false,
+            image_url: BLOCKED,
+            images: [""],
+            options: [],
+          },
+        ],
+        [
+          {
+            id: "v1",
+            track_inventory: true,
+            stock: 2,
+            allow_backorder: false,
+            images: [OWN],
+            option_values: [],
+          },
+          {
+            id: "v2",
+            track_inventory: true,
+            stock: 2,
+            allow_backorder: false,
+            images: [""],
+            option_values: [],
+          },
+        ],
+      ],
+    });
+
+    const info = await getCartStock([
+      { productId: "p1", variantId: null },
+      { productId: "p1", variantId: "v1" },
+      { productId: "p1", variantId: "v2" },
+      { productId: "gone", variantId: null },
+    ]);
+
+    expect(info.map((i) => i.image)).toEqual([
+      // The product's lead photo is blocked: the placeholder takes its place.
+      PLACEHOLDER_URL_PATH,
+      // A variant's own photo comes first, as the product page chose it.
+      OWN,
+      // A variant with none falls back to the (swapped) lead.
+      PLACEHOLDER_URL_PATH,
+      // A vanished line has no picture.
+      null,
+    ]);
+    expect(maskBlockedMedia).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(info)).not.toContain(BLOCKED);
+  });
+
+  it("★★ keeps the photo the shopper chose while it is still one of the line's photos and not blocked", async () => {
+    const LEAD = "https://cdn.example.com/lead.jpg";
+    const SECOND = "https://cdn.example.com/second.jpg";
+    const RED_1 = "https://cdn.example.com/red-1.jpg";
+    const RED_2 = "https://cdn.example.com/red-2.jpg";
+    const GONE = "https://cdn.example.com/removed-since.jpg";
+    const FOREIGN = "https://evil.example.com/tracker.jpg";
+    const product = (id: string, o: Record<string, any> = {}) => ({
+      id,
+      track_inventory: false,
+      stock: 0,
+      allow_backorder: false,
+      image_url: LEAD,
+      images: [SECOND],
+      options: [],
+      ...o,
+    });
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          product("p1"),
+          product("p2"),
+          product("p3"),
+          product("p4"),
+          product("p5"),
+        ],
+        [
+          {
+            id: "v1",
+            track_inventory: false,
+            stock: 0,
+            allow_backorder: false,
+            images: [RED_1, RED_2],
+            option_values: [],
+          },
+          {
+            id: "v2",
+            track_inventory: false,
+            stock: 0,
+            allow_backorder: false,
+            images: [""],
+            option_values: [],
+          },
+        ],
+      ],
+    });
+
+    const info = await getCartStock([
+      // A gallery photo the shopper was looking at: kept.
+      { productId: "p1", variantId: null, image: SECOND },
+      // The second of the variant's own photos: kept.
+      { productId: "p2", variantId: "v1", image: RED_2 },
+      // A variant with no photos of its own offers the gallery: kept.
+      { productId: "p3", variantId: "v2", image: SECOND },
+      // A product photo is not offered for a variant with its own photos.
+      { productId: "p4", variantId: "v1", image: SECOND },
+      // A photo the product no longer has, and an address that was never
+      // one of its photos: neither is kept, and neither comes back.
+      { productId: "p5", variantId: null, image: GONE },
+      { productId: "p1", variantId: null, image: FOREIGN },
+      // Only a string is compared.
+      { productId: "p1", variantId: null, image: 42 as never },
+    ]);
+
+    expect(info.map((i) => i.image)).toEqual([
+      SECOND,
+      RED_2,
+      SECOND,
+      RED_1,
+      LEAD,
+      LEAD,
+      LEAD,
+    ]);
+    expect(JSON.stringify(info)).not.toContain(GONE);
+    expect(JSON.stringify(info)).not.toContain(FOREIGN);
+    // The answer has exactly the shape it had before: nothing extra.
+    expect(Object.keys(info[0]).sort()).toEqual(
+      [
+        "allowBackorder",
+        "exists",
+        "image",
+        "productId",
+        "stock",
+        "trackInventory",
+        "variantId",
+      ].sort(),
+    );
+    expect(maskBlockedMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ never keeps a photo StoreMink has blocked: the line's current picture takes its place", async () => {
+    const LEAD = "https://cdn.example.com/lead.jpg";
+    const BLOCKED_SECOND = "https://cdn.example.com/blocked-second.jpg";
+    const BLOCKED_LEAD = "https://cdn.example.com/blocked-lead.jpg";
+    blocked.addresses = [BLOCKED_SECOND, BLOCKED_LEAD];
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        [
+          {
+            id: "p1",
+            track_inventory: false,
+            stock: 0,
+            allow_backorder: false,
+            image_url: LEAD,
+            images: [BLOCKED_SECOND],
+            options: [],
+          },
+          {
+            id: "p2",
+            track_inventory: false,
+            stock: 0,
+            allow_backorder: false,
+            image_url: BLOCKED_LEAD,
+            images: [BLOCKED_SECOND],
+            options: [],
+          },
+        ],
+      ],
+    });
+
+    const info = await getCartStock([
+      // The chosen photo is blocked; the lead is not: the lead.
+      { productId: "p1", variantId: null, image: BLOCKED_SECOND },
+      // Both are blocked: the placeholder.
+      { productId: "p2", variantId: null, image: BLOCKED_SECOND },
+    ]);
+
+    expect(info.map((i) => i.image)).toEqual([LEAD, PLACEHOLDER_URL_PATH]);
+    expect(JSON.stringify(info)).not.toContain("blocked-");
+    expect(maskBlockedMedia).toHaveBeenCalledTimes(1);
   });
 
   it("marks a vanished product as exists:false", async () => {
@@ -1640,6 +1898,57 @@ describe("placeOrder — offers", () => {
     // ★ A REAL ZERO. `toBe(0)` passes for neither undefined nor null, which is
     // the entire reason this is asserted rather than the price.
     expect(gift.offerDiscount).toBe(0);
+  });
+
+  it("★★ a gift that vanished (or StoreMink blocked) is dropped, and the sale still goes through", async () => {
+    // `readGiftProduct` answers nothing for a deleted, moved or blocked gift
+    // (the flag is in its WHERE, compiled below); the existing vanished-gift
+    // branch then drops the gift and keeps the paying customer's order.
+    vi.mocked(resolveOffersForCart).mockResolvedValue(
+      offerResult({
+        lines: [{ id: "0", offerDiscount: 0 }],
+        discount: 0,
+        applied: [],
+        allocations: [],
+        gift: {
+          offerId: "offer-gift",
+          offerName: "Free tumbler",
+          code: null,
+          productId: "gift-product",
+          variantId: null,
+          quantity: 1,
+        },
+      }) as any,
+    );
+    dbHolder.current = makeDbMock({
+      selectByTable: { products: [[productRow()], []] },
+      executeQueue: [[{ reserved: true }]],
+      returning: [{ id: "order-1", order_ref: "ORD1" }],
+    });
+
+    const result = await placeOrder(validForm, [oneItem()]);
+    expect("success" in result && result.success).toBe(true);
+
+    expect(readCartProducts).toHaveBeenCalledWith(expect.anything(), STORE, [
+      "p1",
+    ]);
+    expect(readGiftProduct).toHaveBeenCalledWith(
+      expect.anything(),
+      STORE,
+      "gift-product",
+    );
+    const rows = dbHolder.current.calls.values[1];
+    const lines = Array.isArray(rows) ? rows : [rows];
+    expect(lines.map((r: any) => r.productId)).toEqual(["p1"]);
+    // Nothing reserves the gift's caps once it is gone.
+    const claimed = vi
+      .mocked(reserveOfferUses)
+      .mock.calls.flatMap(([, applied]) => applied.map((a: any) => a.offerId));
+    expect(claimed).not.toContain("offer-gift");
+    // Both product reads carry the flag.
+    expect(
+      compiledWheres().filter((w) => w.includes(FLAG_FILTER)),
+    ).toHaveLength(2);
   });
 
   // ★★ A GIFT AND A CASHBACK OFFER MUST CLAIM THEIR CAPS TOO.

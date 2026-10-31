@@ -41,7 +41,11 @@ export default async function CustomerDetailPage({
         >
           User since {formatDateTime(customer.created_at)}
         </p>
-        <CustomerDetail customer={customer} canManage={canManage} />
+        <CustomerDetail
+          customer={customer}
+          canManage={canManage}
+          canSeeNotices={access.can("settings", "view")}
+        />
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 
 vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 
@@ -8,9 +9,12 @@ import type { MinkActorContext } from "./types";
 import { validateSections } from "@/lib/sections/registry";
 import { prepareSections } from "@/lib/themes/apply";
 import { THEME_DEFINITIONS } from "@/lib/themes";
+import { makeDbMock } from "@/app/actions/_test-helpers";
 import {
   assertBuilderAccess,
   eligiblePages,
+  readCategories,
+  readPages,
   summarizePersonalizationTarget,
   themeSectionIdsFor,
   type PersonalizationTarget,
@@ -272,6 +276,31 @@ describe("who may personalise", () => {
     ).toThrow(/drafting/);
     expect(() => assertBuilderAccess(actor({}), "view")).toThrow(
       /Website Builder access/,
+    );
+  });
+});
+
+describe("takedown: what StoreMink blocked is left out", () => {
+  const compile = (where: unknown) =>
+    new PgDialect().sqlToQuery(where as never).sql;
+
+  it("never reads a page StoreMink blocked, told or not", async () => {
+    const mock = makeDbMock({ selectQueue: [[]] });
+    await readPages(mock.db, "store-1", {}, null);
+    expect(compile(mock.calls.where[0])).toContain(
+      '"store_pages"."moderation_blocked_at" is null',
+    );
+  });
+
+  it("never reads a collection StoreMink blocked, nor counts a blocked product in one", async () => {
+    const mock = makeDbMock({ selectQueue: [[]] });
+    await readCategories(mock.db, "store-1", new Set());
+    expect(compile(mock.calls.where[0])).toContain(
+      '"categories"."moderation_blocked_at" is null',
+    );
+    const select = mock.calls.select[0] as { productCount: unknown };
+    expect(compile(select.productCount)).toContain(
+      '"products"."moderation_blocked_at" is null',
     );
   });
 });

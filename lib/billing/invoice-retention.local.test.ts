@@ -10,7 +10,13 @@
  * a draft carried, and its issue date, financial year, GSTINs and place of
  * supply are frozen too. deleteStore also keeps the store's open
  * reconciliation items and files a paid AI credit purchase whose receipt never
- * issued, and every close outcome passes the reconciliation CHECK. Run with
+ * issued, and every close outcome passes the reconciliation CHECK. Since the
+ * refunds release (0264) a processed refund of a kept invoice and its credit
+ * note survive the delete too, and an operator still reads the note. Since
+ * GST Stage 8 deleteStore first issues the store's drafts behind money already
+ * taken (issueCapturedDrafts, GST design 5.5), so a paid credit pack's draft
+ * receipt is issued and kept, and only one the repair could not issue is
+ * filed, at the amount charged (`amount_paise`). Run with
  * BILLING_INVOICE_RETENTION_LOCAL_TEST=1; the fixed loopback database keeps it
  * away from Cloud SQL, and everything happens inside one transaction that is
  * rolled back.
@@ -116,6 +122,21 @@ vi.mock("@/lib/auth/server-user", () => ({
     metadata: {},
   })),
 }));
+// ★ The receipt deleteStore's repair cannot issue (a failed read, say):
+//   issueInvoice reports a failure as `invoice` null and never throws.
+const stuck = vi.hoisted(() => ({ invoiceId: crypto.randomUUID() }));
+vi.mock("./invoice-store", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./invoice-store")>();
+  return {
+    ...actual,
+    issueInvoice: vi.fn(
+      async (input: Parameters<typeof actual.issueInvoice>[0]) =>
+        input.invoiceId === stuck.invoiceId
+          ? { invoice: null, claimed: false, restamp: "unchanged" as const }
+          : actual.issueInvoice(input),
+    ),
+  };
+});
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
   logInfo: vi.fn(),
@@ -125,6 +146,10 @@ vi.mock("@/lib/observability/logger", () => ({
 import { sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { deleteStore } from "@/app/actions/platform";
+import {
+  getCreditNoteDocumentForOperator,
+  issueCreditNote,
+} from "./credit-note-store";
 import { getInvoiceDocument } from "./invoice-history";
 import { resolveReconciliationItem } from "./reconcile";
 import {
@@ -144,6 +169,7 @@ const FAILED_DRAFT = crypto.randomUUID();
 const EVIDENCE = crypto.randomUUID();
 const AI_DRAFT = crypto.randomUUID();
 const AI_PENDING_DRAFT = crypto.randomUUID();
+const AI_STUCK = stuck.invoiceId;
 const tag = STORE.slice(0, 8);
 
 describe.skipIf(!enabled)(
@@ -154,6 +180,8 @@ describe.skipIf(!enabled)(
     let issuedRef: string | null = null;
     let unpaidParties: unknown = null;
     let creditsParties: unknown = null;
+    let refundId: string | null = null;
+    let creditNote: { id: string; ref: string } | null = null;
 
     const one = async (sqlText: string, params: unknown[] = []) =>
       (await client.query(sqlText, params)).rows[0] ?? null;
@@ -258,6 +286,12 @@ describe.skipIf(!enabled)(
       await client.query("SET LOCAL lock_timeout = '10s'");
       service.client = client;
       service.db = drizzle(client, { schema: { ...schema, ...relations } });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new Error("No network in this test.");
+        }),
+      );
 
       await client.query(
         "insert into public.platform_admins (email, role) values ($1, 'superadmin')",
@@ -280,6 +314,26 @@ describe.skipIf(!enabled)(
       await client.query(
         "insert into public.billing_accounts (store_id) values ($1)",
         [STORE],
+      );
+      // The drafts below carry GST at 18% and both GSTINs, so the terms in
+      // force and the merchant's records must say the same: issueInvoice
+      // brings a draft up to the reading taken at issue (GST design 5.4).
+      await client.query(
+        "update public.billing_accounts set gstin = '29AAACM1234C1ZP', state_code = '29' where store_id = $1",
+        [STORE],
+      );
+      await client.query(
+        `update public.platform_billing_settings
+            set tax_enabled = true, tax_inclusive = false, tax_rate_bps = 1800,
+                gstin = '07AABCS1429B1ZX', state_code = '07',
+                legal_name = coalesce(nullif(btrim(legal_name), ''), 'STOREMINK LLP'),
+                sac_code = '998314', llpin = 'ADC-5432',
+                registered_office = 'Bala ji Colony, Faridkot, Punjab, India',
+                address = '{"line1": "Bala ji Colony", "city": "Faridkot", "postalCode": "151203"}'::jsonb,
+                invoice_prefix = 'SM', next_tax_enabled = null,
+                next_tax_inclusive = null, next_tax_rate_bps = null,
+                next_tax_starts_at = null, next_tax_notice_id = null
+          where id`,
       );
 
       // An issued subscription invoice, paid, with a captured attempt.
@@ -377,8 +431,9 @@ describe.skipIf(!enabled)(
       );
 
       // AI credit purchases: one paid whose receipt never issued (a draft,
-      // no attempt), one paid behind the issued receipt CREDITS, and one
-      // still pending (an abandoned checkout).
+      // no attempt), one paid behind the issued receipt CREDITS, one still
+      // pending (an abandoned checkout), and one paid at the GST-inclusive
+      // amount whose receipt the repair cannot issue.
       await insertDraft({
         id: AI_DRAFT,
         kind: "ai_credits",
@@ -390,6 +445,12 @@ describe.skipIf(!enabled)(
         kind: "ai_credits",
         subtotal: 5_000,
         tax: 900,
+      });
+      await insertDraft({
+        id: AI_STUCK,
+        kind: "ai_credits",
+        subtotal: 5_900,
+        tax: 1_062,
       });
       await client.query(
         `insert into public.ai_credit_purchases
@@ -410,6 +471,13 @@ describe.skipIf(!enabled)(
           `order_ret_${tag}_ai3`,
           AI_PENDING_DRAFT,
         ],
+      );
+      await client.query(
+        `insert into public.ai_credit_purchases
+           (store_id, pack_id, credits, amount_inr, amount_paise, rzp_order_id,
+            rzp_payment_id, invoice_id, status)
+         values ($1, 'probe-pack', 25, 59, 6962, $2, $3, $4, 'paid')`,
+        [STORE, `order_ret_${tag}_ai4`, `pay_ret_${tag}_ai4`, AI_STUCK],
       );
     });
 
@@ -542,11 +610,61 @@ describe.skipIf(!enabled)(
       }
     });
 
+    it("a processed refund of the issued invoice gets its credit note before the store is deleted", async () => {
+      const attempt = await one(
+        "select id from public.billing_payment_attempts where invoice_id = $1",
+        [ISSUED],
+      );
+      // A refund starts owed (the guard admits nothing else for Razorpay),
+      // then Razorpay's answer moves it to processed: the operator path.
+      const inserted = await one(
+        `insert into public.billing_refunds
+           (invoice_id, attempt_id, reason, status, method, amount_paise,
+            idempotency_key, provider_payment_id, requested_by, note)
+         values ($1, $2, 'goodwill', 'owed', 'razorpay', 59000, $3, $4, $5,
+                 'Retention probe: half of the paid invoice back')
+         returning id`,
+        [
+          ISSUED,
+          attempt?.id,
+          `retention-refund-${tag}`,
+          `pay_ret_${tag}_1`,
+          operator.email,
+        ],
+      );
+      refundId = String(inserted?.id);
+      await client.query(
+        `update public.billing_refunds
+            set status = 'processed', provider_refund_id = $2,
+                sent_at = now(), resolved_at = now()
+          where id = $1`,
+        [refundId, `rfnd_ret_${tag}`],
+      );
+
+      const issued = await issueCreditNote({
+        kind: "refund",
+        refundId,
+        issuedBy: operator.email,
+      });
+      expect(issued.outcome).toBe("issued");
+      if (issued.outcome !== "issued") return;
+      // Half the payment: the note takes the tax in proportion.
+      expect(issued.note).toMatchObject({
+        invoiceId: ISSUED,
+        refundId,
+        reason: "goodwill",
+        totalPaise: 59_000,
+        taxPaise: 9_000,
+      });
+      expect(issued.note.creditNoteRef).toMatch(/^CN\/\d{4}-\d{2}\/\d{5}$/);
+      creditNote = { id: issued.note.id, ref: issued.note.creditNoteRef };
+    });
+
     it("deleteStore keeps every issued invoice, its lines and its payments, and removes the drafts", async () => {
       expect(await deleteStore(STORE)).toEqual({
         success: true,
         warning:
-          "1 paid AI credit purchase has no issued receipt. It is now in Billing & tax > Reconciliation, so the payment is not lost.",
+          "1 paid AI credit purchase has no issued receipt. It is now in Billing & tax > Reconciliation, so the payment is not lost. 1 captured payment could not be put right before the delete. The payment records are kept; check Billing & tax > Reconciliation and the billing.captured_draft logs.",
       });
       // The checks deleteStore deferred to COMMIT run now; a cascade the
       // commit would refuse throws here.
@@ -615,6 +733,17 @@ describe.skipIf(!enabled)(
       expect(credits).toMatchObject({ store_id: null, status: "paid" });
       expect(credits?.parties).toEqual(creditsParties);
 
+      // ★★ The paid credit pack's draft receipt was issued by the repair
+      //   before the delete, so it is kept, paid, numbered and detached.
+      expect(
+        await one(
+          `select store_id, status, invoice_ref is not null as numbered,
+                  paid_at is not null as paid
+             from public.billing_invoices where id = $1`,
+          [AI_DRAFT],
+        ),
+      ).toEqual({ store_id: null, status: "paid", numbered: true, paid: true });
+
       // The draft with a payment possibly at the gateway is kept, detached.
       expect(
         await one(
@@ -656,6 +785,60 @@ describe.skipIf(!enabled)(
       expect(await getInvoiceDocument(STORE, ISSUED)).toBeNull();
     });
 
+    it("deleteStore keeps refunds: the kept invoice's refund and credit note survive with it", async () => {
+      expect(refundId).not.toBeNull();
+      expect(creditNote).not.toBeNull();
+      // Neither table has a store column, so the delete never touches them,
+      // and the payment the refund reverses is kept (detached) as well.
+      expect(
+        await one(
+          `select status, invoice_id, amount_paise, provider_refund_id
+             from public.billing_refunds where id = $1`,
+          [refundId],
+        ),
+      ).toEqual({
+        status: "processed",
+        invoice_id: ISSUED,
+        amount_paise: "59000",
+        provider_refund_id: `rfnd_ret_${tag}`,
+      });
+      const note = await one(
+        `select refund_id, invoice_id, credit_note_ref, total_paise, parties
+           from public.billing_credit_notes where id = $1`,
+        [creditNote!.id],
+      );
+      expect(note).toMatchObject({
+        refund_id: refundId,
+        invoice_id: ISSUED,
+        credit_note_ref: creditNote!.ref,
+        total_paise: "59000",
+      });
+      // The note copied the invoice's recorded parties when it was issued.
+      expect(note?.parties).toEqual(recorded);
+
+      // The console prints a deleted store's credit note (no store predicate).
+      expect(
+        await getCreditNoteDocumentForOperator(creditNote!.id),
+      ).toMatchObject({
+        creditNoteRef: creditNote!.ref,
+        invoiceId: ISSUED,
+        invoiceRef: issuedRef,
+        totalPaise: 59_000,
+      });
+
+      // Both stay financial records after the store is gone.
+      expect(
+        await refused("delete from public.billing_refunds where id = $1", [
+          refundId,
+        ]),
+      ).toMatch(/never deleted/);
+      expect(
+        await refused("delete from public.billing_credit_notes where id = $1", [
+          creditNote!.id,
+        ]),
+      ).toMatch(/never deleted/);
+    });
+
     it("deleteStore keeps the store's open money questions and files a paid AI credit purchase with no receipt", async () => {
       const item = (payment: string) =>
         one(
@@ -689,20 +872,23 @@ describe.skipIf(!enabled)(
       // A closed item is history and goes with the store.
       expect(await item(`pay_ret_${tag}_closed`)).toBeNull();
 
-      // The paid purchase whose receipt never issued: its ids and amount
-      // survive the purchase row, as an open question for a human.
-      expect(await item(`pay_ret_${tag}_ai1`)).toEqual({
+      // The paid purchase whose receipt the repair issued: no question left.
+      expect(await item(`pay_ret_${tag}_ai1`)).toBeNull();
+      // The paid purchase whose receipt the repair could not issue: its ids
+      // and the amount charged (`amount_paise`, GST included) survive the
+      // purchase row, as an open question for a human.
+      expect(await item(`pay_ret_${tag}_ai4`)).toEqual({
         store_id: null,
         kind: "orphan_payment",
         status: "open",
-        expected_paise: "5900",
+        expected_paise: "6962",
         observed_paise: null,
-        provider_order_id: `order_ret_${tag}_ai1`,
+        provider_order_id: `order_ret_${tag}_ai4`,
         detail: {
           note: "AI credit purchase paid, receipt never issued",
           storeDeleted: true,
           storeName: "Retention Probe",
-          credits: 100,
+          credits: 25,
         },
       });
       // Not filed: one behind an issued (kept) receipt, and a pending one.
@@ -714,7 +900,8 @@ describe.skipIf(!enabled)(
         ),
       ).toBe(0);
 
-      // The purchase rows cascade with the store; the two AI drafts go too.
+      // The purchase rows cascade with the store; the two AI drafts left
+      // go too, and the receipt the repair issued stays.
       expect(
         await count(
           "select count(*) as n from public.ai_credit_purchases where store_id = $1 or rzp_order_id like $2",
@@ -724,9 +911,15 @@ describe.skipIf(!enabled)(
       expect(
         await count(
           "select count(*) as n from public.billing_invoices where id in ($1, $2)",
-          [AI_DRAFT, AI_PENDING_DRAFT],
+          [AI_PENDING_DRAFT, AI_STUCK],
         ),
       ).toBe(0);
+      expect(
+        await count(
+          "select count(*) as n from public.billing_invoices where id = $1 and store_id is null",
+          [AI_DRAFT],
+        ),
+      ).toBe(1);
     });
 
     it("an operator can close a deleted store's payment question with each outcome", async () => {

@@ -47,7 +47,7 @@ export type EventGroup =
   | "Content"
   | "Marketing"
   | "Team & security"
-  | "Plan & billing"
+  | "Plans & Billing"
   | "Platform";
 
 export const EVENT_GROUPS: readonly EventGroup[] = [
@@ -58,9 +58,30 @@ export const EVENT_GROUPS: readonly EventGroup[] = [
   "Content",
   "Marketing",
   "Team & security",
-  "Plan & billing",
+  "Plans & Billing",
   "Platform",
 ];
+
+/**
+ * Group names this registry used before a rename, read as today's name.
+ *
+ * An operator override in `notification_definitions` stores its group as free
+ * text, and an Activity link carries one in `?group=`, so a name saved or
+ * bookmarked before a rename still arrives in its old spelling. Without this
+ * map such a row falls outside EVENT_GROUPS (no tab, no filter, no heading of
+ * its own) and such a link filters nothing. "Plan & billing" became
+ * "Plans & Billing" with the GST release (owner decision 11: one page name
+ * everywhere, the sidebar included). A Map, not an object, so a stored
+ * "toString" can never read an inherited property.
+ */
+export const LEGACY_EVENT_GROUPS: ReadonlyMap<string, EventGroup> = new Map([
+  ["Plan & billing", "Plans & Billing"],
+]);
+
+/** A stored or linked group name, read as today's name (else unchanged). */
+export function canonicalEventGroup(name: string): string {
+  return LEGACY_EVENT_GROUPS.get(name) ?? name;
+}
 
 export interface EventDef {
   key: EventKey;
@@ -148,6 +169,9 @@ export const EVENT_KEYS = [
   "blog.rejected",
   "blog.comment_posted",
   "page.published",
+  "store.content_blocked",
+  "store.content_block_lifted",
+  "store.content_block_reply",
   // ── Marketing ───────────────────────────────────────────────────────────
   "coupon.created",
   "campaign.sent",
@@ -161,7 +185,7 @@ export const EVENT_KEYS = [
   "store.launched",
   "store.domain_live",
   "store.domain_reverted",
-  // ── Plan & billing ──────────────────────────────────────────────────────
+  // ── Plans & Billing ─────────────────────────────────────────────────────
   "store.comp_ended",
   "plan.changed",
   "plan.expiring",
@@ -184,6 +208,9 @@ export const EVENT_KEYS = [
   "platform.theme_studio_ready",
   "platform.theme_studio_needs_fix",
   "platform.theme_studio_questions",
+  "platform.complaint_urgent",
+  "platform.complaint_due",
+  "platform.takedown_reply",
 ] as const;
 
 export type EventKey = (typeof EVENT_KEYS)[number];
@@ -544,6 +571,44 @@ export const EVENTS: readonly EventDef[] = [
     audiences: { "store-admins": OFF },
   },
 
+  // ── Takedowns (StoreMink speaking to the store; design 7.5) ─────────────
+  // ★ In the bell only: the notice EMAIL goes to every owner from
+  //   lib/email/takedown-emails.ts (one sender per message, as
+  //   subscription.payment_failed does). NOT configurable: a store must not
+  //   be able to go blind on StoreMink blocking its content. Emitted only for
+  //   a block the store is told about (lib/moderation/notify.ts).
+  {
+    key: "store.content_blocked",
+    label: "Content blocked by StoreMink",
+    description:
+      "StoreMink blocked something on your store after a complaint, a legal order, a breach of its policies or your request.",
+    group: "Content",
+    section: "settings",
+    severity: "critical",
+    audiences: { "store-admins": IN_APP },
+    configurable: false,
+  },
+  {
+    key: "store.content_block_lifted",
+    label: "Block lifted by StoreMink",
+    description: "StoreMink lifted a block on your store.",
+    group: "Content",
+    section: "settings",
+    severity: "success",
+    audiences: { "store-admins": IN_APP },
+    configurable: false,
+  },
+  {
+    key: "store.content_block_reply",
+    label: "Reply from StoreMink",
+    description: "StoreMink replied about something it blocked on your store.",
+    group: "Content",
+    section: "settings",
+    severity: "info",
+    audiences: { "store-admins": IN_APP },
+    configurable: false,
+  },
+
   // ── Marketing ───────────────────────────────────────────────────────────
   {
     key: "coupon.created",
@@ -616,7 +681,7 @@ export const EVENTS: readonly EventDef[] = [
     audiences: {},
   },
 
-  // ── Plan & billing ──────────────────────────────────────────────────────
+  // ── Plans & Billing ─────────────────────────────────────────────────────
   {
     key: "store.created",
     label: "Store created",
@@ -687,7 +752,7 @@ export const EVENTS: readonly EventDef[] = [
     label: "Free plan upgrade ended",
     description:
       "A comped plan reached the end of its window; the store is back on the plan it pays for.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "info",
     // ★ BOTH channels, and NOT configurable. What the store can DO changed
@@ -705,7 +770,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "plan.changed",
     label: "Plan changed",
     description: "This store moved to a different StoreMink plan.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "info",
     // IN-APP ONLY, deliberately. StoreMink's own billing sender
@@ -720,7 +785,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "plan.expiring",
     label: "Plan expiring soon",
     description: "A timed plan is about to lapse back to Free.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "warning",
     // The exception to the rule above: nothing else warns BEFORE a plan
@@ -731,7 +796,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "subscription.invoice_due",
     label: "Renewal invoice issued",
     description: "A subscription invoice was raised for the next cycle.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "info",
     // In-app only — renewalDueTemplate already mails this one from
@@ -746,7 +811,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "subscription.payment_failed",
     label: "Subscription payment failed",
     description: "A recurring plan payment could not be collected.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "critical",
     // In-app only — paymentFailedTemplate already mails this one.
@@ -757,7 +822,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "ai.credits_low",
     label: "Mink credits running low",
     description: "Your included Mink credits are nearly used up.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "warning",
     audiences: { "store-admins": IN_APP },
@@ -766,7 +831,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "ai.credits_purchased",
     label: "Mink credits purchased",
     description: "A credit pack was bought and added to your balance.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "ai",
     severity: "success",
     audiences: { "store-admins": IN_APP },
@@ -776,7 +841,7 @@ export const EVENTS: readonly EventDef[] = [
     label: "Mink watch update",
     description:
       "A personally enabled watch has new evidence or a scheduled brief.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "dashboard",
     severity: "info",
     audiences: { "store-admins": IN_APP },
@@ -786,7 +851,7 @@ export const EVENTS: readonly EventDef[] = [
     key: "mink.workflow_completed",
     label: "Mink workflow ready",
     description: "A requested Mink background workflow finished safely.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "dashboard",
     severity: "success",
     audiences: { "store-admins": IN_APP },
@@ -801,7 +866,7 @@ export const EVENTS: readonly EventDef[] = [
     label: "Storefront redesign ready",
     description:
       "A storefront redesign Mink AI was asked for is ready to review in the chat.",
-    group: "Plan & billing",
+    group: "Plans & Billing",
     section: "builder",
     severity: "success",
     audiences: { "store-admins": IN_APP },
@@ -944,6 +1009,44 @@ export const EVENTS: readonly EventDef[] = [
     audiences: { operators: BOTH },
     configurable: false,
   },
+  // ── Complaints and takedowns (design 7.5) ─────────────────────────────────
+  // ★ ALWAYS emitted with storeId: null, through notifyOperators
+  //   (lib/moderation/notify.ts): the notification worker logs an event's
+  //   emails under its store, and an alert about a complaint must never
+  //   appear in the complained-about store's email log or bell (design F9).
+  // ★ Bell AND email, not configurable: a legal deadline can be hours away,
+  //   and no operator has a settings page to switch them off from.
+  {
+    key: "platform.complaint_urgent",
+    label: "Urgent complaint logged",
+    description:
+      "A court order, a government order, an information order or an intimate-image complaint was logged.",
+    group: "Platform",
+    section: "activity",
+    severity: "critical",
+    audiences: { operators: BOTH },
+    configurable: false,
+  },
+  {
+    key: "platform.complaint_due",
+    label: "Complaint deadline",
+    description: "A complaint deadline is close or has passed.",
+    group: "Platform",
+    section: "activity",
+    severity: "warning",
+    audiences: { operators: BOTH },
+    configurable: false,
+  },
+  {
+    key: "platform.takedown_reply",
+    label: "Store replied about a block",
+    description: "A store replied about something StoreMink blocked.",
+    group: "Platform",
+    section: "activity",
+    severity: "info",
+    audiences: { operators: BOTH },
+    configurable: false,
+  },
 ];
 
 const EVENT_BY_KEY = new Map<string, EventDef>(EVENTS.map((e) => [e.key, e]));
@@ -990,6 +1093,9 @@ export const PLATFORM_VOICE_EVENTS: ReadonlySet<EventKey> = new Set<EventKey>([
   "subscription.payment_failed",
   "ai.credits_low",
   "ai.credits_purchased",
+  "store.content_blocked",
+  "store.content_block_lifted",
+  "store.content_block_reply",
 ]);
 
 export function isPlatformVoiceEvent(key: string | null | undefined): boolean {

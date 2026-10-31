@@ -6,6 +6,7 @@ import {
   eq,
   gte,
   inArray,
+  isNotNull,
   isNull,
   lt,
   lte,
@@ -566,12 +567,16 @@ export async function readMinkShopperOffers(
           .from(offerProducts)
           // ★ Joined only to what the storefront shows, so a draft product's
           // name never reaches a stranger; a hidden item reads as no name.
+          // An item StoreMink has blocked is hidden too (takedown design 5.7,
+          // review finding F6): the flag is in each join, because this read is
+          // service-scope and the read policies that hide it never run.
           .leftJoin(
             products,
             and(
               eq(offerProducts.productId, products.id),
               eq(products.storeId, actor.storeId),
               eq(products.status, "published"),
+              isNull(products.moderationBlockedAt),
             ),
           )
           .leftJoin(
@@ -587,6 +592,7 @@ export async function readMinkShopperOffers(
               eq(productVariants.productId, variantProduct.id),
               eq(variantProduct.storeId, actor.storeId),
               eq(variantProduct.status, "published"),
+              isNull(variantProduct.moderationBlockedAt),
             ),
           )
           .leftJoin(
@@ -595,6 +601,7 @@ export async function readMinkShopperOffers(
               eq(offerProducts.categoryId, categories.id),
               eq(categories.storeId, actor.storeId),
               eq(categories.status, "active"),
+              isNull(categories.moderationBlockedAt),
             ),
           )
           .where(
@@ -617,14 +624,24 @@ export async function readMinkShopperOffers(
           ),
       ),
     ];
+    // A gift is named only when the storefront shows it. A gift StoreMink
+    // has blocked is read whatever its status, with the flag, so its offer is
+    // left out below rather than told as a nameless "gift".
     const giftRows = giftIds.length
       ? await db
-          .select({ productId: products.id, productName: products.name })
+          .select({
+            productId: products.id,
+            productName: products.name,
+            blockedAt: products.moderationBlockedAt,
+          })
           .from(products)
           .where(
             and(
               eq(products.storeId, actor.storeId),
-              eq(products.status, "published"),
+              or(
+                eq(products.status, "published"),
+                isNotNull(products.moderationBlockedAt),
+              ),
               inArray(products.id, giftIds),
             ),
           )
@@ -654,8 +671,15 @@ export async function readMinkShopperOffers(
     }
     scopes.set(row.offerId, entry);
   }
+  const blockedGifts = new Set(
+    result.giftRows
+      .filter((row) => row.blockedAt != null)
+      .map((row) => row.productId),
+  );
   const giftNames = new Map(
-    result.giftRows.map((row) => [row.productId, row.productName]),
+    result.giftRows
+      .filter((row) => row.blockedAt == null)
+      .map((row) => [row.productId, row.productName]),
   );
 
   const shown: MinkShopperOffer[] = [];
@@ -674,6 +698,11 @@ export async function readMinkShopperOffers(
     if (scope && scope.on.length === 0) continue;
 
     const reward = decodeReward(row.rewardType, row.rewardConfig);
+    // ★ A gift StoreMink has blocked is never given (the offer engine treats
+    // it as unavailable), so the offer is not told at all.
+    if (reward.giftProductId && blockedGifts.has(reward.giftProductId)) {
+      continue;
+    }
     const trigger = decodeTrigger(row.triggerType, row.triggerConfig);
     const names = scope ? listWords(scope.on, "and") : null;
     const anyOf = scope ? listWords(scope.includes, "or") : null;

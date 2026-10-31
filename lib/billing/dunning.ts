@@ -42,12 +42,14 @@ import { PLAN_META, normalizePlan } from "@/lib/plans";
 import { logError } from "@/lib/observability/logger";
 import { recordEvent } from "@/lib/notifications/record";
 import {
+  emailTaxFromInvoice,
   manageUrl,
   planDowngradedTemplate,
   renewalDueTemplate,
   renewalOverdueTemplate,
   resolveBillingEmail,
   sendBillingEmail,
+  type InvoiceTaxColumns,
 } from "@/lib/email/billing-emails";
 
 function planName(plan: string): string {
@@ -78,6 +80,17 @@ export async function notifyInvoiceIssued(input: {
    * surprise on a card statement.
    */
   previousAmountPaise?: number | null;
+  /**
+   * The issued invoice's tax columns (GST Stage 6). Absent or null: no GST
+   * rows, today's email. GST Stage 7 passes them from the renewal worker.
+   */
+  tax?: InvoiceTaxColumns | null;
+  /**
+   * The previous cycle's tax columns, so the email can tell "GST started"
+   * from "the plan price changed" (tax-copy's `renewalChange`). Absent: the
+   * previous cycle is read as having charged no GST.
+   */
+  previousTax?: InvoiceTaxColumns | null;
 }): Promise<void> {
   try {
     const to = await resolveBillingEmail(input.storeId);
@@ -87,15 +100,18 @@ export async function notifyInvoiceIssued(input: {
       renewalDueTemplate({
         storeName: to.storeName,
         planName: planName(input.plan),
-        amountInr: Math.round(input.amountPaise / 100),
+        // Paise as invoiced: "₹433.33" keeps its paise.
+        amountPaise: input.amountPaise,
+        tax: input.tax ? emailTaxFromInvoice(input.tax) : null,
         dueOn: input.dueAt.toISOString(),
         invoiceRef: input.invoiceRef,
         autopay: input.autopay,
-        previousAmountInr:
-          input.previousAmountPaise != null &&
-          input.previousAmountPaise !== input.amountPaise
-            ? Math.round(input.previousAmountPaise / 100)
-            : null,
+        // The template names the change (or says nothing when the amounts
+        // match) from these figures, through tax-copy's `renewalChange`.
+        previousAmountPaise: input.previousAmountPaise ?? null,
+        previousTax: input.previousTax
+          ? emailTaxFromInvoice(input.previousTax)
+          : null,
         manageUrl: manageUrl(to.slug),
       }),
       input.storeId,

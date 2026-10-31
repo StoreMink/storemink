@@ -1,11 +1,20 @@
 import { Check, Minus } from "lucide-react";
 import {
+  allowanceLabel,
   planFeatureMatrix,
   type IncludedMinkCredits,
+  type Plan,
   PLAN_LIMITS,
   PLAN_META,
   type PlanMatrixValue,
 } from "@/lib/plans";
+import {
+  gstFaq,
+  pricingCardNote,
+  pricingPriceSuffix,
+} from "@/lib/billing/tax-copy";
+import type { TaxTerms } from "@/lib/billing/tax-terms";
+import type { PricingCard } from "./pricing-cards";
 
 // The plan cards' copy, the comparison matrix and the FAQ, shared by the
 // homepage (cards + a short FAQ) and /pricing (everything). One source so the
@@ -14,6 +23,12 @@ import {
 // Each feature line is written to fit ONE row of the card at its narrowest
 // width, the way shopify.com/pricing keeps its rows to a few words. Anything
 // longer belongs in the comparison matrix, which /pricing renders in full.
+//
+// ★ GST (GST design 7.1). The cards' notes and the FAQ follow the GST terms the
+// page rendered with (`termsAt` on the cached public source), and every GST
+// sentence comes from lib/billing/tax-copy.ts. `terms` is null when
+// StoreMink's GST settings could not be read: the prices are then shown with no
+// GST words at all, neither "plus GST" nor anything that says GST is off.
 
 export const PLANS = [
   {
@@ -60,6 +75,62 @@ export const PLANS = [
     popular: false,
   },
 ];
+
+/** A plan's resolved prices, in rupees (lib/plans/pricing.ts `PlanPrice`). */
+type CardPrices = Pick<
+  PricingCard,
+  "monthlyInr" | "yearlyInr" | "baseMonthlyInr" | "baseYearlyInr"
+>;
+
+/**
+ * The price cards of the homepage and /pricing: PLANS with the resolved
+ * prices, the included Mink allowance and the GST words for `terms`.
+ *
+ * The notes come from `pricingCardNote` for both billing periods ("₹1,500
+ * billed every month, plus GST from 1 Dec 2026"), and "plus GST" follows "/mo"
+ * on a paid card while GST is added on top. With `terms` null, `notes` and
+ * `priceSuffix` are null and each card states its amount alone.
+ */
+export function pricingCards(
+  prices: Record<Plan, CardPrices>,
+  included: IncludedMinkCredits,
+  terms: TaxTerms | null,
+): PricingCard[] {
+  return PLANS.map((plan) => {
+    const price = prices[plan.meta.id];
+    const free = price.monthlyInr === 0 && price.yearlyInr === 0;
+    return {
+      id: plan.meta.id,
+      name: plan.meta.name,
+      who: plan.who,
+      features: [
+        ...plan.features,
+        `${allowanceLabel(included[plan.meta.id])} Mink credits a month`,
+      ],
+      cta: plan.cta,
+      popular: plan.popular,
+      monthlyInr: price.monthlyInr,
+      yearlyInr: price.yearlyInr,
+      baseMonthlyInr: price.baseMonthlyInr,
+      baseYearlyInr: price.baseYearlyInr,
+      notes: terms
+        ? {
+            monthly: pricingCardNote(
+              terms,
+              "monthly",
+              Math.round(price.monthlyInr * 100),
+            ),
+            yearly: pricingCardNote(
+              terms,
+              "yearly",
+              Math.round(price.yearlyInr * 100),
+            ),
+          }
+        : null,
+      priceSuffix: terms && !free ? pricingPriceSuffix(terms) : null,
+    };
+  });
+}
 
 function MatrixValue({ value }: { value: PlanMatrixValue }) {
   if (value === true) {
@@ -131,7 +202,12 @@ export function PlanComparison({
   );
 }
 
-export const FAQS = [
+export interface PricingFaq {
+  q: string;
+  a: string;
+}
+
+const FAQS: PricingFaq[] = [
   {
     q: "Can I start without paying?",
     a: "Yes. The Free plan lets you build and publish a working StoreMink storefront without a credit card. When you need your own domain, online payments, more products or Point of Sale, you can upgrade without rebuilding anything.",
@@ -161,3 +237,25 @@ export const FAQS = [
     a: "Mink AI is StoreMink's built-in assistant, currently in beta. It can answer permission-aware questions from your store data and prepare private, editable content drafts. Guarded dashboard actions will expand as their approval controls are ready.",
   },
 ];
+
+/** The question the GST entry follows (GST design 7.1). */
+const GST_FAQ_FOLLOWS = "Does StoreMink charge a transaction fee?";
+
+/**
+ * The FAQ for the homepage and /pricing.
+ *
+ * "Do your prices include GST?" follows the transaction-fee question only
+ * while GST is charged or a switch to prices that exclude GST is scheduled
+ * (`gstFaq`). With GST off, or `terms` null (the GST settings could not be
+ * read), there is no GST entry: nothing is claimed either way.
+ */
+export function pricingFaqs(terms: TaxTerms | null): PricingFaq[] {
+  const gst = terms ? gstFaq(terms) : null;
+  if (!gst) return [...FAQS];
+  const after = FAQS.findIndex((faq) => faq.q === GST_FAQ_FOLLOWS) + 1;
+  return [
+    ...FAQS.slice(0, after),
+    { q: gst.question, a: gst.answer },
+    ...FAQS.slice(after),
+  ];
+}

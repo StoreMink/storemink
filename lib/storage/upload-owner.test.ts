@@ -39,7 +39,18 @@ describe("resolveUploadOwner", () => {
 
     await expect(
       resolveUploadOwner({ id: "user-1", email: "owner@example.com" }),
-    ).resolves.toEqual({ kind: "store", storeId: "store-1" });
+    ).resolves.toEqual({ kind: "store", storeId: "store-1", staff: true });
+  });
+
+  it("marks a shopper of the store as not staff", async () => {
+    state.db = makeDbMock({
+      // admin, customer, POS staff, platform operator
+      selectQueue: [[], [{ id: "shopper-1" }], [], []],
+    }).db;
+
+    await expect(
+      resolveUploadOwner({ id: "shopper-1", email: "shopper@example.com" }),
+    ).resolves.toEqual({ kind: "store", storeId: "store-1", staff: false });
   });
 
   it("rejects a signed-in user with no relationship to the host store", async () => {

@@ -195,6 +195,25 @@ describe("transcribeMinkRecording", () => {
       MinkVoiceCaptureError,
     );
   });
+
+  it("posts to the dashboard route unless it is given another", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: "hi" }),
+    });
+    await transcribeMinkRecording(wav());
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/mink/voice");
+
+    fetchMock.mockClear();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: "hi" }),
+    });
+    await expect(
+      transcribeMinkRecording(wav(), undefined, undefined, "/api/help/voice"),
+    ).resolves.toBe("hi");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/help/voice");
+  });
 });
 
 /** An open microphone that records nothing until a test hands it a clip. */

@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, Suspense } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useCallback,
+  Suspense,
+} from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
@@ -9,6 +16,11 @@ import { navIcons, type NavIconKey } from "./nav-icons";
 import { useMobileNav } from "./dashboard-mobile-nav";
 import { LogsRail } from "./logs/logs-rail";
 import type { LogType } from "./logs/log-types";
+import {
+  STORE_NOTICES_HREF,
+  unreadBadge,
+  useUnreadCounts,
+} from "./components/unread-counts-context";
 
 type Child = {
   label: string;
@@ -70,8 +82,46 @@ export function resolveActiveSection<
   );
 }
 
+/**
+ * The nav with the unread notices from StoreMink on Settings, Notices from
+ * StoreMink (takedown design 7.1): the count the bell already polls, never a
+ * read of its own. The badge sits on the child and, as foldNestedSections
+ * does for a nested section, on its parent when the parent has none of its
+ * own, or the root nav would hide it until Settings is opened. It is a count
+ * that asks for action and goes away once the notice is opened (CODEBASE §5).
+ *
+ * Pure: returns the same groups when there is nothing to show, and copies
+ * only the item it changes, never the shared nav.
+ */
+export function withStoreNoticesBadge(
+  groups: Group[],
+  storemink: number,
+): Group[] {
+  const badge = unreadBadge(storemink);
+  if (!badge) return groups;
+  return groups.map((group) => {
+    let changed = false;
+    const items = group.items.map((item) => {
+      if (!item.children?.some((c) => c.href === STORE_NOTICES_HREF)) {
+        return item;
+      }
+      changed = true;
+      return {
+        ...item,
+        ...(item.badge ? {} : { badge, badgeTone: "amber" as const }),
+        children: item.children.map((c) =>
+          c.href === STORE_NOTICES_HREF
+            ? { ...c, badge, badgeTone: "amber" as const }
+            : c,
+        ),
+      };
+    });
+    return changed ? { ...group, items } : group;
+  });
+}
+
 export function DashboardSidebar({
-  groups,
+  groups: navGroups,
   logTypes,
   logsBasePath = "/dashboard/logs",
 }: {
@@ -87,6 +137,11 @@ export function DashboardSidebar({
 }) {
   const pathname = usePathname();
   const { open, setOpen } = useMobileNav();
+  const { storemink } = useUnreadCounts();
+  const groups = useMemo(
+    () => (navGroups ? withStoreNoticesBadge(navGroups, storemink) : navGroups),
+    [navGroups, storemink],
+  );
   const allItems = groups ? groups.flatMap((g) => g.items) : [];
 
   const [sidebarWidth, setSidebarWidth] = useState(240);

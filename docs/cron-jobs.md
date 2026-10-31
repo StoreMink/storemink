@@ -26,7 +26,7 @@ each job is a landmine the moment it does:
 
 | Job                       | What its absence would have cost under real traffic                                                                                                                                                                                                                                                                                      |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `send-emails`             | Coupon email campaigns never send; Phase 5E scheduled campaigns also miss their reviewed delivery time.                                                                                                                                                                                                                                  |
+| `send-emails`             | Coupon email campaigns never send; Phase 5E scheduled campaigns also miss their reviewed delivery time. Since the takedown release it also runs the takedown follow-ups, so without it no complaint deadline alert goes out and no blocked file is copied, replaced or put back.                                                         |
 | `plan-expiry`             | A lapsed timed plan keeps its paid features **forever** — the durable half of the plan gate (`lib/plans.ts` `effectivePlan` covers reads only).                                                                                                                                                                                          |
 | `expire-pending-payments` | Unpaid Razorpay orders are never reaped, so their stock reservations and coupon uses are held **permanently** — and it also carries the PICKUP sweeps (expired collections never lapse, no collection reminder is sent) and the WhatsApp COD follow-up (no reminder to a customer who has not confirmed, and no automatic cancellation). |
 | `domain-reconcile`        | A merchant's custom domain **never goes live** unless they happen to keep the settings tab open for the whole of Google's issuance window.                                                                                                                                                                                               |
@@ -631,6 +631,28 @@ service account first; see `docs/seo-indexing.md`.
 > next minute heartbeat drains them. Future campaign rows are excluded from the
 > worker's remaining count, so this cadence does not self-chain while waiting.
 
+> **★ `send-emails` also runs the takedown follow-ups, last**
+> (`runModerationFollowUps`, `lib/moderation/follow-ups.ts`; CODEBASE.md §5
+> convention 45). Each minute, in order: complaint deadline alerts (the bell
+> and email to every operator, and the WARNING line
+> `moderation: complaint due` with `ref`, `kind`, `stage`, `phase`, `dueAt`),
+> archive copies, file replacements (no sooner than 35 seconds after a block,
+> and only once the archive holds the file), restores after a lift, and store
+> notice emails not yet sent (retried for 24 hours after the block). Every row
+> is claimed first (`for update skip locked` plus a claim time, 2 minutes), so
+> two overlapping calls never do the same work, and every settle is fenced on
+> its claim. A run is bounded: 20 rows a step, 50 archive files a run, and a
+> deadline of `min(start + 40 s, routeStart + 52 s)`, inside the route's 60 s.
+> The follow-ups run even when an email queue throws (the error is re-thrown
+> after them, so the scheduler still sees the failure), and the route answers
+> their result as `moderation` (null when the run itself failed). A step that
+> throws logs ERROR `moderation: follow-up failed` with its `step`; every run
+> ends with INFO `moderation: follow-ups ran` and its counts, in a `finally`.
+> Alerts 25 to 28 of [`monitoring.md`](monitoring.md) watch those lines and
+> this job's own attempts. Dev and staging have no scheduler, so there the
+> follow-ups run at the end of each console action instead (a replacement
+> then happens at the next action).
+
 > **⚠ Timezone is `Etc/UTC`, not IST.** The cron expressions are written in
 > UTC. Re-creating them in `Asia/Kolkata` would shift every job by 5h30m.
 
@@ -806,19 +828,125 @@ gcloud scheduler jobs create http storemink-billing \
 unset CRON_SECRET_VALUE
 ```
 
-Runs the three renewal passes **in one request, in order** — collect at T−4d,
-evaluate at the cycle turn, downgrade after the 48-hour grace. Splitting them
-across jobs would leave each pass a full interval behind the one before it, so a
-merchant's buffer would quietly become 48 hours plus two intervals.
+Runs seven steps **in one request, in order**: promote a GST change that has
+started (`promoteDueTaxChange`), collect at T-4d, reconcile (payments we never
+heard about), repair captured drafts (`issueCapturedDrafts`), evaluate at the
+cycle turn, downgrade after the 48-hour grace, and last the **refund pass**
+(`processBillingRefunds`, `lib/billing/refunds.ts`). Splitting them across jobs
+would leave each pass a full interval behind the one before it, so a merchant's
+buffer would quietly become 48 hours plus two intervals. The refund pass runs last with the same
+clock, so a plan that ends in this run (a cancellation reaching its end closes
+its unreached invoices) has its refund owed, and sent when automatic sending is
+on, in this run too. No new Scheduler job: the refund pass rides this one.
+
+**The promote step comes first** (`lib/billing/platform-settings.ts`, the GST
+release). When a scheduled GST change has started, one UPDATE copies it into
+the in-force columns of `platform_billing_settings` (recorded as
+`system: scheduled GST change`) and clears the schedule; only then is the
+public pricing pages' cached copy refreshed (`bustPlatformTax`, tag
+`platform-tax`). Nothing below depends on it, because every invoice reads the
+terms at its own instant (`termsAt` applies a started change by time); it keeps
+the in-force columns true for anything that reads them directly. A failure
+logs `billing.cron.promote_tax_change` (ERROR), counts as an error (503, so
+Scheduler retries) and the other passes still run.
+
+**The reconcile pass also finishes closed-tab purchases** (RC-F1b). After it
+settles stranded attempts, the same pass looks for payments captured on a
+**draft** subscription or add-on invoice: a merchant paid for a first plan, a
+plan change or extra locations and closed the tab before the browser confirmed
+it. It takes only attempts older than **15 minutes** (`STALE_AFTER_MINUTES`, so
+a browser confirm still has time to win), of stores that still exist and not
+already held by a person (an open or in-review reconciliation item about the
+attempt, or a `purchase_refused:` or `purchase_unapplied:` item in any status),
+at most **50 a pass**; the next run takes the rest, and a full recovery batch
+does not set `more`. Each one is asked of the gateway again. A purchase that
+still applies is finished: the invoice is issued and paid, one receipt goes
+out, the plan or the locations are applied, and an enrolment also gets its
+welcome email. One that no longer applies, or whose captured amount or currency
+differs from the attempt's, is filed for a person in the reconciliation queue,
+and nothing is refunded or applied. It runs before the evaluate and downgrade
+passes, like the rest of reconciliation, so a merchant whose payment it finds
+is never downgraded in the same run, and like the rest of reconciliation it
+does nothing without the platform's Razorpay keys.
+
+Its log lines: `billing.reconcile.purchase_completed` (INFO, one per purchase
+finished, with the attempt, store, invoice and outcome) and
+`billing.purchase_completed` (INFO, from the completion itself);
+`billing.recovery.filed` (WARNING, a purchase filed for a person); and the
+errors `billing.recovery.scan` (the list of captured drafts could not be read),
+`billing.recovery.gateway_read` and `billing.recovery.order_read` (the gateway
+or the order could not be read, so nothing changed and the next pass looks
+again) and `billing.reconcile.purchase_one` (one purchase threw; the rest go
+on).
+
+**The repair pass runs after reconcile and before evaluate** (`issueCapturedDrafts`,
+`lib/billing/reconcile.ts`, the GST release). It finds invoices that are still
+unnumbered drafts behind money already taken: a subscription or add-on draft
+whose attempt was captured more than **60 minutes** ago
+(`CAPTURED_DRAFT_WAIT_MINUTES`, so the browser confirm and the reconcile
+completion get the first chance), or a Mink credit pack whose purchase is paid.
+At most **100 of each a pass** (`CAPTURED_DRAFT_BATCH`), oldest first; a full
+batch sets `repair.more`. A subscription or add-on draft goes to its
+purchase's own completion first (the same one reconcile uses); when the
+completion declines, the pass issues the invoice alone at the capture time,
+settles the payment (no receipt: a person checks this purchase) and files one
+`captured_draft:<invoice>` reconciliation item for a person, unless a person
+already holds that payment. A credit pack's invoice is issued as paid. It runs
+before evaluate so a payment repaired here counts as paid at the cycle turn.
+A draft it could not issue is asked again next run and is not an error; it
+logs `billing.captured_draft_unissued`, a WARNING for its first six hours and
+an ERROR after (alert 24, [monitoring](monitoring.md)). Its other lines:
+`billing.captured_draft.issued` and `billing.captured_draft.completed` (INFO),
+and the errors `billing.captured_draft.scan`, `billing.captured_draft.one`,
+`billing.captured_draft.payment_read` and `billing.captured_draft.item_read`.
+`deleteStore` runs the same pass for one store first, issuing only and never
+completing.
+
+The refund pass repairs leftovers older code made, owes one refund per captured
+payment on a closed (`void` or `uncollectible`) subscription invoice, sends the
+owed ones (automatic ones only while `platform_billing_settings.auto_refunds` is
+on, which it ships off; an operator's always), settles sent ones by the key it
+planted, issues credit notes and emails the merchant once per finished refund.
+At most 50 rows per step per run.
+
+**Its daily waiting check** runs only in the run whose India-time hour is 9
+(`WAITING_CHECK_IST_HOUR`). With this job at `20 * * * *` UTC that is exactly
+one run a day, **04:20 UTC (09:50 IST)**. It logs `billing.refund_waiting`
+(WARNING, with `owed`, `pending`, `failed` and `oldestAt`) when a refund has
+waited more than a day, which the daily alert reads ([monitoring](monitoring.md)).
+Refunds held only because automatic sending is off are counted on the console's
+banner, not here. ⚠ A Scheduler retry of a 503 in that hour, or a run by hand,
+logs it again: the alert opens once and must not page per line. The 09:00 IST
+hour is 03:30 to 04:29 UTC, so whatever minute this job runs at, exactly one run
+a day falls in it; moving the minute only moves the check.
 
 **Its status contract, which differs from the others in one important way:**
 
-| Situation                             | Status  | Why                                                                                                                            |
-| ------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| A merchant's payment was **declined** | **200** | Not an outage. That merchant has not paid, which the grace window already handles; a 5xx would make Scheduler retry a decline. |
-| A merchant was **downgraded**         | **200** | The system working as designed.                                                                                                |
-| Collection is **unconfigured**        | **200** | See below — it is a known state, not a failure.                                                                                |
-| A pass threw, or a store errored      | **503** | Money was not collected or a plan was not applied. Worth retrying.                                                             |
+| Situation                              | Status  | Why                                                                                                                            |
+| -------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| A merchant's payment was **declined**  | **200** | Not an outage. That merchant has not paid, which the grace window already handles; a 5xx would make Scheduler retry a decline. |
+| A merchant was **downgraded**          | **200** | The system working as designed.                                                                                                |
+| Collection is **unconfigured**         | **200** | See below — it is a known state, not a failure.                                                                                |
+| A refund **failed** or is **waiting**  | **200** | A person's job: the pass never retries a refused refund, and the refund alerts fire. Not counted in `errors`.                  |
+| A pass threw, or a store errored       | **503** | Money was not collected or a plan was not applied. Worth retrying.                                                             |
+| A started GST change was not promoted  | **503** | `promote.errors`; the other passes still ran. Worth retrying.                                                                  |
+| The repair pass hit an error           | **503** | Counted in `repair.errors`. A draft it could not issue (`repair.unissued`) is NOT an error: it is logged and asked again.      |
+| A renewal could not read the GST terms | **200** | Counted in `collect.pendingReconcile` and logged `billing.renewal_tax_snapshot` (alert 23); the next run tries again.          |
+| The refund pass hit a database error   | **503** | Counted in `refunds.errors`, a failed settings read included (fail closed: nothing is sent). Worth retrying.                   |
+
+**The response body** carries each pass's summary: `collectionSkipped`,
+`promote` (`promoted`, the GST change made current this run or null, and
+`errors`), `collect`, `reconcile` (with `completed`, closed-tab purchases
+finished this run; a recovery scan that could not be read counts in
+`reconcile.errors`, so the run answers 503), `repair` (`considered`, `issued`,
+`completed`, `filed`, `deferred`, `unissued`, `errors`, `more`), `evaluate`, `downgrade` (with `ended`, cancelling plans
+ended at grace end, and `advancedAfterGrace`, paid renewals the safety net
+advanced) and `refunds` (`repairedInvoices`, `flaggedForPerson`, `detected`,
+`sent`, `processed`, `failed`, `stillPending`, `creditNotes`, `notified`,
+`waiting`, `errors`, `more`), plus `ok` and `more`. **`more`** is true when any
+pass filled its batch: `collect.considered`, the evaluate outcomes, the
+downgrade outcomes (`downgraded + ended + advancedAfterGrace`) at 50, or
+`refunds.more` or `repair.more`. A backlog draining is 200, not an error.
 
 ⚠ **`collectionSkipped` in the response body means AUTOPAY is off, not that
 billing is idle.** While the Razorpay subsequent-charge endpoint is unverified
@@ -842,18 +970,82 @@ because there was nothing to list. The job reported green throughout.
 Three tables grew without bound because their retention policy was written down
 and never wired to anything:
 
-| Table                            | Window                   | Why                                                                                                                                                                                                                                                                                                                                                                                         |
-| -------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `notifications`                  | 90 days                  | A read inbox row is history.                                                                                                                                                                                                                                                                                                                                                                |
-| `activity_events`                | 365 days                 | The audit trail, so it gets the longest life.                                                                                                                                                                                                                                                                                                                                               |
-| `email_logs`                     | 90 days                  | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.                                                                                                                                                                                                                                                                                        |
-| `store_search_metrics`           | 488 days                 | Matches the source product's roughly 16-month Search Console history window.                                                                                                                                                                                                                                                                                                                |
-| `theme_studio_image_checkpoints` | 30 days after settlement | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain.                                                                                                                                                                                                                                                                                   |
-| `whatsapp_logs`                  | 90 days                  | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.                                                                                                                                                                                                                                                                                        |
-| `whatsapp_inbound_events`        | 30 days                  | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows.                                                                                                                                                                                                                                                                                   |
-| `ai_quota_refunds`               | 90 days                  | One row per Generate with AI take that was given back, kept so a second refund of the same take gives nothing; a take is refunded only inside its own request.                                                                                                                                                                                                                              |
-| `mink_refine_requests`           | 30 days                  | One row per Refine with Mink AI request: the browser's stop and the charge claim; it decides only while its refine runs.                                                                                                                                                                                                                                                                    |
-| `mink_conversations`             | 90 days after last use   | A Mink AI chat is kept 90 days after the merchant last sent a message in it or opened it, then retired: deleted, or reduced when it holds the record of an approved or published change (its words go, the record stays while the store exists). A chat is retired only when both its expiry and its last message are 90 days old; never one with a reply running or a redesign being made. |
+| Table                            | Window                            | Why                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `notifications`                  | 90 days                           | A read inbox row is history.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `activity_events`                | 365 days                          | The audit trail, so it gets the longest life.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `email_logs`                     | 90 days                           | Holds rendered message BODIES, so it is much the heaviest of the three and gets the shortest window.                                                                                                                                                                                                                                                                                                                           |
+| `store_search_metrics`           | 488 days                          | Matches the source product's roughly 16-month Search Console history window.                                                                                                                                                                                                                                                                                                                                                   |
+| `theme_studio_image_checkpoints` | 30 days after settlement          | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain.                                                                                                                                                                                                                                                                                                                      |
+| `whatsapp_logs`                  | 90 days                           | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.                                                                                                                                                                                                                                                                                                                           |
+| `whatsapp_inbound_events`        | 30 days                           | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows.                                                                                                                                                                                                                                                                                                                      |
+| `ai_quota_refunds`               | 90 days                           | One row per Generate with AI take that was given back, kept so a second refund of the same take gives nothing; a take is refunded only inside its own request.                                                                                                                                                                                                                                                                 |
+| `mink_refine_requests`           | 30 days                           | One row per Refine with Mink AI request: the browser's stop and the charge claim; it decides only while its refine runs.                                                                                                                                                                                                                                                                                                       |
+| `help_assistant_feedback`        | 365 days                          | A Help Centre visitor's thumbs up or down on a Mink AI answer, with the question, the answer and its guides, so operators can fix the guides behind bad answers. Nothing in it identifies the visitor.                                                                                                                                                                                                                         |
+| `mink_conversations`             | 90 days after last use            | A Mink AI chat is kept 90 days after the merchant last sent a message in it or opened it, then retired: deleted, or reduced when it holds the record of an approved or published change (its words go, the record stays while the store exists). A chat is retired only when both its expiry and its last message are 90 days old; never one with a reply running or a redesign being made.                                    |
+| `mink_attachments`               | with its chat; never sent: 2 days | A picture attached to a Mink AI chat (private bucket) is deleted with its chat: the merchant's delete, or the chat's 90 days after last use. One the merchant attached and never sent is deleted 2 days after it was attached. Batch 50, after `mink_conversations`. A store under a legal hold waits: its pictures are marked but not deleted until the hold is released, then go on the next run.                            |
+| `content_block_archives`         | 180 days, by `keep_until`         | IT Rules 3(1)(g): what StoreMink removes, with its records, is kept 180 days, or longer when a court or an authority asks (a later date or a legal hold). The archive's files are deleted from the private bucket and the row emptied, keeping its fingerprint. Never a held archive, one of a held store, one whose block is restoring a file, one still being copied, or a file of another environment's database. Batch 20. |
+| `moderation_events`              | 3 years (1095 days)               | The record of every takedown action (decision D3), through `moderation_prune_events`, never while its store is held or its archive is kept.                                                                                                                                                                                                                                                                                    |
+| `grievance_complaints`           | 3 years after it was resolved     | A complainant's name, contact, reference, addresses and words, and the outcome note, are erased (not deleted); the dates, kind, outcome and blocks stay. Never a held store's, a hold's complaint or one whose block's archive is on legal hold. Batch 500.                                                                                                                                                                    |
+| `content_blocks`                 | 3 years after the lift            | A lifted block's item name, address, legal basis, message and lift note, and its conversation's words and senders, are erased ("Erased"); what was blocked, when, why and by whom stays. Never a held store's, a hold's complaint's, or one whose archive is held or not yet purged. Batch 200.                                                                                                                                |
+| `mink_attachments_legacy`        | temporary, last entry             | Not a window: the job that sorts pictures attached before they were stored privately (public `media_assets` rows with source `mink_attachment`). One the store still uses is kept as an ordinary upload, one only a live chat uses moves to the private bucket with that chat, one nothing uses is deleted. Batch 25. Removed once production has nothing left for a week (owner step P5).                                     |
+
+For `mink_attachments`, `deleted` counts the rows each batch CLAIMED: deleted,
+or kept for a retry because their object would not delete. Each batch first
+marks pictures never sent for 2 days, pictures whose chat row was deleted
+without the mark (at once, no 2-day wait) and pictures whose chat is no longer
+active, then claims up to a batch of marked rows by writing a 15-minute lease
+into `purge_failed_at`, so a claimed row is out of every other purge (a retried
+sweep, or the purge that runs after a merchant deletes a chat) for exactly 15
+minutes, and a run that dies after claiming leaves its rows for a purge 15
+minutes later. The log line `mink.attachments: purge batch` gives marked,
+claimed, deleted, failed and foreign per batch (and `storeId` for the purge
+after a merchant's delete, which runs up to five batches of 20 within 10
+seconds and never fails the request). A picture whose object could not be
+deleted keeps its row, is stamped `purge_failed_at` and is tried again after 7
+days. `foreign` counts rows whose path names another database: the row goes and
+the object is left for the database that wrote it.
+
+For `mink_attachments_legacy`, `deleted` counts pictures handled (kept, moved,
+deleted, missing or failed), and the line `mink.attachments: legacy batch`
+gives kept, moved, deleted, missing, failed, left, givenUp and held. It runs
+only against `storemink` and `storemink_staging` with the private bucket set;
+anywhere else it logs one warning (`mink.attachments: legacy move skipped`)
+and does nothing. It runs last and shares the run's 240-second budget: it
+starts no picture within 20 seconds of the deadline, stops its batch and
+reports the table as `budget` (so `incomplete: true`, a 200), and with less
+than that left when its turn comes it reads nothing and writes no batch line;
+the rest waits for the next night. Per picture it may also log
+`legacy picture waits` (tried the next night: a chat with a reply running,
+which does not count toward giving up, a chat locked or no longer live, or a
+public object that would not delete), `legacy picture failed`,
+`legacy picture changed underneath` (another run or a delete took the row
+first), `legacy failure not recorded` (the picture is left out for the rest of
+the run) and, for a private copy it could not judge,
+`legacy private copy kept, row check failed` or
+`legacy leftover check failed`. `held` counts pictures of a store under a
+legal hold, which the job never claims while the hold lasts (they go on the
+first run after it is released). A picture given up on before its store was
+held counts in both `givenUp` and `held`, so while such a store is held the sum
+can read more than `left`. Owner step P5 reads the batch line in
+production: once `left` equals `givenUp + held` for a week, delete
+`lib/mink/attachments-legacy.ts`, its unit and local tests, the retention entry
+and the `mink_attachment_legacy_log` table (a later contract migration). Every
+outcome is recorded in that table with its public path, so a mistaken deletion
+can be restored from the bucket's soft delete (7 days, owner step P9).
+
+The four takedown entries run in this order, before the legacy job: archives
+first (a purged archive is what lets a lifted block's words go), then the
+record, then complainants' details, then lifted blocks; each skips anything a
+hold covers, so a held store keeps all four. For `content_block_archives`,
+`deleted` counts archives HANDLED (purged, skipped, failed or busy), so a batch
+with a skip still reads as full; it reads the sweep's batch context (it stops 5
+seconds before the deadline and an archive it sets aside stays aside for the
+run), and `keep_until` decides what is due, not the sweep's floor. A purge
+first empties the row in its transaction, then deletes the objects; a skip or a
+failed delete rolls the row back. A path naming another environment's database
+is never deleted and is recorded as `archive_purge_skipped`. Erasing lifted
+blocks logs `moderation.retention: blocks erased`.
 
 For `mink_conversations`, `deleted` in the response counts chats retired
 (deleted or reduced), and the log line `mink.retention: batch` gives healed,

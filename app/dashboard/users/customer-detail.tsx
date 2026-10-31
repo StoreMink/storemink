@@ -7,6 +7,7 @@ import { CalendarDays, Copy, Mail, Phone, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { deleteCustomer, updateCustomer } from "@/app/actions/customer-actions";
+import { ITEM } from "@/lib/moderation/copy";
 import {
   formatDate,
   formatDateTime,
@@ -16,9 +17,12 @@ import {
 export function CustomerDetail({
   customer,
   canManage,
+  canSeeNotices = false,
 }: {
   customer: CustomerDetailType;
   canManage: boolean;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -178,6 +182,23 @@ export function CustomerDetail({
                       </span>
                     </div>
                     {review.comment && <p>{review.comment}</p>}
+                    {review.storemink_block_id ? (
+                      // StoreMink removed this review and told the store
+                      // (takedown design 7.3); shoppers no longer see it.
+                      <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="dash-badge dash-badge-storemink">
+                          {ITEM.removed}
+                        </span>
+                        {canSeeNotices ? (
+                          <Link
+                            href={`/dashboard/settings/notices/${review.storemink_block_id}`}
+                            className="dash-btn dash-btn-ghost dash-btn-sm pointer-coarse:min-h-11"
+                          >
+                            {ITEM.seeWhy}
+                          </Link>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <small>{formatDate(review.created_at)}</small>
                   </li>
                 ))}

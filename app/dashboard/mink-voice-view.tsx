@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { Mic, MicOff, Square, X } from "lucide-react";
+import type { MinkFaceState } from "@/components/mink/mink-face";
 import { MinkMark } from "./mink-mark";
 import { MinkWaveform } from "./mink-waveform";
 import type { MinkVoiceMode } from "./mink-voice-mode";
@@ -28,6 +29,25 @@ export function minkVoiceStatus(
       return "Listening…";
     default:
       return "";
+  }
+}
+
+/** The Mink face's expression for what voice chat is doing. */
+export function minkVoiceFace(
+  voice: Pick<MinkVoiceMode, "state" | "mic"> &
+    Partial<Pick<MinkVoiceMode, "muted">>,
+): MinkFaceState {
+  switch (voice.state) {
+    case "speaking":
+      return "talking";
+    case "waiting":
+    case "sending":
+      return "thinking";
+    case "listening":
+      if (voice.muted || voice.mic === "starting") return "default";
+      return voice.mic === "transcribing" ? "thinking" : "listening";
+    default:
+      return "default";
   }
 }
 
@@ -111,7 +131,7 @@ export function MinkVoiceBar({
         <div className="rounded-3xl border border-[#e5e5e5] bg-white p-3 shadow-sm">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <div className="flex min-w-0 flex-1 basis-32 items-center gap-2">
-              <MinkMark size="sm" />
+              <MinkMark size="sm" state={minkVoiceFace(voice)} animated />
               <div className="min-w-0 flex-1">
                 <p
                   role="status"

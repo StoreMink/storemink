@@ -23,6 +23,11 @@ export type CustomerReview = {
   created_at: string;
   product_id: string;
   product_name: string | null;
+  /**
+   * The block id when StoreMink removed this review and told the store
+   * (takedown design 7.3), else null or absent.
+   */
+  storemink_block_id?: string | null;
 };
 
 export type CustomerBlog = {

@@ -22,6 +22,7 @@ import {
   readMinkStorefrontPageContext,
   readMinkStorefrontPages,
   readMinkStorefrontSectionContext,
+  withStoreMinkBlocks,
 } from "../storefront-context-read";
 import type { MinkActorContext, MinkArtifact } from "../types";
 import {
@@ -163,35 +164,43 @@ const listBlogs: MinkTool = {
     const dashboardPath = query
       ? `/dashboard/blogs?q=${encodeURIComponent(query)}`
       : "/dashboard/blogs";
-    return {
-      query: query || null,
-      status,
-      count: visible.length,
-      truncated: rows.length > limit,
-      blogs: visible.map((blog) => ({
-        id: blog.id,
-        title: boundedOutputText(blog.title, 200),
-        slug: boundedOutputText(blog.slug, 200),
-        excerpt: boundedOutputText(blog.excerpt, 500),
-        status: boundedOutputText(blog.status, 32),
-        featured: blog.featured,
-        categories: boundedOutputList(blog.categories, 20, 100),
-        tags: boundedOutputList(blog.tags, 20, 100),
-        coverImageUrl:
-          typeof blog.coverImageUrl === "string" &&
-          blog.coverImageUrl.length <= 2_048
-            ? blog.coverImageUrl
-            : null,
-        publishedAt: blog.publishedAt,
-        createdAt: blog.createdAt,
-        updatedAt: blog.updatedAt,
+    // Takedown: a post StoreMink blocked and told the store about is marked;
+    // a blocked cover reaches Mink only as the placeholder.
+    return withStoreMinkBlocks(
+      actor.storeId,
+      "blog_post",
+      visible.map((blog) => blog.id),
+      (markFor) => ({
+        query: query || null,
+        status,
+        count: visible.length,
+        truncated: rows.length > limit,
+        blogs: visible.map((blog) => ({
+          id: blog.id,
+          title: boundedOutputText(blog.title, 200),
+          slug: boundedOutputText(blog.slug, 200),
+          excerpt: boundedOutputText(blog.excerpt, 500),
+          status: boundedOutputText(blog.status, 32),
+          featured: blog.featured,
+          categories: boundedOutputList(blog.categories, 20, 100),
+          tags: boundedOutputList(blog.tags, 20, 100),
+          coverImageUrl:
+            typeof blog.coverImageUrl === "string" &&
+            blog.coverImageUrl.length <= 2_048
+              ? blog.coverImageUrl
+              : null,
+          publishedAt: blog.publishedAt,
+          createdAt: blog.createdAt,
+          updatedAt: blog.updatedAt,
+          dashboardPath,
+          ...markFor(blog.id, blog.title),
+        })),
+        contentTrust: "untrusted_store_data" as const,
+        scope: "current_store" as const,
+        dataAsOf: new Date().toISOString(),
         dashboardPath,
-      })),
-      contentTrust: "untrusted_store_data" as const,
-      scope: "current_store" as const,
-      dataAsOf: new Date().toISOString(),
-      dashboardPath,
-    };
+      }),
+    );
   },
 };
 
@@ -517,18 +526,29 @@ const getCatalogSummary: MinkTool = {
       includeInventory,
       limit: readLimit(args.limit, 20),
     });
-    return {
-      ...summary,
-      inventoryAccess,
-      inventoryVisible: includeInventory,
-      inventoryView: includeInventory ? "summary" : "hidden",
-      locationScope,
-      dataAsOf,
-      inventoryDashboardPath: selectedId
-        ? `/dashboard/inventory?location=${encodeURIComponent(selectedId)}`
-        : "/dashboard/inventory",
-      dashboardPath: "/dashboard/products",
-    };
+    // Takedown: a listed product StoreMink blocked and told the store about
+    // is marked (its variants too); the read's own scope has closed.
+    return withStoreMinkBlocks(
+      actor.storeId,
+      "product",
+      summary.items.map((item) => item.productId),
+      (markFor) => ({
+        ...summary,
+        items: summary.items.map((item) => ({
+          ...item,
+          ...markFor(item.productId, item.productName),
+        })),
+        inventoryAccess,
+        inventoryVisible: includeInventory,
+        inventoryView: includeInventory ? "summary" : "hidden",
+        locationScope,
+        dataAsOf,
+        inventoryDashboardPath: selectedId
+          ? `/dashboard/inventory?location=${encodeURIComponent(selectedId)}`
+          : "/dashboard/inventory",
+        dashboardPath: "/dashboard/products",
+      }),
+    );
   },
 };
 
@@ -588,17 +608,25 @@ const searchProducts: MinkTool = {
         .orderBy(asc(products.name))
         .limit(limit),
     );
-    return {
-      query,
-      count: rows.length,
-      products: rows.map((product) => ({
-        ...product,
-        images: productGallery(product.imageUrl, product.images),
-        dashboardPath: `/dashboard/products/${product.id}`,
-      })),
-      dataAsOf: new Date().toISOString(),
-      dashboardPath: `/dashboard/products?q=${encodeURIComponent(query)}`,
-    };
+    // Takedown: a product StoreMink blocked and told the store about is
+    // marked; a blocked photo reaches Mink only as the placeholder.
+    return withStoreMinkBlocks(
+      actor.storeId,
+      "product",
+      rows.map((product) => product.id),
+      (markFor) => ({
+        query,
+        count: rows.length,
+        products: rows.map((product) => ({
+          ...product,
+          images: productGallery(product.imageUrl, product.images),
+          dashboardPath: `/dashboard/products/${product.id}`,
+          ...markFor(product.id, product.name),
+        })),
+        dataAsOf: new Date().toISOString(),
+        dashboardPath: `/dashboard/products?q=${encodeURIComponent(query)}`,
+      }),
+    );
   },
 };
 
@@ -657,16 +685,24 @@ const searchStorefrontCategories: MinkTool = {
         .orderBy(asc(categories.name))
         .limit(limit),
     );
-    return {
-      query,
-      count: rows.length,
-      categories: rows.map((category) => ({
-        ...category,
+    // Takedown: a collection StoreMink blocked and told the store about is
+    // marked; a blocked image reaches Mink only as the placeholder.
+    return withStoreMinkBlocks(
+      actor.storeId,
+      "collection",
+      rows.map((category) => category.id),
+      (markFor) => ({
+        query,
+        count: rows.length,
+        categories: rows.map((category) => ({
+          ...category,
+          dashboardPath: "/dashboard/categories",
+          ...markFor(category.id, category.name),
+        })),
+        dataAsOf: new Date().toISOString(),
         dashboardPath: "/dashboard/categories",
-      })),
-      dataAsOf: new Date().toISOString(),
-      dashboardPath: "/dashboard/categories",
-    };
+      }),
+    );
   },
 };
 
@@ -710,23 +746,29 @@ const getCurrentProduct: MinkTool = {
         )
         .limit(1),
     );
-    return {
-      query: "Current dashboard product",
-      count: rows.length,
-      products: rows.map((product) => ({
-        ...product,
-        images: productGallery(product.imageUrl, product.images),
-        ...(!actor.draftingEnabled
-          ? {
-              description: undefined,
-              seoTitle: undefined,
-              seoDescription: undefined,
-            }
-          : {}),
-        dashboardPath: `/dashboard/products/${product.id}`,
-      })),
-      dataAsOf: new Date().toISOString(),
-    };
+    return withStoreMinkBlocks(
+      actor.storeId,
+      "product",
+      rows.map((product) => product.id),
+      (markFor) => ({
+        query: "Current dashboard product",
+        count: rows.length,
+        products: rows.map((product) => ({
+          ...product,
+          images: productGallery(product.imageUrl, product.images),
+          ...(!actor.draftingEnabled
+            ? {
+                description: undefined,
+                seoTitle: undefined,
+                seoDescription: undefined,
+              }
+            : {}),
+          dashboardPath: `/dashboard/products/${product.id}`,
+          ...markFor(product.id, product.name),
+        })),
+        dataAsOf: new Date().toISOString(),
+      }),
+    );
   },
 };
 
@@ -920,21 +962,29 @@ const listLowStock: MinkTool = {
       includeOutOfStock,
       limit,
     });
-    return {
-      locationScope: location.label,
-      includeOutOfStock,
-      count: result.items.length,
-      truncated: result.truncated,
-      defaultThreshold: actor.defaultLowStockThreshold,
-      items: result.items.map((item) => ({
-        ...item,
-        productDashboardPath: `/dashboard/products/${item.productId}`,
-      })),
-      dataAsOf: new Date().toISOString(),
-      inventoryDashboardPath: location.selectedId
-        ? `/dashboard/inventory?location=${encodeURIComponent(location.selectedId)}`
-        : "/dashboard/inventory",
-    };
+    // Takedown: a low-stock product StoreMink blocked and told the store
+    // about is marked; the read's own scope has closed.
+    return withStoreMinkBlocks(
+      actor.storeId,
+      "product",
+      result.items.map((item) => item.productId),
+      (markFor) => ({
+        locationScope: location.label,
+        includeOutOfStock,
+        count: result.items.length,
+        truncated: result.truncated,
+        defaultThreshold: actor.defaultLowStockThreshold,
+        items: result.items.map((item) => ({
+          ...item,
+          productDashboardPath: `/dashboard/products/${item.productId}`,
+          ...markFor(item.productId, item.productName),
+        })),
+        dataAsOf: new Date().toISOString(),
+        inventoryDashboardPath: location.selectedId
+          ? `/dashboard/inventory?location=${encodeURIComponent(location.selectedId)}`
+          : "/dashboard/inventory",
+      }),
+    );
   },
 };
 

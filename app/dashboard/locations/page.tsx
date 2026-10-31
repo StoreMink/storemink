@@ -29,6 +29,9 @@ export default async function LocationsPage() {
       initialLocations={locations}
       plan={plan}
       canManage={access.can("locations", "manage")}
+      // ★ Buying and releasing paid locations are billing actions, gated on
+      // the billing permission the Plans page uses (`ai`), not Locations.
+      canPay={access.can("ai", "manage")}
       locationsIncluded={state.locationsIncluded}
       billing={billing}
     />

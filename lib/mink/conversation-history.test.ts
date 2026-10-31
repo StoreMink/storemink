@@ -9,7 +9,7 @@ import { logError } from "@/lib/observability/logger";
 import { retireMinkConversation } from "./conversation-retire";
 import { MINK_CSV_MARKER } from "./csv-input";
 import { REVIEWED_DOCUMENT_MARKER } from "./document-input";
-import { SAVED_MEDIA_MARKER } from "./media-attachment";
+import { MINK_ATTACHMENT_MARKER, SAVED_MEDIA_MARKER } from "./media-attachment";
 import { closeStaleMinkRuns } from "./persistence";
 import { MAX_RUN_BUDGET_MS } from "./tools/registry";
 import type { MinkActorContext } from "./types";
@@ -401,6 +401,10 @@ describe("History search", () => {
     expect(text).not.toContain("content_json ->> 'text', 4000");
   });
 
+  /** The `split_part(..., '<words>', 1)` arm a search function strips a marker with. */
+  const strips = (marker: string) =>
+    `'${marker.trim().replace(/'/g, "''")}', 1)`;
+
   it("★ F16: migration 0249 strips exactly the attachment markers the thread turns into file cards", () => {
     const migration = readFileSync(
       "drizzle/migrations/sql/20261026_0249_mink_chat_history_search_index.sql",
@@ -415,11 +419,43 @@ describe("History search", () => {
       // marker's opening blank line (lib/mink/conversation-title.ts).
       const words = marker.trim();
       expect(words.length).toBeGreaterThan(40);
-      expect(migration).toContain(`'${words.replace(/'/g, "''")}', 1)`);
+      expect(migration).toContain(strips(marker));
     }
+    // ★ 0249 keeps its three: the composer's private marker came with 0262,
+    //   which replaces the function (next test); an applied migration never
+    //   changes.
+    expect(migration).not.toContain(strips(MINK_ATTACHMENT_MARKER));
+    expect(migration.match(/split_part\(/g)).toHaveLength(3);
     expect(migration).toContain(
       "USING gin (public.mink_message_search_vector(store_id, role, content_json))",
     );
+  });
+
+  it("★ F16: migration 0262 replaces the search function to strip the composer's private marker too, four markers in all", () => {
+    const migration = readFileSync(
+      "drizzle/migrations/sql/20261028_0262_mink_attachments_private.sql",
+      "utf8",
+    );
+    const body = migration.match(
+      /CREATE OR REPLACE FUNCTION public\.mink_message_search_text\(role text, content jsonb\)[\s\S]*?\$\$;/,
+    )?.[0];
+    expect(body, "0262 replaces public.mink_message_search_text").toBeTruthy();
+    for (const marker of [
+      SAVED_MEDIA_MARKER,
+      MINK_ATTACHMENT_MARKER,
+      REVIEWED_DOCUMENT_MARKER,
+      MINK_CSV_MARKER,
+    ]) {
+      expect(marker.trim().length).toBeGreaterThan(40);
+      expect(body).toContain(strips(marker));
+    }
+    expect(body!.match(/split_part\(/g)).toHaveLength(4);
+    // The same signature, attributes and 4,000-character cut as 0249's, so
+    // the GIN index built on it needs no rebuild.
+    expect(body).toContain("IMMUTABLE");
+    expect(body).toContain("PARALLEL SAFE");
+    expect(body).toContain("SET search_path = ''");
+    expect(body).toContain("end, 4000)");
   });
 
   it("refuses to build a search without a title pattern (ILIKE ALL of nothing is true)", () => {

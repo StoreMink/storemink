@@ -30,14 +30,22 @@ import {
   populatedCollections,
 } from "@/lib/storefront/collection-links";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
+import {
+  blockedMedia,
+  isBlockedAddressIn,
+  type BlockedMediaSet,
+} from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
 
-// NOTE: no `export const revalidate` here — it would be dead config. This route
+// NOTE: no `export const revalidate` here: it would be dead config. This route
 // awaits headers() (the sitemap is per-host, necessarily), which forces it fully
 // dynamic; live responses carry `cache-control: public, max-age=0,
-// must-revalidate` regardless of any revalidate value. Freshness is already
-// bounded by the tagged unstable_cache reads underneath (300s, plus
-// revalidateTag on every publish), so a publish reaches the sitemap within
-// ~5 minutes without one.
+// must-revalidate` regardless of any revalidate value. The storefront reads
+// underneath are memoized with React `cache()` for one request only (there is
+// no unstable_cache layer behind them any more), so every sitemap request reads
+// Postgres and a publish shows on the next fetch. Those readers also pass their
+// rows through the takedown page swap, so a blocked image arrives here as the
+// placeholder path; imageEntry() leaves that out.
 
 type ChangeFreq = MetadataRoute.Sitemap[number]["changeFrequency"];
 
@@ -58,12 +66,18 @@ const STATIC_PATHS: { path: string; priority: number; freq: ChangeFreq }[] = [
 // Image sitemaps need an absolute image URL. Uploaded media is already an
 // absolute URL (GCS, or an older external host); theme-bundled imagery is a
 // site-relative /public path, so resolve that against the store origin.
-// Anything else is skipped.
+// Anything else is skipped. A taken-down image is skipped too: the readers
+// hand it over as the placeholder path (`/moderation/image-unavailable.webp`),
+// which must never be listed as a product, collection or post image, and an
+// address that reached here unswapped is checked against the blocked set.
 function imageEntry(
   siteUrl: string,
   url: string | null | undefined,
+  blocked: BlockedMediaSet,
 ): { images?: string[] } {
   if (!url) return {};
+  if (url.includes(PLACEHOLDER_URL_PATH)) return {};
+  if (isBlockedAddressIn(blocked, url)) return {};
   if (/^https?:\/\//.test(url)) return { images: [url] };
   if (url.startsWith("/")) return { images: [`${siteUrl}${url}`] };
   return {};
@@ -218,12 +232,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // Dynamic product + blog detail pages, plus merchant-built custom pages, for
   // THIS store. A failed DB read must never break the sitemap, so each falls
   // back to empty.
-  const [products, blogs, customPages, activeCategories] = await Promise.all([
-    getPublishedProducts(storeId).catch(() => []),
-    getPublishedBlogCards(storeId).catch(() => []),
-    getPublishedPageSlugs(storeId).catch(() => []),
-    getActiveCategories(storeId).catch(() => []),
-  ]);
+  // blockedMedia() never throws (a failed load answers the last good set, or
+  // an empty one), so it cannot break the sitemap either.
+  const [products, blogs, customPages, activeCategories, blocked] =
+    await Promise.all([
+      getPublishedProducts(storeId).catch(() => []),
+      getPublishedBlogCards(storeId).catch(() => []),
+      getPublishedPageSlugs(storeId).catch(() => []),
+      getActiveCategories(storeId).catch(() => []),
+      blockedMedia(),
+    ]);
 
   const blogRows = blogs as {
     slug: string;
@@ -292,7 +310,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         : {}),
       changeFrequency: "weekly",
       priority: 0.8,
-      ...imageEntry(siteUrl, p.image_url),
+      ...imageEntry(siteUrl, p.image_url, blocked),
     }));
 
   // Each category's own page, listed only when it has a product on it — an
@@ -310,7 +328,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       ...(lastModified ? { lastModified } : {}),
       changeFrequency: "weekly" as const,
       priority: 0.7,
-      ...imageEntry(siteUrl, category.image_url),
+      ...imageEntry(siteUrl, category.image_url, blocked),
     }));
 
   const blogEntries: MetadataRoute.Sitemap = blogRows
@@ -320,7 +338,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       ...(b.published_at ? { lastModified: new Date(b.published_at) } : {}),
       changeFrequency: "monthly",
       priority: 0.6,
-      ...imageEntry(siteUrl, b.cover_image_url),
+      ...imageEntry(siteUrl, b.cover_image_url, blocked),
     }));
 
   // Never submit a page robots.txt blocks. A merchant can slug a page anything,

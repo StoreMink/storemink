@@ -47,12 +47,15 @@ export function LocationsClient({
   initialLocations,
   plan,
   canManage,
+  canPay,
   locationsIncluded,
   billing,
 }: {
   initialLocations: LocationWithCapabilities[];
   plan: Plan;
   canManage: boolean;
+  /** Billing permission: buying or releasing paid locations needs it. */
+  canPay: boolean;
   locationsIncluded: number;
   billing: LocationBillingState | null;
 }) {
@@ -147,7 +150,11 @@ export function LocationsClient({
           the line that used to sit here said "coming soon", which was the only
           thing between a merchant and a location they wanted to pay for. */}
       {billing ? (
-        <LocationBillingCard state={billing} canManage={canManage} />
+        <LocationBillingCard
+          state={billing}
+          canManage={canManage}
+          canPay={canPay}
+        />
       ) : (
         <div className="mt-2 text-xs font-medium text-[#9aa1ab]">
           {count} of {allowance} locations used
