@@ -10366,6 +10366,221 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261030_0271_help_assistant_voice_help",
+      "description": "Help Centre: the public Mink AI guide (use-storemink-help-assistant) edited in place for the new voice input. The opening steps say where Ask Mink AI is on the home page and on a phone, and that the microphone dictates a question into the message box; a Talk with Mink AI section after them describes the spoken conversation (listen, answer aloud, Skip, End, when it ends by itself, the microphone permission, and that recordings are not kept).",
+      "file": "sql/20261030_0271_help_assistant_voice_help.sql",
+      "transaction": true,
+      "requires": ["20261030_0270_content_takedown_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the guide says the microphone dictates into the message box",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%select the microphone and say it%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide has the Talk with Mink AI section",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%<h2>Talk with Mink AI</h2>%' and body like '%does not keep the recording%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide says where Ask Mink AI is on a phone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%shows only the Mink AI face%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261030_0272_help_assistant_feedback",
+      "description": "Help Centre: thumbs up and down on Mink AI answers (app/actions/help-assistant-feedback-actions.ts, read by the operator console's Help, Mink AI feedback page). help_assistant_feedback is platform-global (no store_id) and service-only (RLS on, no policies, app_user has no grants): one row per rated answer, unique on (conversation_id, message_key) so a changed rating updates its row; the visitor's question, Mink AI's answer and its cited guides, bounded by CHECK; no IP or account. Pruned after a year (lib/retention/prune.ts). Expand only: a new table nothing in the replaced revision names",
+      "file": "sql/20261030_0272_help_assistant_feedback.sql",
+      "transaction": true,
+      "requires": ["20261030_0271_help_assistant_voice_help"],
+      "verify": {
+        "tables": ["help_assistant_feedback"],
+        "constraints": [
+          "help_assistant_feedback_pkey",
+          "help_assistant_feedback_answer_key",
+          "help_assistant_feedback_rating_check",
+          "help_assistant_feedback_ids_check",
+          "help_assistant_feedback_language_check",
+          "help_assistant_feedback_question_check",
+          "help_assistant_feedback_answer_check",
+          "help_assistant_feedback_sources_check"
+        ],
+        "indexes": [
+          "help_assistant_feedback_created_idx",
+          "help_assistant_feedback_rating_idx"
+        ],
+        "rlsTables": ["help_assistant_feedback"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "app_service may read, record, change and prune Help answer ratings",
+            "sql": "select (has_table_privilege('app_service', 'public.help_assistant_feedback', 'SELECT') and has_table_privilege('app_service', 'public.help_assistant_feedback', 'INSERT') and has_table_privilege('app_service', 'public.help_assistant_feedback', 'UPDATE') and has_table_privilege('app_service', 'public.help_assistant_feedback', 'DELETE'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "app_user holds no privilege on Help answer ratings",
+            "sql": "select (not has_table_privilege('app_user', 'public.help_assistant_feedback', 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'))::text",
+            "equals": "true"
+          },
+          {
+            "name": "row level security is on, with no policy",
+            "sql": "select (c.relrowsecurity and not exists (select 1 from pg_policy p where p.polrelid = c.oid))::text from pg_class c where c.oid = 'public.help_assistant_feedback'::regclass",
+            "equals": "true"
+          },
+          {
+            "name": "a rating is only up or down",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.help_assistant_feedback'::regclass and conname = 'help_assistant_feedback_rating_check' and pg_get_constraintdef(oid) like '%up%' and pg_get_constraintdef(oid) like '%down%'",
+            "equals": "1"
+          },
+          {
+            "name": "one row per rated answer",
+            "sql": "select count(*)::text from pg_constraint where conrelid = 'public.help_assistant_feedback'::regclass and conname = 'help_assistant_feedback_answer_key' and contype = 'u'",
+            "equals": "1"
+          },
+          {
+            "name": "the retention sweep finds old ratings through their own index",
+            "sql": "select count(*)::text from pg_indexes where schemaname = 'public' and tablename = 'help_assistant_feedback' and indexname = 'help_assistant_feedback_created_idx' and indexdef like '%USING btree (created_at)'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261031_0273_help_assistant_language_help",
+      "description": "Help Centre: the public Mink AI guide (use-storemink-help-assistant) edited in place for the redesigned chat. On a phone Mink AI opens from the header menu and dictation is not offered; the full window lists recent chats and opens from the menu and the home page; answers list Source guides (was Verified guides) and offer copy, read aloud and thumbs up or down, which send the question and answer to StoreMink without name or contact details; the language menu (nine languages) sets the chat's words and the answer language; New chat (was New conversation) and Recent chats saved in this browser only; the back arrow closes Mink AI on a phone. Content only.",
+      "file": "sql/20261031_0273_help_assistant_language_help.sql",
+      "transaction": true,
+      "requires": ["20261030_0272_help_assistant_feedback"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "on a phone, Mink AI opens from the menu",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%open the menu and select <strong>Mink AI</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old phone header sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%shows only the Mink AI face%'",
+            "equals": "0"
+          },
+          {
+            "name": "dictation is described for a computer or tablet",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%On a computer or tablet, you can also select the microphone%'",
+            "equals": "1"
+          },
+          {
+            "name": "the full window lists recent chats",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%the full window lists your recent chats down the left%'",
+            "equals": "1"
+          },
+          {
+            "name": "answers name their source guides",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%<strong>Source guides</strong> link to%'",
+            "equals": "1"
+          },
+          {
+            "name": "the reply-position sentence names source guides",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%important notes, source guides, and suggested%'",
+            "equals": "1"
+          },
+          {
+            "name": "the troubleshooting step names source guides",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%Open the source guides shown in the answer%'",
+            "equals": "1"
+          },
+          {
+            "name": "no verified-guides label is left",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%<strong>Verified guides</strong>%'",
+            "equals": "0"
+          },
+          {
+            "name": "thumbs up and down are explained, with what they send",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%Select thumbs up or thumbs down to tell StoreMink%'",
+            "equals": "1"
+          },
+          {
+            "name": "the language menu is explained",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%Until you choose one, Mink AI answers in the language you type in%'",
+            "equals": "1"
+          },
+          {
+            "name": "recent chats are saved in this browser only",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%They are saved in this browser only%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old New conversation label is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%<strong>New conversation</strong>%'",
+            "equals": "0"
+          },
+          {
+            "name": "the back arrow closes Mink AI on a phone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%On a phone, select the back arrow.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261031_0274_help_assistant_menu_help",
+      "description": "Help Centre: the public Mink AI guide (use-storemink-help-assistant) edited in place for the minimal chat layout. Maximize and Restore drawer, the language and Recent chats are chosen from the Mink AI menu at the top of the chat; the microphone is shown on phones too. Content only.",
+      "file": "sql/20261031_0274_help_assistant_menu_help.sql",
+      "transaction": true,
+      "requires": ["20261031_0273_help_assistant_language_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "dictation is described for every device",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%On a computer or tablet, you can also select the microphone%'",
+            "equals": "0"
+          },
+          {
+            "name": "the microphone sentence is still there",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%You can also select the microphone and say it:%'",
+            "equals": "1"
+          },
+          {
+            "name": "the full window opens from the Mink AI menu",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%To use the full browser window, select <strong>Mink AI</strong> at the top of the chat and choose <strong>Maximize</strong>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old header Maximize sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%<strong>Maximize</strong> in the Mink AI header%'",
+            "equals": "0"
+          },
+          {
+            "name": "the language is chosen from the Mink AI menu",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%use <strong>Language</strong> to choose English%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old language menu sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%Use the language menu in the Mink AI header%'",
+            "equals": "0"
+          },
+          {
+            "name": "recent chats open from the Mink AI menu",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%choose <strong>Recent chats</strong>.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old phone New chat sentence is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'use-storemink-help-assistant' and status = 'published' and body like '%on a phone, <strong>New chat</strong> is there too%'",
+            "equals": "0"
+          }
+        ]
+      }
     }
   ]
 }

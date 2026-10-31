@@ -117,6 +117,7 @@ describe("askHelpAssistant", () => {
             title: DOCUMENT.title,
             url: "/help/point-of-sale/process-an-in-store-sale",
             excerpt: DOCUMENT.excerpt,
+            category: DOCUMENT.categoryTitle,
           },
         ],
         clarificationPrompts: [],

@@ -54,6 +54,18 @@ const VOICE_STORE_PER_HOUR = 300;
 const VOICE_STORE_PER_DAY = 1_000;
 const VOICE_GLOBAL_PER_HOUR = 5_000;
 
+/**
+ * ★ THE HELP CENTRE'S VOICE IS PUBLIC, SO ITS BUCKETS ARE PER VISITOR AND
+ * TIGHTER. Nobody signs in to help.storemink.com, so the only key there is the
+ * client address (`lib/client-ip.ts`), and the platform-wide ceiling is what
+ * bounds the provider bill if many addresses arrive at once. A spoken
+ * question every few seconds still fits the minute; an afternoon of it does
+ * not fit the hour. ⚠ Spend decisions, like the merchant numbers above.
+ */
+const HELP_VOICE_VISITOR_PER_MINUTE = 8;
+const HELP_VOICE_VISITOR_PER_HOUR = 60;
+const HELP_VOICE_GLOBAL_PER_HOUR = 1_000;
+
 type Limit = [key: string, max: number, windowSeconds: number];
 
 /**
@@ -135,6 +147,28 @@ export async function reserveMinkVoice(
       new MinkRequestError(
         "voice_rate_limit",
         "Voice has reached its limit for now. Try again a little later, or type your message.",
+        429,
+      ),
+  );
+}
+
+/**
+ * One transcription for the public Help Centre assistant, keyed by the
+ * visitor's address (nobody signs in there). Same fail-closed rule and the
+ * same replay key as the dashboard's, so a retried request cannot spend twice.
+ */
+export async function reserveHelpVoice(ip: string, requestKey: string) {
+  await reserveLimits(
+    [
+      [`help-voice-visitor:${ip}`, HELP_VOICE_VISITOR_PER_MINUTE, 60],
+      [`help-voice-visitor-hour:${ip}`, HELP_VOICE_VISITOR_PER_HOUR, 3600],
+      ["help-voice-global", HELP_VOICE_GLOBAL_PER_HOUR, 3600],
+      [`help-voice-replay:${ip}:${requestKey}`, 1, 3600],
+    ],
+    () =>
+      new MinkRequestError(
+        "voice_rate_limit",
+        "Voice has reached its limit for now. Try again a little later, or type your question.",
         429,
       ),
   );

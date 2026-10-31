@@ -332,6 +332,28 @@ function refineRequestBatchDeleter(
 /** Search metrics use the meaningful composite bucket key rather than a
  * surrogate id. `ctid` is confined to this one statement, where it safely
  * identifies the bounded page selected and cannot survive a transaction. */
+/** `help_assistant_feedback` (migration 0272) has no Drizzle table: only
+ * lib/help/assistant-feedback.ts writes it, by raw SQL. One statement keyed on
+ * its primary key, the `aiQuotaRefundBatchDeleter` shape;
+ * `help_assistant_feedback_created_idx` serves the page. */
+function helpFeedbackBatchDeleter(
+  floorIso: string,
+  limit: number,
+): Promise<number> {
+  return withService(async (db) => {
+    const result = await db.execute(sql`
+      DELETE FROM public.help_assistant_feedback
+       WHERE id IN (
+         SELECT id
+           FROM public.help_assistant_feedback
+          WHERE created_at < ${floorIso}::timestamptz
+          LIMIT ${limit}
+       )
+    `);
+    return result.rowCount ?? 0;
+  });
+}
+
 function searchMetricBatchDeleter(
   floorIso: string,
   limit: number,
@@ -608,6 +630,19 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "(about three minutes) and while the stage sweep looks at it (minutes); 30 " +
       "days keeps 'did this merchant stop it?' answerable for support.",
     deleteBatch: refineRequestBatchDeleter,
+  },
+  // ── Help Centre answer ratings ─────────────────────────────────────────
+  // ★ Platform-global (no store), nothing cascades into it or out of it, so
+  // its place in this list is free.
+  {
+    table: "help_assistant_feedback",
+    days: 365,
+    reason:
+      "A Help Centre visitor's thumbs up or down on a Mink AI answer, with the " +
+      "question, the answer and its guides, so operators can fix the guides " +
+      "behind bad answers. A year covers every guide's review cycle; nothing in " +
+      "it identifies the visitor.",
+    deleteBatch: helpFeedbackBatchDeleter,
   },
   {
     table: "store_search_metrics",

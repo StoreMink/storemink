@@ -5315,7 +5315,10 @@ recording, so a few minutes of voice chat used up the store's 30 attachments
 for the hour, and then voice and attachments were both refused for everyone
 on the store. ⚠ The voice numbers are a spend cap on the transcription
 provider (billed per second of audio, at most 30 seconds a clip), chosen
-rather than measured: revisit them on real use.
+rather than measured: revisit them on real use. The public Help Centre's voice
+(`/api/help/voice`, §21) has buckets of its own, keyed by visitor address
+(`reserveHelpVoice`: 8 a minute, 60 an hour, 1,000 an hour platform-wide), so a
+busy Help page can never use up a merchant's voice.
 There are at most two concurrent local processing requests. Bounded body reads
 honour abort/deadline. `input-provider.ts` counts tokens then extracts with
 the configured Vertex model/location (asked again, then the Mink fallback,
@@ -8055,7 +8058,20 @@ wholesip/
 │   │                          # httpOnly Firebase session cookie), signout/route.ts (clear it)
 │   ├── auth/                  # Store-host auth: login (email+pw + Google popup),
 │   │                          # forgot/set/update-password (Firebase; callback route removed)
-│   ├── help/                  # Request-rendered Help Centre; error.tsx retries failed reads
+│   ├── help/                  # Request-rendered Help Centre; error.tsx retries failed reads.
+│   │                          # page.tsx = the home (hero search, popular guides, topic
+│   │                          # cards, start here, still need help); search/page.tsx =
+│   │                          # results with a topic filter, highlights and a Mink AI rail.
+│   │                          # components/: help-header.tsx (the header: Guides, Mink AI,
+│   │                          # Contact support on the home page, the compact search
+│   │                          # elsewhere, a menu on phones), help-assistant.tsx (the
+│   │                          # Mink AI drawer: language menu, recent chats, ratings),
+│   │                          # mink-answer.tsx + mink-recent.tsx (an answer, the chat
+│   │                          # list), mink-strings.ts (its words in nine languages),
+│   │                          # recent-chats.ts (chats kept in this browser),
+│   │                          # help-voice.ts (dictation, Talk with Mink AI, read aloud),
+│   │                          # mink-launch.ts + ask-mink-button.tsx (open the drawer
+│   │                          # from any Help page), search-box, category-icon (§21)
 │   ├── themes/                # ★ Public metadata-driven theme catalog served at
 │   │                          # themes.storemink.com; own canonical/OG/CSS, industry
 │   │                          # filters, truthful demo/release/plan state, and a
@@ -8566,6 +8582,9 @@ wholesip/
 │       ├── storefront/search/ # ★ Predictive header search (§11, 1.7): GET, store
 │       │                      # from the Host, this request's catalogue read (answer
 │       │                      # masked, convention 45), shared matching rule
+│       ├── help/voice/        # ★ POST: the public Help Centre's transcription (§21):
+│       │                      # Help host only, Mink AI switch on, WAV + request key,
+│       │                      # per-visitor limits (reserveHelpVoice), {text} back
 │       ├── og-image/          # OG image proxy (shrinks images from our own GCS bucket only);
 │       │                      # reads the address in its normal form first, 400 for an
 │       │                      # unreadable one, and a blocked one answers the takedown
@@ -9868,7 +9887,13 @@ wholesip/
 │   │                          # with stable RRF; embedding-worker.ts atomically replaces
 │   │                          # current-revision chunks and reconciles missing/stale/model-
 │   │                          # changed rows; embedding-trigger.ts continues bounded batches
-│   │                          # on the current request origin, with the platform as fallback
+│   │                          # on the current request origin, with the platform as fallback.
+│   │                          # Help pages: languages.ts (the nine chat languages, pure),
+│   │                          # highlight.ts (search words marked in a result, pure),
+│   │                          # search-topics.ts (topic counts and links for search
+│   │                          # results, pure), popular-searches.ts (the one-tap
+│   │                          # searches); assistant-feedback.ts (server-only: the
+│   │                          # answer ratings, validated, saved and listed)
 │   ├── observability/         # ★ Structured logging for Google Cloud (GCP migration Phase 2):
 │   │                          # logger.ts — logInfo/logWarn/logError emit Cloud Logging-
 │   │                          # compatible JSON (severity+message) in prod, readable lines in
@@ -10139,6 +10164,10 @@ wholesip/
 │   │                          # and useImageRefineView
 │   ├── invoice/               # ★ Print-styled InvoiceDocument (server) + PrintButton
 │   │                          # (client) + invoice.css (@media print isolation) — §17
+│   ├── mink/                  # ★ MinkFace: the Mink AI face from the expression sheet
+│   │                          # (five states, hook-free, reduced-motion aware) over the
+│   │                          # pure geometry in mink-face-geometry.ts; used by the
+│   │                          # Help Centre (§21)
 │   └── customer-multiselect.tsx
 ├── hooks/use-mobile.ts
 │
@@ -10695,11 +10724,26 @@ wholesip/
 │                              # (if-storemink-blocks-something-on-your-store,
 │                              # Setting up your store, position 15) and the reviews
 │                              # guide's contact-support step replaced in place.
-│                              # Next free: 0271 (0260 = redesign recovery fence,
+│                              # 0271 edits the Help Centre's Mink AI guide in place
+│                              # for its microphone and Talk with Mink AI (§21).
+│                              # 0272 adds service-only help_assistant_feedback (a
+│                              # Help visitor's thumbs on a Mink AI answer: one row
+│                              # per answer, unique on (conversation_id,
+│                              # message_key), no store and nothing identifying the
+│                              # visitor; RLS on, app_service only; pruned after a
+│                              # year; §21). 0273 edits the Help Centre's Mink AI guide
+│                              # in place for the language menu, recent chats, the
+│                              # source guides wording and the ratings (§21).
+│                              # 0274 edits it again for the minimal chat layout:
+│                              # Maximize, Language and Recent chats in the Mink AI
+│                              # menu, the microphone on every device (§21).
+│                              # Next free: 0275 (0260 = redesign recovery fence,
 │                              # 0261 = voice controls Help edit, 0262 and 0263 =
 │                              # private chat attachments, 0264 and 0265 = refunds
 │                              # and credit notes, 0266 to 0268 = GST, 0269 and
-│                              # 0270 = content takedown). Previously: 0269.
+│                              # 0270 = content takedown, 0271 = Help voice, 0272
+│                              # and 0273 = Help ratings and languages, 0274 =
+│                              # Help chat menu). Previously: 0274.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -19133,6 +19177,180 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       clickable grounded follow-ups for complete answers, non-clickable reply
       guidance for incomplete questions, reset, backdrop close, and
       reduced-motion support.
+      ★★ **THE MINK FACE, VOICE AND THE HOME PAGE REVAMP (2026-10-30).** The
+      Help Centre's Mink AI wears the face from the owner's expression sheet,
+      not the old purple robot: `components/mink/mink-face.tsx` (`MinkFace`:
+      saffron tile `#FFB224`, ink head `#141522`, cream face `#FFF4E3`; states
+      `default`, `listening`, `thinking`, `talking`, `done`; hook-free, so a
+      server component can draw it) over the pure geometry in
+      `mink-face-geometry.ts`, animated only under
+      `prefers-reduced-motion: no-preference` (`mink-face.module.css`). The
+      launcher is a pill with the face (the face alone on a phone, its name kept
+      in the button's aria-label); the drawer opens on a welcome screen (a
+      small face, one sentence, four starter questions as plain text rows; see
+      (4) below for the minimal layout of 31 Oct) rather than an intro bubble,
+      though the intro stays message 0 so the history sent with a question is
+      unchanged. Answers carry Copy answer and Read this answer aloud. The
+      composer is one rounded box with Dictate your question (microphone), Talk
+      with Mink AI (sound wave) and Send question inside it.
+      ★ VOICE (`app/help/components/help-voice.ts`): dictation records until
+      Done, transcribes, and adds the words to the box, sending nothing;
+      `useHelpTalk` is the spoken conversation: listen until a pause,
+      transcribe, ask through the same `askHelpAssistant` call a typed question
+      uses (the user bubble says "Said aloud"), read the answer and its steps
+      aloud, listen again. While voice chat is on the composer is replaced by a
+      voice bar (face, status, waveform or caption, Skip, End); the thread stays
+      on screen with the guides. It ends on End, three turns with no words, a
+      hidden tab, closing the drawer or unmounting. ★ IT REUSES THE DASHBOARD'S
+      RECORDER, CAPTURE AND SPEECH SESSION, NOT ITS VOICE LOOP: the Help answer
+      is one request, so there is no barge-in, no stop handshake and no echo
+      handling, because the microphone is never open while Mink speaks (Skip
+      ends an answer early). ★ ANSWERS ARE READ BY THE BROWSER'S OWN VOICE
+      (`speechSynthesis`, primed by a silent utterance inside the tap for iOS):
+      the paid read-aloud model behind `/api/mink/speech` needs a signed-in
+      merchant, and a public page must not spend it. ★ TRANSCRIPTION GOES TO
+      `POST /api/help/voice` (`app/api/help/voice/route.ts`): 404 unless the
+      request host is the Help host (`x-forwarded-host`, then `host`, then the
+      URL's), a foreign origin 403, 404 "Voice isn't available right now." while
+      Mink AI's platform switch is off, at most 6 transcriptions per instance
+      (429), only `audio/wav` (415) with a UUID `X-Mink-Request-Key` (400), then
+      `reserveHelpVoice(clientIp, key)` (`lib/mink/input-limits.ts`: 8 a minute
+      and 60 an hour per visitor address, 1,000 an hour platform-wide, one use
+      of each key; fail closed, `voice_rate_limit` 429), the same audio
+      validation and platform provider as `/api/mink/voice`, the text and its
+      language back; an empty clip is a 200 with no words and a provider
+      failure 503 "Voice isn't working right now. Try again, or type your
+      question.". Logs `help.voice.completed` / `help.voice.empty` /
+      `help.voice.refused` / `help.voice.failed`, never the words.
+      `transcribeMinkRecording` (`lib/mink/voice-turn.ts`) takes the endpoint as
+      a fourth argument, defaulting to the dashboard's. The voice buttons appear
+      only when `app/help/layout.tsx` passes `voiceEnabled`
+      (`getMinkConfig().enabled`, read on the server) AND the browser has a
+      secure-context microphone (dictation) and speech synthesis (Talk); the
+      server snapshot says neither, so hydration matches.
+      ★ THE HOME PAGE OPENS MINK FROM ANYWHERE (`app/help/components/mink-launch.ts`):
+      `openHelpMink({ mode, question })` dispatches `sm-help:open-mink` on
+      window inside the click (so Talk still counts as a tap), and the drawer
+      opens, starts voice chat for `mode: "talk"`, or asks a `question`
+      (trimmed, at most 400 characters; `readOpenHelpMinkDetail` validates the
+      event). `AskMinkButton` is the button that sends it (props `mode`,
+      `question`, `expand`, `ariaLabel`; `expand` opens the full window).
+      The home page it first sat on was redesigned the next day (the paragraph
+      after this one). Styles: the Hero, Category grid and Mink AI Help
+      Assistant blocks of `app/help/help.css`
+      (ink buttons, a warm saffron tint, Help purple kept for links). Tests:
+      `components/mink/mink-face.test.tsx`, `help-voice.test.ts`,
+      `help-assistant-voice.test.tsx`, `help-assistant.test.tsx`,
+      `app/help/page.test.tsx`, `app/api/help/voice/route.test.ts`,
+      `lib/mink/input-limits.test.ts`, `lib/mink/voice-turn.test.ts`. ⚠ Not run
+      in a real browser or against the live provider from the Help host;
+      the dashboard's Mink mark is still the purple robot. Help migration
+      `20261030_0271_help_assistant_voice_help` edits the guide's opening steps
+      in place and adds a Talk with Mink AI section after them.
+      ★★ **THE HELP CENTRE REDESIGN (2026-10-31, from the owner's five
+      mockups, used as designs only: every guide, topic and count on screen is
+      live data, and nothing in the mockups that does not exist (tickets,
+      WhatsApp support, invented guides) was built).** Four parts:
+      **(1) The header** (`components/help-header.tsx`, a client component the
+      layout renders): the home page shows Guides (`/help#topics`), Mink AI
+      (`openHelpMink({ expand: true })`) and Contact support (`/help#contact`);
+      every other page keeps the compact search, which on the results page is
+      filled with the search made (`isHelpSearchPath`: "/search" or
+      "/help/search"; `useSearchParams` inside a Suspense boundary whose
+      fallback is the same empty box, keyed by the query so Back refills it).
+      At 900 px and below everything folds behind a menu button
+      (Escape closes it and returns focus; a new page closes it); Mink AI opens
+      from the menu. The search box (`search-box.tsx`) gains a Clear search
+      button and `name="q"`. The footer links storemink.com, the Terms, the
+      Privacy policy and Contact support (support@storemink.com).
+      **(2) The home page** (`page.tsx`): the hero search with a Mink AI pill
+      beside it, popular searches as chips (`lib/help/popular-searches.ts`,
+      some shown only on wider screens), then Popular guides (the eight most
+      viewed, two columns, a guide whose topic no longer exists left out),
+      Browse by topic (every topic as a card with its first three guides and
+      "View all N guides"; `id="topics"`), New to StoreMink? Start here (the
+      first four guides of `getting-started`, numbered; left out when that
+      topic does not exist) and Still need help? (`id="contact"`: Ask Mink AI,
+      or Email support at support@storemink.com, owner's choice). On a phone
+      the hero shows a Mink AI card (Ask, and Talk when voice is on) and topic
+      cards turn compact.
+      **(3) Search results** (`search/page.tsx`, noindex): one read of
+      `searchPublishedHelpWithAi` and the topics; a Filter by topic list with
+      counts (`lib/help/search-topics.ts`: topic from the guide's address
+      `/help/<topic>/<guide>`, counted, sorted by count then the topic's own
+      order; a `?topic=` naming no result's topic shows every result, never an
+      empty page), headings such as "5 guides for “domain” in Domains", the
+      search words marked in titles and excerpts (`lib/help/highlight.ts`: up
+      to six words of two letters or more in any script, common words skipped,
+      longest first), popular searches when nothing matched, and a rail with
+      "Want a direct answer?" (Ask Mink AI with the search as the question,
+      full window) and "Didn't find it?" (Contact support). Below 900 px the
+      topics become a row of chips and the rail moves under the results.
+      **(4) The Mink AI chat** (`help-assistant.tsx`, with `mink-answer.tsx`,
+      `mink-recent.tsx`, `mink-strings.ts`, `recent-chats.ts`): ★ A LANGUAGE
+      MENU (`lib/help/languages.ts`: English, Hindi, Bengali, Tamil, Telugu,
+      Marathi, Gujarati, Kannada, Punjabi; kept in localStorage
+      `sm-help-mink-language`) changes the chat's own words AND the language
+      every answer is written in (`askHelpAssistant` takes `language`,
+      validated with `isHelpLanguageCode`, and the model's rule says to answer
+      in it whatever language the question is in). Until one is picked the
+      chat is in English and Mink AI answers in the language typed, as before.
+      The chat's translated words are owner-requested and not yet reviewed by
+      native speakers. ★ RECENT CHATS ARE KEPT IN THIS BROWSER ONLY
+      (`recent-chats.ts`, localStorage `sm-help-mink-chats-v1`: at most 20
+      chats of 40 messages, every stored field re-validated on read, a guide
+      link only a `/help/...` path); the full window lists them in a sidebar
+      with New chat and Delete; nothing about a chat is stored on the server.
+      On a phone the chat is a full screen with a back arrow. ★ ANSWERS CARRY
+      Copy, Read aloud and a thumbs up or down; a rating goes through
+      `rateHelpAnswer` (`app/actions/help-assistant-feedback-actions.ts`: 60 an
+      hour per visitor address) to `lib/help/assistant-feedback.ts`, which
+      saves the visitor's question, the answer as plain text and its cited
+      guides in service-only `help_assistant_feedback` (migration 0272: one
+      row per answer, unique on the browser's random
+      `(conversation_id, message_key)` so a changed rating updates its row; no
+      store, no IP, no
+      account; pruned after a year). A failed save puts the old rating back and
+      says so. Operators read the ratings at `/dashboard/help/feedback` on the
+      platform host (`requireOperator`; filters Not helpful (the default),
+      Helpful and All; 50 a page; linked as "Mink AI feedback" from the Help
+      console). "Verified
+      guides" is now "Source guides". Help migration
+      `20261031_0273_help_assistant_language_help` edits the public Mink AI
+      guide in place for all of this. Tests: `app/help/page.test.tsx`,
+      `app/help/search/page.test.tsx`, `help-header.test.tsx`,
+      `search-box.test.tsx`, `lib/help/highlight.test.ts`,
+      `lib/help/search-topics.test.ts`, `lib/help/languages.test.ts`,
+      `mink-strings.test.ts`, `recent-chats.test.ts`,
+      `lib/help/assistant-feedback.test.ts`,
+      `help-assistant-feedback-actions.test.ts`, the drawer tests and
+      `app/platform/dashboard/(console)/help/feedback/page.test.tsx`.
+      ★★ THE MINIMAL LAYOUT (owner, 31 Oct 2026: "Minimal, like ChatGPT").
+      White and neutral greys with ink buttons; the Mink face is the only
+      colour (no tinted cards, coloured borders or message avatars). The
+      header is three things: "Mink AI" with a chevron, a button
+      (`hc-assistant-title-button`, aria-label `Mink AI ${t.options}`,
+      aria-expanded and aria-controls `hc-assistant-menu`) that opens a menu
+      holding Recent chats, the Language select (the menu stays open on a
+      change) and the full-window toggle; then New chat (pencil) and Close.
+      Escape closes the menu first and returns focus to its button
+      (`menuOpenRef`), a press outside closes it, and New chat or closing the
+      chat closes it. The launcher keeps the name "Ask Mink AI" when open
+      (aria-expanded says so). The welcome is centred in the thread (auto
+      margins, so it never slides under the header) with a 48 px face and
+      starters as text rows with an arrow. Steps are a numbered list, notes a
+      grey rule, sources bordered rows, follow-ups outline pills; the composer
+      is one box with the buttons inside (Send is the one ink button). In the
+      full window at 901 px and wider the header's New chat and the menu's
+      Recent chats step aside for the sidebar. On a phone (620 px and below)
+      the back arrow replaces Close and the microphone stays. Styles: the
+      Mink AI Help Assistant block of `app/help/help.css`. Help migration
+      `20261031_0274_help_assistant_menu_help` edits the guide in place:
+      Maximize, Language and Recent chats are chosen from the Mink AI menu,
+      and the microphone is described for every device.
+      ⚠ The privacy policy does not yet mention that a rating sends the
+      question and answer to StoreMink (the guide does); whether it needs a
+      line is the owner's call.
       Migration `20260825_0016_help_assistant_guide` publishes the plain-language
       guide for using Mink AI. Migration
       `20260825_0017_help_article_embeddings` installs pgvector, adds the

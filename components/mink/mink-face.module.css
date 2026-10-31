@@ -1,0 +1,95 @@
+/* The Mink face's motion. Every rule moves an inner group, never the group
+   that carries the tile's `transform` attribute, because a CSS transform on
+   an SVG element replaces its transform attribute. */
+
+.face {
+  display: inline-block;
+  flex-shrink: 0;
+  overflow: visible;
+  vertical-align: middle;
+}
+
+.head,
+.eyes,
+.pupil,
+.mouth {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .animated[data-state="default"] .eyes,
+  .animated[data-state="listening"] .eyes,
+  .animated[data-state="talking"] .eyes {
+    animation: blink 5.4s ease-in-out infinite;
+  }
+
+  .animated[data-state="listening"] .head {
+    animation: lean 2.8s ease-in-out infinite;
+  }
+
+  .animated[data-state="thinking"] .pupil {
+    animation: glance 2.6s ease-in-out infinite;
+  }
+
+  .animated[data-state="talking"] .mouth {
+    animation: talk 0.36s ease-in-out infinite alternate;
+  }
+
+  .animated[data-state="done"] .head {
+    animation: hop 0.7s cubic-bezier(0.3, 1.6, 0.5, 1) 1;
+  }
+}
+
+@keyframes blink {
+  0%,
+  91%,
+  100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.12);
+  }
+}
+
+@keyframes lean {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-4deg) translateY(-0.2px);
+  }
+}
+
+@keyframes glance {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  45%,
+  60% {
+    transform: translateX(-0.85px);
+  }
+}
+
+@keyframes talk {
+  from {
+    transform: scaleY(1) scaleX(1);
+  }
+  to {
+    transform: scaleY(0.45) scaleX(1.15);
+  }
+}
+
+@keyframes hop {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  40% {
+    transform: translateY(-1.1px) scale(1.04);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}

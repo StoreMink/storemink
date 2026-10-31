@@ -535,6 +535,29 @@ describe("RETENTION_POLICIES", () => {
     expect(query.params).toEqual([floor, 1000]);
   });
 
+  it("★ forgets a Help Centre answer rating after a year, by its primary key", async () => {
+    // help_assistant_feedback (migration 0272) is written by raw SQL only.
+    const policy = RETENTION_POLICIES.find(
+      (entry) => entry.table === "help_assistant_feedback",
+    );
+    expect(policy?.days).toBe(365);
+    const execute = vi.fn<
+      (query: SQL) => Promise<{ rows: unknown[]; rowCount: number }>
+    >(async () => ({ rows: [], rowCount: 3 }));
+    vi.mocked(withService).mockImplementationOnce(async (fn) =>
+      fn({ execute } as never),
+    );
+
+    const floor = "2025-10-30T00:00:00.000Z";
+    expect(await policy!.deleteBatch(floor, 1000, context())).toBe(3);
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0][0]);
+    expect(query.sql.replace(/\s+/g, " ").trim()).toBe(
+      "DELETE FROM public.help_assistant_feedback WHERE id IN ( SELECT id FROM public.help_assistant_feedback WHERE created_at < $1::timestamptz LIMIT $2 )",
+    );
+    expect(query.params).toEqual([floor, 1000]);
+  });
+
   describe("content takedown (design 8.2)", () => {
     const TAKEDOWN = [
       "content_block_archives",

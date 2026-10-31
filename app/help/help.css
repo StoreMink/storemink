@@ -168,36 +168,234 @@
   opacity: 0.88;
 }
 
-/* The Help home already has the large, primary search in its hero. Keep the
-   compact header search for categories, articles, and results, but avoid
-   showing two search boxes on the home page. `:has()` is inside the project's
-   declared browser floor (see CODEBASE.md). */
-.hc:has(.hc-hero) .hc-topbar .hc-search-compact {
-  display: none;
-}
+/* The Help home carries its own large search in the hero, so its header shows
+   the section links instead of the compact search (help-header.tsx). Keep the
+   actions in the last column when those links fold away on narrow screens.
+   `:has()` is inside the project's declared browser floor (see CODEBASE.md). */
 .hc:has(.hc-hero) .hc-topbar-actions {
   grid-column: 3;
 }
 
 /* ---- Hero ---- */
 .hc-hero {
-  background: var(--hc-surface);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      ellipse 60% 70% at 85% -10%,
+      rgba(255, 178, 36, 0.16),
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 55% 65% at 10% 110%,
+      rgba(87, 60, 240, 0.08),
+      transparent 70%
+    ),
+    var(--hc-surface);
   border-bottom: 1px solid var(--hc-line);
-  padding: 56px 0 60px;
+  padding: 64px 0 52px;
   text-align: center;
 }
 .hc-hero .kicker {
-  font-size: 13px;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--hc-line);
+  border-radius: 999px;
+  padding: 4px 11px;
+  background: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--hc-ink-faint);
+  color: var(--hc-ink-soft);
 }
 .hc-hero h1 {
-  font-size: clamp(28px, 4vw, 40px);
+  font-size: clamp(32px, 4.6vw, 48px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  margin: 0 0 10px;
+}
+.hc-hero-sub {
+  max-width: 520px;
+  margin: 0 auto 22px;
+  color: var(--hc-ink-soft);
+  font-size: 16px;
+  line-height: 1.5;
+}
+/* The search and, beside it, the Ask Mink AI pill (wide screens). */
+.hc-hero-search {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  max-width: 820px;
+  margin: 0 auto;
+}
+.hc-hero-search .hc-search {
+  flex: 1;
+  max-width: 620px;
+  margin: 0;
+}
+.hc-hero-mink-pill {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  border: 1px solid #f1e2c2;
+  border-radius: 999px;
+  padding: 0 18px 0 8px;
+  background: linear-gradient(135deg, #fff6e2 0%, #ffffff 80%);
+  color: var(--hc-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.hc-hero-mink-pill:hover {
+  border-color: #e6c98d;
+  box-shadow: 0 8px 20px rgba(255, 178, 36, 0.18);
+}
+.hc-hero-mink-pill > span {
+  display: grid;
+  line-height: 1.25;
+}
+.hc-hero-mink-pill strong {
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: -0.03em;
-  margin: 8px 0 20px;
+}
+.hc-hero-mink-pill small {
+  color: var(--hc-ink-soft);
+  font-size: 12px;
+}
+.hc-hero-popular {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 820px;
+  margin: 18px auto 0;
+  font-size: 13px;
+}
+.hc-hero-popular > span {
+  color: var(--hc-ink-soft);
+}
+.hc .hc-hero-popular .hc-chip {
+  color: var(--hc-ink);
+}
+/* The Ask Mink AI card: phones only (the pill does the job on wide screens). */
+.hc-hero-mink {
+  display: none;
+  max-width: 640px;
+  margin: 20px auto 0;
+  border: 1px solid #f1e2c2;
+  border-radius: 20px;
+  padding: 16px;
+  background: linear-gradient(135deg, #fff7e6 0%, #ffffff 75%);
+  text-align: left;
+}
+.hc-hero-mink-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.hc-hero-mink-face {
+  flex: 0 0 auto;
+  filter: drop-shadow(0 6px 12px rgba(255, 178, 36, 0.35));
+}
+.hc-hero-mink-text {
+  flex: 1;
+  min-width: 0;
+}
+.hc-hero-mink-text strong {
+  display: block;
+  font-size: 17px;
+  font-weight: 750;
+}
+.hc-hero-mink-text span {
+  display: block;
+  margin-top: 2px;
+  color: var(--hc-ink-soft);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.hc-hero-mink-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+}
+.hc-hero-mink-actions .hc-btn {
+  min-height: 46px;
+}
+.hc-hero-mink-actions .hc-btn-primary {
+  flex: 1;
+}
+.hc-chip {
+  border: 1px solid var(--hc-line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--hc-bg);
+  color: var(--hc-ink-soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.hc-chip:hover {
+  border-color: #e6c98d;
+  background: #fffaf0;
+  color: var(--hc-ink);
+}
+/* Shared buttons for the Help pages. */
+.hc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+.hc-btn:active {
+  transform: translateY(1px);
+}
+.hc .hc-btn-primary {
+  background: var(--hc-accent);
+  color: var(--hc-accent-ink);
+}
+.hc .hc-btn-primary:hover {
+  background: #2c2620;
+}
+.hc .hc-btn-ghost {
+  border-color: var(--hc-line);
+  background: var(--hc-bg);
+  color: var(--hc-ink);
+}
+.hc .hc-btn-ghost:hover {
+  border-color: #cfcfc7;
+  background: var(--hc-surface);
+}
+.hc-btn:focus-visible,
+.hc-chip:focus-visible {
+  outline: 3px solid rgba(87, 60, 240, 0.32);
+  outline-offset: 2px;
 }
 
 /* ---- Search box ---- */
@@ -330,6 +528,263 @@
   background: var(--hc-surface);
 }
 
+/* The clear button sits between the words and Search. The browser's own clear
+   cross is hidden so there is only one. */
+.hc-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+.hc-search.is-clearable input {
+  padding-right: 136px;
+}
+.hc-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 98px;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: #ececea;
+  color: var(--hc-ink-soft);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+.hc-search-clear:hover {
+  background: #e2e2de;
+  color: var(--hc-ink);
+}
+.hc-search-clear:focus-visible {
+  outline: 3px solid rgba(87, 60, 240, 0.32);
+  outline-offset: 2px;
+}
+.hc-search-compact.is-clearable input {
+  padding-right: 116px;
+}
+.hc-search-compact .hc-search-clear {
+  right: 84px;
+  width: 26px;
+  height: 26px;
+}
+
+/* ---- Search results: [Filter by topic] · [results] · [Mink AI] ---- */
+.hc-search-main {
+  padding-top: 36px;
+}
+.hc-results-layout {
+  width: var(--hc-shell);
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: 236px minmax(0, 1fr) 300px;
+  gap: 40px;
+  align-items: start;
+}
+/* With no results there is no topic column; the results take its place. */
+.hc-results-layout:not(:has(.hc-results-topics)) {
+  grid-template-columns: minmax(0, 1fr) 300px;
+}
+.hc-results-topics {
+  position: sticky;
+  top: calc(var(--hc-topbar-h) + 20px);
+}
+.hc-results-topics-title {
+  margin: 4px 0 12px;
+  padding-left: 14px;
+  color: var(--hc-ink-faint);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.hc-results-topics ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hc-results-topics a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 44px;
+  border-radius: 12px;
+  padding: 0 14px;
+  color: var(--hc-ink);
+  font-size: 14.5px;
+}
+.hc-results-topics a:hover {
+  background: var(--hc-surface);
+}
+.hc-results-topics a[aria-current="page"] {
+  background: var(--hc-accent);
+  color: var(--hc-accent-ink);
+  font-weight: 700;
+}
+.hc-results-topics .count {
+  color: var(--hc-ink-faint);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.hc-results-topics a[aria-current="page"] .count {
+  color: var(--hc-accent-ink);
+}
+.hc-results-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 20px;
+  margin-bottom: 18px;
+}
+.hc-results-head h1 {
+  margin: 0;
+  font-size: clamp(24px, 3vw, 32px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.hc-results-sort {
+  color: var(--hc-ink-soft);
+  font-size: 13.5px;
+}
+.hc-results-note {
+  margin: 0 0 16px;
+  color: var(--hc-ink-soft);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.hc .hc-results-note a {
+  color: var(--hc-purple);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.hc-results-popular {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.hc-results-popular > span {
+  color: var(--hc-ink-soft);
+}
+.hc-results-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hc .hc-result {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--hc-line);
+  border-radius: 18px;
+  padding: 20px 24px;
+  background: var(--hc-bg);
+  color: var(--hc-ink);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.hc .hc-result:hover {
+  border-color: #d5d5cd;
+  box-shadow: 0 12px 28px rgba(20, 21, 34, 0.06);
+}
+.hc .hc-result:focus-visible {
+  outline: 3px solid rgba(87, 60, 240, 0.32);
+  outline-offset: 2px;
+}
+.hc-result-topic {
+  color: var(--hc-ink-soft);
+  font-size: 13px;
+}
+.hc-result-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+.hc-result-title mark {
+  border-radius: 5px;
+  padding: 0 1px;
+  background: #ffe9b8;
+  color: inherit;
+}
+.hc-result-excerpt {
+  color: var(--hc-ink-soft);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.hc-result-excerpt mark {
+  background: none;
+  color: var(--hc-ink);
+  font-weight: 700;
+}
+.hc-results-rail {
+  position: sticky;
+  top: calc(var(--hc-topbar-h) + 20px);
+  display: grid;
+  gap: 14px;
+}
+.hc-rail-mink {
+  border: 1px solid #f1e2c2;
+  border-radius: 22px;
+  padding: 24px;
+  background: #fffaf0;
+}
+.hc-rail-mink h2,
+.hc-rail-contact h2 {
+  margin: 14px 0 6px;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+.hc-rail-mink > p {
+  margin: 0 0 14px;
+  color: var(--hc-ink-soft);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.hc-rail-mink .hc-rail-mink-quote {
+  display: -webkit-box;
+  overflow: hidden;
+  border: 1px solid var(--hc-line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--hc-bg);
+  color: var(--hc-ink);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.hc-rail-mink .hc-btn {
+  width: 100%;
+  min-height: 48px;
+}
+.hc-rail-contact {
+  border: 1px solid var(--hc-line);
+  border-radius: 22px;
+  padding: 20px 24px;
+}
+.hc-rail-contact h2 {
+  margin-top: 0;
+  font-size: 16px;
+}
+.hc .hc-rail-contact a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--hc-purple);
+  font-weight: 650;
+}
+
 /* ---- Sections ---- */
 .hc-main {
   flex: 1;
@@ -344,53 +799,275 @@
   margin: 0 0 18px;
 }
 
-/* ---- Category grid ---- */
-.hc-grid {
+/* ---- Home sections ---- */
+.hc-home-head {
+  margin: 0 0 18px;
+}
+.hc-home-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.hc-home-sub {
+  margin: 4px 0 0;
+  color: var(--hc-ink-soft);
+  font-size: 14px;
+}
+
+/* ---- Home: wider measure for the guide lists ---- */
+.hc-wrap-wide {
+  max-width: 1220px;
+}
+.hc-home-section + .hc-home-section {
+  margin-top: 64px;
+}
+
+/* ---- Popular guides (home) ---- */
+.hc-popular {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 32px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hc-popular li {
+  border-top: 1px solid var(--hc-line);
+}
+.hc-popular li:nth-last-child(-n + 2) {
+  border-bottom: 1px solid var(--hc-line);
+}
+.hc-popular a {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 12px 4px;
+  color: var(--hc-ink);
+}
+.hc-popular a:hover .a-title {
+  color: var(--hc-purple);
+}
+.hc-popular .doc {
+  flex: 0 0 auto;
+  color: var(--hc-purple);
+}
+.hc-popular .a-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.hc-popular .a-title {
+  font-size: 15px;
+  font-weight: 650;
+  transition: color 0.12s ease;
+}
+.hc-popular .a-cat {
+  color: var(--hc-ink-soft);
+  font-size: 13px;
+}
+.hc-popular .chev {
+  flex-shrink: 0;
+  color: var(--hc-ink-faint);
+}
+
+/* ---- Browse by topic ---- */
+.hc-topic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 16px;
 }
-.hc-card {
+.hc-topic {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--hc-line);
-  border-radius: var(--hc-radius);
+  border-radius: 18px;
   padding: 22px;
   background: var(--hc-bg);
   transition:
     border-color 0.15s ease,
-    box-shadow 0.15s ease,
-    transform 0.15s ease;
+    box-shadow 0.15s ease;
 }
-.hc-card:hover {
-  border-color: var(--hc-ink-faint);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
-  transform: translateY(-1px);
+.hc-topic:hover {
+  border-color: #d5d5cd;
+  box-shadow: 0 14px 32px rgba(20, 21, 34, 0.07);
 }
-.hc-card .ic {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: var(--hc-surface);
+.hc-topic-head {
+  display: grid;
+  color: var(--hc-ink);
+}
+.hc-topic .ic {
+  width: 42px;
+  height: 42px;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin-bottom: 16px;
+  border-radius: 12px;
+  background: var(--hc-surface);
   color: var(--hc-accent);
-  margin-bottom: 14px;
 }
-.hc-card h3 {
+.hc-topic-title {
   font-size: 17px;
-  font-weight: 650;
-  margin: 0 0 6px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
-.hc-card p {
-  font-size: 14px;
+.hc-topic-desc {
+  margin-top: 4px;
   color: var(--hc-ink-soft);
-  line-height: 1.5;
-  margin: 0 0 12px;
+  font-size: 13.5px;
+  line-height: 1.45;
 }
-.hc-card .count {
+.hc-topic-guides {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.hc-topic-guides li {
+  border-top: 1px solid var(--hc-line);
+}
+.hc-topic-guides a {
+  display: block;
+  padding: 10px 0;
+  color: var(--hc-ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.hc-topic-guides a:hover {
+  color: var(--hc-purple);
+}
+.hc-topic .hc-topic-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--hc-line);
+  color: var(--hc-purple);
+  font-size: 13.5px;
+  font-weight: 650;
+}
+.hc-topic-head:focus-visible,
+.hc-topic-guides a:focus-visible,
+.hc-topic-all:focus-visible,
+.hc-popular a:focus-visible,
+.hc-start-grid a:focus-visible,
+.hc-hero-mink-pill:focus-visible {
+  outline: 3px solid rgba(87, 60, 240, 0.32);
+  outline-offset: 2px;
+}
+
+/* ---- New to StoreMink? Start here ---- */
+.hc-start {
+  margin-top: 64px;
+  border-radius: 24px;
+  padding: 34px 28px 28px;
+  background: var(--hc-surface);
+}
+.hc-start-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 20px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.hc-start-grid a {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  height: 100%;
+  border: 1px solid var(--hc-line);
+  border-radius: 16px;
+  padding: 18px;
+  background: var(--hc-bg);
+  color: var(--hc-ink);
+  transition: border-color 0.15s ease;
+}
+.hc-start-grid a:hover {
+  border-color: #cfcfc7;
+}
+.hc-start-number {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: var(--hc-accent);
+  color: var(--hc-accent-ink);
+  font-size: 12.5px;
+  font-weight: 750;
+}
+.hc-start-grid strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+.hc-start-grid span:last-child:not(.hc-start-number) {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--hc-ink-soft);
   font-size: 13px;
-  color: var(--hc-ink-faint);
-  font-weight: 500;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* ---- Still need help? ---- */
+.hc-still {
+  margin-top: 64px;
+  scroll-margin-top: calc(var(--hc-topbar-h) + 16px);
+}
+#topics {
+  scroll-margin-top: calc(var(--hc-topbar-h) + 16px);
+}
+.hc-still-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+.hc-still-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  border: 1px solid var(--hc-line);
+  border-radius: 18px;
+  padding: 22px;
+  background: var(--hc-bg);
+}
+.hc-still-card.is-mink {
+  border-color: #f1e2c2;
+  background: linear-gradient(135deg, #fff7e6 0%, #ffffff 75%);
+}
+.hc-still-card h3 {
+  margin: 2px 0 6px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.hc-still-card p {
+  margin: 0 0 14px;
+  color: var(--hc-ink-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.hc-still-face {
+  flex: 0 0 auto;
+  filter: drop-shadow(0 6px 12px rgba(255, 178, 36, 0.3));
+}
+.hc-still-icon {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: var(--hc-surface);
+  color: var(--hc-ink);
 }
 
 /* ---- Article list ---- */
@@ -783,44 +1460,168 @@
 /* ---- Footer ---- */
 .hc-footer {
   border-top: 1px solid var(--hc-line);
-  padding: 32px 0;
-  font-size: 14px;
-  color: var(--hc-ink-faint);
-  text-align: center;
+  padding: 26px 0;
+  font-size: 13.5px;
+  color: var(--hc-ink-soft);
 }
-.hc-footer a {
-  color: var(--hc-link);
+.hc-footer-inner {
+  width: var(--hc-shell);
+  margin-inline: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+}
+.hc-footer-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: auto;
+  color: var(--hc-ink);
+}
+.hc-footer-logo > span {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.hc-footer-logo em {
+  color: var(--hc-purple);
+  font-style: normal;
+}
+.hc-footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+}
+.hc-footer-links a {
+  color: var(--hc-ink-soft);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.hc-footer-links a:hover {
+  color: var(--hc-ink);
 }
 
-/* ---- Grounded Help Assistant ---- */
+/* Header nav (home page) and the small-screen menu. */
+.hc-topnav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.hc-topnav a,
+.hc-topnav button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 14.5px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.hc-topnav a:hover,
+.hc-topnav button:hover {
+  background: var(--hc-surface);
+}
+.hc-menu-toggle {
+  display: none;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--hc-ink);
+  cursor: pointer;
+}
+.hc-menu-toggle:hover {
+  background: var(--hc-surface);
+}
+.hc-mobile-menu {
+  display: none;
+  border-top: 1px solid var(--hc-line);
+  background: var(--hc-bg);
+}
+.hc-mobile-menu-inner {
+  width: var(--hc-shell);
+  margin-inline: auto;
+  padding: 12px 0 16px;
+}
+.hc-mobile-menu nav {
+  display: grid;
+}
+.hc-mobile-menu nav a,
+.hc-mobile-menu nav button {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  border: 0;
+  border-bottom: 1px solid var(--hc-line);
+  padding: 0 4px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.hc-mobile-menu nav > :last-child {
+  border-bottom: 0;
+}
+.hc-topbar-actions .hc-menu-toggle:focus-visible,
+.hc-topnav a:focus-visible,
+.hc-topnav button:focus-visible,
+.hc-mobile-menu a:focus-visible,
+.hc-mobile-menu button:focus-visible,
+.hc-footer a:focus-visible {
+  outline: 3px solid rgba(87, 60, 240, 0.35);
+  outline-offset: 2px;
+}
+
+/* ---- Mink AI Help Assistant ----
+   Minimal, the way ChatGPT and Claude look (owner, 31 Oct 2026): white,
+   neutral greys and ink, no tinted cards or coloured borders. The Mink face
+   (components/mink, from the expression sheet) is the only colour. The
+   drawer opens at the side; the header menu's full-window item turns it into
+   the full view, a sidebar of recent chats beside the conversation, below the
+   Help header. */
 .hc-assistant {
   display: inline-flex;
   align-items: center;
 }
 .hc-assistant-launcher {
-  min-height: 40px;
+  min-height: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  border: 1px solid #ded6ff;
+  gap: 9px;
+  border: 1px solid var(--hc-line);
   border-radius: 999px;
-  padding: 0 16px;
-  background: #f6f3ff;
-  color: #5b3ed0;
-  box-shadow: 0 1px 2px rgba(45, 28, 110, 0.05);
+  padding: 0 16px 0 7px;
+  background: var(--hc-bg);
+  color: var(--hc-ink);
   font: inherit;
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 650;
   cursor: pointer;
   transition:
-    transform 0.15s ease,
-    box-shadow 0.15s ease;
+    border-color 0.15s ease,
+    background 0.15s ease;
 }
 .hc-assistant-launcher:hover {
-  border-color: #b8a8f8;
-  background: #eee9ff;
-  box-shadow: 0 3px 10px rgba(74, 51, 167, 0.1);
+  border-color: #d2d2cb;
+}
+/* Open: the chat has its own close, so the launcher only shows it is on. */
+.hc-assistant-launcher.is-open {
+  border-color: #d2d2cb;
+  background: var(--hc-surface);
 }
 /* ★ THE PANEL IS LISTED SEPARATELY BECAUSE IT IS PORTALLED. It used to render
    inside `.hc-assistant`, so `.hc-assistant button` covered every control in
@@ -831,8 +1632,10 @@
 .hc-assistant button:focus-visible,
 .hc-assistant a:focus-visible,
 .hc-assistant-panel button:focus-visible,
-.hc-assistant-panel a:focus-visible {
-  outline: 3px solid rgba(122, 92, 255, 0.35);
+.hc-assistant-panel a:focus-visible,
+.hc-assistant-panel select:focus-visible,
+.hc-assistant-panel [role="separator"]:focus-visible {
+  outline: 3px solid rgba(87, 60, 240, 0.35);
   outline-offset: 2px;
 }
 /* ★★ RENDERED THROUGH A PORTAL INTO #hc-overlay-root, NOT WHERE THE LAUNCHER
@@ -853,31 +1656,31 @@
   max-width: calc(100vw - 280px);
   min-width: 360px;
   display: flex;
-  flex-direction: column;
   overflow: hidden;
   border: 0;
   border-left: 1px solid var(--hc-line);
   background: var(--hc-bg);
-  box-shadow: -18px 0 55px rgba(23, 19, 15, 0.13);
-  animation: hc-assistant-slide-in 0.2s ease-out;
+  box-shadow: -12px 0 40px rgba(20, 21, 34, 0.1);
+  animation: hc-assistant-slide-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+/* The full view sits below the Help header. */
 .hc-assistant-panel.is-maximized {
-  inset: 0;
-  width: 100vw;
+  left: 0;
+  width: auto;
   max-width: none;
   min-width: 0;
-  height: 100dvh;
   border-left: 0;
+  border-top: 1px solid var(--hc-line);
   box-shadow: none;
+  animation: hc-assistant-fade-in 0.18s ease-out;
 }
-.hc-assistant-panel.is-maximized .hc-assistant-messages {
-  padding-right: max(24px, calc((100vw - 960px) / 2));
-  padding-left: max(24px, calc((100vw - 960px) / 2));
-}
-.hc-assistant-panel.is-maximized .hc-assistant-composer {
-  width: min(960px, calc(100% - 32px));
-  margin-right: auto;
-  margin-left: auto;
+.hc-assistant-main {
+  position: relative;
+  container-type: inline-size;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 .hc-assistant-backdrop {
   position: fixed;
@@ -886,8 +1689,7 @@
   right: 0;
   bottom: 0;
   left: 0;
-  background: rgba(24, 20, 16, 0.2);
-  backdrop-filter: blur(1px);
+  background: rgba(20, 21, 34, 0.12);
   animation: hc-assistant-fade-in 0.18s ease-out;
 }
 .hc-assistant-resizer {
@@ -914,11 +1716,11 @@
 .hc-assistant-resizer:hover::after,
 .hc-assistant-resizer:focus-visible::after,
 .hc-assistant-panel.is-resizing .hc-assistant-resizer::after {
-  background: #7a5cff;
+  background: #cfcfc8;
 }
 @keyframes hc-assistant-slide-in {
   from {
-    transform: translateX(28px);
+    transform: translateX(32px);
     opacity: 0;
   }
   to {
@@ -934,61 +1736,237 @@
     opacity: 1;
   }
 }
+
+/* Sidebar (full view only) */
+.hc-assistant-sidebar {
+  width: 260px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--hc-line);
+  padding: 14px 10px 12px;
+  background: #f9f9f8;
+}
+.hc-assistant-sidebar .hc-assistant-recent {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.hc-assistant-sidebar-links {
+  display: grid;
+  gap: 2px;
+  margin-top: 10px;
+  border-top: 1px solid var(--hc-line);
+  padding-top: 10px;
+}
+.hc-assistant-sidebar-links a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--hc-ink);
+  font-size: 14px;
+}
+.hc-assistant-sidebar-links a:hover {
+  background: #efefec;
+}
+.hc-assistant-sidebar-links svg {
+  color: var(--hc-ink-soft);
+}
+
+/* Recent chats (sidebar and the drawer's history view) */
+.hc-assistant-recent {
+  display: flex;
+  flex-direction: column;
+}
+.hc-assistant-newchat {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.hc-assistant-newchat:hover {
+  background: #efefec;
+}
+.hc-assistant-recent-label {
+  margin: 18px 0 6px;
+  padding: 0 10px;
+  color: var(--hc-ink-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.hc-assistant-recent ul {
+  display: grid;
+  /* An implicit column sizes to the longest title, which never wraps, and
+     the row then runs past the sidebar with no ellipsis. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hc-assistant-recent li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+}
+.hc-assistant-recent li:hover {
+  background: #efefec;
+}
+.hc-assistant-recent li.is-active {
+  background: #e9e9e5;
+}
+.hc-assistant-recent-open {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  min-height: 38px;
+  overflow: hidden;
+  border: 0;
+  padding: 0 34px 0 10px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.hc-assistant-recent-delete {
+  position: absolute;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hc-ink-faint);
+  opacity: 0;
+  cursor: pointer;
+}
+.hc-assistant-recent li:hover .hc-assistant-recent-delete,
+.hc-assistant-recent li:focus-within .hc-assistant-recent-delete {
+  opacity: 1;
+}
+.hc-assistant-recent-delete:hover {
+  background: #dfdfda;
+  color: var(--hc-ink);
+}
+@media (hover: none) {
+  .hc-assistant-recent-delete {
+    opacity: 1;
+  }
+}
+.hc-assistant-recent-empty,
+.hc-assistant-recent-note {
+  margin: 4px 0 0;
+  padding: 0 10px;
+  color: var(--hc-ink-faint);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.hc-assistant-recent-note {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.hc-assistant-history {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 10px;
+}
+.hc-assistant-history > h3 {
+  margin: 4px 10px 10px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+/* Header: the face and "Mink AI ▾" (the menu), then New chat and Close. */
 .hc-assistant-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 76px;
-  padding: 14px 18px 14px 20px;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 10px 0 10px;
   border-bottom: 1px solid var(--hc-line);
-  background: linear-gradient(135deg, #fbfaff 0%, #f5f2ff 100%);
+  background: var(--hc-bg);
 }
-.hc-assistant-identity {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-}
-.hc-assistant-avatar {
+.hc-assistant-back {
+  display: none;
   width: 40px;
   height: 40px;
-  border-radius: 13px;
-  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  flex: 0 0 auto;
-  background: #6d4dff;
-  color: #fff;
-  box-shadow: 0 7px 18px rgba(109, 77, 255, 0.24);
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--hc-ink);
+  cursor: pointer;
 }
-.hc-assistant-identity h2 {
+.hc-assistant-title {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.hc-assistant-title h2 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 750;
-  letter-spacing: -0.01em;
+  font-size: inherit;
 }
-.hc-assistant-identity p {
-  display: flex;
+.hc-assistant-title-button {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin: 3px 0 0;
-  color: var(--hc-ink-soft);
-  font-size: 12px;
+  gap: 8px;
+  max-width: 100%;
+  height: 40px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 8px 0 6px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  cursor: pointer;
 }
-.hc-assistant-identity p span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #20a776;
-  box-shadow: 0 0 0 3px rgba(32, 167, 118, 0.12);
+.hc-assistant-title-button:hover,
+.hc-assistant-title-button[aria-expanded="true"] {
+  background: var(--hc-surface);
+}
+.hc-assistant-title-button .hc-assistant-avatar,
+.hc-assistant-title-chevron {
+  flex: 0 0 auto;
+}
+.hc-assistant-title-chevron {
+  color: var(--hc-ink-faint);
 }
 .hc-assistant-header-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
 }
-.hc-assistant-header-actions button {
+.hc-assistant-icon {
   width: 36px;
   height: 36px;
   border: 0;
@@ -1000,226 +1978,393 @@
   color: var(--hc-ink-soft);
   cursor: pointer;
 }
-.hc-assistant-header-actions button:hover {
-  background: rgba(23, 19, 15, 0.06);
+.hc-assistant-icon:hover {
+  background: var(--hc-surface);
   color: var(--hc-ink);
 }
+
+/* The header menu: recent chats, language, full window. */
+.hc-assistant-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 6px);
+  left: 0;
+  /* The title starts after the phone's back arrow, so the menu leaves room
+     for it on the narrowest screens. */
+  width: min(270px, calc(100vw - 72px));
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--hc-line);
+  border-radius: 14px;
+  padding: 6px;
+  background: var(--hc-bg);
+  box-shadow: 0 12px 32px rgba(20, 21, 34, 0.14);
+  animation: hc-assistant-fade-in 0.12s ease-out;
+}
+.hc-assistant-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.hc-assistant-menu-item:hover {
+  background: var(--hc-surface);
+}
+.hc-assistant-menu-item > svg {
+  flex: 0 0 auto;
+  color: var(--hc-ink-soft);
+}
+.hc-assistant-language-value {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--hc-ink-soft);
+}
+.hc-assistant-language select {
+  appearance: none;
+  -webkit-appearance: none;
+  max-width: 130px;
+  border: 0;
+  outline: 0;
+  padding: 0 18px 0 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  text-align: right;
+  cursor: pointer;
+}
+.hc-assistant-language-value > svg {
+  position: absolute;
+  right: 0;
+  pointer-events: none;
+}
+
+/* Thread */
 .hc-assistant-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 24px 20px 18px;
-  background:
-    radial-gradient(
-      circle at 100% 0%,
-      rgba(122, 92, 255, 0.055),
-      transparent 34%
-    ),
-    var(--hc-bg);
+  padding: 20px 16px 12px;
+  background: var(--hc-bg);
+}
+.hc-assistant-thread {
+  width: 100%;
+  max-width: 720px;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  margin: 0 auto;
+}
+/* Auto margins centre the welcome in the space and fall to zero when it
+   does not fit, so it never slides under the header the way
+   `justify-content: center` lets an overflowing child do. */
+.hc-assistant-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: auto 0;
+  padding: 24px 4px;
+  text-align: center;
+  animation: hc-assistant-fade-in 0.3s ease-out;
+}
+.hc-assistant-welcome h3 {
+  margin: 14px 0 6px;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.hc-assistant-welcome p {
+  max-width: 340px;
+  margin: 0;
+  color: var(--hc-ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.hc-assistant-starters {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  max-width: 380px;
+  margin-top: 24px;
+}
+.hc-assistant-starters button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--hc-ink);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.hc-assistant-starters button:hover {
+  background: var(--hc-surface);
+}
+.hc-assistant-starters svg {
+  flex: 0 0 auto;
+  color: var(--hc-ink-faint);
+}
+.hc-assistant-starters button:hover svg {
+  color: var(--hc-ink);
 }
 .hc-assistant-row {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 22px;
   scroll-margin-top: 8px;
+  animation: hc-assistant-rise 0.24s ease-out;
 }
 .hc-assistant-row.user {
   justify-content: flex-end;
 }
-.hc-assistant-mini-avatar {
-  width: 25px;
-  height: 25px;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: #eee9ff;
-  color: #6647ea;
-}
 .hc-assistant-message {
-  max-width: min(640px, calc(100% - 34px));
-  border: 1px solid var(--hc-line);
-  border-radius: 5px 15px 15px 15px;
-  padding: 11px 13px;
-  background: var(--hc-bg);
+  flex: 1;
+  min-width: 0;
   color: var(--hc-ink);
-  box-shadow: 0 3px 12px rgba(23, 19, 15, 0.035);
-  font-size: 13.5px;
-  line-height: 1.52;
+  font-size: 15px;
+  line-height: 1.65;
 }
 .hc-assistant-row.user .hc-assistant-message {
-  max-width: 84%;
-  border: 0;
-  border-radius: 15px 5px 15px 15px;
-  background: var(--hc-accent);
-  color: var(--hc-accent-ink);
-  box-shadow: none;
+  flex: 0 1 auto;
+  max-width: 82%;
+  border-radius: 20px;
+  padding: 9px 16px;
+  background: #f3f3f1;
 }
 .hc-assistant-message > p {
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.hc-assistant-spoken {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  color: var(--hc-ink-faint);
+  font-size: 11px;
+  font-weight: 600;
 }
 .hc-assistant-steps {
+  display: grid;
+  gap: 10px;
   margin: 12px 0 0;
   padding: 0;
   list-style: none;
-  counter-reset: assistant-step;
 }
 .hc-assistant-steps li {
-  position: relative;
-  display: block;
-  min-height: 25px;
-  padding: 2px 0 9px 33px;
-  counter-increment: assistant-step;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  overflow-wrap: anywhere;
 }
-.hc-assistant-steps li::before {
-  content: counter(assistant-step);
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 24px;
-  height: 24px;
+.hc-assistant-step-number {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  background: #f0edff;
-  color: #6044d7;
-  font-size: 11px;
-  font-weight: 750;
+  border-radius: 50%;
+  background: #ecece8;
+  color: var(--hc-ink);
+  font-size: 12px;
+  font-weight: 650;
 }
 .hc-assistant-notes {
-  margin-top: 10px;
-  border-radius: 10px;
-  padding: 10px 11px;
-  background: #fff8e8;
-  color: #66501a;
-  font-size: 12.5px;
+  margin-top: 14px;
+  border-left: 3px solid var(--hc-line);
+  padding: 2px 0 2px 12px;
+  color: var(--hc-ink-soft);
+  font-size: 14px;
 }
-.hc-assistant-notes strong,
-.hc-assistant-sources > strong {
+.hc-assistant-notes strong {
   display: block;
-  margin-bottom: 5px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.055em;
+  margin-bottom: 4px;
+  color: var(--hc-ink-faint);
+  font-size: 11.5px;
+  font-weight: 600;
 }
 .hc-assistant-notes ul {
   margin: 0;
   padding-left: 17px;
+  list-style: disc;
 }
 .hc-assistant-notes li + li {
   margin-top: 4px;
 }
 .hc-assistant-sources {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--hc-line);
+  margin-top: 16px;
 }
 .hc-assistant-sources > strong {
+  display: block;
+  margin-bottom: 8px;
   color: var(--hc-ink-faint);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.hc-assistant-source-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+/* Two side by side only where there is room (the full view). */
+@container (min-width: 640px) {
+  .hc-assistant-source-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .hc-assistant-sources a {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 9px;
-  margin-top: 6px;
-  border-radius: 8px;
-  padding: 8px 9px;
-  background: var(--hc-surface);
-  color: #5a3ed1;
-  font-size: 12.5px;
-  font-weight: 650;
+  gap: 10px;
+  min-height: 52px;
+  border: 1px solid var(--hc-line);
+  border-radius: 12px;
+  padding: 9px 12px;
+  background: var(--hc-bg);
+  color: var(--hc-ink);
 }
 .hc-assistant-sources a:hover {
-  background: #eee9ff;
+  background: var(--hc-surface);
 }
-.hc-assistant-sources svg {
+.hc-assistant-sources a > svg {
   flex: 0 0 auto;
+  color: var(--hc-ink-soft);
+}
+.hc-assistant-sources a > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.hc-assistant-source-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.hc-assistant-sources small {
+  color: var(--hc-ink-faint);
+  font-size: 12.5px;
 }
 .hc-assistant-clarifications {
-  margin-top: 12px;
-  border-top: 1px solid var(--hc-line);
-  padding-top: 11px;
+  margin-top: 14px;
 }
 .hc-assistant-clarifications > strong {
   display: block;
-  margin-bottom: 7px;
+  margin-bottom: 6px;
   color: var(--hc-ink-faint);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 11.5px;
+  font-weight: 600;
 }
 .hc-assistant-clarifications ul {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   margin: 0;
-  padding: 0;
-  list-style: none;
+  padding-left: 18px;
+  color: var(--hc-ink-soft);
+  font-size: 14px;
+  line-height: 1.45;
 }
-.hc-assistant-clarifications li {
-  position: relative;
-  border-radius: 9px;
-  padding: 8px 10px 8px 25px;
-  background: #f7f5ff;
-  color: #4f456e;
-  font-size: 12px;
-  line-height: 1.4;
-}
-.hc-assistant-clarifications li::before {
-  position: absolute;
-  top: 7px;
-  left: 10px;
-  color: #7356eb;
-  content: "•";
-}
-.hc-assistant-followups,
-.hc-assistant-starters {
+.hc-assistant-message-actions {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 7px;
-  margin-top: 11px;
+  align-items: center;
+  gap: 2px;
+  margin: 10px -6px 0;
+}
+.hc-assistant-message-actions button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hc-ink-faint);
+  cursor: pointer;
+}
+.hc-assistant-message-actions button:hover {
+  background: var(--hc-surface);
+  color: var(--hc-ink);
+}
+.hc-assistant-message-actions button.is-active,
+.hc-assistant-message-actions button[aria-pressed="true"] {
+  color: var(--hc-ink);
+}
+.hc-assistant-action-note {
+  margin-left: 4px;
+  color: var(--hc-ink-faint);
+  font-size: 12.5px;
+}
+.hc-assistant-thanks {
+  margin: 2px 0 0;
+  color: var(--hc-ink-soft);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.hc-assistant-followups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 14px;
 }
 .hc-assistant-followups button,
-.hc-assistant-starters button {
-  border: 1px solid #dcd3ff;
+.hc-assistant-followup-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  border: 1px solid var(--hc-line);
   border-radius: 999px;
-  padding: 7px 11px;
-  background: #faf9ff;
-  color: #5a3ed1;
+  padding: 6px 14px;
+  background: var(--hc-bg);
+  color: var(--hc-ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 13.5px;
   line-height: 1.35;
   text-align: left;
   cursor: pointer;
 }
 .hc-assistant-followups button:hover,
-.hc-assistant-starters button:hover {
-  border-color: #a994fb;
-  background: #f2efff;
+.hc-assistant-followup-link:hover {
+  background: var(--hc-surface);
 }
-.hc-assistant-starters {
-  margin: 0 0 16px 33px;
+.hc-assistant-followups button:disabled {
+  opacity: 0.42;
+  cursor: default;
 }
 .hc-assistant-thinking {
-  min-width: 54px;
   display: flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid var(--hc-line);
-  border-radius: 5px 15px 15px 15px;
-  padding: 12px 13px;
-  background: var(--hc-bg);
+  padding: 6px 0;
 }
 .hc-assistant-thinking span {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #8068e9;
+  background: var(--hc-ink-faint);
   animation: hc-assistant-dot 1.1s infinite ease-in-out;
 }
 .hc-assistant-thinking span:nth-child(2) {
@@ -1227,6 +2372,12 @@
 }
 .hc-assistant-thinking span:nth-child(3) {
   animation-delay: 0.28s;
+}
+.hc-assistant-thinking em {
+  margin-left: 7px;
+  color: var(--hc-ink-faint);
+  font-size: 13px;
+  font-style: normal;
 }
 @keyframes hc-assistant-dot {
   0%,
@@ -1240,50 +2391,106 @@
     opacity: 1;
   }
 }
+@keyframes hc-assistant-rise {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
 .hc-assistant-error {
-  margin: 2px 0 12px 33px;
-  border: 1px solid #f2c9c5;
-  border-radius: 10px;
-  padding: 9px 11px;
-  background: #fff5f4;
+  margin: 2px 0 12px;
+  border-radius: 12px;
+  padding: 9px 12px;
+  background: #fdf1f0;
   color: #8c352c;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.45;
 }
+.hc-assistant-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  width: min(720px, calc(100% - 24px));
+  margin: 0 auto 8px;
+  border-radius: 12px;
+  padding: 9px 8px 9px 12px;
+  background: var(--hc-surface);
+  color: var(--hc-ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.hc-assistant-notice button {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hc-ink-faint);
+  cursor: pointer;
+}
+
+/* Composer: one rounded box, the buttons inside it on the right. */
 .hc-assistant-composer {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
-  margin: 0 16px;
-  border: 1px solid var(--hc-line);
-  border-radius: 14px;
-  padding: 8px 8px 8px 12px;
+  gap: 4px;
+  width: min(720px, calc(100% - 24px));
+  margin: 0 auto;
+  border: 1px solid #e0e0da;
+  border-radius: 24px;
+  padding: 6px 6px 6px 16px;
   background: var(--hc-bg);
-  box-shadow: 0 3px 14px rgba(23, 19, 15, 0.06);
+  box-shadow:
+    0 1px 2px rgba(20, 21, 34, 0.04),
+    0 6px 20px rgba(20, 21, 34, 0.05);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 .hc-assistant-composer:focus-within {
-  border-color: #a994fb;
-  box-shadow: 0 0 0 3px rgba(122, 92, 255, 0.12);
+  border-color: #c6c6bf;
 }
 .hc-assistant-composer textarea {
-  min-width: 0;
-  min-height: 36px;
-  max-height: 100px;
   flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
   resize: none;
   border: 0;
   outline: 0;
-  padding: 8px 2px;
+  padding: 9px 0 7px;
   background: transparent;
   color: var(--hc-ink);
   font: inherit;
-  font-size: 13.5px;
-  line-height: 1.4;
+  /* 16px or iOS zooms the page when the box is tapped. */
+  font-size: 16px;
+  line-height: 1.45;
 }
+/* One line, cut with an ellipsis: on a phone the box is narrow and a
+   placeholder that wraps reads as two broken lines. */
 .hc-assistant-composer textarea::placeholder {
+  overflow: hidden;
   color: var(--hc-ink-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.hc-assistant-composer button {
+.hc-assistant-composer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+.hc-assistant-tool,
+.hc-assistant-send {
   width: 36px;
   height: 36px;
   flex: 0 0 auto;
@@ -1291,44 +2498,215 @@
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 10px;
-  background: #6d4dff;
-  color: #fff;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hc-ink-soft);
   cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
-.hc-assistant-composer button:disabled,
-.hc-assistant-followups button:disabled {
-  opacity: 0.42;
+.hc-assistant-tool:hover {
+  background: var(--hc-surface);
+  color: var(--hc-ink);
+}
+.hc-assistant-send {
+  margin-left: 2px;
+  background: var(--hc-accent);
+  color: var(--hc-accent-ink);
+}
+.hc-assistant-send:hover {
+  background: #2c2620;
+}
+.hc-assistant-send:disabled {
+  background: #e8e8e4;
+  color: #a6a69e;
   cursor: default;
 }
-.hc-assistant-footer {
+.hc-assistant-tool:disabled,
+.hc-assistant-done:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.hc-assistant-done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0 14px 0 12px;
+  background: var(--hc-accent);
+  color: var(--hc-accent-ink);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hc-assistant-recording {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
   gap: 10px;
-  min-height: 34px;
+  min-height: 40px;
+  padding: 2px 4px 2px 0;
+}
+.hc-assistant-recording-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #e5484d;
+  animation: hc-assistant-pulse 1.4s ease-in-out infinite;
+}
+.hc-assistant-recording-clock {
+  flex: 0 0 auto;
+  color: var(--hc-ink-soft);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+.hc-assistant-wave {
+  flex: 1;
+  color: #2a2620;
+}
+@keyframes hc-assistant-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+
+/* Voice chat: takes the composer's place, the thread stays above it. */
+.hc-assistant-voicebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(720px, calc(100% - 24px));
+  margin: 0 auto;
+  border: 1px solid #e0e0da;
+  border-radius: 24px;
+  padding: 8px 8px 8px 10px;
+  background: var(--hc-bg);
+  box-shadow:
+    0 1px 2px rgba(20, 21, 34, 0.04),
+    0 6px 20px rgba(20, 21, 34, 0.05);
+}
+.hc-assistant-voicebar-face {
+  border-radius: 12px;
+  transition: filter 0.2s ease;
+}
+.hc-assistant-voicebar.is-listening .hc-assistant-voicebar-face {
+  animation: hc-assistant-listen 1.8s ease-in-out infinite;
+}
+@keyframes hc-assistant-listen {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 rgba(255, 178, 36, 0));
+  }
+  50% {
+    filter: drop-shadow(0 0 8px rgba(255, 178, 36, 0.6));
+  }
+}
+.hc-assistant-voicebar-body {
+  flex: 1;
+  min-width: 0;
+}
+.hc-assistant-voicebar-status {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.hc-assistant-voicebar-caption {
+  display: -webkit-box;
+  min-height: 18px;
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: var(--hc-ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.hc-assistant-voicebar .hc-assistant-wave {
+  margin-top: 4px;
+}
+.hc-assistant-voicebar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+.hc-assistant-voicebar-skip,
+.hc-assistant-voicebar-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 36px;
+  border-radius: 999px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hc-assistant-voicebar-skip {
+  border: 1px solid var(--hc-line);
+  background: var(--hc-bg);
+  color: var(--hc-ink);
+}
+.hc-assistant-voicebar-end {
+  border: 0;
+  background: var(--hc-accent);
+  color: var(--hc-accent-ink);
+}
+
+/* Footer */
+.hc-assistant-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 8px;
   padding: 8px 16px max(10px, env(safe-area-inset-bottom));
   color: var(--hc-ink-faint);
-  font-size: 10.5px;
+  font-size: 11.5px;
   text-align: center;
 }
 .hc-assistant-powered {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-}
-.hc-assistant-powered {
-  flex: 0 0 auto;
-  color: var(--hc-ink-soft);
+  gap: 4px;
 }
 .hc-assistant-powered img {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
 }
 .hc-assistant-powered strong {
-  color: var(--hc-ink);
-  font-weight: 700;
+  color: var(--hc-ink-soft);
+  font-weight: 600;
+}
+.hc-assistant-disclaimer::before {
+  content: "·";
+  margin-right: 8px;
+}
+/* Too narrow for one line (a phone, or the side drawer at its narrowest):
+   the two parts stack, and the separator dot would otherwise start the
+   second line. */
+@container (max-width: 520px) {
+  .hc-assistant-footer {
+    flex-direction: column;
+  }
+  .hc-assistant-disclaimer::before {
+    content: none;
+  }
 }
 .hc-assistant-sr-only {
   position: absolute;
@@ -1342,9 +2720,61 @@
   border: 0;
 }
 
+/* A finger needs 44px; a mouse is fine with the smaller buttons above. */
+@media (pointer: coarse) {
+  .hc-assistant-back,
+  .hc-assistant-icon,
+  .hc-assistant-tool,
+  .hc-assistant-send,
+  .hc-assistant-message-actions button {
+    width: 44px;
+    height: 44px;
+  }
+  .hc-assistant-title-button,
+  .hc-assistant-menu-item,
+  .hc-assistant-recent-open,
+  .hc-assistant-newchat {
+    min-height: 44px;
+  }
+  .hc-assistant-title-button {
+    height: 44px;
+  }
+}
+
+/* Full view, wide screens: the sidebar holds the recent chats and New chat,
+   so the header's New chat and the menu's Recent chats step aside. */
+@media (min-width: 901px) {
+  .hc-assistant-panel.is-maximized .hc-assistant-history-toggle,
+  .hc-assistant-panel.is-maximized .hc-assistant-new {
+    display: none;
+  }
+  .hc-assistant-panel.is-maximized .hc-assistant-header {
+    padding: 0 16px 0 18px;
+  }
+  .hc-assistant-panel.is-maximized .hc-assistant-messages {
+    padding: 32px 24px 16px;
+  }
+}
+
 /* ---- Responsive ---- */
 /* Below 1120px, drop the right "On this page" rail. */
 @media (max-width: 1120px) {
+  /* The Mink AI rail moves under the results. */
+  .hc-results-layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .hc-results-layout:not(:has(.hc-results-topics)) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hc-results-rail {
+    position: static;
+    grid-column: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hc-results-layout:not(:has(.hc-results-topics)) .hc-results-rail {
+    grid-column: 1;
+  }
+
   .hc-docs,
   .hc-docs.no-toc {
     grid-template-columns: 264px minmax(0, 1fr);
@@ -1355,6 +2785,38 @@
 }
 /* Below 900px, drop the left Topics rail too (single-column docs). */
 @media (max-width: 900px) {
+  /* Topics become a row of chips above the results; the rail follows them. */
+  .hc-results-layout,
+  .hc-results-layout:not(:has(.hc-results-topics)) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .hc-results-topics {
+    position: static;
+  }
+  .hc-results-rail,
+  .hc-results-layout:not(:has(.hc-results-topics)) .hc-results-rail {
+    grid-column: 1;
+  }
+  .hc-results-topics-title {
+    display: none;
+  }
+  .hc-results-topics ul {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: none;
+  }
+  .hc-results-topics li {
+    flex: 0 0 auto;
+  }
+  .hc-results-topics a {
+    border: 1px solid var(--hc-line);
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+
   .hc-topbar-inner {
     height: auto;
     min-height: 64px;
@@ -1384,9 +2846,27 @@
   .hc-topbar-cta {
     display: none !important;
   }
+  /* The home page's nav folds into the menu. */
+  .hc-topnav {
+    display: none;
+  }
+  .hc-menu-toggle {
+    display: inline-flex;
+  }
+  .hc-mobile-menu {
+    display: block;
+  }
   .hc-assistant-panel,
   .hc-assistant-backdrop {
     top: 0;
+  }
+  .hc-assistant-panel.is-maximized {
+    border-top: 0;
+  }
+  /* No room for the recent-chats sidebar: the header's New chat and the
+     menu's Recent chats take its place. */
+  .hc-assistant-sidebar {
+    display: none;
   }
   .hc-docs,
   .hc-docs.no-toc {
@@ -1438,9 +2918,19 @@
     max-width: 100%;
     text-align: left;
   }
-  /* Phones keep the mark and wordmark only — the same trade the other three
-     hosts make for their own section labels at this width. */
+  /* Phones shorten the section label to "Help". */
   .hc-logo i {
+    padding-left: 8px;
+    font-size: 11px;
+  }
+  .hc-logo i > span {
+    display: none;
+  }
+  .hc-logo i::after {
+    content: attr(data-short);
+  }
+  /* Mink AI opens from the menu on a phone. */
+  .hc-topbar-actions .hc-assistant {
     display: none;
   }
   .hc-logo > span {
@@ -1452,36 +2942,134 @@
 }
 
 @media (max-width: 620px) {
+  .hc-search-main {
+    padding-top: 22px;
+  }
+  .hc .hc-result {
+    padding: 16px 18px;
+  }
+  .hc-result-title {
+    font-size: 16.5px;
+  }
+  .hc-result-excerpt {
+    font-size: 14.5px;
+  }
+  .hc-results-rail {
+    grid-template-columns: 1fr;
+  }
+
   .hc-hero {
-    padding: 40px 0 44px;
+    padding: 32px 0 30px;
   }
+  .hc-hero .kicker {
+    display: inline-flex;
+    margin-bottom: 14px;
+  }
+  .hc-hero-search .hc-hero-mink-pill,
+  .hc-hero-popular > span,
+  .hc-chip-wide {
+    display: none;
+  }
+  .hc-hero-mink {
+    display: block;
+  }
+  .hc-popular {
+    grid-template-columns: 1fr;
+  }
+  .hc-popular li:nth-last-child(2) {
+    border-bottom: 0;
+  }
+  /* Phones show topics as compact tiles: icon and title only. */
+  .hc-topic-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .hc-topic {
+    padding: 16px;
+    border-radius: 16px;
+  }
+  .hc-topic .ic {
+    margin-bottom: 12px;
+  }
+  .hc-topic-title {
+    font-size: 15px;
+  }
+  .hc-topic-desc,
+  .hc-topic-guides,
+  .hc-topic .hc-topic-all {
+    display: none;
+  }
+  .hc-start {
+    margin-top: 48px;
+    padding: 24px 16px 16px;
+  }
+  .hc-start-grid {
+    grid-template-columns: 1fr;
+  }
+  .hc-home-section + .hc-home-section {
+    margin-top: 48px;
+  }
+  /* The face alone is the launcher on a phone; its name stays for
+     assistive technology through the button's aria-label. */
   .hc-assistant-launcher {
-    min-height: 38px;
-    padding: 0 13px;
-    font-size: 13px;
+    min-height: 40px;
+    padding: 0 6px;
   }
+  .hc-assistant-launcher-label {
+    display: none;
+  }
+  /* The phone chat: the back arrow, "Mink AI" with its menu, and New chat.
+     The back arrow closes the chat, so Close steps aside. */
   .hc-assistant-header {
-    min-height: 68px;
-    padding: 10px 12px 10px 14px;
+    gap: 4px;
+    padding: 0 6px 0 4px;
+  }
+  .hc-assistant-back {
+    display: inline-flex;
+  }
+  .hc-assistant-header-actions .hc-assistant-close {
+    display: none;
   }
   .hc-assistant-messages {
-    padding: 18px 12px 14px;
+    padding: 16px 14px 10px;
   }
-  .hc-assistant-composer {
-    margin: 0 10px;
+  .hc-assistant-row.user .hc-assistant-message {
+    max-width: 88%;
   }
-  .hc-assistant-footer {
-    flex-direction: column;
-    gap: 5px;
+  .hc-assistant-composer,
+  .hc-assistant-voicebar,
+  .hc-assistant-notice {
+    width: calc(100% - 20px);
+  }
+  /* Skip and End together leave the status no room on a phone, so only
+     then do the buttons take a row of their own. */
+  .hc-assistant-voicebar.is-speaking {
+    flex-wrap: wrap;
+  }
+  .hc-assistant-voicebar.is-speaking .hc-assistant-voicebar-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .hc-assistant-launcher,
   .hc-assistant-thinking span,
+  .hc-assistant-menu,
   .hc-assistant-panel,
-  .hc-assistant-backdrop {
+  .hc-assistant-backdrop,
+  .hc-assistant-row,
+  .hc-assistant-welcome,
+  .hc-assistant-starters button,
+  .hc-assistant-recording-dot,
+  .hc-assistant-voicebar-face,
+  .hc-assistant-recent-delete,
+  .hc-topic,
+  .hc-start-grid a,
+  .hc-hero-mink-pill,
+  .hc-btn {
     transition: none;
     animation: none;
+    transform: none;
   }
 }
