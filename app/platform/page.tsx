@@ -568,9 +568,9 @@ export default async function StoreminkLanding() {
                     GST-ready from the first invoice.
                   </h2>
                   <p className="smh-lead">
-                    Rupee pricing, GST tax classes and printable invoices are
-                    built in. Connect your own payment gateway and keep every
-                    rupee: StoreMink takes 0% of your sales.
+                    Built for India with rupee pricing, GST and printable
+                    invoices. Connect your own payment gateway and keep 100% of
+                    your sales. StoreMink charges 0% commission.
                   </p>
                   <ul className="smh-check-list">
                     <li>
@@ -620,9 +620,8 @@ export default async function StoreminkLanding() {
                   </span>
                   <h3>Get started fast</h3>
                   <p>
-                    Pick a theme, add your products and take your first order
-                    the same day, from your kitchen table if that is where you
-                    are.
+                    Choose a theme, add your products and start taking orders
+                    the same day. No matter where you work.
                   </p>
                 </Link>
                 <Link href="/products/marketing" className="smh-story">
@@ -637,9 +636,9 @@ export default async function StoreminkLanding() {
                   </span>
                   <h3>Grow as big as you want</h3>
                   <p>
-                    Customer groups, offers and email campaigns turn a first
-                    order into a regular. Staff accounts with roles turn a
-                    founder into a team.
+                    Build customer loyalty with groups, offers and email
+                    campaigns. Grow your team with staff accounts and role-based
+                    access.
                   </p>
                 </Link>
                 <Link href="/pricing" className="smh-story">
@@ -654,9 +653,9 @@ export default async function StoreminkLanding() {
                   </span>
                   <h3>Raise the bar</h3>
                   <p>
-                    Your own domain, Point of Sale across every shop, and the
-                    colourways, filters and photos shoppers expect from a big
-                    brand.
+                    Use your own domain, manage every store with POS, and create
+                    a branded shopping experience with custom colours, filters
+                    and photos.
                   </p>
                 </Link>
               </div>

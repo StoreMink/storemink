@@ -141,6 +141,17 @@ describe("StoreMink public homepage", () => {
     }
   });
 
+  // ★ Mink is drawn with the Mink face (owner, 31 Oct 2026), the face the
+  // dashboard and Help Centre use, never the old sparkle.
+  it("draws Mink with the Mink face in the chat art and the header tile", async () => {
+    const { MinkArt } = await import("./homepage-art");
+    const art = renderToStaticMarkup(MinkArt());
+    expect(art).toContain("data-mink-face");
+    expect(art).not.toContain("lucide-sparkles");
+    expect(art).toContain("Mink AI");
+    expect(header).toContain("<MinkFace size={16} />");
+  });
+
   it("keeps the redesign isolated, responsive and motion-safe", () => {
     expect(css).toContain(".smh {");
     expect(css).toMatch(/@media \(max-width: 940px\)/);

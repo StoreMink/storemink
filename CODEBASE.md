@@ -19258,8 +19258,11 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       was. The "Ask Mink" buttons (each Mink suggests row, and Analytics'
       "Ask Mink why") carry an 18 px face too; a CSS rule keeps the face at
       18 px inside `.dash-an-btn`, whose icon rule is 15 px. The sparkle stays
-      on buttons that ask AI to write something (Generate with AI). Help
-      migration
+      on buttons that ask AI to write something (Generate with AI). The
+      marketing site draws Mink the same way: the Mink chat artwork's header
+      (`MinkArt` in `app/platform/homepage-art.tsx`, on the homepage,
+      Products, Mink AI and Why StoreMink pages) and Mink's reply in the
+      header's Products menu tile (`site-header.tsx`). Help migration
       `20261030_0271_help_assistant_voice_help` edits the guide's opening steps
       in place and adds a Talk with Mink AI section after them.
       ★★ **THE HELP CENTRE REDESIGN (2026-10-31, from the owner's five
