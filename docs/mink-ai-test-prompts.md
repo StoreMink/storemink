@@ -967,22 +967,26 @@ to be helpful rather than blank.
 
 ### Copy-and-test merchant prompts
 
-| ID         | Exact prompt                                                                                                                       | What to check                                                                                                                                                                                                    |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ECH-P9D-01 | `What images do I have to work with?`                                                                                              | Lists the Media Library with filenames, newest first. A read: no proposal, no credits. It must not list product photographs or theme artwork, which are not in the library.                                      |
-| ECH-P9D-02 | (Empty library) `Add a gallery of three photos to my homepage.`                                                                    | ★ Refuses and says the store has no images, pointing at Media or the plus button. It must NOT invent URLs, offer stock photography, or produce a card with broken pictures.                                      |
-| ECH-P9D-03 | Attach an Almond Shake photo with **+**, type `Create a homepage carousel for my buy 1 get 1 offer and use this photo`, then Send. | ★ One turn reads and saves the photo under **Media**, then prepares one layout proposal whose `hero_carousel` uses that exact URL. “Buy 1 Get 1” is editable slide copy, not regenerated into the product image. |
-| ECH-P9D-04 | (After 03) approve the layout proposal and open Website Builder.                                                                   | The draft carousel shows the real product photograph and offer copy. It is still not live until the merchant publishes it.                                                                                       |
-| ECH-P9D-05 | `Use the photo from nike.com's homepage as my hero.`                                                                               | ★ Refuses. It must not claim to have fetched the page, and must not compose a URL that looks like one of ours.                                                                                                   |
-| ECH-P9D-06 | Attach a photo, type `use that as my hero`, then press Send once.                                                                  | Saves the sent image under **Media**, shows it in the sent message and prepares a private layout proposal that cites the exact same URL. No attachment approval box or second upload.                            |
-| ECH-P9D-07 | `Move my gallery above the hero.`                                                                                                  | ★ This must still work with no Media Library read at all — images already on the page carry across untouched. A pure reorder must never be refused for its own pictures.                                         |
-| ECH-P9D-08 | (After a proposal citing a saved image) delete that image in **Media**, then press **Approve**.                                    | Conflict naming the Media Library. Nothing is saved, and the page keeps its old sections.                                                                                                                        |
-| ECH-P9D-09 | `Put my logo in the footer.`                                                                                                       | Refuses within the layout proposal and points at Website Builder: header and footer are not this tool's.                                                                                                         |
-| ECH-P9D-10 | `Generate a hero image of a grocery shelf for me.`                                                                                 | ★ CHANGED BY 9E. Mink creates the image, saves it to Media and shows it. It does not invent a target page: no layout proposal because the merchant did not name one.                                             |
-| ECH-P9D-11 | Attach an image, PDF and text file one at a time without sending.                                                                  | Each selection appears as a compact removable preview/file card in the composer. Clicking an image opens the full-size viewer; no approval/review panel appears.                                                 |
-| ECH-P9D-12 | Open a long conversation and scroll upward.                                                                                        | A circular down-arrow appears above the composer; clicking it scrolls smoothly to the latest message and hides the button.                                                                                       |
+| ID         | Exact prompt                                                                                                                                                                                                                      | What to check                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ECH-P9D-01 | `What images do I have to work with?`                                                                                                                                                                                             | Lists the Media Library with filenames, newest first. A read: no proposal, no credits. It must not list product photographs or theme artwork, which are not in the library.                                                                                                                                                                                                                                                                                                                                                                |
+| ECH-P9D-02 | (Empty library) `Add a gallery of three photos to my homepage.`                                                                                                                                                                   | ★ Refuses and says the store has no images, pointing at Media or the plus button. It must NOT invent URLs, offer stock photography, or produce a card with broken pictures.                                                                                                                                                                                                                                                                                                                                                                |
+| ECH-P9D-03 | Attach an Almond Shake photo with **+**, type `Create a homepage carousel for my buy 1 get 1 offer and use this photo`, then Send.                                                                                                | ★ The photo is kept privately with the chat: the sent message shows it as an attachment card whose address is `/api/mink/attachments/…`, and nothing appears under **Media** at send. One turn prepares one layout proposal whose `hero_carousel` uses a Media Library COPY of the photo, made when the proposal runs, which appears under **Media** as an ordinary upload with the file's own name and stays there whether or not the proposal is approved. “Buy 1 Get 1” is editable slide copy, not regenerated into the product image. |
+| ECH-P9D-04 | (After 03) approve the layout proposal and open Website Builder.                                                                                                                                                                  | The draft carousel shows the real product photograph and offer copy. It is still not live until the merchant publishes it.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ECH-P9D-05 | `Use the photo from nike.com's homepage as my hero.`                                                                                                                                                                              | ★ Refuses. It must not claim to have fetched the page, and must not compose a URL that looks like one of ours.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ECH-P9D-06 | Attach a photo, type `use that as my hero`, then press Send once.                                                                                                                                                                 | Keeps the sent image privately with the chat (it shows in the sent message with its `/api/mink/attachments/…` address) and prepares a private layout proposal whose hero cites a Media Library copy of it, which appears under **Media**. No attachment approval box, no second upload, and no Media row until the proposal runs.                                                                                                                                                                                                          |
+| ECH-P9D-07 | `Move my gallery above the hero.`                                                                                                                                                                                                 | ★ This must still work with no Media Library read at all — images already on the page carry across untouched. A pure reorder must never be refused for its own pictures.                                                                                                                                                                                                                                                                                                                                                                   |
+| ECH-P9D-08 | (After a proposal citing a saved image) delete that image in **Media**, then press **Approve**.                                                                                                                                   | Conflict naming the Media Library. Nothing is saved, and the page keeps its old sections.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ECH-P9D-09 | `Put my logo in the footer.`                                                                                                                                                                                                      | Refuses within the layout proposal and points at Website Builder: header and footer are not this tool's.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ECH-P9D-10 | `Generate a hero image of a grocery shelf for me.`                                                                                                                                                                                | ★ CHANGED BY 9E. Mink creates the image, saves it to Media and shows it. It does not invent a target page: no layout proposal because the merchant did not name one.                                                                                                                                                                                                                                                                                                                                                                       |
+| ECH-P9D-11 | Attach an image, PDF and text file one at a time without sending.                                                                                                                                                                 | Each selection appears as a compact removable preview/file card in the composer. Clicking an image opens the full-size viewer; no approval/review panel appears.                                                                                                                                                                                                                                                                                                                                                                           |
+| ECH-P9D-12 | Open a long conversation and scroll upward.                                                                                                                                                                                       | A circular down-arrow appears above the composer; clicking it scrolls smoothly to the latest message and hides the button.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ECH-P9D-13 | Attach an Almond Shake photo, type `Use this photo as the main photo of my Almond Shake product.`, then Send.                                                                                                                     | ★ The sent message shows the photo as an attachment card (address `/api/mink/attachments/…`); nothing is under **Media** yet. One turn reads the product and prepares a product-images proposal (`replace_primary`) whose new primary is a Media Library COPY of the photo, which now appears under **Media** as an ordinary upload with the file's own name and stays there whether or not the proposal is approved. It must not search the library for the picture or generate one. The eval case is `attachment-product-photo`.         |
+| ECH-P9D-14 | Attach the same photo, type `Make a new product photo of my Almond Shake on a marble kitchen counter from this photo.`, then Send.                                                                                                | ★ One image generation (charged) whose first reference is the attached photo: the result shows the real shake re-shot on the counter, with **Use as product photo** and **Try again** on the card. No Media copy of the attachment is made (nothing new under **Media** but the generated picture), and nothing changes on the product until a follow-up is approved. A picture that ignores the attached photo fails. The eval case is `attachment-product-photo-scene`.                                                                  |
+| ECH-P9D-15 | Attach the same photo, type `Write a short blog post about our new almond shake and use this photo as its cover.`, then Send.                                                                                                     | One turn lists the blogs, then prepares a blog proposal whose cover is a Media Library copy of the photo (visible under **Media**); the chat message keeps the private address. No generated cover. The eval case is `attachment-blog-cover`.                                                                                                                                                                                                                                                                                              |
+| ECH-P9D-16 | Copy the attachment's address from a sent message (the card's picture `src`), then open it in a new tab: signed out; signed in as another staff member of the same store; and, after deleting the chat from History, as yourself. | ★ Signed out: 401. Another staff member of the store: 404 (never the picture, and never a 403 that would confirm it exists). After the chat is deleted: 404 for you too, the Media Library copies from -13 and -15 stay under **Media**, and the private object is gone from the bucket by the next nightly run at the latest (usually within minutes).                                                                                                                                                                                    |
 
-### Five of these are in the repeatable harness
+### Seven of these are in the repeatable harness
 
 `evals/mink/read-alpha.json` carries **ECH-P9D-01, -02, -05 and -06** as
 `storefront-media` cases (⚠ -10's case was REPLACED by 9E's four — it asserted
@@ -991,17 +995,53 @@ behaviour it describes is worse than none), so they are scored rather than eyeba
 call `propose_storefront_layout`" is an observable, and a refused proposal
 surfaces as `invalid_tool_input`, which the scorer counts as malformed.
 
+It also carries **-13, -14 and -15** as `attachments` cases
+(`attachment-product-photo`, `attachment-product-photo-scene`,
+`attachment-blog-cover`), each with the private attachment address in its
+prompt exactly as the composer writes it (the new marker, then
+`{"filename":"almond-shake.webp","url":"{{attachmentUrl}}"}`). The runner
+replaces `{{attachmentUrl}}` with **`MINK_EVAL_ATTACHMENT_URL`**, the address
+of a picture the eval admin attached in the controlled store.
+
+★ A sent picture can be used only in the chat it was sent in, so the three
+cases run in that one chat, in order, and share its history; every other case
+still starts a new chat. To set it up, sign in as the eval admin, attach the
+picture and send it once in a chat (any short message will do), then copy
+its address from the sent message as in -16. The runner finds that chat in the
+eval admin's History before it posts anything (it reads at most the newest 3
+pages of chats). To name the chat yourself, set
+**`MINK_EVAL_ATTACHMENT_CHAT`** to its id: every run's report names the chat
+the three cases used under `attachmentChat`, so a later run can pass it. Do
+that too when the runner cannot see the chat, for example when every reply in
+it failed (History hides those messages). A picture that was never sent is
+linked by the first case, in a new chat, and the other two follow it there;
+such a picture is deleted 2 days after it was attached, so run on the same
+day. If the first case ends without a chat, or History cannot be read, the
+three cases are reported as **skipped**.
+
+With `MINK_EVAL_ATTACHMENT_URL` unset the runner reports those three as
+**skipped**, never failed, and scores the rest as before; with a value that is
+not an attachment address, or a `MINK_EVAL_ATTACHMENT_CHAT` that is not a chat
+id, it refuses to start. ⚠ They are the one exception to the rule below: -14
+spends one image generation on the dev project, and -13 and -15 each make a
+Media Library copy of the attached picture, so the run waits for the owner's
+go-ahead.
+
 ```bash
 MINK_EVAL_BASE_URL=https://echos.storemink.com \
-  MINK_EVAL_COOKIE='sm_session=…' npm run mink:eval
+  MINK_EVAL_COOKIE='sm_session=…' \
+  MINK_EVAL_ATTACHMENT_URL='/api/mink/attachments/<id>' npm run mink:eval
 ```
+
+To run them in a chat you name, add
+`MINK_EVAL_ATTACHMENT_CHAT='<chat id>'` before `npm run mink:eval`.
 
 ⚠ **`media-empty-library-refusal` needs an EMPTY Media Library.** With images
 present the model may legitimately propose a gallery and the case fails for the
 fixture rather than the behaviour. The case carries that requirement in its own
 `fixture` field.
 
-**-03, -04, -07, -08, -11 and -12 stay manual, deliberately.** The first four end in a saved
+**-03, -04, -07, -08, -11, -12 and -16 stay manual, deliberately.** The first four end in a saved
 proposal, and the harness is a _repeatable_ gate — putting a charged proposal in
 it would spend the merchant's credits on every run. That is the same rule the
 dataset's own description states for Phase 7B code proposals.
@@ -1020,17 +1060,24 @@ contract will refuse.
    all**, ask what images the store has: the tool is not offered, and the
    answer explains the limit rather than returning an empty list, which would
    read as "you have no pictures".
-2. As an admin with **Media → View** only, attach an image: the **Save to
-   Media Library** button must not appear. An explicit storefront-placement
-   Send must explain that Manage permission is required and keep the draft;
-   confirm the server refuses the upload too if reached another way.
-3. Saving an image charges **no AI credits** and creates no approval — check
-   the AI usage page before and after. It is an ordinary upload the merchant
-   made.
-4. Attach a **PDF** and confirm no save control appears: the Media Library
-   holds images.
-5. Confirm a saved image is scoped to the store — sign in to a second store and
-   check its Media Library and its `list_storefront_media` answer are unchanged.
+2. As an admin with **Media → View** only, attach an image: it is read for the
+   message and NOT kept with the chat (the sent message carries no attachment
+   card and no `/api/mink/attachments/…` address). A storefront-placement Send
+   such as -13 must explain that Media Manage is required and keep the draft;
+   confirm the server refuses `uploadMinkAttachment` too if reached another
+   way.
+3. Attaching an image charges **no AI credits** and creates no approval:
+   check the AI usage page before and after. It is the merchant's own file,
+   kept privately with the chat; the Media Library copy a proposal makes is
+   an ordinary upload, charged nothing either.
+4. Attach a **PDF** and confirm it is only read for the message: no attachment
+   card, no address, nothing kept with the chat. Pictures are the only thing
+   kept.
+5. Confirm an attached image is scoped to the store and to the person who
+   attached it: sign in to a second store and check its Media Library and its
+   `list_storefront_media` answer are unchanged, and on THIS store check that
+   `list_storefront_media` never lists the attachment itself (only a Media
+   Library copy a proposal made).
 
 ## Phase 9E — Ask Mink to make a picture
 

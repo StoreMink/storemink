@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { productVariants, products } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
 import { variantEffectiveSelling } from "@/lib/pricing";
@@ -57,11 +57,15 @@ export async function estimateProductDelivery(
           heightCm: products.heightCm,
         })
         .from(products)
+        // ★ Service scope, so the flag is in the query: a product StoreMink
+        // has blocked answers "no longer available", like a deleted one
+        // (takedown design 5.7).
         .where(
           and(
             eq(products.storeId, storeId),
             eq(products.id, input.productId),
             eq(products.status, "published"),
+            isNull(products.moderationBlockedAt),
           ),
         )
         .limit(1),

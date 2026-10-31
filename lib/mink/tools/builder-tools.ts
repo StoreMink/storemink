@@ -69,6 +69,9 @@ export const minkBuilderTools: MinkTool[] = [
     permission: { section: "builder", action: "manage" },
     available: (actor) => actor.draftingEnabled === true,
     timeoutMs: 15000,
+    // An attachment inside the JSON string (a section's image, a logo) is
+    // rewritten to its Media Library copy before this runs (registry.ts).
+    attachmentArgs: ["changes_json"],
     stepLimitCompletionText:
       "Your Website Builder change is ready. Review the changes and approve them in the card.",
     artifact(output) {

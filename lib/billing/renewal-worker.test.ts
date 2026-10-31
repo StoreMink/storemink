@@ -14,8 +14,16 @@
 // which outcome maps to which consequence.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeDbMock, sqlParamValues } from "@/app/actions/_test-helpers";
-import { planEvents, stores } from "@/drizzle/schema";
+import { PgDialect } from "drizzle-orm/pg-core";
+import {
+  makeDbMock,
+  sqlParamValues,
+  sqlText,
+} from "@/app/actions/_test-helpers";
+import { billingSubscriptions, planEvents, stores } from "@/drizzle/schema";
+import { withService } from "@/lib/db/client";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
+import { resolveTaxSnapshot, type SnapshotRow } from "./tax-snapshot";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -31,8 +39,7 @@ vi.mock("@/lib/db/client", () => ({
 // The repository and the collector are proved by their own suites; here they
 // are seams, so a test can put the worker in any outcome without a database.
 const repo = vi.hoisted(() => ({
-  loadTaxContext: vi.fn(),
-  loadInvoiceParties: vi.fn(),
+  loadTaxSnapshot: vi.fn(),
   ensureRenewalInvoice: vi.fn(),
   finalizeInvoiceClaimed: vi.fn(),
   getCycleInvoice: vi.fn(),
@@ -53,12 +60,36 @@ const dunning = vi.hoisted(() => ({
 vi.mock("./dunning", () => dunning);
 
 import {
+  advanceAfterPayment,
   classify,
   collectDueRenewals,
   downgradeExpired,
   evaluateCycleTurns,
 } from "./renewal-worker";
 import { GRACE_HOURS } from "./cycle";
+
+/** A Drizzle statement or condition, as Postgres would receive it. */
+function render(query: unknown) {
+  const q = new PgDialect().sqlToQuery(query as any);
+  return { sql: q.sql.replace(/\s+/g, " ").trim(), params: q.params };
+}
+
+/** The raw statements a test ran whose text contains `fragment`. */
+function executed(fragment: string): unknown[] {
+  return dbHolder.current.calls.execute.filter((q: unknown) =>
+    sqlText(q).includes(fragment),
+  );
+}
+
+/** A row closeUnreachedInvoices' statement returns for one closed invoice. */
+function closedRow(previousStatus: string) {
+  return {
+    id: "inv-4",
+    previous_status: previousStatus,
+    total_paise: "240000",
+    invoice_ref: previousStatus === "draft" ? null : "SM/2026-27/00004",
+  };
+}
 
 const STORE = "store-1";
 const NOW = new Date("2026-09-01T00:00:00.000Z");
@@ -85,6 +116,61 @@ const priceFor = vi.fn(async () => ({
 
 const charge = vi.fn() as any;
 
+const PUNJAB_GSTIN = "03ABCDE1234F1Z5";
+
+/** GST off, StoreMink's identity complete, a merchant with no records. The
+ *  worker's snapshot is the REAL `resolveTaxSnapshot` over this row, so the
+ *  build and the stamp are what production would produce. */
+const SNAPSHOT_ROW: SnapshotRow = {
+  taxEnabled: false,
+  taxInclusive: false,
+  taxRateBps: 1800,
+  nextTaxEnabled: null,
+  nextTaxInclusive: null,
+  nextTaxRateBps: null,
+  nextTaxStartsAt: null,
+  supplierGstin: PUNJAB_GSTIN,
+  supplierStateCode: "03",
+  sacCode: "998314",
+  accountGstin: null,
+  accountStateCode: null,
+  accountCountry: null,
+  taxIdGstin: null,
+  storeTaxStateCode: null,
+  locationGstin: null,
+  locationStateCode: null,
+  taxAddress: null,
+  signupStateName: null,
+  signupCountry: null,
+};
+
+/** GST charged (exclusive, 18%) for a merchant in Karnataka (29). */
+const GST_ON_KARNATAKA: SnapshotRow = {
+  ...SNAPSHOT_ROW,
+  taxEnabled: true,
+  accountStateCode: "29",
+};
+
+function readingFor(row: SnapshotRow) {
+  repo.loadTaxSnapshot.mockImplementation(async (_store: string, at: Date) =>
+    resolveTaxSnapshot(row, at),
+  );
+}
+
+/** The invoice `finalizeInvoiceClaimed` reports it issued. */
+const ISSUED = {
+  id: "inv-1",
+  status: "open",
+  finalizedAt: "2026-09-01T00:00:00.000Z",
+  invoiceRef: "SM/2026-27/00004",
+  totalPaise: 7_000_00,
+  taxPaise: 0,
+  taxRateBps: 0,
+  taxInclusive: false,
+  placeOfSupply: null,
+  placeOfSupplyBasis: null,
+};
+
 function seed(selects: any[][] = []) {
   dbHolder.current = makeDbMock({ selectQueue: selects });
 }
@@ -92,30 +178,14 @@ function seed(selects: any[][] = []) {
 beforeEach(() => {
   vi.clearAllMocks();
   seed();
-  repo.loadTaxContext.mockResolvedValue({
-    enabled: false,
-    rateBps: 0,
-    inclusive: false,
-    supplierStateCode: null,
-    placeOfSupply: null,
-  });
-  repo.loadInvoiceParties.mockResolvedValue({
-    supplierGstin: null,
-    customerGstin: null,
-    placeOfSupply: null,
-  });
+  readingFor(SNAPSHOT_ROW);
   repo.ensureRenewalInvoice.mockResolvedValue({
     id: "inv-1",
     status: "draft",
     finalizedAt: null,
   });
   repo.finalizeInvoiceClaimed.mockResolvedValue({
-    invoice: {
-      id: "inv-1",
-      status: "open",
-      finalizedAt: "2026-09-01T00:00:00.000Z",
-      invoiceRef: "SM/2026-27/00004",
-    },
+    invoice: ISSUED,
     claimed: true,
   });
   repo.amountDueForInvoice.mockResolvedValue(7_000_00);
@@ -179,6 +249,10 @@ describe("collectDueRenewals", () => {
         // ₹5,000 plan + 2 billed locations × ₹1,000.
         amountPaise: 7_000_00,
         invoiceRef: "SM/2026-27/00004",
+        // GST off: the email prints no GST rows.
+        tax: { taxPaise: 0, taxRateBps: 0, taxInclusive: false },
+        // Cycle 1 has no predecessor here (`getCycleInvoice` finds none).
+        previousTax: null,
       });
     });
 
@@ -301,6 +375,265 @@ describe("collectDueRenewals", () => {
     });
   });
 
+  describe("★★ one tax reading per renewal (GST Stage 7)", () => {
+    // The invoice is built from ONE reading of the tax settings and the
+    // merchant's records, and stamped with that reading's particulars. There is
+    // no tax-off fallback: a reading that fails leaves the renewal for the next
+    // hourly run, because an invoice issued on a guess charges the wrong GST.
+
+    it("★★ a reading that fails issues nothing and waits for the next run", async () => {
+      repo.loadTaxSnapshot.mockRejectedValue(new Error("connection reset"));
+      seed([[DUE_ROW]]);
+      const res = await collectDueRenewals({ now: NOW, charge, priceFor });
+
+      expect(repo.ensureRenewalInvoice).not.toHaveBeenCalled();
+      expect(repo.finalizeInvoiceClaimed).not.toHaveBeenCalled();
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+      // Waiting, not an error and never a decline: no grace clock starts.
+      expect(res).toMatchObject({ pendingReconcile: 1, failed: 0, errors: 0 });
+      expect(logError).toHaveBeenCalledWith(
+        "billing.renewal_tax_snapshot",
+        expect.any(Error),
+        expect.objectContaining({ storeId: STORE, reason: "read_failed" }),
+      );
+    });
+
+    it("★★ GST on without StoreMink's SAC code: nothing is issued untaxed", async () => {
+      readingFor({ ...GST_ON_KARNATAKA, sacCode: null });
+      seed([[DUE_ROW]]);
+      const res = await collectDueRenewals({ now: NOW, charge, priceFor });
+
+      expect(repo.ensureRenewalInvoice).not.toHaveBeenCalled();
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ pendingReconcile: 1, failed: 0, errors: 0 });
+      expect(logError).toHaveBeenCalledWith(
+        "billing.renewal_tax_snapshot",
+        expect.any(Error),
+        expect.objectContaining({
+          storeId: STORE,
+          reason: "settings_incomplete",
+        }),
+      );
+    });
+
+    it("reads the terms in force at the run, for this store", async () => {
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(repo.loadTaxSnapshot).toHaveBeenCalledWith(STORE, NOW);
+    });
+
+    it("★ builds with the reading's GST and stamps its particulars", async () => {
+      readingFor(GST_ON_KARNATAKA);
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+
+      const arg = repo.ensureRenewalInvoice.mock.calls[0][0];
+      // ₹7,000 + 18% exclusive, inter-state (Punjab to Karnataka): IGST.
+      expect(arg.built).toMatchObject({
+        taxPaise: 1_260_00,
+        totalPaise: 8_260_00,
+        taxRateBps: 1800,
+        inclusive: false,
+      });
+      expect(arg.built.gst).toMatchObject({ igstPaise: 1_260_00 });
+      expect(arg.stamp).toEqual({
+        supplierGstin: PUNJAB_GSTIN,
+        customerGstin: null,
+        placeOfSupply: "29",
+        placeOfSupplyBasis: "recipient",
+        sacCode: "998314",
+      });
+      // The old loose parties are gone: the stamp is the one source.
+      expect(arg).not.toHaveProperty("supplierGstin");
+      expect(arg).not.toHaveProperty("placeOfSupply");
+    });
+
+    it("★★ the notice quotes the ISSUED invoice and both cycles' GST", async () => {
+      // GST started between the two cycles. The email must say so (from the
+      // previous invoice's tax columns), and its Price, GST and Amount rows
+      // must add up to the document it names.
+      readingFor(GST_ON_KARNATAKA);
+      repo.getCycleInvoice.mockResolvedValue({
+        id: "inv-prev",
+        status: "paid",
+        totalPaise: 7_000_00,
+        taxPaise: 0,
+        taxRateBps: 0,
+        taxInclusive: false,
+        cycleSeq: 3,
+        invoiceRef: "SM/2026-27/00003",
+        finalizedAt: "2026-08-01T00:00:00.000Z",
+        periodStart: null,
+        periodEnd: null,
+      });
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: {
+          ...ISSUED,
+          totalPaise: 8_260_00,
+          taxPaise: 1_260_00,
+          taxRateBps: 1800,
+          placeOfSupply: "29",
+          placeOfSupplyBasis: "recipient",
+        },
+        claimed: true,
+      });
+      repo.amountDueForInvoice.mockResolvedValue(8_260_00);
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+
+      expect(repo.getCycleInvoice).toHaveBeenCalledWith(STORE, 3);
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0]).toMatchObject({
+        amountPaise: 8_260_00,
+        tax: { taxPaise: 1_260_00, taxRateBps: 1800, taxInclusive: false },
+        previousAmountPaise: 7_000_00,
+        previousTax: { taxPaise: 0, taxRateBps: 0, taxInclusive: false },
+      });
+      // An ordinary merchant: nothing to warn about.
+      expect(logWarn).not.toHaveBeenCalledWith(
+        "billing.renewal_place_of_supply_fallback",
+        expect.anything(),
+      );
+    });
+
+    it("★★ a draft kept at its own figures is collected and announced at them", async () => {
+      // The cycle's draft was built at 18%; the reading now says 28%. Issuing
+      // could not rebuild it (`kept_draft`) and issued it as built. The worker
+      // must charge and quote what was ISSUED, never its own fresh build:
+      // otherwise the email names one amount and the debit takes another.
+      readingFor({ ...GST_ON_KARNATAKA, taxRateBps: 2800 });
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: {
+          ...ISSUED,
+          totalPaise: 8_260_00,
+          taxPaise: 1_260_00,
+          taxRateBps: 1800,
+          placeOfSupply: "29",
+          placeOfSupplyBasis: "recipient",
+        },
+        claimed: true,
+      });
+      repo.amountDueForInvoice.mockResolvedValue(8_260_00);
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+
+      // This run's own build was at 28%...
+      expect(repo.ensureRenewalInvoice.mock.calls[0][0].built.totalPaise).toBe(
+        8_960_00,
+      );
+      // ...and the merchant is charged and told the draft's 18% figures.
+      expect(collector.collectInvoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          invoiceId: "inv-1",
+          amountDuePaise: 8_260_00,
+        }),
+      );
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0]).toMatchObject({
+        amountPaise: 8_260_00,
+        tax: { taxPaise: 1_260_00, taxRateBps: 1800, taxInclusive: false },
+      });
+    });
+
+    it("★ no state anywhere: billed in StoreMink's state, logged once, never refused", async () => {
+      readingFor({ ...SNAPSHOT_ROW, taxEnabled: true });
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: {
+          ...ISSUED,
+          totalPaise: 8_260_00,
+          taxPaise: 1_260_00,
+          taxRateBps: 1800,
+          placeOfSupply: "03",
+          placeOfSupplyBasis: "supplier",
+        },
+        claimed: true,
+      });
+      repo.amountDueForInvoice.mockResolvedValue(8_260_00);
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+
+      const arg = repo.ensureRenewalInvoice.mock.calls[0][0];
+      expect(arg.stamp).toMatchObject({
+        placeOfSupply: "03",
+        placeOfSupplyBasis: "supplier",
+      });
+      // Intra-state: CGST and SGST.
+      expect(arg.built.gst).toMatchObject({
+        cgstPaise: 630_00,
+        sgstPaise: 630_00,
+        igstPaise: 0,
+      });
+      expect(logWarn).toHaveBeenCalledWith(
+        "billing.renewal_place_of_supply_fallback",
+        expect.objectContaining({ storeId: STORE, invoiceId: "inv-1" }),
+      );
+      expect(collector.collectInvoice).toHaveBeenCalled();
+    });
+
+    it("★ the fallback is not logged again by the hourly re-runs", async () => {
+      readingFor({ ...SNAPSHOT_ROW, taxEnabled: true });
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: { ...ISSUED, placeOfSupplyBasis: "supplier" },
+        claimed: false, // another run issued it
+      });
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(logWarn).not.toHaveBeenCalledWith(
+        "billing.renewal_place_of_supply_fallback",
+        expect.anything(),
+      );
+    });
+
+    it("★ outside India: place 96, IGST, logged, never refused", async () => {
+      // New on-session payments from a business outside India are refused
+      // while GST is charged; a renewal already running is billed.
+      readingFor({ ...SNAPSHOT_ROW, taxEnabled: true, accountCountry: "US" });
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: {
+          ...ISSUED,
+          totalPaise: 8_260_00,
+          taxPaise: 1_260_00,
+          taxRateBps: 1800,
+          placeOfSupply: "96",
+          placeOfSupplyBasis: "outside_india",
+        },
+        claimed: true,
+      });
+      repo.amountDueForInvoice.mockResolvedValue(8_260_00);
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+
+      const arg = repo.ensureRenewalInvoice.mock.calls[0][0];
+      expect(arg.stamp).toMatchObject({
+        placeOfSupply: "96",
+        placeOfSupplyBasis: "outside_india",
+      });
+      expect(arg.built.gst).toMatchObject({ igstPaise: 1_260_00 });
+      expect(logWarn).toHaveBeenCalledWith(
+        "billing.renewal_outside_india",
+        expect.objectContaining({ storeId: STORE, invoiceId: "inv-1" }),
+      );
+      expect(collector.collectInvoice).toHaveBeenCalled();
+    });
+
+    it("an untaxed invoice outside India is not worth a warning", async () => {
+      readingFor({ ...SNAPSHOT_ROW, accountCountry: "US" });
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: {
+          ...ISSUED,
+          placeOfSupply: "96",
+          placeOfSupplyBasis: "outside_india",
+        },
+        claimed: true,
+      });
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(logWarn).not.toHaveBeenCalledWith(
+        "billing.renewal_outside_india",
+        expect.anything(),
+      );
+    });
+  });
+
   describe("★★ charge = null — ISSUE the invoice, do not charge", () => {
     // Issuing is not charging. When the pass was skipped wholesale for a missing
     // gateway, no invoice was ever written: pass 2 waited forever, grace never
@@ -395,6 +728,63 @@ describe("collectDueRenewals", () => {
     const s = await collectDueRenewals({ now: NOW, charge, priceFor });
     expect(collector.collectInvoice).not.toHaveBeenCalled();
     expect(s.pendingReconcile).toBe(1);
+  });
+
+  describe("★★ an invoice with no issue date is never collected", () => {
+    // Finalize claims only a draft, so an invoice that is not a draft yet has no
+    // `finalized_at` (a draft closed by hand) comes back unissued. Charging it
+    // would take money with no document behind it.
+    beforeEach(() => {
+      repo.finalizeInvoiceClaimed.mockResolvedValue({
+        invoice: {
+          id: "inv-1",
+          status: "void",
+          finalizedAt: null,
+          invoiceRef: null,
+        },
+        claimed: false,
+      });
+    });
+
+    it("★★ does not charge it, does not announce it, and leaves it as it is", async () => {
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+      expect(repo.amountDueForInvoice).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+    });
+
+    it("★ logs it, naming the invoice and its status", async () => {
+      seed([[DUE_ROW]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(logError).toHaveBeenCalledWith(
+        "billing.renewal_unissued_invoice",
+        expect.any(Error),
+        { storeId: STORE, invoiceId: "inv-1", status: "void" },
+      );
+    });
+
+    it("★ counts it with the other skips, never as collected, failed or manual", async () => {
+      seed([[DUE_ROW]]);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(s).toMatchObject({
+        considered: 1,
+        collected: 0,
+        failed: 0,
+        manualRequired: 0,
+        pendingReconcile: 1,
+        errors: 0,
+      });
+    });
+
+    it("★ the same with collection gated (charge = null): not a manual bill either", async () => {
+      seed([[DUE_ROW]]);
+      const s = await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      expect(s.manualRequired).toBe(0);
+      expect(s.pendingReconcile).toBe(1);
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+    });
   });
 
   it("bills locations on a POS plan", async () => {
@@ -803,6 +1193,115 @@ describe("★★ a cancelled subscription ends at its period end", () => {
     expect(s.graced).toBe(0);
     expect(dunning.notifyGraceStarted).not.toHaveBeenCalled();
   });
+
+  describe("★★ every invoice for a cycle it does not reach is closed (R3)", () => {
+    // The next cycle's invoice can be in any state when the plan ends: a draft
+    // finalize left behind, open, still processing, or already paid. Each
+    // becomes `void` in the same transaction that ends the plan, so an open one
+    // is never chased and a paid one is refunded by the refund pass.
+    it.each(["draft", "open", "processing", "paid"])(
+      "★★ the next invoice, %s, is closed in the SAME transaction that ends the plan",
+      async (status) => {
+        dbHolder.current = makeDbMock({
+          selectQueue: [[CANCELLING]],
+          executeQueue: [[closedRow(status)]],
+        });
+        const s = await evaluateCycleTurns({ now: NOW });
+        expect(s.ended).toBe(1);
+
+        const closes = executed("update public.billing_invoices i");
+        expect(closes).toHaveLength(1);
+        const { sql, params } = render(closes[0]);
+        expect(sql).toContain(
+          "and i.status in ('draft', 'open', 'processing', 'paid')",
+        );
+        expect(sql).toContain("and i.cycle_seq > $2");
+        // Above the cycle the plan reached: the one it was in (3).
+        expect(params).toEqual([STORE, 3, NOW.toISOString()]);
+
+        // ★ One transaction: the evaluate pass's own. Nothing else opened one
+        // (the store row has no plan change to audit here).
+        expect(vi.mocked(withService)).toHaveBeenCalledTimes(1);
+        // ★ After the claim, before the plan moves: subscription row first,
+        // invoices second, the store last.
+        const db = dbHolder.current.db;
+        const claimAt = db.update.mock.invocationCallOrder[0];
+        const closeAt = db.execute.mock.invocationCallOrder[0];
+        const storeAt =
+          db.update.mock.invocationCallOrder[
+            dbHolder.current.calls.update.indexOf(stores)
+          ];
+        expect(dbHolder.current.calls.update[0]).toBe(billingSubscriptions);
+        expect(claimAt).toBeLessThan(closeAt);
+        expect(closeAt).toBeLessThan(storeAt);
+
+        expect(logInfo).toHaveBeenCalledWith(
+          "billing.renewal.closed_unreached",
+          {
+            storeId: STORE,
+            lastReachedSeq: 3,
+            invoices: [{ id: "inv-4", previousStatus: status }],
+          },
+        );
+      },
+    );
+
+    it("★★ a LOST end claim closes nothing", async () => {
+      // A resume racing the turn: the cycle carries on, and so does its invoice.
+      dbHolder.current = makeDbMock({
+        selectQueue: [[CANCELLING]],
+        returning: [],
+      });
+      await evaluateCycleTurns({ now: NOW });
+      expect(executed("billing_invoices")).toHaveLength(0);
+    });
+
+    it("★ a failed close rolls the plan end back with it, and nobody is told", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [[CANCELLING]] });
+      dbHolder.current.db.execute = vi.fn(async () => {
+        throw new Error("db down");
+      });
+      const s = await evaluateCycleTurns({ now: NOW });
+      expect(s.errors).toBe(1);
+      expect(dunning.notifyDowngraded).not.toHaveBeenCalled();
+    });
+  });
+});
+
+/** A subscription whose cycle has ended, as `advanceAfterPayment` reads it. */
+const ENDED_CYCLE = {
+  storeId: STORE,
+  plan: "pro",
+  period: "monthly",
+  billedLocations: 0,
+  scheduledPlan: null,
+  scheduledPeriod: null,
+  scheduledLocations: null,
+  currentCycleSeq: 3,
+  currentPeriodEnd: "2026-08-31T00:00:00.000Z",
+  state: "past_due",
+};
+
+describe("★★ advanceAfterPayment never renews a cancelling subscription (R2)", () => {
+  // A renewal payment that lands while the cancellation stands (an autopay
+  // debit under way, a checkout opened before cancelling) must not restore or
+  // extend the plan. It is refunded when the plan ends; Keep my plan clears the
+  // flag first, and then this advances it.
+  it("★★ returns false for a cancelling subscription even with a PAID next invoice", async () => {
+    seed([[{ ...ENDED_CYCLE, cancelAtPeriodEnd: true }], [{ status: "paid" }]]);
+    expect(await advanceAfterPayment(STORE, NOW)).toBe(false);
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+
+  it("★ the same subscription, not cancelling, IS advanced (the control)", async () => {
+    seed([
+      [{ ...ENDED_CYCLE, cancelAtPeriodEnd: false }],
+      [{ status: "paid" }],
+    ]);
+    expect(await advanceAfterPayment(STORE, NOW)).toBe(true);
+    expect(dbHolder.current.calls.set[0].state).toBe("active");
+    expect(dbHolder.current.calls.set[0].currentCycleSeq).toBe(4);
+  });
 });
 
 describe("★★ pass 1 skips a cancelled subscription", () => {
@@ -1023,5 +1522,211 @@ describe("downgradeExpired", () => {
     const s = await downgradeExpired({ now: NOW });
     expect(s.errors).toBe(1);
     expect(s.downgraded).toBe(0);
+  });
+
+  describe("★★ a cancelling subscription in grace is ENDED, never downgraded", () => {
+    // Cancelled while past_due or in grace: the plan stops at the grace end as
+    // a cancellation (state `cancelled`, the flag cleared, the next invoice
+    // closed `void`), never through `billing_claim_downgrade`, which would mark
+    // the next invoice `uncollectible` and leave a payment there unrefunded.
+    const CANCELLING_IN_GRACE = {
+      storeId: STORE,
+      plan: "pro",
+      cancelAtPeriodEnd: true,
+      currentCycleSeq: 3,
+    };
+
+    it.each(["open", "processing", "paid"])(
+      "★★ next invoice %s: ended by endSubscription, the invoice closed void",
+      async (status) => {
+        dbHolder.current = makeDbMock({
+          selectQueue: [[CANCELLING_IN_GRACE]],
+          executeQueue: [[closedRow(status)]],
+        });
+        const s = await downgradeExpired({ now: NOW });
+
+        expect(s).toEqual({
+          downgraded: 0,
+          shiftsClosed: 0,
+          ended: 1,
+          advancedAfterGrace: 0,
+          errors: 0,
+        });
+        // ★★ The downgrade claim is never asked.
+        expect(executed("billing_claim_downgrade")).toHaveLength(0);
+
+        // The end: state cancelled, flag cleared, grace fields cleared.
+        expect(dbHolder.current.calls.update[0]).toBe(billingSubscriptions);
+        expect(dbHolder.current.calls.set[0]).toEqual(
+          expect.objectContaining({
+            state: "cancelled",
+            cancelAtPeriodEnd: false,
+            graceStartedAt: null,
+            graceEndsAt: null,
+            currentPeriodStart: null,
+            currentPeriodEnd: null,
+          }),
+        );
+        // ★ The claim has NO state condition: the scan already chose past_due
+        // or grace, and the flag plus the cycle are what make it exactly-once.
+        const claim = render(dbHolder.current.calls.where[1]);
+        expect(claim.sql).toContain('"billing_subscriptions"."store_id" = $1');
+        expect(claim.sql).toContain(
+          '"billing_subscriptions"."current_cycle_seq" = $2',
+        );
+        expect(claim.sql).toContain(
+          '"billing_subscriptions"."cancel_at_period_end" = $3',
+        );
+        expect(claim.sql).not.toContain('"billing_subscriptions"."state"');
+        expect(claim.params).toEqual([STORE, 3, true]);
+
+        // ★★ Every invoice above the cycle, whatever its status, goes void.
+        const closes = executed("update public.billing_invoices i");
+        expect(closes).toHaveLength(1);
+        const { sql, params } = render(closes[0]);
+        expect(sql).toContain(
+          "and i.status in ('draft', 'open', 'processing', 'paid')",
+        );
+        expect(sql).toContain("set status = 'void'");
+        expect(params).toEqual([STORE, 3, NOW.toISOString()]);
+
+        expect(logInfo).toHaveBeenCalledWith(
+          "billing.renewal.cancelled_at_grace_end",
+          { storeId: STORE },
+        );
+        expect(dunning.notifyDowngraded).toHaveBeenCalledWith({
+          storeId: STORE,
+          fromPlan: "pro",
+        });
+      },
+    );
+
+    it("★ a LOST end claim (a resume won) ends nothing, closes nothing and says nothing", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[CANCELLING_IN_GRACE]],
+        returning: [],
+      });
+      const s = await downgradeExpired({ now: NOW });
+      expect(s.ended).toBe(0);
+      expect(s.downgraded).toBe(0);
+      expect(dbHolder.current.calls.execute).toHaveLength(0);
+      expect(dunning.notifyDowngraded).not.toHaveBeenCalled();
+      // Not the safety net either: that is for a subscription the claim refused.
+      expect(dbHolder.current.calls.select).toHaveLength(1);
+    });
+
+    it("★ a failure ending it is counted, and the batch goes on", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [CANCELLING_IN_GRACE, { ...CANCELLING_IN_GRACE, storeId: "s2" }],
+        ],
+      });
+      let n = 0;
+      dbHolder.current.db.execute = vi.fn(async () => {
+        n += 1;
+        if (n === 1) throw new Error("boom");
+        return { rows: [] };
+      });
+      const s = await downgradeExpired({ now: NOW });
+      expect(s.errors).toBe(1);
+      expect(s.ended).toBe(1);
+      expect(logError).toHaveBeenCalledWith(
+        "billing.renewal.end_cancelled",
+        expect.any(Error),
+        { storeId: STORE },
+      );
+    });
+
+    it("★★ a NON-cancelling subscription still goes through the claim, unchanged", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[{ ...CANCELLING_IN_GRACE, cancelAtPeriodEnd: false }]],
+        executeQueue: [[{ ok: true }]],
+      });
+      const s = await downgradeExpired({ now: NOW });
+      expect(s.downgraded).toBe(1);
+      expect(s.ended).toBe(0);
+      expect(executed("billing_claim_downgrade")).toHaveLength(1);
+      // The claim marks the next invoice uncollectible itself; nothing is
+      // closed void on this path.
+      expect(executed("update public.billing_invoices i")).toHaveLength(0);
+    });
+  });
+
+  describe("★★ the safety net: a refused claim whose next invoice is PAID advances", () => {
+    // `billing_claim_downgrade` refuses when the next invoice was paid, and the
+    // cycle may still not have turned (a payment the reconcile pass recorded
+    // without advancing, a manual payment whose advance failed). Left alone
+    // that subscription sits in grace for ever; `advanceAfterPayment` re-reads
+    // everything and advances only a paid next invoice.
+    const IN_GRACE = {
+      storeId: STORE,
+      plan: "pro",
+      cancelAtPeriodEnd: false,
+      currentCycleSeq: 3,
+    };
+
+    it("★★ advances it and counts it", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [IN_GRACE],
+          [{ ...ENDED_CYCLE, cancelAtPeriodEnd: false }],
+          [{ status: "paid" }],
+        ],
+        executeQueue: [[{ ok: false }]],
+      });
+      const s = await downgradeExpired({ now: NOW });
+
+      expect(s.advancedAfterGrace).toBe(1);
+      expect(s.downgraded).toBe(0);
+      expect(s.ended).toBe(0);
+      expect(s.errors).toBe(0);
+      expect(logInfo).toHaveBeenCalledWith(
+        "billing.renewal.advanced_after_grace",
+        { storeId: STORE },
+      );
+      const advance = dbHolder.current.calls.set.find(
+        (x: any) => x.state === "active",
+      );
+      expect(advance.currentCycleSeq).toBe(4);
+      expect(dunning.notifyDowngraded).not.toHaveBeenCalled();
+    });
+
+    it("★ runs AFTER the claim's transaction, in its own", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [IN_GRACE],
+          [{ ...ENDED_CYCLE, cancelAtPeriodEnd: false }],
+          [{ status: "paid" }],
+        ],
+        executeQueue: [[{ ok: false }]],
+      });
+      await downgradeExpired({ now: NOW });
+      // The scan, the claim and the advance: three transactions.
+      expect(vi.mocked(withService)).toHaveBeenCalledTimes(3);
+      const db = dbHolder.current.db;
+      const claimAt = db.execute.mock.invocationCallOrder[0];
+      const advanceReadAt = db.select.mock.invocationCallOrder[1];
+      expect(claimAt).toBeLessThan(advanceReadAt);
+    });
+
+    it("★★ a refused claim whose next invoice is still PROCESSING is NOT advanced", async () => {
+      // The money may yet land; until it does, the claim keeps refusing and the
+      // subscription waits. Advancing on a payment in flight gives a cycle away.
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [IN_GRACE],
+          [{ ...ENDED_CYCLE, cancelAtPeriodEnd: false }],
+          [{ status: "processing" }],
+        ],
+        executeQueue: [[{ ok: false }]],
+      });
+      const s = await downgradeExpired({ now: NOW });
+      expect(s.advancedAfterGrace).toBe(0);
+      expect(dbHolder.current.calls.set).toHaveLength(0);
+      expect(logInfo).not.toHaveBeenCalledWith(
+        "billing.renewal.advanced_after_grace",
+        expect.anything(),
+      );
+    });
   });
 });

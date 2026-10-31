@@ -1,9 +1,14 @@
 import "server-only";
 
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import { categories, products } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
+import {
+  blockedMedia,
+  isBlockedAddressIn,
+} from "@/lib/moderation/blocked-objects";
+import { isMediaKey, mediaKeyFromUrl } from "@/lib/moderation/media-key";
 import type { MinkActorContext } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -24,6 +29,15 @@ import type { MinkActorContext } from "./types";
 // with its own permission, and an admin trusted to arrange a page is not
 // automatically trusted to enumerate every file the store has uploaded --
 // filenames alone can carry a supplier's name or an unreleased product's.
+//
+// ★★ A FILE STOREMINK BLOCKED IS NEITHER LISTED NOR OWNED (takedown design
+// 3.4 and 5.7, plan A18). The library list leaves it out, told or not, and
+// `selectOwnedStorefrontImageUrls` does not count it as the store's, so every
+// proposal that places a picture through that check (a layout, the Website
+// Builder, a personalisation, a redesign, a blog cover, a product's photos, a
+// domain card) refuses it with its own "no longer available" words. A block
+// kept from the store (decision D21) is refused in exactly those words too:
+// nothing here names or hints at it.
 // ---------------------------------------------------------------------------
 
 /** Bounded, like every other Mink read: a library can hold thousands. */
@@ -63,8 +77,13 @@ export async function readMinkStorefrontMedia(
     `),
   );
   const rows = result.rows as MediaRow[];
+  // Read once the scope has closed: the set may reload through its own.
+  const blocked = await blockedMedia();
+  const listed = rows
+    .slice(0, limit)
+    .filter((row) => !isBlockedAddressIn(blocked, row.url));
   return {
-    media: rows.slice(0, limit).map((row) => ({
+    media: listed.map((row) => ({
       mediaId: row.id,
       /**
        * ★ THE EXACT STRING A PROPOSAL MUST ECHO BACK. The ownership guard
@@ -161,8 +180,91 @@ export async function selectOwnedStorefrontImageUrls(
       where ${categories.storeId} = ${storeId}
         and ${categories.imageUrl} = any(${sql.param(unique)}::text[])
     ) owned
+    ${notBlocked(sql`owned.url`, unique)}
   `);
   return new Set((result.rows as { url: string }[]).map((row) => row.url));
+}
+
+/**
+ * Which of these exact addresses name a file StoreMink blocked (told or not),
+ * read on the caller's connection. Never opens a scope of its own, so it is
+ * safe inside another scope's callback (the campaign's brand read uses it to
+ * leave a blocked logo off an email).
+ */
+export async function selectBlockedImageUrls(
+  db: Db,
+  urls: readonly string[],
+): Promise<Set<string>> {
+  const pairs = blockedKeyPairs(
+    [...new Set(urls.map((url) => url.trim()))].filter(Boolean),
+  );
+  if (pairs.urls.length === 0) return new Set();
+  const result = await db.execute(sql`
+    select distinct candidate.url
+      from unnest(
+             ${sql.param(pairs.urls)}::text[],
+             ${sql.param(pairs.keys)}::text[]
+           ) as candidate(url, key)
+      join public.content_blocks blocked
+        on blocked.object_path = candidate.key
+       and blocked.lifted_at is null
+  `);
+  return new Set((result.rows as { url: string }[]).map((row) => row.url));
+}
+
+/**
+ * The address-to-key pairs the blocked-file check looks up: each candidate's
+ * key in the takedown normal form (`mediaKeyFromUrl`), plus, for an absolute
+ * address whose path is one of our bundled theme files, that file's key, the
+ * same two lookups `isBlockedAddressIn` makes. An address that is not a media
+ * address, or cannot be read safely, gives no pair.
+ */
+function blockedKeyPairs(urls: readonly string[]): {
+  urls: string[];
+  keys: string[];
+} {
+  const bucket = mediaBucket();
+  const pairs = { urls: [] as string[], keys: [] as string[] };
+  for (const url of urls) {
+    const result = mediaKeyFromUrl(url, { bucket });
+    if (!isMediaKey(result)) continue;
+    pairs.urls.push(url);
+    pairs.keys.push(result.key);
+    if (result.source !== "external") continue;
+    const path = result.key.replace(/^https:\/\/[^/]+/, "");
+    if (!path.startsWith("/themes/")) continue;
+    const bundled = mediaKeyFromUrl(path, { bucket });
+    if (isMediaKey(bundled)) {
+      pairs.urls.push(url);
+      pairs.keys.push(bundled.key);
+    }
+  }
+  return pairs;
+}
+
+/** `where not exists (a live file block on this address)`, or nothing. */
+function notBlocked(column: SQL, urls: readonly string[]): SQL {
+  const pairs = blockedKeyPairs(urls);
+  if (pairs.urls.length === 0) return sql``;
+  return sql`where not exists (
+      select 1
+        from unnest(
+               ${sql.param(pairs.urls)}::text[],
+               ${sql.param(pairs.keys)}::text[]
+             ) as candidate(url, key)
+        join public.content_blocks blocked
+          on blocked.object_path = candidate.key
+         and blocked.lifted_at is null
+       where candidate.url = ${column}
+    )`;
+}
+
+/**
+ * This environment's public bucket, read the way `GCS_BUCKET_NAME` is
+ * (`lib/storage/gcs.ts`), so the keys here match the ones a file block stores.
+ */
+function mediaBucket(): string | null {
+  return process.env.GCS_BUCKET || null;
 }
 
 /** The same question outside a transaction, for the proposal path. */

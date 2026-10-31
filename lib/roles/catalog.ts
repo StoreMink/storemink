@@ -134,7 +134,7 @@ function everything(): RolePermissions {
 
 /**
  * Admin: runs the whole store, but does not decide WHO runs it or what it
- * pays for. Staff and roles are read-only, and Plan & billing (`ai`) is absent.
+ * pays for. Staff and roles are read-only, and Plans & Billing (`ai`) is absent.
  */
 function adminPermissions(): RolePermissions {
   const map = everything();

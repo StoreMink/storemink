@@ -28,24 +28,18 @@ import {
 // re-export fails the BUILD while typecheck passes. See invoice-types.ts.
 import type { PayableInvoice } from "@/lib/billing/invoice-types";
 import { openRazorpayModal } from "@/lib/payments/razorpay-client";
+import {
+  amountChanged,
+  formatRupees,
+  invoiceGstLine,
+  istShortDate,
+} from "@/lib/billing/tax-copy";
+import { shouldOpenPayment } from "./amount-guard";
 
-function money(paise: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(paise / 100);
-}
-
+/** "1 Nov 2026 to 30 Nov 2026", in India time (GST design 7.3). */
 function period(from: string | null, to: string | null): string | null {
   if (!from || !to) return null;
-  const fmt = (iso: string) =>
-    new Date(iso).toLocaleDateString("en-GB", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  return `${fmt(from)} to ${fmt(to)}`;
+  return `${istShortDate(from)} to ${istShortDate(to)}`;
 }
 
 export function OpenInvoices({
@@ -57,15 +51,43 @@ export function OpenInvoices({
 }) {
   const router = useRouter();
   const [paying, setPaying] = useState<string | null>(null);
+  // ★ The amount guard's memory (design 7.4): when a start asked for a
+  // different amount than the row showed, that amount is shown on the row and
+  // is what the next press must match.
+  const [askedPaise, setAskedPaise] = useState<Record<string, number>>({});
 
   if (invoices.length === 0) return null;
 
-  async function pay(invoiceId: string) {
+  async function pay(inv: PayableInvoice) {
+    const invoiceId = inv.id;
     setPaying(invoiceId);
     const start = await startPayInvoice(invoiceId);
     if (!start.ok) {
+      // ★ The server's sentence, word for word (renewal-cancel design 8.4).
+      // It knows WHY: a cancelled plan's next invoice ("You've cancelled your
+      // plan, so this invoice won't be charged..."), a closed one ("That
+      // invoice is closed and can't be paid..."). A generic "couldn't pay"
+      // would send the merchant to pay again for something they must not.
       toast.error(start.error);
       setPaying(null);
+      // A refusal usually means this list is out of date (the plan was
+      // cancelled or the invoice closed since the page loaded), and the
+      // server's list leaves out what can no longer be paid.
+      router.refresh();
+      return;
+    }
+    // ★★ THE AMOUNT GUARD (design 7.4). The invoice is issued, so its total
+    // cannot change, but account credit or a late change can still make the
+    // start ask for something else: the window never asks for more (or less)
+    // than this row showed. A mismatch shows the new amount and waits for
+    // another press.
+    const shown = askedPaise[invoiceId] ?? inv.totalPaise;
+    if (!shouldOpenPayment(shown, start.amountPaise)) {
+      setAskedPaise((prev) => ({ ...prev, [invoiceId]: start.amountPaise }));
+      // The press named is this row's own button, "Pay now".
+      toast.info(amountChanged(start.amountPaise, "pay_now"));
+      setPaying(null);
+      router.refresh();
       return;
     }
     const opened = await openRazorpayModal({
@@ -86,6 +108,8 @@ export function OpenInvoices({
         if (!done.ok) {
           // ★ Money may well have moved. Never report this as a failure — a
           // merchant told "payment failed" pays twice (§26's rule, same shape).
+          // Shown as returned: for a payment that arrived after the plan
+          // ended, the server says it is being refunded and when.
           toast.info(done.error);
         } else if (done.planRestored) {
           toast.success("Paid - your plan is active again.");
@@ -123,6 +147,12 @@ export function OpenInvoices({
           <ul className="mt-4 space-y-2">
             {invoices.map((inv) => {
               const span = period(inv.periodStart, inv.periodEnd);
+              // "Including ₹2,700 GST (18%)": the invoice's own figure, keyed
+              // on the tax it carries, never on the rate alone.
+              const gstLine = invoiceGstLine(inv.taxPaise, inv.taxRateBps);
+              const asked = askedPaise[inv.id];
+              const askedOther =
+                asked !== undefined && asked !== inv.totalPaise;
               // `processing` means a payment is already with the gateway.
               // Offering "Pay" would open a second one against the same money.
               const inFlight = inv.status === "processing";
@@ -133,22 +163,27 @@ export function OpenInvoices({
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-[#111827]">
-                      {money(inv.totalPaise)}
+                      {formatRupees(inv.totalPaise)}
                       {inv.invoiceRef ? (
                         <span className="ml-2 font-mono text-xs font-normal text-[#5b6472]">
                           {inv.invoiceRef}
                         </span>
                       ) : null}
                     </div>
+                    {gstLine && (
+                      <div className="mt-0.5 text-xs text-[#5b6472]">
+                        {gstLine}
+                      </div>
+                    )}
                     <div className="mt-0.5 text-xs text-[#5b6472]">
                       {span ? `Service period ${span}` : "Subscription"}
-                      {inv.dueAt
-                        ? ` · due ${new Date(inv.dueAt).toLocaleDateString(
-                            "en-GB",
-                            { day: "2-digit", month: "short" },
-                          )}`
-                        : null}
+                      {inv.dueAt ? ` · due ${istShortDate(inv.dueAt)}` : null}
                     </div>
+                    {askedOther && (
+                      <div className="mt-1 text-xs font-medium text-amber-800">
+                        {amountChanged(asked, "pay_now")}
+                      </div>
+                    )}
                   </div>
                   {inFlight ? (
                     <span className="text-xs font-medium text-amber-700">
@@ -157,7 +192,7 @@ export function OpenInvoices({
                   ) : (
                     <button
                       type="button"
-                      onClick={() => pay(inv.id)}
+                      onClick={() => pay(inv)}
                       disabled={!canManage || paying !== null}
                       className="inline-flex items-center gap-2 rounded-lg bg-[#111827] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-50"
                       title={

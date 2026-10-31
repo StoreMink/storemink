@@ -19,19 +19,34 @@ import "server-only";
  * locked out of their own POS for up to an hour, at the moment they are watching
  * the screen. So the advance runs here too — through the SAME function the worker
  * uses, never a second copy of the rule.
+ *
+ * ★★ A CYCLE THE STORE WILL NEVER ENTER IS NOT PAYABLE (renewal-cancel, design
+ * 6.5). While a cancellation stands, the next cycle's invoice cannot be paid:
+ * the plan ends at the cycle end and the payment would only have to be refunded.
+ * An invoice above an ended plan's last cycle, or below a live plan's current
+ * one, is refused for the same reason. `cycleRefusal` is the rule for one
+ * invoice; `listPayableInvoices` applies the same three conditions in SQL.
  */
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { billingInvoices, billingPaymentAttempts } from "@/drizzle/schema";
-import { logError, logWarn } from "@/lib/observability/logger";
+import {
+  billingInvoices,
+  billingPaymentAttempts,
+  billingSubscriptions,
+} from "@/drizzle/schema";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
   rzpCreateOrder,
   verifyCapturedCheckoutPayment,
   verifyCheckoutSignature,
 } from "@/lib/payments/razorpay";
-import { beginAttempt, settleAttempt } from "./collect";
+import {
+  beginAttempt,
+  capturedAttemptForInvoice,
+  settleAttempt,
+} from "./collect";
 import type { PayableInvoice } from "./invoice-types";
 import {
   amountDueForInvoice,
@@ -50,8 +65,85 @@ export interface PaymentStart {
 
 export type PayResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-/** Invoice states a merchant may still pay. */
-const PAYABLE = ["open", "draft"] as const;
+/**
+ * Invoice states a merchant may still pay.
+ *
+ * ★ NOT A DRAFT (R1-06). A draft is an offer, not a debt: enrolment, a plan
+ * change and a location purchase each take their payment through their own
+ * start, which reads the tax and refuses what GST forbids (no state on record,
+ * a business outside India) before anything is written. This action is a
+ * public server action, so accepting a draft here let a crafted call issue
+ * and charge an enrolment draft past those refusals, and without activating
+ * the plan. The screen never offered one (`listPayableInvoices` lists open and
+ * processing only), so nothing a merchant can see changes.
+ */
+const PAYABLE = ["open"] as const;
+
+/** Subscription states that still have a current cycle. */
+const LIVE_STATES = ["active", "past_due", "grace"];
+/** Subscription states whose plan has ended. */
+const ENDED_STATES = ["cancelled", "downgraded"];
+
+/** Refused: the next cycle's invoice while a cancellation stands (design 8.4). */
+export const CANCELLING_INVOICE_MESSAGE =
+  "You've cancelled your plan, so this invoice won't be charged. To keep your plan, choose Keep my plan first.";
+
+/** Refused: a closed invoice, or one for a cycle the store will never enter. */
+export const CLOSED_INVOICE_MESSAGE =
+  "That invoice is closed and can't be paid. Subscribe again to start a new cycle.";
+
+/** A payment that settled after the plan ended and its invoice closed. */
+export const CLOSED_ON_ARRIVAL_MESSAGE =
+  "Your plan ended before this payment arrived, so we're refunding it to the account you paid from, usually within 5 working days.";
+
+/**
+ * Refused: a payment for this invoice is already captured (RC-F1b). Never a
+ * second order: the earlier payment is recorded and finished by the hourly
+ * check, or by a person.
+ */
+export const ALREADY_CAPTURED_INVOICE_MESSAGE =
+  "A payment for this invoice has already gone through, so please don't pay it again. It will show as paid shortly. If it still shows as unpaid after a day, write to support@storemink.com.";
+
+/** Refused: an invoice with no issue date after the finalize step. */
+export const UNISSUED_INVOICE_MESSAGE =
+  "That invoice hasn't been issued, so it can't be paid. Please try again, or write to support@storemink.com if this keeps happening.";
+
+/** The subscription facts that decide whether an invoice's cycle is payable. */
+export interface SubscriptionCycleFacts {
+  state: string;
+  currentCycleSeq: number;
+  cancelAtPeriodEnd: boolean;
+}
+
+/**
+ * Why an invoice's cycle cannot be paid, or null when it can.
+ *
+ * - `cancelling`: the next cycle's invoice while a cancellation stands. Keep my
+ *   plan clears the flag, and the invoice is payable again.
+ * - `unreachable`: an issued invoice above an ended plan's last cycle, or below
+ *   a live plan's current cycle. The store will never enter that cycle.
+ *
+ * ★ `listPayableInvoices` applies the same three conditions in SQL; a change
+ * here belongs there too.
+ */
+export function cycleRefusal(
+  sub: SubscriptionCycleFacts | null,
+  invoice: { cycleSeq: number | null; issued: boolean },
+): "cancelling" | "unreachable" | null {
+  if (!sub || invoice.cycleSeq === null) return null;
+  const seq = invoice.cycleSeq;
+  if (sub.cancelAtPeriodEnd && seq === sub.currentCycleSeq + 1) {
+    return "cancelling";
+  }
+  if (!invoice.issued) return null;
+  if (ENDED_STATES.includes(sub.state) && seq > sub.currentCycleSeq) {
+    return "unreachable";
+  }
+  if (LIVE_STATES.includes(sub.state) && seq < sub.currentCycleSeq) {
+    return "unreachable";
+  }
+  return null;
+}
 
 /**
  * Open a payment for an invoice the merchant already owes.
@@ -90,14 +182,45 @@ export async function startInvoicePayment(input: {
   // ★ `uncollectible` and `void` are DECISIONS, not states to pay out of. An
   // uncollectible invoice belongs to a cycle the merchant was already downgraded
   // for; taking money for it would charge them for a service period they never
-  // received (§7). They re-subscribe instead.
+  // received (§7). They re-subscribe instead. ("Closed", not "closed unpaid":
+  // a void invoice may have been paid and refunded.)
   if (invoice.status === "uncollectible" || invoice.status === "void") {
+    return { ok: false, error: CLOSED_INVOICE_MESSAGE };
+  }
+
+  // ★★ DEFENCE IN DEPTH (RC-F1b): AN INVOICE WITH A CAPTURED ATTEMPT IS NEVER
+  // OFFERED A SECOND PAYMENT. Finding F1's fix already makes such an invoice
+  // paid when the capture is seen again, but an open invoice an older confirm
+  // left behind captured money, or a draft whose purchase the merchant closed
+  // the tab on, must not open a second order here. An open or processing one
+  // is re-synced first, so the merchant sees it paid; a draft is never
+  // finalized here, because the hourly check finishes that purchase. A failed
+  // read refuses: "we could not check" is not "nothing was paid".
+  const captured = await capturedAttemptForInvoice(invoice.id, input.storeId);
+  if (captured === undefined) {
     return {
       ok: false,
       error:
-        "That invoice was closed unpaid and can't be settled. Subscribe again to start a new cycle.",
+        "We couldn't check this invoice's payments just now. Please try again.",
     };
   }
+  if (captured) {
+    if (invoice.status === "open" || invoice.status === "processing") {
+      await settleAttempt(captured.id, "captured", { now });
+      const after = await getInvoice(invoice.id);
+      if (after?.status === "paid") {
+        return { ok: false, error: "That invoice is already paid." };
+      }
+    }
+    logWarn("billing.manual_pay_captured_attempt", {
+      storeId: input.storeId,
+      invoiceId: invoice.id,
+      attemptId: captured.id,
+      invoiceStatus: invoice.status,
+    });
+    return { ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE };
+  }
+
   if (invoice.status === "processing") {
     return {
       ok: false,
@@ -108,11 +231,64 @@ export async function startInvoicePayment(input: {
     return { ok: false, error: "That invoice can't be paid." };
   }
 
+  // ★★ A CYCLE THE STORE WILL NEVER ENTER IS NOT PAYABLE (design 6.5). Read
+  // before finalize, so a refused draft never takes a number in the gapless
+  // series. ★ An unreadable subscription refuses: no money has moved, while
+  // taking it for a cycle the store will not enter would have to be refunded.
+  let sub: SubscriptionCycleFacts | null;
+  try {
+    sub = await withService(async (db) => {
+      const [row] = await db
+        .select({
+          state: billingSubscriptions.state,
+          currentCycleSeq: billingSubscriptions.currentCycleSeq,
+          cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
+        })
+        .from(billingSubscriptions)
+        .where(eq(billingSubscriptions.storeId, input.storeId))
+        .limit(1);
+      return row ?? null;
+    });
+  } catch (err) {
+    logError("billing.manual_pay_subscription_read", err, {
+      storeId: input.storeId,
+      invoiceId: invoice.id,
+    });
+    return {
+      ok: false,
+      error: "We couldn't check your plan just now. Please try again.",
+    };
+  }
+  const refusal = cycleRefusal(sub, {
+    cycleSeq: invoice.cycleSeq,
+    issued: !!invoice.finalizedAt,
+  });
+  if (refusal === "cancelling") {
+    return { ok: false, error: CANCELLING_INVOICE_MESSAGE };
+  }
+  if (refusal === "unreachable") {
+    return { ok: false, error: CLOSED_INVOICE_MESSAGE };
+  }
+
   // An invoice must be issued before it is paid — the merchant is paying against
   // a document number.
+  let issued = invoice;
   if (!invoice.finalizedAt) {
-    const issued = await finalizeInvoice(invoice.id, now);
-    if (!issued) return { ok: false, error: "Couldn't issue that invoice." };
+    const finalized = await finalizeInvoice(invoice.id, now);
+    if (!finalized) return { ok: false, error: "Couldn't issue that invoice." };
+    issued = finalized;
+  }
+  // ★★ AND IT MUST HAVE BEEN ISSUED. Finalize claims only a draft, so an
+  // invoice that is not a draft but carries no `finalized_at` comes back
+  // unnumbered (no code writes that state; a hand edit could). Taking money
+  // against it would be a payment with no document behind it.
+  if (!issued.finalizedAt) {
+    logError(
+      "billing.manual_pay_unissued_invoice",
+      new Error("invoice has no finalized_at after the finalize step"),
+      { storeId: input.storeId, invoiceId: invoice.id, status: issued.status },
+    );
+    return { ok: false, error: UNISSUED_INVOICE_MESSAGE };
   }
 
   const amountDue = await amountDueForInvoice(invoice.id);
@@ -280,6 +456,26 @@ export async function confirmInvoicePayment(input: {
     return { ok: false, error: "That payment didn't complete." };
   }
 
+  // ★★ THE PLAN MAY HAVE ENDED WHILE THE CHECKOUT WAS OPEN (design 4.3 edge
+  // case 2). The plan end closes the invoice, the capture cannot reopen it
+  // (`syncInvoiceStatus` claims only open and processing), and the refund pass
+  // returns the money. Saying "Paid" here would be untrue, so the merchant is
+  // told the refund instead. A failed re-read changes nothing: the advance
+  // below decides from the database either way.
+  const after = await getInvoice(input.invoiceId);
+  if (
+    after &&
+    after.storeId === input.storeId &&
+    (after.status === "void" || after.status === "uncollectible")
+  ) {
+    logInfo("billing.manual_pay_on_closed_invoice", {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+      invoiceStatus: after.status,
+    });
+    return { ok: false, error: CLOSED_ON_ARRIVAL_MESSAGE };
+  }
+
   // ★★ Restore the plan NOW rather than at the next cron tick, using the SAME
   // advance the worker uses. A merchant who has just paid must not stay locked
   // out of their own till for an hour.
@@ -294,6 +490,13 @@ export async function confirmInvoicePayment(input: {
  *
  * Excludes `uncollectible` and `void`: both are closed decisions, and offering
  * to pay one would take money for a period the merchant never received.
+ *
+ * ★★ AND EVERY INVOICE FOR A CYCLE THE STORE WILL NOT ENTER (design 6.5): the
+ * next cycle's while a cancellation stands, any above an ended plan's last
+ * cycle, any below a live plan's current cycle. The `cycleRefusal` rule, in
+ * SQL. ★ The subscription is a LEFT join wrapped in coalesce: a store with no
+ * subscription row lists its invoices as before, where a bare NOT over a NULL
+ * comparison would silently hide every one.
  */
 export async function listPayableInvoices(
   storeId: string,
@@ -310,13 +513,30 @@ export async function listPayableInvoices(
           periodEnd: billingInvoices.periodEnd,
           dueAt: billingInvoices.dueAt,
           createdAt: billingInvoices.createdAt,
+          // GST design 5.9: the "invoice to pay" panel says what of the
+          // total is GST, from the invoice's own figures.
+          taxPaise: billingInvoices.taxPaise,
+          taxRateBps: billingInvoices.taxRateBps,
+          taxInclusive: billingInvoices.taxInclusive,
         })
         .from(billingInvoices)
+        .leftJoin(
+          billingSubscriptions,
+          eq(billingSubscriptions.storeId, billingInvoices.storeId),
+        )
         .where(
           and(
             eq(billingInvoices.storeId, storeId),
             eq(billingInvoices.kind, "subscription"),
             inArray(billingInvoices.status, ["open", "processing"]),
+            sql`not coalesce(
+              (${billingSubscriptions.cancelAtPeriodEnd}
+                and ${billingInvoices.cycleSeq} = ${billingSubscriptions.currentCycleSeq} + 1)
+              or (${billingSubscriptions.state} in ('cancelled', 'downgraded')
+                and ${billingInvoices.cycleSeq} > ${billingSubscriptions.currentCycleSeq})
+              or (${billingSubscriptions.state} in ('active', 'past_due', 'grace')
+                and ${billingInvoices.cycleSeq} < ${billingSubscriptions.currentCycleSeq}),
+              false)`,
           ),
         )
         .orderBy(desc(billingInvoices.createdAt))

@@ -10,8 +10,10 @@ import { userEvent } from "@testing-library/user-event";
 // mock it so we drive the apply-coupon path without a network/database round-trip.
 vi.mock("@/app/actions/coupon-actions", () => ({ validateCoupon: vi.fn() }));
 
-import CartProvider, { useCart, lineKey } from "./CartProvider";
+import CartProvider, { useCart, lineKey, cartStockLines } from "./CartProvider";
 import { validateCoupon } from "@/app/actions/coupon-actions";
+
+const SECOND_PHOTO = "https://cdn.example.com/scarf-second.jpg";
 
 // A tiny consumer that surfaces the cart context as test-readable DOM + buttons,
 // so we can exercise the provider through real React state transitions.
@@ -33,6 +35,12 @@ function Harness() {
         {cart.items
           .map((i) => `${lineKey(i.productId, i.variantId)}x${i.quantity}`)
           .join("|")}
+      </span>
+      <span data-testid="images">
+        {cart.items.map((i) => String(i.image)).join("|")}
+      </span>
+      <span data-testid="stockLines">
+        {JSON.stringify(cartStockLines(cart.items))}
       </span>
       <button
         onClick={() =>
@@ -165,6 +173,86 @@ function Harness() {
       >
         reconcileP1Gone
       </button>
+      <button
+        onClick={() =>
+          setReconcileOut(
+            JSON.stringify(
+              cart.reconcileStock([
+                {
+                  productId: "p1",
+                  variantId: null,
+                  exists: true,
+                  trackInventory: false,
+                  stock: 0,
+                  allowBackorder: false,
+                  image: "/moderation/image-unavailable.webp",
+                },
+              ]),
+            ),
+          )
+        }
+      >
+        reconcileP1Image
+      </button>
+      <button
+        onClick={() =>
+          setReconcileOut(
+            JSON.stringify(
+              cart.reconcileStock([
+                {
+                  productId: "p1",
+                  variantId: null,
+                  exists: true,
+                  trackInventory: false,
+                  stock: 0,
+                  allowBackorder: false,
+                },
+              ]),
+            ),
+          )
+        }
+      >
+        reconcileP1NoImage
+      </button>
+      {/* A line added while the shopper looked at the product's SECOND
+          gallery photo, and the stock check's answer keeping it. */}
+      <button
+        onClick={() =>
+          cart.addItem({
+            productId: "p4",
+            slug: "scarf",
+            name: "Scarf",
+            variantId: "v9",
+            variantName: "Red",
+            price: 40,
+            basePrice: 40,
+            image: SECOND_PHOTO,
+          })
+        }
+      >
+        addP4Photo
+      </button>
+      <button
+        onClick={() =>
+          setReconcileOut(
+            JSON.stringify(
+              cart.reconcileStock([
+                {
+                  productId: "p4",
+                  variantId: "v9",
+                  exists: true,
+                  trackInventory: false,
+                  stock: 0,
+                  allowBackorder: false,
+                  image: SECOND_PHOTO,
+                },
+              ]),
+            ),
+          )
+        }
+      >
+        reconcileP4Kept
+      </button>
       <button onClick={() => cart.clear()}>clear</button>
       <button onClick={() => cart.openCart()}>open</button>
       <button onClick={() => cart.closeCart()}>close</button>
@@ -272,6 +360,51 @@ describe("CartProvider", () => {
     expect(screen.getByTestId("lines")).toHaveTextContent("");
     const out = JSON.parse(screen.getByTestId("reconcile").textContent!);
     expect(out.removed).toEqual(["Soap"]);
+  });
+
+  it("★ reconcileStock takes the server's current image, and keeps the line's own when none was sent", async () => {
+    const user = userEvent.setup();
+    renderCart();
+
+    await user.click(screen.getByText("addP1")); // added with no picture
+    expect(screen.getByTestId("images")).toHaveTextContent("null");
+    // The checkout's stock check says the line's picture is now the
+    // placeholder (StoreMink blocked the photo): the cart shows that.
+    await user.click(screen.getByText("reconcileP1Image"));
+    expect(screen.getByTestId("images")).toHaveTextContent(
+      "/moderation/image-unavailable.webp",
+    );
+    const out = JSON.parse(screen.getByTestId("reconcile").textContent!);
+    expect(out).toEqual({ removed: [], reduced: [] });
+    // An answer without an image (an older server) leaves the picture alone.
+    await user.click(screen.getByText("reconcileP1NoImage"));
+    expect(screen.getByTestId("images")).toHaveTextContent(
+      "/moderation/image-unavailable.webp",
+    );
+    expect(screen.getByTestId("lines")).toHaveTextContent("p1:x2");
+  });
+
+  it("★ the stock check is sent each line's own photo, and a photo the server kept stays", async () => {
+    const user = userEvent.setup();
+    renderCart();
+
+    await user.click(screen.getByText("addP2")); // no picture
+    await user.click(screen.getByText("addP4Photo")); // a gallery photo
+    // getCartStock compares the photo with the product's own; nothing else
+    // about the line is sent.
+    expect(JSON.parse(screen.getByTestId("stockLines").textContent!)).toEqual([
+      { productId: "p2", variantId: "v1", image: null },
+      { productId: "p4", variantId: "v9", image: SECOND_PHOTO },
+    ]);
+
+    await user.click(screen.getByText("reconcileP4Kept"));
+    expect(screen.getByTestId("images")).toHaveTextContent(
+      `null|${SECOND_PHOTO}`,
+    );
+    expect(JSON.parse(screen.getByTestId("reconcile").textContent!)).toEqual({
+      removed: [],
+      reduced: [],
+    });
   });
 
   it("setQuantity updates a line and removes it when set below 1", async () => {

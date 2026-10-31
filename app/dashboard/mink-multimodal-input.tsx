@@ -12,10 +12,9 @@ import {
   X,
 } from "lucide-react";
 import {
-  deleteMediaAsset,
-  uploadMediaAsset,
-} from "@/app/actions/media-actions";
-import type { MediaAsset } from "@/lib/media/library-types";
+  discardMinkAttachment,
+  uploadMinkAttachment,
+} from "@/app/actions/mink-attachment-actions";
 import { sendPageExitRequest } from "@/lib/http/page-exit-request";
 import {
   addReviewedMinkDocument,
@@ -47,12 +46,26 @@ import { formatMinkClock, MinkWaveform } from "./mink-waveform";
 const COMPOSER_FILE_ACCEPT =
   ".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,text/csv,image/png,image/jpeg,image/webp,application/pdf,text/plain,text/markdown";
 
+/**
+ * A picked photo's private copy, kept with the chat (lib/mink/attachments.ts)
+ * and never a Media Library row: the id the discard paths name, the address
+ * (`/api/mink/attachments/{id}`) the message carries, and the file's name.
+ */
+type MinkAttachmentRef = { id: string; url: string; filename: string };
+
+/**
+ * What the merchant reads when the upload call itself fails: a revision
+ * without this action during a deploy, or a network failure. The server's
+ * own sentence for a failed save, so the two cases read alike.
+ */
+const UPLOAD_FAILED = "Upload failed. Please try again.";
+
 type ComposerAttachment = {
   id: string;
   file: File;
   preview: string;
   localText: string | null;
-  asset: MediaAsset | null;
+  asset: MinkAttachmentRef | null;
   csvFile: MinkCsvReference | null;
   uploadState: "local" | "uploading" | "ready" | "error";
   /**
@@ -123,7 +136,9 @@ export function MinkMultimodalInput({
   const dragDepth = useRef(0);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
-  const uploadPromises = useRef(new Map<string, Promise<MediaAsset | null>>());
+  const uploadPromises = useRef(
+    new Map<string, Promise<MinkAttachmentRef | null>>(),
+  );
   const removedAttachmentIds = useRef(new Set<string>());
   const [submitting, setSubmittingState] = useState(false);
   const submittingRef = useRef(false);
@@ -227,7 +242,7 @@ export function MinkMultimodalInput({
     removedAttachmentIds.current.add(id);
     updateAttachments((current) => current.filter((item) => item.id !== id));
     if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-    if (attachment.asset) void deleteMediaAsset(attachment.asset.id);
+    if (attachment.asset) discardQuietly(attachment.asset.id);
     if (previewId === id) setPreviewId(null);
   }
 
@@ -238,7 +253,7 @@ export function MinkMultimodalInput({
       for (const attachment of attachmentsRef.current) {
         removedAttachmentIds.current.add(attachment.id);
         if (attachment.preview) URL.revokeObjectURL(attachment.preview);
-        if (attachment.asset) void deleteMediaAsset(attachment.asset.id);
+        if (attachment.asset) discardQuietly(attachment.asset.id);
       }
     },
     [],
@@ -247,11 +262,10 @@ export function MinkMultimodalInput({
   /**
    * ★★ THE UNMOUNT CLEANUP ABOVE CANNOT SURVIVE A REAL UNLOAD. It calls a
    * Server Action, and the browser cancels that request when the page is going
-   * away — so picking an image and then closing the tab left the upload in the
-   * merchant's Media Library permanently, with nothing marking it as a chat
-   * leftover. The two effects cover different exits: that one handles in-app
-   * navigation, where the request completes normally; this one handles the
-   * page actually being discarded.
+   * away, so picking an image and then closing the tab left the private upload
+   * until the nightly purge took it, two days later. The two effects cover
+   * different exits: that one handles in-app navigation, where the request
+   * completes normally; this one handles the page actually being discarded.
    *
    * ★ `sendBeacon`, NOT `fetch(..., {keepalive: true})`. It is the API built
    * for exactly this and cannot be cancelled by the unload — and because
@@ -432,7 +446,7 @@ export function MinkMultimodalInput({
     }
   }
 
-  async function startUpload(id: string): Promise<MediaAsset | null> {
+  async function startUpload(id: string): Promise<MinkAttachmentRef | null> {
     const pending = uploadPromises.current.get(id);
     if (pending) return pending;
     const attachment = attachmentsRef.current.find((item) => item.id === id);
@@ -446,7 +460,8 @@ export function MinkMultimodalInput({
     const promise = (async () => {
       const asset = await uploadMinkImage(attachment.file);
       if (removedAttachmentIds.current.has(id)) {
-        await deleteMediaAsset(asset.id);
+        // The card was removed while this uploaded: let the copy go now.
+        await discardMinkAttachment(asset.id).catch(() => undefined);
         return null;
       }
       updateAttachments((current) =>
@@ -735,7 +750,7 @@ export function MinkMultimodalInput({
       for (const record of records) {
         removedAttachmentIds.current.add(record.id);
         if (record.preview) URL.revokeObjectURL(record.preview);
-        if (record.asset) void deleteMediaAsset(record.asset.id);
+        if (record.asset) discardQuietly(record.asset.id);
       }
     };
     const prepared: MinkPreparedSend = {
@@ -1178,17 +1193,37 @@ function shortName(name: string) {
   return characters.length > 40 ? `${characters.slice(0, 37).join("")}…` : name;
 }
 
-/** The Media Library copy of a picked photo, kept for Mink, not listed. */
-async function uploadMinkImage(file: File): Promise<MediaAsset> {
+/**
+ * The private copy of a picked photo, kept with the chat (never a Media
+ * Library row). The form carries the picture as `file` and nothing else: the
+ * store, the admin and the path are the server's. A refusal the server
+ * answers (a role without Media manage, no private storage, the waiting cap,
+ * a blocked image, the type and size rules) is shown in its own words; a
+ * call that never reached the server is shown as the server's own
+ * failed-upload sentence, never as the thrown text.
+ */
+async function uploadMinkImage(file: File): Promise<MinkAttachmentRef> {
   const form = new FormData();
   form.set("file", file);
-  // Kept so Mink can use it, but not listed in the Media Library: it was
-  // handed to Mink, not chosen for the library.
-  form.set("purpose", "mink_attachment");
-  const result = await uploadMediaAsset(form);
-  if (result.error || !result.asset)
+  let result: Awaited<ReturnType<typeof uploadMinkAttachment>>;
+  try {
+    result = await uploadMinkAttachment(form);
+  } catch {
+    throw new Error(UPLOAD_FAILED);
+  }
+  if ("error" in result)
     throw new Error(result.error || "Could not upload this image.");
-  return result.asset;
+  return { id: result.id, url: result.url, filename: result.filename };
+}
+
+/**
+ * Let a private copy go without waiting for the answer. A discard never
+ * answers an error the composer must show, and a call that cannot reach the
+ * server (a deploy in progress, a closed connection) is not one to report
+ * either: a picture that was never sent is purged two days after upload.
+ */
+function discardQuietly(id: string) {
+  void discardMinkAttachment(id).catch(() => undefined);
 }
 
 async function uploadMinkCsv(
@@ -1259,8 +1294,9 @@ async function readMinkAttachment(
 
 /**
  * Turns a message and its staged files into the one message Mink receives:
- * each CSV copied and referenced, each photo saved (with media:manage) and
- * read, each document read, all within the message limit.
+ * each CSV copied and referenced, each photo kept privately with the chat
+ * (with media:manage) and read, each document read, all within the message
+ * limit.
  *
  * ★ Every step's result is reported through `onProgress` as soon as it
  * exists, BEFORE the next abort check, so a send stopped or failed halfway
@@ -1278,8 +1314,10 @@ async function prepareMinkAttachments({
   text: string;
   attachments: ComposerAttachment[];
   signal: AbortSignal;
-  /** The photo's saved copy; null without media:manage. Throws on failure. */
-  uploadImage: (attachment: ComposerAttachment) => Promise<MediaAsset | null>;
+  /** The photo's private copy; null without media:manage. Throws on failure. */
+  uploadImage: (
+    attachment: ComposerAttachment,
+  ) => Promise<MinkAttachmentRef | null>;
   onProgress: (id: string, patch: AttachmentProgress) => void;
   onStatus?: (status: string) => void;
 }): Promise<string> {

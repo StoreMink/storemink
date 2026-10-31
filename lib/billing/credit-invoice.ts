@@ -14,66 +14,61 @@ import "server-only";
  * closes it must not burn a number in the gapless GST series for a document
  * nobody received.
  *
- * ★ EVERY FUNCTION HERE IS BEST-EFFORT and returns rather than throws. Credits
- * are granted by `add_ai_credits`, and that must not fail because an invoice
- * could not be written — a merchant who paid gets their credits, and a missing
- * document is a support question rather than lost money.
+ * ★ EVERY FUNCTION HERE returns rather than throws. Credits are granted by
+ * `add_ai_credits`, and that must not fail because an invoice could not be
+ * issued: a merchant who paid gets their credits, and an invoice that did not
+ * issue is picked up by the repair pass (`issueCapturedDrafts`).
+ *
+ * ★★ BUT THE DRAFT IS NO LONGER OPTIONAL (GST, design 5.5). Once StoreMink
+ * charges GST the document is a tax invoice, so `startCreditPurchase` refuses
+ * the purchase when `draftCreditInvoice` returns null, before any payment
+ * window opens. The draft is built by the caller from ONE tax reading, the
+ * same one that priced the Razorpay order, so the invoice and the charge
+ * cannot disagree.
  */
 
 import { eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { aiCreditPurchases } from "@/drizzle/schema";
 import { logError } from "@/lib/observability/logger";
-import { buildAiCreditsInvoice } from "./invoice";
+import type { BuiltInvoice } from "./invoice";
 import {
   createAiCreditsInvoice,
   finalizePaidAiCreditsInvoice,
-  loadInvoiceParties,
-  loadTaxContext,
 } from "./invoice-store";
+import type { InvoiceTaxStamp } from "./tax-snapshot";
 
 /**
  * Raise the draft invoice for a purchase and link it.
  *
- * Returns the invoice id, or null when anything went wrong — the caller carries
- * on either way.
+ * `built` and `stamp` come from the caller's one tax reading
+ * (`loadTaxSnapshot`), the reading the Razorpay order was priced from.
+ *
+ * Returns the invoice id, or null when anything went wrong. The caller refuses
+ * the purchase on null (fail closed): no payment window opens without its
+ * invoice.
  */
 export async function draftCreditInvoice(input: {
   storeId: string;
   purchaseId: string;
-  packLabel: string;
-  credits: number;
-  amountPaise: number;
+  built: BuiltInvoice;
+  stamp: InvoiceTaxStamp;
 }): Promise<string | null> {
   try {
-    const [tax, parties] = await Promise.all([
-      loadTaxContext(input.storeId),
-      loadInvoiceParties(input.storeId),
-    ]);
-
-    const built = buildAiCreditsInvoice({
-      packLabel: input.packLabel,
-      credits: input.credits,
-      amountPaise: input.amountPaise,
-      tax,
-    });
-
     const invoice = await createAiCreditsInvoice({
       storeId: input.storeId,
-      built,
-      ...parties,
+      built: input.built,
+      stamp: input.stamp,
     });
     if (!invoice) return null;
 
     // ★ Linked on the PURCHASE. The unique index makes a retry a no-op rather
     // than a corruption.
     //
-    // ⚠ DEPLOY ORDER: if this ships before `billing_08` is applied, the column
-    // does not exist, this UPDATE throws, and the whole function returns null —
-    // so credit purchases keep working and simply produce no document. What it
-    // DOES leave is an orphan DRAFT invoice per purchase: harmless (drafts carry
-    // no number and the history filters them out) and never finalized, but
-    // untidy. Apply the migration first.
+    // ⚠ A link that fails returns null, so the caller refuses the purchase,
+    // and the draft just written stays an orphan: harmless (a draft carries no
+    // number, the history filters it out, and no payment can ever land on
+    // it), but untidy.
     await withService(async (db) => {
       await db
         .update(aiCreditPurchases)
@@ -102,10 +97,16 @@ export async function draftCreditInvoice(input: {
  * same idempotent transition. The checkout already captured this one-time
  * purchase; exposing it as an open subscription debt would invite a second
  * charge.
+ *
+ * `paidAt` is when the payment was captured, when the caller knows it: the
+ * read-time reconcile passes the payment's own `created_at`, so a pack paid
+ * before GST started but noticed on a later visit is issued with the terms of
+ * its payment time. The on-session confirm passes nothing (seconds old).
  */
 export async function issueCreditInvoice(
   purchaseId: string,
   now: Date = new Date(),
+  paidAt?: Date,
 ): Promise<void> {
   try {
     const invoiceId = await withService(async (db) => {
@@ -122,7 +123,7 @@ export async function issueCreditInvoice(
     // worse than no number.
     if (!invoiceId) return;
 
-    await finalizePaidAiCreditsInvoice(invoiceId, now);
+    await finalizePaidAiCreditsInvoice(invoiceId, now, paidAt);
   } catch (err) {
     logError("billing.issue_credit_invoice", err, { purchaseId });
   }

@@ -183,6 +183,167 @@
   color: var(--a-soft);
 }
 
+/* Mink AI feedback (/dashboard/help/feedback) */
+.hc-admin .hca-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  color: var(--a-soft);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.hc-admin .hca-back-link:hover {
+  color: var(--a-ink);
+}
+.hca-feedback-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #f2c9c5;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #fff5f4;
+  color: #8c352c;
+  font-size: 14px;
+}
+.hca-feedback-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 0 18px;
+}
+.hca-feedback-stats > div {
+  border: 1px solid var(--a-line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #fff;
+}
+.hca-feedback-stats dt {
+  color: var(--a-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+.hca-feedback-stats dd {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+.hca-feedback-stats > div:last-child dd {
+  font-size: 15px;
+  line-height: 1.6;
+}
+.hca-feedback-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.hc-admin .hca-feedback-filters a {
+  border: 1px solid var(--a-line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  background: #fff;
+  color: var(--a-ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.hc-admin .hca-feedback-filters a.is-active {
+  border-color: var(--a-accent);
+  background: var(--a-accent);
+  color: #fff;
+}
+.hca-feedback-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hca-feedback-list > li {
+  border: 1px solid var(--a-line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #fff;
+}
+.hca-feedback-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  color: var(--a-soft);
+  font-size: 12.5px;
+}
+.hca-feedback-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-weight: 600;
+}
+.hca-feedback-rating.up {
+  background: #e5f4ec;
+  color: var(--a-green);
+}
+.hca-feedback-rating.down {
+  background: #fdecea;
+  color: #a5281b;
+}
+.hc-admin p.hca-feedback-question {
+  margin: 10px 0 6px;
+  color: var(--a-ink);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: pre-wrap;
+}
+.hca-feedback-list details summary {
+  cursor: pointer;
+  color: var(--a-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+.hc-admin p.hca-feedback-answer {
+  margin: 6px 0 0;
+  color: var(--a-ink);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.hca-feedback-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.hca-feedback-sources > span {
+  color: var(--a-soft);
+}
+.hc-admin p.hca-feedback-none {
+  margin-top: 8px;
+  color: var(--a-faint);
+  font-size: 13px;
+}
+.hca-feedback-pages {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  color: var(--a-soft);
+  font-size: 13px;
+}
+@media (max-width: 640px) {
+  .hca-feedback-stats {
+    grid-template-columns: 1fr;
+  }
+  .hca-topline {
+    flex-direction: column;
+  }
+}
+
 /* ── Full-screen editor (route /dashboard/help/new | /[id]) ──
    A focused takeover, Shopify-style: fixed over the whole viewport (above the
    dashboard sidebar + topbar) so the editor gets the full width, with a back

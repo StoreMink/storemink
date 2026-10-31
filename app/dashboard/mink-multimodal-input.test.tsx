@@ -25,10 +25,19 @@ const recording = vi.hoisted(() => ({
 vi.mock("@/lib/mink/voice-recorder", () => ({
   startMinkRecording: recording.start,
 }));
-const media = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn() }));
+const attachments = vi.hoisted(() => ({ upload: vi.fn(), discard: vi.fn() }));
+vi.mock("@/app/actions/mink-attachment-actions", () => ({
+  uploadMinkAttachment: attachments.upload,
+  discardMinkAttachment: attachments.discard,
+}));
+// ★ The Media Library actions stay mocked though the composer no longer
+//   imports them: a discard path put back on deleteMediaAsset, or an upload
+//   put back on uploadMediaAsset, would record here, and "none of the four
+//   paths calls deleteMediaAsset" is pinned below.
+const library = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn() }));
 vi.mock("@/app/actions/media-actions", () => ({
-  uploadMediaAsset: media.upload,
-  deleteMediaAsset: media.remove,
+  uploadMediaAsset: library.upload,
+  deleteMediaAsset: library.remove,
 }));
 // The composer reads the voice loop only for its toggle; one mutable value
 // the voice tests move and every other test ignores.
@@ -56,8 +65,15 @@ vi.mock("./chat-context", () => ({
 }));
 
 const fetchMock = vi.fn();
-const SAVED_URL =
-  "https://storage.googleapis.com/b/stores/s1/media/echos_1.webp";
+// The private copy's id and address, as uploadMinkAttachment answers them.
+const ATTACHMENT_ID = "11111111-1111-4111-8111-111111111111";
+const ATTACHMENT_URL = `/api/mink/attachments/${ATTACHMENT_ID}`;
+const SECOND_ID = "22222222-2222-4222-8222-222222222222";
+const uploaded = (id = ATTACHMENT_ID, filename = "echos.png") => ({
+  id,
+  url: `/api/mink/attachments/${id}`,
+  filename,
+});
 
 beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
@@ -66,12 +82,12 @@ beforeEach(() => {
     ok: true,
     json: async () => ({ text: "Visible product and storefront details" }),
   });
-  media.upload.mockReset();
-  media.remove.mockReset();
-  media.upload.mockResolvedValue({
-    asset: { id: "asset-1", url: SAVED_URL, filename: "echos.png" },
-  });
-  media.remove.mockResolvedValue({ success: true });
+  attachments.upload.mockReset();
+  attachments.discard.mockReset();
+  attachments.upload.mockResolvedValue(uploaded());
+  attachments.discard.mockResolvedValue({ discarded: true });
+  library.upload.mockReset();
+  library.remove.mockReset();
   recording.start.mockReset();
   recording.done = null;
   recording.signal = null;
@@ -191,7 +207,7 @@ describe("ChatGPT-style Mink attachments", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(media.upload).not.toHaveBeenCalled();
+    expect(attachments.upload).not.toHaveBeenCalled();
     expect(submit).toHaveBeenCalledWith(
       expect.stringContaining("Visible product and storefront details"),
     );
@@ -210,19 +226,20 @@ describe("ChatGPT-style Mink attachments", () => {
       />,
     );
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
-    // ★ Labelled as a chat attachment, so the Media Library does not list it;
-    //   the row is still written, which is what lets Mink use the image.
-    const form = media.upload.mock.calls[0][0] as FormData;
-    expect(form.get("purpose")).toBe("mink_attachment");
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
+    // ★ The form carries the picture and nothing else: no Media Library
+    //   purpose, no label. The store, the admin and the path are the server's.
+    const form = attachments.upload.mock.calls[0][0] as FormData;
     expect(form.get("file")).toBeInstanceOf(File);
+    expect([...form.keys()]).toEqual(["file"]);
+    expect(library.upload).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    expect(media.upload).toHaveBeenCalledOnce();
+    expect(attachments.upload).toHaveBeenCalledOnce();
     expect(fetchMock).toHaveBeenCalledOnce();
     const sent = submit.mock.calls[0][0] as string;
-    expect(sent).toContain(SAVED_URL);
+    expect(sent).toContain(ATTACHMENT_URL);
     expect(sent).toContain("Visible product and storefront details");
   });
 
@@ -289,9 +306,11 @@ describe("ChatGPT-style Mink attachments", () => {
       <LiveComposer initial="Use this" canSaveMedia onSubmit={vi.fn()} />,
     );
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
     view.unmount();
-    await waitFor(() => expect(media.remove).toHaveBeenCalledWith("asset-1"));
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ATTACHMENT_ID),
+    );
   });
 
   it("accepts five attachments in one selection", async () => {
@@ -398,7 +417,7 @@ describe("ChatGPT-style Mink attachments", () => {
     vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon });
     render(<LiveComposer initial="Use this" canSaveMedia onSubmit={vi.fn()} />);
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
 
     // bfcache: the page comes back with the preview still on screen.
     fireEvent(
@@ -430,13 +449,9 @@ describe("ChatGPT-style Mink attachments", () => {
       },
     );
     vi.stubGlobal("navigator", { ...navigator, sendBeacon: beacon });
-    media.upload
-      .mockResolvedValueOnce({
-        asset: { id: "asset-1", url: SAVED_URL, filename: "a.png" },
-      })
-      .mockResolvedValueOnce({
-        asset: { id: "asset-2", url: SAVED_URL, filename: "b.png" },
-      });
+    attachments.upload
+      .mockResolvedValueOnce(uploaded(ATTACHMENT_ID, "a.png"))
+      .mockResolvedValueOnce(uploaded(SECOND_ID, "b.png"));
     render(
       <LiveComposer initial="Use these" canSaveMedia onSubmit={vi.fn()} />,
     );
@@ -450,7 +465,7 @@ describe("ChatGPT-style Mink attachments", () => {
     fireEvent.change(screen.getByLabelText("Choose image or document"), {
       target: { files },
     });
-    await waitFor(() => expect(media.upload).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledTimes(2));
     await screen.findByRole("button", { name: "View b.png" });
     const keepalive = vi.fn(async () => new Response(null));
     vi.stubGlobal("fetch", keepalive);
@@ -472,7 +487,7 @@ describe("ChatGPT-style Mink attachments", () => {
         JSON.parse(await (body as Blob).text()),
       ),
     );
-    expect(ids).toEqual([{ id: "asset-1" }, { id: "asset-2" }]);
+    expect(ids).toEqual([{ id: ATTACHMENT_ID }, { id: SECOND_ID }]);
   });
 
   it("dismisses attachment errors after a few seconds", async () => {
@@ -585,7 +600,7 @@ describe("★★ a spoken turn takes what is staged in the hidden composer", () 
       />,
     );
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
     const deliver = vi.fn<(message: string) => boolean>(() => true);
     let taken: boolean | null | undefined;
     await act(async () => {
@@ -600,12 +615,12 @@ describe("★★ a spoken turn takes what is staged in the hidden composer", () 
         "Create a new product from this image call it Almond Shake",
       ),
     ).toBe(true);
-    expect(sent).toContain(SAVED_URL);
+    expect(sent).toContain(ATTACHMENT_URL);
     expect(screen.queryByRole("button", { name: "View echos.png" })).toBeNull();
     // The composer remounts once the new conversation has its id: the image
     // went with the message, so its upload must survive that.
     view.unmount();
-    expect(media.remove).not.toHaveBeenCalled();
+    expect(attachments.discard).not.toHaveBeenCalled();
   });
 
   it("leaves the words in the box when the turn cannot go", async () => {
@@ -848,7 +863,7 @@ it("uploads an intact CSV privately without calling the visual reader", async ()
   expect(JSON.parse(fetchMock.mock.calls[0][1].body).csv).toBe(text);
   expect(submit.mock.calls[0][0]).toContain("Private product CSV attachment");
   expect(submit.mock.calls[0][0]).not.toContain("Whole Milk");
-  expect(media.upload).not.toHaveBeenCalled();
+  expect(attachments.upload).not.toHaveBeenCalled();
 });
 
 describe("★★ Enter hands a message with attachments to the chat at once", () => {
@@ -863,13 +878,10 @@ describe("★★ Enter hands a message with attachments to the chat at once", ()
 
   it("clears the box and hands over the photo before anything is uploaded or read", async () => {
     let finishUpload!: () => void;
-    media.upload.mockImplementation(
+    attachments.upload.mockImplementation(
       () =>
         new Promise((resolve) => {
-          finishUpload = () =>
-            resolve({
-              asset: { id: "asset-1", url: SAVED_URL, filename: "echos.png" },
-            });
+          finishUpload = () => resolve(uploaded());
         }),
     );
     const { sent, onSubmitPrepared } = handOff();
@@ -882,7 +894,7 @@ describe("★★ Enter hands a message with attachments to the chat at once", ()
       />,
     );
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
 
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
@@ -906,14 +918,16 @@ describe("★★ Enter hands a message with attachments to the chat at once", ()
     const finished = await reading;
 
     expect(finished.message).toContain("Is this in stock?");
-    expect(finished.message).toContain(SAVED_URL);
+    expect(finished.message).toContain(ATTACHMENT_URL);
     expect(finished.message).toContain(
       "Visible product and storefront details",
     );
-    expect(finished.previews).toEqual({ [`url:${SAVED_URL}`]: "blob:local" });
+    expect(finished.previews).toEqual({
+      [`url:${ATTACHMENT_URL}`]: "blob:local",
+    });
     expect(setStatus).toHaveBeenCalledWith("Looking at your photo…");
     // ★ The upload begun when the photo was picked is the one used: no second.
-    expect(media.upload).toHaveBeenCalledOnce();
+    expect(attachments.upload).toHaveBeenCalledOnce();
     // ★ The chat shows that picture now, so it is not revoked here.
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
   });
@@ -929,7 +943,7 @@ describe("★★ Enter hands a message with attachments to the chat at once", ()
       />,
     );
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(screen.getByLabelText("Message")).toHaveValue("");
 
@@ -963,7 +977,7 @@ describe("★★ Enter hands a message with attachments to the chat at once", ()
       signal: new AbortController().signal,
       setStatus: vi.fn(),
     });
-    expect(media.upload).toHaveBeenCalledOnce();
+    expect(attachments.upload).toHaveBeenCalledOnce();
   });
 
   it("sends a photo on its own, with no words", async () => {
@@ -1034,20 +1048,154 @@ describe("★★ Enter hands a message with attachments to the chat at once", ()
     }
     const view = render(<ChatBox />);
     await stageImage();
-    await waitFor(() => expect(media.upload).toHaveBeenCalledOnce());
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await sent[0]!
       .prepare({ signal: new AbortController().signal, setStatus: vi.fn() })
       .catch(() => undefined);
     view.unmount();
     // ★ Handed over, so leaving did not delete the upload the message uses.
-    expect(media.remove).not.toHaveBeenCalled();
+    expect(attachments.discard).not.toHaveBeenCalled();
 
     const kept = sent[0]!.restore({ code: "attachment_failed", message: "x" });
 
     expect(kept).toBe(false);
     expect(onAdd).toHaveBeenCalledWith("Is this in stock?");
-    await waitFor(() => expect(media.remove).toHaveBeenCalledWith("asset-1"));
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ATTACHMENT_ID),
+    );
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:local");
+  });
+});
+
+describe("★★ the picture is kept privately with the chat (28 Oct 2026)", () => {
+  it("★ shows the server's own refusal when the upload is refused", async () => {
+    attachments.upload.mockResolvedValue({
+      error: "Your role can't save images for Mink AI.",
+    });
+    render(<LiveComposer initial="Use this" canSaveMedia onSubmit={vi.fn()} />);
+    await stageImage();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your role can't save images for Mink AI.",
+    );
+  });
+
+  it("★ a call that never reaches the server reads as a failed upload, never as the thrown text", async () => {
+    attachments.upload.mockRejectedValue(new TypeError("Failed to fetch"));
+    render(<LiveComposer initial="Use this" canSaveMedia onSubmit={vi.fn()} />);
+    await stageImage();
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Upload failed. Please try again.");
+    expect(alert).not.toHaveTextContent("Failed to fetch");
+  });
+
+  it("discards an upload that finished after its card was removed", async () => {
+    let finishUpload!: () => void;
+    attachments.upload.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = () => resolve(uploaded());
+        }),
+    );
+    render(<LiveComposer initial="Use this" canSaveMedia onSubmit={vi.fn()} />);
+    await stageImage();
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Remove echos.png" }));
+    // Nothing to discard yet: the copy does not exist until the upload answers.
+    expect(attachments.discard).not.toHaveBeenCalled();
+    await act(async () => {
+      finishUpload();
+    });
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ATTACHMENT_ID),
+    );
+  });
+
+  it("★★ none of the four discard paths calls deleteMediaAsset", async () => {
+    const ids = [
+      ATTACHMENT_ID,
+      SECOND_ID,
+      "33333333-3333-4333-8333-333333333333",
+      "44444444-4444-4444-8444-444444444444",
+    ];
+    const compose = (
+      onSubmitPrepared?: (prepared: MinkPreparedSend) => boolean,
+    ) =>
+      render(
+        <LiveComposer
+          initial="Use this"
+          canSaveMedia
+          onSubmit={vi.fn()}
+          onSubmitPrepared={onSubmitPrepared}
+        />,
+      );
+
+    // 1. Remove.
+    attachments.upload.mockResolvedValueOnce(uploaded(ids[0]));
+    const removed = compose();
+    await stageImage();
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole("button", { name: "Remove echos.png" }));
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ids[0]),
+    );
+    removed.unmount();
+
+    // 2. The composer unmounted with a picture still staged.
+    attachments.upload.mockResolvedValueOnce(uploaded(ids[1]));
+    const abandoned = compose();
+    await stageImage();
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledTimes(2));
+    abandoned.unmount();
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ids[1]),
+    );
+
+    // 3. An upload that finished after its card was removed.
+    let finishUpload!: () => void;
+    attachments.upload.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishUpload = () => resolve(uploaded(ids[2]));
+        }),
+    );
+    const replaced = compose();
+    await stageImage();
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledTimes(3));
+    fireEvent.click(screen.getByRole("button", { name: "Remove echos.png" }));
+    await act(async () => {
+      finishUpload();
+    });
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ids[2]),
+    );
+    replaced.unmount();
+
+    // 4. Let go: the box that sent the picture closed before a failed read
+    //    came back, so the words go back and the files are released.
+    attachments.upload.mockResolvedValueOnce(uploaded(ids[3]));
+    const sent: MinkPreparedSend[] = [];
+    const handedOver = compose((prepared) => {
+      sent.push(prepared);
+      return true;
+    });
+    await stageImage();
+    await waitFor(() => expect(attachments.upload).toHaveBeenCalledTimes(4));
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await sent[0]!.prepare({
+      signal: new AbortController().signal,
+      setStatus: vi.fn(),
+    });
+    handedOver.unmount();
+    expect(sent[0]!.restore({ code: "attachment_failed", message: "x" })).toBe(
+      false,
+    );
+    await waitFor(() =>
+      expect(attachments.discard).toHaveBeenCalledWith(ids[3]),
+    );
+
+    expect(attachments.discard).toHaveBeenCalledTimes(4);
+    expect(library.remove).not.toHaveBeenCalled();
+    expect(library.upload).not.toHaveBeenCalled();
   });
 });

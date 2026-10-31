@@ -25,6 +25,9 @@ export const MAILER_KEYS = [
   "billing",
   // Platform → merchant broadcast (§38)
   "announcement",
+  // Content takedowns (takedown design 7.6)
+  "takedown_notice",
+  "complaint_reply",
   // Platform security
   "operator_otp",
   "signup_otp",
@@ -52,6 +55,12 @@ export interface MailerDef {
    * log is for, and redaction keeps all of them.
    */
   sensitive?: boolean;
+  /**
+   * What a sensitive mailer's subject reads in the log instead of
+   * `REDACTED`, when that default would say the wrong thing: a complaint is
+   * redacted for privacy, not because it carries a sign-in code.
+   */
+  redactedLabel?: string;
 }
 
 export const MAILERS: MailerDef[] = [
@@ -125,6 +134,25 @@ export const MAILERS: MailerDef[] = [
       "A feature or operational notice StoreMink sent to merchants and their staff.",
   },
   {
+    key: "takedown_notice",
+    label: "Notice from StoreMink",
+    description:
+      "StoreMink told a store that it blocked, lifted or replied about something on it.",
+    // NOT sensitive: it is the store's own notice, logged under that store,
+    // and says only what the store's Notices from StoreMink page shows it.
+  },
+  {
+    key: "complaint_reply",
+    label: "Complaint reply",
+    description:
+      "StoreMink acknowledged a complaint, or told the person who made it what was decided.",
+    // Sensitive, and always platform mail (store_id NULL, never the store
+    // complained about): it quotes a complainant's name, address and words,
+    // which no store and no log reader beyond the delivery facts should see.
+    sensitive: true,
+    redactedLabel: "[redacted - a complaint to StoreMink]",
+  },
+  {
     key: "operator_otp",
     label: "Operator sign-in code",
     description: "A one-time code for a StoreMink operator login.",
@@ -179,3 +207,9 @@ export function isSensitiveMailer(key: string): boolean {
 
 /** Stored in place of a redacted subject/body, so the row still reads sensibly. */
 export const REDACTED = "[redacted - contains a sign-in code or link]";
+
+/** What a sensitive mailer's subject reads in the log: its own label, else
+ *  `REDACTED`. */
+export function redactedLabelFor(key: string): string {
+  return BY_KEY.get(key as MailerKey)?.redactedLabel ?? REDACTED;
+}

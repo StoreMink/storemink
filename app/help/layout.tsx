@@ -4,10 +4,10 @@ import { Inter } from "next/font/google";
 import { HELP_URL } from "@/lib/site";
 import { platformOrganizationSchema } from "@/lib/seo/brand-identity";
 import { serializeJsonLd } from "@/lib/seo/json-ld";
-import { SEARCH_INDEXABLE } from "@/lib/store/host";
+import { PLATFORM_URL, SEARCH_INDEXABLE } from "@/lib/store/host";
+import { getMinkConfig } from "@/lib/mink/config";
 import { BrandMark } from "../platform/brand-mark";
-import { HelpAssistant } from "./components/help-assistant";
-import { HelpSearchBox } from "./components/search-box";
+import { HelpHeader } from "./components/help-header";
 import "./help.css";
 
 const helpFont = Inter({
@@ -62,43 +62,33 @@ export default function HelpLayout({
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: serializeJsonLd(HELP_GRAPH) }}
       />
-      <header className="hc-topbar">
-        <div className="hc-topbar-inner">
-          {/* One brand lockup across all three public hosts: the real mark,
-              the wordmark with Mink in the brand purple, then the section
-              label. storemink.com is bare, pos.storemink.com reads
-              "StoreMink | POS", and this reads "StoreMink | HELP". The Help
-              header had no mark at all and a lighter purple of its own, so it
-              looked like a different product. */}
-          <Link href="/help" className="hc-logo" aria-label="StoreMink Help">
-            <BrandMark size={29} priority />
-            <span aria-hidden="true">
-              Store<em>Mink</em>
-            </span>
-            <i aria-hidden="true">Help Centre</i>
-          </Link>
-          <HelpSearchBox compact />
-          <div className="hc-topbar-actions">
-            <a
-              href="https://storemink.com/signup"
-              className="hc-topbar-cta"
-              rel="noopener"
-            >
-              Create your store
-            </a>
-            <HelpAssistant />
-          </div>
-        </div>
-      </header>
+      <HelpHeader voiceEnabled={getMinkConfig().enabled} />
 
       {children}
 
       <footer className="hc-footer">
-        <div className="hc-wrap">
-          Can&apos;t find what you need? Email{" "}
-          <a href="mailto:support@storemink.com">support@storemink.com</a>
-          {" · "}
-          <a href="https://storemink.com">storemink.com</a>
+        <div className="hc-footer-inner">
+          <Link
+            href="/help"
+            className="hc-footer-logo"
+            aria-label="StoreMink Help"
+          >
+            <BrandMark size={22} />
+            <span aria-hidden="true">
+              Store<em>Mink</em>
+            </span>
+          </Link>
+          <nav className="hc-footer-links" aria-label="StoreMink">
+            <a href={PLATFORM_URL}>
+              {PLATFORM_URL.replace(/^https?:\/\//, "")}
+            </a>
+            <a href={`${PLATFORM_URL}/legal/terms`}>Terms of service</a>
+            <a href={`${PLATFORM_URL}/legal/privacy`}>Privacy policy</a>
+            <a href="mailto:support@storemink.com">Contact support</a>
+          </nav>
+          <span className="hc-footer-copy">
+            © {new Date().getFullYear()} StoreMink LLP
+          </span>
         </div>
       </footer>
 

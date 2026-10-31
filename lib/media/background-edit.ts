@@ -9,10 +9,12 @@ import {
   gcsConfigured,
   gcsDeletePaths,
   gcsDownloadObject,
-  gcsUploadObject,
 } from "@/lib/storage/gcs";
 import { ownedObjectPath } from "@/lib/storage/ownership";
 import { storeStoragePrefix } from "@/lib/storage/paths";
+import { writeStoreObject } from "@/lib/storage/store-objects";
+import { uploadRefusal } from "@/lib/moderation/copy";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 import { rateLimit } from "@/lib/rate-limit";
 import { logError } from "@/lib/observability/logger";
 import { getMinkConfig } from "@/lib/mink/config";
@@ -102,6 +104,23 @@ function refuse(
   status: number,
 ): MinkRequestError {
   return new MinkRequestError(code, message, status);
+}
+
+/**
+ * Bytes StoreMink has blocked are refused by the re-upload guard
+ * (`writeStoreObject`, takedown design 5.7): the sentence of design 7.4,
+ * told or nameless, in the route's `{ error }` answer with status 409.
+ * Nothing was written, so there is nothing to delete.
+ */
+function blockedRefusal(error: {
+  told: boolean;
+  kindWord: string;
+}): MinkRequestError {
+  return refuse(
+    "upload_blocked",
+    uploadRefusal({ told: error.told, kindWord: error.kindWord }),
+    409,
+  );
 }
 
 function insufficient(): MinkRequestError {
@@ -353,8 +372,13 @@ async function getOrCreateCutout(input: {
   const path = `${storeStoragePrefix(actor.storeId)}${CUTOUT_FOLDER}/${cutoutId}.png`;
   let url: string;
   try {
-    url = await gcsUploadObject(path, png, "image/png");
+    url = await writeStoreObject(path, png, "image/png", {
+      storeId: actor.storeId,
+      via: "background_edit",
+      actor: actor.adminId,
+    });
   } catch (error) {
+    if (isBlockedUploadError(error)) throw blockedRefusal(error);
     logError("background edit: cut-out upload failed", error, { path });
     throw refuse(
       "cutout_storage_failed",
@@ -503,7 +527,11 @@ async function composeOnBackground(input: {
 
   let url: string;
   try {
-    url = await gcsUploadObject(path, output, "image/webp");
+    url = await writeStoreObject(path, output, "image/webp", {
+      storeId: actor.storeId,
+      via: "background_edit",
+      actor: actor.adminId,
+    });
     await withService((db) =>
       db.insert(mediaAssets).values({
         storeId: actor.storeId,
@@ -517,6 +545,8 @@ async function composeOnBackground(input: {
       }),
     );
   } catch (error) {
+    // A refused write stored nothing, so nothing is deleted.
+    if (isBlockedUploadError(error)) throw blockedRefusal(error);
     await gcsDeletePaths([path]).catch(() => []);
     logError("background edit: result storage failed", error, { path });
     throw refuse(

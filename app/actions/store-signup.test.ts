@@ -421,6 +421,45 @@ describe("createStore gates", () => {
       "IN",
     );
   });
+
+  // ★ GST design 5.7: "Other" was cut to "OT" and stored as India, which
+  // decides GST's place of supply. The code is read whole now.
+  it.each([
+    ["OTHER", "OTHER"],
+    [" other ", "OTHER"],
+    ["IN", "IN"],
+    ["sg", "SG"],
+    ["OTHERWISE", "IN"],
+    ["IND", "IN"],
+    ["<script>", "IN"],
+  ])("stores the country %j as %j", async (sent, stored) => {
+    await createStore({ ...INPUT, country: sent });
+    expect(dbHolder.current.calls.values[0].settings.business.country).toBe(
+      stored,
+    );
+  });
+
+  it("★ names an OTHER country in the address as Other, from the list", async () => {
+    await createStore({
+      ...INPUT,
+      country: "OTHER",
+      addressLine1: "1 Harbour Road",
+      addressLine2: "",
+      city: "Port Louis",
+      state: "",
+      postalCode: "",
+    });
+    const business = dbHolder.current.calls.values[0].settings.business;
+    expect(business.country).toBe("OTHER");
+    expect(business.address).toBe("1 Harbour Road\nPort Louis\nOther");
+  });
+
+  it("★ a country that is not a string is the home country", async () => {
+    await createStore({ ...INPUT, country: 42 as any });
+    expect(dbHolder.current.calls.values[0].settings.business.country).toBe(
+      "IN",
+    );
+  });
 });
 
 describe("createStore provisioning", () => {

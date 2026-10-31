@@ -2,6 +2,11 @@ import "server-only";
 
 import { can } from "@/app/dashboard/lib/permissions";
 import { logError } from "@/lib/observability/logger";
+import { minkAttachmentIdsInValue } from "../attachment-ref";
+import {
+  MINK_ATTACHMENT_ONLY_AS_A_PICTURE,
+  promoteMinkAttachmentRefs,
+} from "../attachments";
 import {
   MinkRequestError,
   MinkRunStoppedError,
@@ -157,6 +162,24 @@ export interface MinkTool {
    * minutes by `MAX_RUN_BUDGET_MS`.
    */
   runBudgetMs?: number;
+  /**
+   * The arguments in which a Mink AI chat attachment's address may appear.
+   * The registry saves a Media Library copy of each attachment named in them
+   * and gives the tool the copy's public URL (lib/mink/attachments.ts). An
+   * attachment address in any other argument, or given to a tool without this
+   * list, is refused before anything is copied.
+   * ★ Only a tool that puts pictures on the store may set it, and only for
+   *   arguments that carry pictures: a customer message or a social post must
+   *   never turn a private screenshot into a public link. tool-effects.test.ts
+   *   pins the nine that do.
+   */
+  attachmentArgs?: readonly string[];
+  /**
+   * The tool reads Mink AI chat attachments itself (as private bytes), so the
+   * registry must not save Media Library copies of the ones it is given.
+   * ★ Only a tool that never puts a picture on the storefront may set it.
+   */
+  readsAttachmentsItself?: boolean;
   available?: (actor: MinkActorContext) => boolean;
   artifact?: (output: Record<string, unknown>) => MinkArtifact | undefined;
   /**
@@ -191,6 +214,47 @@ export function effectOf(
   return tool.repeatSafe === true || tool.restartSafe === true
     ? "read"
     : "write";
+}
+
+/**
+ * The refusal for an attachment address outside a picture argument, or in a
+ * tool that takes none (design 5.7); the model can then leave it out, or ask
+ * for the picture again.
+ */
+export const ATTACHMENT_ONLY_AS_A_PICTURE = MINK_ATTACHMENT_ONLY_AS_A_PICTURE;
+
+/**
+ * Whether the registry copies attachments for a tool: read tools, and the
+ * tool that reads attachments itself, get the model's own arguments.
+ */
+export function usesAttachmentCopies(
+  tool: Pick<MinkTool, "readsAttachmentsItself">,
+  effect: MinkToolEffect,
+): boolean {
+  return effect !== "read" && tool.readsAttachmentsItself !== true;
+}
+
+/**
+ * ★★ AN ATTACHMENT ADDRESS ANYWHERE BUT A PICTURE ARGUMENT IS REFUSED BEFORE
+ *    ANYTHING IS CLAIMED OR COPIED. A customer message, a coupon email, a
+ *    social post or a workflow must never turn a private screenshot into a
+ *    public link, so a write or commit tool with no `attachmentArgs` refuses
+ *    every address, and one with the list refuses an address outside it.
+ *    Pure: it runs inside `execute`'s try, before a write tool's claim.
+ */
+export function assertAttachmentArgs(
+  tool: Pick<MinkTool, "attachmentArgs" | "readsAttachmentsItself">,
+  effect: MinkToolEffect,
+  args: Record<string, unknown>,
+): void {
+  if (!usesAttachmentCopies(tool, effect)) return;
+  const allowed = new Set(tool.attachmentArgs ?? []);
+  for (const [name, value] of Object.entries(args)) {
+    if (allowed.has(name)) continue;
+    if (minkAttachmentIdsInValue(value, 1).length > 0) {
+      throw new MinkToolInputError(ATTACHMENT_ONLY_AS_A_PICTURE);
+    }
+  }
 }
 
 export class MinkToolRegistry {
@@ -243,6 +307,16 @@ export class MinkToolRegistry {
     return tool ? effectOf(tool) : undefined;
   }
 
+  /** See `MinkTool.attachmentArgs`; undefined for a tool without the list, or a name it does not know. */
+  attachmentArgsOf(name: string): readonly string[] | undefined {
+    return this.tools.get(name)?.attachmentArgs;
+  }
+
+  /** See `MinkTool.readsAttachmentsItself`. */
+  readsAttachmentsItself(name: string): boolean {
+    return this.tools.get(name)?.readsAttachmentsItself === true;
+  }
+
   declarationsFor(actor: MinkActorContext): MinkToolDeclaration[] {
     return [...this.tools.values()]
       .filter((tool) => this.allowed(actor, tool))
@@ -285,13 +359,33 @@ export class MinkToolRegistry {
 
     const effect = effectOf(tool);
     try {
+      // ★ An attachment address the tool may not take is refused first: a
+      //   refused call neither claims nor copies anything.
+      assertAttachmentArgs(tool, effect, call.args);
       // ★ A write tool claims before it starts. A run that has already
       //   stopped claims nothing: the deadline below refuses to start it.
       if (effect === "write" && options.claimAct && !options.signal?.aborted) {
         await options.claimAct();
       }
       const output = await executeWithDeadline(
-        (context) => tool.execute(actor, call.args, context),
+        async (context) => {
+          // ★ The Media Library copies, just before the tool runs, for the
+          //   picture-placing tools only (lib/mink/attachments.ts). A write
+          //   tool has already claimed it acted; a commit tool claims inside
+          //   `commit`, after this. So a copy can exist for a run stopped
+          //   after it: the merchant's own picture saved as an upload, never
+          //   a proposal, a charge or a change to the store.
+          const args =
+            usesAttachmentCopies(tool, effect) && tool.attachmentArgs?.length
+              ? await promoteMinkAttachmentRefs(
+                  actor,
+                  call.args,
+                  tool.attachmentArgs,
+                  { signal: context.signal },
+                )
+              : call.args;
+          return tool.execute(actor, args, context);
+        },
         tool.timeoutMs,
         {
           runSignal: options.signal,

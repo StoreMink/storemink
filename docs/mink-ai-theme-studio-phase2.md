@@ -57,7 +57,8 @@ superadmin**, returning the row's uuid id. It fails closed on a read error.
 
 ## 3. References are private, sanitized and never published
 
-The media GCS bucket is public (`allUsers:objectViewer`, uniform access), so
+The media GCS bucket is public by link (`allUsers` holds
+`roles/storage.legacyObjectReader`: get, no list; uniform access), so
 the plan's "private GCS prefix" does not exist in it. References are therefore
 stored as bytes in the service-only `theme_studio_assets` table — the same
 decision `data_job_payloads` made for CSV imports. Provisioning a private bucket

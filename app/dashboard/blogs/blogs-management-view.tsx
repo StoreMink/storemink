@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import Image from "next/image";
 import Link from "next/link";
 import {
+  Ban,
   Check,
   Eye,
   FileText,
@@ -24,6 +25,7 @@ import {
   Search,
   Send,
   Settings,
+  ShieldAlert,
   Star,
   Trash2,
   Undo2,
@@ -70,6 +72,7 @@ import {
 } from "@/app/dashboard/components/bulk-actions";
 import { ListPagination } from "@/app/dashboard/components/list-pagination";
 import dynamic from "next/dynamic";
+import { ITEM } from "@/lib/moderation/copy";
 import type { Blog, BlogCounts, BlogFilter } from "./page";
 
 // Lazy-load the editor dialog so its heavy TipTap/ProseMirror bundle downloads
@@ -95,7 +98,20 @@ type Props = {
   tagOptions: string[];
   /** Server-computed public prefix of this store's own GCS objects. */
   mediaUrlPrefix: string;
+  /**
+   * Posts StoreMink blocked and told the store about, post id to block id
+   * (takedown design 7.3). A block kept from the store is not in here, so it
+   * shows nothing (D21).
+   */
+  blockedByStoreMink?: Record<string, string>;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 };
+
+/** Where "See why" goes for a blocked post: its notice. */
+function noticeHref(blockId: string): string {
+  return `/dashboard/settings/notices/${blockId}`;
+}
 
 /**
  * Fields Mink filled in for a new post, read once and cleared.
@@ -124,9 +140,19 @@ export function BlogsManagementView({
   categoryOptions,
   tagOptions,
   mediaUrlPrefix,
+  blockedByStoreMink,
+  canSeeNotices = false,
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  // The notice a blocked post's "See why" opens, or null when the post has
+  // no block the store was told about.
+  const blockIdOf = (blogId: string): string | null =>
+    blockedByStoreMink?.[blogId] ?? null;
+  const openNotice = (blogId: string) => {
+    const blockId = blockIdOf(blogId);
+    if (blockId) router.push(noticeHref(blockId));
+  };
   const [isPending, startTransition] = useTransition();
   const [navigating, startNavigation] = useTransition();
   const [search, setSearch] = useState(query);
@@ -529,21 +555,29 @@ export function BlogsManagementView({
 
                   {/* Status */}
                   <td>
-                    <span
-                      className={`dash-badge ${
-                        blog.status === "published"
-                          ? "dash-badge-green"
+                    {blockIdOf(blog.id) ? (
+                      // A post StoreMink blocked is hidden whatever its own
+                      // status says (takedown design 7.3).
+                      <span className="dash-badge dash-badge-storemink">
+                        {ITEM.blocked}
+                      </span>
+                    ) : (
+                      <span
+                        className={`dash-badge ${
+                          blog.status === "published"
+                            ? "dash-badge-green"
+                            : blog.status === "pending_review"
+                              ? "dash-badge-violet"
+                              : "dash-badge-amber"
+                        }`}
+                      >
+                        {blog.status === "published"
+                          ? "Published"
                           : blog.status === "pending_review"
-                            ? "dash-badge-violet"
-                            : "dash-badge-amber"
-                      }`}
-                    >
-                      {blog.status === "published"
-                        ? "Published"
-                        : blog.status === "pending_review"
-                          ? "Pending"
-                          : "Draft"}
-                    </span>
+                            ? "Pending"
+                            : "Draft"}
+                      </span>
+                    )}
                   </td>
 
                   {/* Published date */}
@@ -591,14 +625,32 @@ export function BlogsManagementView({
                                 Review &amp; edit
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                className="cursor-pointer text-[var(--dash-green)] focus:text-[var(--dash-green)]"
-                                onClick={() => handleApprove(blog)}
-                                disabled={isPending}
-                              >
-                                <Check className="mr-2 h-4 w-4" />
-                                Approve
-                              </DropdownMenuItem>
+                              {blockIdOf(blog.id) ? (
+                                // Approving publishes; a blocked post cannot
+                                // be shown, so the item says why instead.
+                                <DropdownMenuItem disabled>
+                                  <Ban className="mr-2 h-4 w-4" />
+                                  {ITEM.blocked}
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-[var(--dash-green)] focus:text-[var(--dash-green)]"
+                                  onClick={() => handleApprove(blog)}
+                                  disabled={isPending}
+                                >
+                                  <Check className="mr-2 h-4 w-4" />
+                                  Approve
+                                </DropdownMenuItem>
+                              )}
+                              {canSeeNotices && blockIdOf(blog.id) ? (
+                                <DropdownMenuItem
+                                  className="cursor-pointer"
+                                  onClick={() => openNotice(blog.id)}
+                                >
+                                  <ShieldAlert className="mr-2 h-4 w-4" />
+                                  {ITEM.seeWhyItIsBlocked}
+                                </DropdownMenuItem>
+                              ) : null}
                               <DropdownMenuItem
                                 variant="destructive"
                                 className="cursor-pointer"
@@ -617,32 +669,54 @@ export function BlogsManagementView({
                                 <Pencil className="mr-2 h-4 w-4" />
                                 Edit
                               </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() => handleTogglePublish(blog)}
-                                disabled={isPending}
-                              >
-                                {blog.status === "published" ? (
-                                  <>
-                                    <Undo2 className="mr-2 h-4 w-4" />
-                                    Unpublish
-                                  </>
-                                ) : (
-                                  <>
-                                    <Send className="mr-2 h-4 w-4" />
-                                    Publish
-                                  </>
-                                )}
-                              </DropdownMenuItem>
-                              <DropdownMenuItem
-                                className="cursor-pointer"
-                                onClick={() =>
-                                  window.open(`/blogs/${blog.slug}`, "_blank")
-                                }
-                              >
-                                <Eye className="mr-2 h-4 w-4" />
-                                Preview
-                              </DropdownMenuItem>
+                              {blockIdOf(blog.id) ? (
+                                // As on products (design 7.3): publishing a
+                                // blocked post changes nothing a shopper sees.
+                                // Editing and saving stay open.
+                                <DropdownMenuItem disabled>
+                                  <Ban className="mr-2 h-4 w-4" />
+                                  {ITEM.blocked}
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  className="cursor-pointer"
+                                  onClick={() => handleTogglePublish(blog)}
+                                  disabled={isPending}
+                                >
+                                  {blog.status === "published" ? (
+                                    <>
+                                      <Undo2 className="mr-2 h-4 w-4" />
+                                      Unpublish
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Send className="mr-2 h-4 w-4" />
+                                      Publish
+                                    </>
+                                  )}
+                                </DropdownMenuItem>
+                              )}
+                              {canSeeNotices && blockIdOf(blog.id) ? (
+                                // Preview would show the shopper's "removed"
+                                // page; the notice says why instead.
+                                <DropdownMenuItem
+                                  className="cursor-pointer"
+                                  onClick={() => openNotice(blog.id)}
+                                >
+                                  <ShieldAlert className="mr-2 h-4 w-4" />
+                                  {ITEM.seeWhyItIsBlocked}
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem
+                                  className="cursor-pointer"
+                                  onClick={() =>
+                                    window.open(`/blogs/${blog.slug}`, "_blank")
+                                  }
+                                >
+                                  <Eye className="mr-2 h-4 w-4" />
+                                  Preview
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 variant="destructive"
@@ -877,6 +951,8 @@ export function BlogsManagementView({
           onSaved={handleEditorSaved}
           categoryOptions={categoryOptions}
           tagOptions={tagOptions}
+          blockedByStoreMink={editingBlog ? blockIdOf(editingBlog.id) : null}
+          canSeeNotices={canSeeNotices}
         />
       )}
     </div>

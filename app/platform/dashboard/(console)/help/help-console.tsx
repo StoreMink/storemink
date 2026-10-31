@@ -12,6 +12,7 @@ import {
   EyeOff,
   ExternalLink,
   FolderCog,
+  MessageSquareText,
 } from "lucide-react";
 import {
   deleteHelpArticle,
@@ -91,6 +92,9 @@ export function HelpConsole({
           </p>
         </div>
         <div className="hca-topline-actions">
+          <Link className="hca-btn ghost" href="/dashboard/help/feedback">
+            <MessageSquareText size={16} /> Mink AI feedback
+          </Link>
           <button className="hca-btn ghost" onClick={() => setShowCats(true)}>
             <FolderCog size={16} /> Categories
           </button>

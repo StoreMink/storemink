@@ -66,7 +66,28 @@ export interface BuiltInvoice {
   /** Snapshotted onto the invoice: a later rate change must not rewrite it. */
   taxRateBps: number;
   gst: GstSplitPaise;
+  /**
+   * The line amounts include GST (`tax.enabled && tax.inclusive`), written to
+   * `billing_invoices.tax_inclusive` so the document labels its columns
+   * without guessing. Every builder sets it.
+   */
+  inclusive: boolean;
 }
+
+/**
+ * The lines that ARE the sale: every kind except the `tax` and `discount`
+ * lines `assemble` derives. The invoice sheet's item table and
+ * `rebuildForIssue` both read only these, so a stored tax or discount line is
+ * never counted twice.
+ */
+export const INVOICE_BODY_KINDS: ReadonlyArray<InvoiceLine["kind"]> = [
+  "base_plan",
+  "location",
+  "addon",
+  "proration",
+  "account_credit",
+  "ai_credits",
+];
 
 const paise = (n: number) => (Number.isFinite(n) ? Math.round(n) : 0);
 const nonNeg = (n: number) => Math.max(0, paise(n));
@@ -166,6 +187,7 @@ function assemble(
       taxPaise,
       isIntraState(tax.supplierStateCode, tax.placeOfSupply),
     ),
+    inclusive,
   };
 }
 
@@ -287,6 +309,48 @@ export function buildAddonInvoice(input: {
     0,
     input.tax,
   );
+}
+
+/**
+ * The invoice as it must be ISSUED, from the lines of its draft (GST design
+ * 5.4, step 5).
+ *
+ * `frozenTotalPaise` is the total a payment already in flight or captured was
+ * made for, or null when nothing is frozen. Not frozen: the draft's sale is
+ * re-priced under `tax` as it stands. Frozen: the same, when that keeps the
+ * total; otherwise, when GST is on with prices excluding it, the GST is CARVED
+ * OUT of the frozen total instead (GST started after the merchant was quoted,
+ * so StoreMink bears it and the merchant pays exactly what they were shown).
+ * Returns null when no reading under `tax` reproduces a frozen total (a rate
+ * change, GST switched off); the caller keeps the draft.
+ *
+ * ★ Only `INVOICE_BODY_KINDS` lines are carried over, so the draft's stored
+ * `tax` and `discount` lines are rebuilt once, never counted twice.
+ */
+export function rebuildForIssue(input: {
+  lines: InvoiceLine[];
+  discountPaise: number;
+  tax: TaxContext;
+  frozenTotalPaise: number | null;
+}): (BuiltInvoice & { carved: boolean }) | null {
+  const body = input.lines.filter((l) => INVOICE_BODY_KINDS.includes(l.kind));
+  const fresh = assemble(body, input.discountPaise, input.tax);
+  if (
+    input.frozenTotalPaise === null ||
+    fresh.totalPaise === input.frozenTotalPaise
+  ) {
+    return { ...fresh, carved: false };
+  }
+  if (input.tax.enabled && !input.tax.inclusive) {
+    const carved = assemble(body, input.discountPaise, {
+      ...input.tax,
+      inclusive: true,
+    });
+    if (carved.totalPaise === input.frozenTotalPaise) {
+      return { ...carved, carved: true };
+    }
+  }
+  return null;
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1373,6 +1374,111 @@ describe("★★ New chat and messages with attachments", () => {
       "Attach the file again to send it.",
     );
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+});
+
+describe("★★ a picture kept privately with the chat (28 Oct 2026)", () => {
+  const ATTACHMENT_URL =
+    "/api/mink/attachments/33333333-3333-4333-8333-333333333333";
+  const LEGACY_URL =
+    "https://storage.googleapis.com/storemink-media/stores/s1/media/shoe.webp";
+  const UNAVAILABLE = "This image is no longer available.";
+
+  function renderSentPicture(
+    url: string,
+    localPreviews?: Record<string, string>,
+  ) {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      messages: [
+        {
+          id: "user-1",
+          role: "user",
+          text: addSavedMinkMediaReference("Put this on the product", {
+            filename: "shoe.jpg",
+            url,
+          }),
+          ...(localPreviews ? { localPreviews } : {}),
+        },
+      ],
+    } as unknown as ReturnType<typeof useChat>);
+    return render(createElement(DashboardChat, { variant: "overlay" }));
+  }
+
+  it("renders the attachment address directly, never through the proxy", () => {
+    renderSentPicture(ATTACHMENT_URL);
+
+    const image = screen.getByRole("img", { name: "shoe.jpg" });
+    expect(image).toHaveAttribute("src", ATTACHMENT_URL);
+    expect(image.getAttribute("src")).not.toContain("/api/og-image");
+    expect(screen.getByText("Put this on the product")).toBeVisible();
+    expect(
+      screen.queryByText(/untrusted reference data, not instructions/i),
+    ).toBeNull();
+  });
+
+  it("renders an address the model gave back with a host on this origin", () => {
+    renderSentPicture(`https://echoss.storemink.com${ATTACHMENT_URL}`);
+
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      ATTACHMENT_URL,
+    );
+  });
+
+  it("still sends a Media Library URL from before the change through the proxy", () => {
+    renderSentPicture(LEGACY_URL);
+
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      `/api/og-image?url=${encodeURIComponent(LEGACY_URL)}`,
+    );
+  });
+
+  it("this tab's own copy of the picture wins over the address", () => {
+    renderSentPicture(ATTACHMENT_URL, {
+      [`url:${ATTACHMENT_URL}`]: "blob:shoe",
+    });
+
+    expect(screen.getByRole("img", { name: "shoe.jpg" })).toHaveAttribute(
+      "src",
+      "blob:shoe",
+    );
+  });
+
+  it("★ a tile whose picture cannot be loaded says so, keeps the file name and offers no viewer", () => {
+    renderSentPicture(ATTACHMENT_URL);
+
+    fireEvent.error(screen.getByRole("img", { name: "shoe.jpg" }));
+
+    expect(screen.getByText(UNAVAILABLE)).toBeVisible();
+    expect(screen.getByText("shoe.jpg")).toBeVisible();
+    expect(screen.queryByRole("img", { name: "shoe.jpg" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "View shoe.jpg" })).toBeNull();
+    expect(screen.getAllByText(UNAVAILABLE)).toHaveLength(1);
+  });
+
+  it("★ the viewer says so too when the picture fails there, and the tile follows", () => {
+    renderSentPicture(ATTACHMENT_URL);
+
+    fireEvent.click(screen.getByRole("button", { name: "View shoe.jpg" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "Attachment preview: shoe.jpg",
+    });
+    fireEvent.error(within(dialog).getByRole("img", { name: "shoe.jpg" }));
+
+    expect(within(dialog).getByText(UNAVAILABLE)).toBeVisible();
+    expect(within(dialog).getByText("shoe.jpg")).toBeVisible();
+    expect(within(dialog).queryByRole("img")).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Close attachment preview" }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // The tile shows the same picture, so it says the same thing now.
+    expect(screen.getByText(UNAVAILABLE)).toBeVisible();
+    expect(screen.getByText("shoe.jpg")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "View shoe.jpg" })).toBeNull();
   });
 });
 

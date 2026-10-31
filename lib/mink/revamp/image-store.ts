@@ -11,9 +11,9 @@ import {
   gcsDeletePaths,
   gcsDownloadObject,
   gcsPathFromUrl,
-  gcsUploadObject,
 } from "@/lib/storage/gcs";
 import { isStoreOwnedObjectPath } from "@/lib/storage/paths";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import {
   claimSpendLimits,
   releaseSpendLimits,
@@ -101,10 +101,12 @@ const MAX_PROBLEM_CHARS = 200;
 const SAFE_SLOT_CHARS = 60;
 const FILENAME_ALT_CHARS = 60;
 /**
- * ★ The name carries the content digest, so the object behind a path never
- *   changes: it can be cached for good.
+ * ★ A minute, not for good (takedown decision D4). The name carries the
+ *   content digest, so the object behind a path never changes, but StoreMink
+ *   may block a photograph and replace it with the "Image not available"
+ *   placeholder: an edge copy kept for a year would go on showing it.
  */
-const CACHE_CONTROL = "public, max-age=31536000, immutable";
+const CACHE_CONTROL = "public, max-age=60";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -262,13 +264,16 @@ export async function storeRevampImage(
   }
   if (before.existing) return toStoredImage(before.existing as ImageRow);
 
-  // 2. The object.
-  const url = await gcsUploadObject(
-    path,
-    bytes,
-    input.mediaType,
-    CACHE_CONTROL,
-  );
+  // 2. The object, through the store's one writer (takedown design 5.7).
+  //    Bytes StoreMink has blocked on this store throw `BlockedUploadError`,
+  //    whose message is the design's sentence, and nothing is written; the
+  //    callers treat it like any other photo that could not be stored.
+  const url = await writeStoreObject(path, bytes, input.mediaType, {
+    storeId: input.storeId,
+    cacheControl: CACHE_CONTROL,
+    via: "mink_revamp",
+    actor: before.adminId,
+  });
 
   // 3. The rows: the revamp's, and the Media Library's for a slot this call won.
   const recorded = await withService(async (db) => {

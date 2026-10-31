@@ -442,3 +442,60 @@ describe("★★ Refine with Mink AI in the product editor", () => {
     }
   });
 });
+
+describe("Status while StoreMink blocks the product", () => {
+  const renderForm = (p: Product) =>
+    render(
+      <ProductEditorForm
+        product={p}
+        categories={[
+          {
+            id: "category-1",
+            name: "Coffee",
+            slug: "coffee",
+            status: "active",
+          },
+        ]}
+        taxClasses={[]}
+        onClose={vi.fn()}
+        onSaved={vi.fn()}
+      />,
+    );
+
+  it("disables the select with the reason written under it, and saves the status as it was", async () => {
+    vi.mocked(updateProduct).mockResolvedValue({ success: true });
+    renderForm({
+      ...product,
+      blockedByStoreMink: { blockId: "block-1", canSeeNotices: true },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Visibility" }));
+
+    const status = screen.getByLabelText("Status");
+    expect(status).toBeDisabled();
+    expect(status).toHaveValue("published");
+    // ★ Written under it, never a tooltip, and read with the field.
+    expect(status).toHaveAccessibleDescription("Blocked by StoreMink");
+    expect(screen.getByText("Blocked by StoreMink")).toBeVisible();
+
+    // Every other field stays open, and a save keeps the saved status.
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(updateProduct).toHaveBeenCalled());
+    expect(vi.mocked(updateProduct).mock.calls.at(-1)![1].status).toBe(
+      "published",
+    );
+  });
+
+  it("an untold block (or none) leaves the select open with nothing under it (D21)", () => {
+    // The editor's read sets the field only for a block the store was told
+    // about, so an untold block looks exactly like no block here.
+    renderForm({ ...product, blockedByStoreMink: null });
+    fireEvent.click(screen.getByRole("button", { name: "Visibility" }));
+
+    const status = screen.getByLabelText("Status");
+    expect(status).toBeEnabled();
+    expect(status).not.toHaveAccessibleDescription();
+    expect(screen.queryByText("Blocked by StoreMink")).toBeNull();
+    fireEvent.change(status, { target: { value: "draft" } });
+    expect(status).toHaveValue("draft");
+  });
+});

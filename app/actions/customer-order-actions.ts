@@ -29,6 +29,7 @@ import {
 import { getServerUser } from "@/lib/auth/server-user";
 import { getCurrentStore, requireStorefrontStoreId } from "@/lib/store/resolve";
 import { logError } from "@/lib/observability/logger";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import { getStoreSettings } from "@/lib/settings/resolve";
 import { effectivePlan } from "@/lib/plans";
 import { isPosEnabled } from "@/lib/pos/locations";
@@ -145,7 +146,7 @@ export async function getMyOrders(): Promise<{
   const storeId = await requireStorefrontStoreId();
 
   try {
-    return await withUser(
+    const list = await withUser(
       { uid: user.id, email: user.email ?? null },
       async (db) => {
         const rows = await db
@@ -223,6 +224,10 @@ export async function getMyOrders(): Promise<{
         };
       },
     );
+    // The takedown page swap runs once the shopper's scope has closed (it may
+    // open its own service scope to reload the blocked set): a blocked order
+    // line photo becomes the placeholder in the thumbnail stack.
+    return await maskBlockedMedia(list);
   } catch (error) {
     logError("customer orders: list failed", error, { userId: user.id });
     return { orders: [], error: "Couldn't load your orders." };
@@ -435,6 +440,10 @@ export async function getMyOrder(
         : [];
       return { shipmentRows, eventRows };
     });
+    // The takedown page swap, after both scopes have closed: a blocked order
+    // line photo becomes the placeholder. Only the lines carry media.
+    const shownItems = await maskBlockedMedia(items);
+
     const customerShipments: MyOrderShipment[] = shipmentRows.map(
       (shipment) => {
         const status = shipment.status as ShipmentStatus;
@@ -462,9 +471,9 @@ export async function getMyOrder(
           string,
           unknown
         >,
-        item_count: items.reduce((n, i) => n + i.quantity, 0),
-        first_item: items[0]?.name ?? null,
-        items,
+        item_count: shownItems.reduce((n, i) => n + i.quantity, 0),
+        first_item: shownItems[0]?.name ?? null,
+        items: shownItems,
         shipments: customerShipments,
       },
     };

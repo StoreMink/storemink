@@ -3,6 +3,13 @@
 import { headers } from "next/headers";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
+import {
+  cartLinePhotos,
+  readCartProducts,
+  readGiftProduct,
+  shopperLinePhoto,
+} from "@/lib/checkout/product-reads";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import { getServerUser } from "@/lib/auth/server-user";
 import {
   orderItems,
@@ -224,6 +231,13 @@ export interface CartStockInfo {
   trackInventory: boolean;
   stock: number;
   allowBackorder: boolean;
+  // The line's picture as the product stands now, passed through the
+  // takedown page swap. The photo the shopper chose stays while it is still
+  // one of the photos the product page offers for that line and StoreMink
+  // has not blocked it; otherwise the first of those photos (`cartLinePhotos`),
+  // so a photo replaced since is refreshed and a blocked one becomes the
+  // placeholder. Null when the line is gone or the product has no photo.
+  image: string | null;
 }
 
 interface StockRow {
@@ -237,6 +251,7 @@ function toInfo(
   productId: string,
   variantId: string | null,
   row: StockRow | undefined,
+  image: string | null,
 ): CartStockInfo {
   if (!row) {
     return {
@@ -246,6 +261,7 @@ function toInfo(
       trackInventory: false,
       stock: 0,
       allowBackorder: false,
+      image: null,
     };
   }
   return {
@@ -255,11 +271,19 @@ function toInfo(
     trackInventory: !!row.track_inventory,
     stock: row.stock ?? 0,
     allowBackorder: !!row.allow_backorder,
+    image,
   };
 }
 
 export async function getCartStock(
-  lines: Array<{ productId: string; variantId: string | null }>,
+  lines: Array<{
+    productId: string;
+    variantId: string | null;
+    /** The photo the line shows in the browser. ★ Only ever compared with
+     *  the product's own photos (`shopperLinePhoto`): never stored, and
+     *  never returned unless it is one of them. */
+    image?: string | null;
+  }>,
 ): Promise<CartStockInfo[]> {
   if (!Array.isArray(lines) || lines.length === 0) return [];
   const bounded = lines.slice(0, MAX_LINE_ITEMS);
@@ -285,19 +309,10 @@ export async function getCartStock(
 
   // Read-only, store-scoped stock lookup. Stock is already public on the
   // storefront, so a service-role (RLS-bypassing) read just gives us a single
-  // uncached snapshot.
+  // uncached snapshot. `readCartProducts` leaves out a product StoreMink has
+  // blocked, so its line reads as gone and the cart drops it.
   const { productRows, variantRows } = await withService(async (db) => {
-    const productRows = await db
-      .select({
-        id: products.id,
-        track_inventory: products.trackInventory,
-        stock: products.stock,
-        allow_backorder: products.allowBackorder,
-      })
-      .from(products)
-      .where(
-        and(inArray(products.id, productIds), eq(products.storeId, storeId)),
-      );
+    const productRows = await readCartProducts(db, storeId, productIds);
     const variantRows = variantIds.length
       ? await db
           .select({
@@ -305,6 +320,8 @@ export async function getCartStock(
             track_inventory: productVariants.trackInventory,
             stock: productVariants.stock,
             allow_backorder: productVariants.allowBackorder,
+            images: productVariants.images,
+            option_values: productVariants.optionValues,
           })
           .from(productVariants)
           .where(
@@ -317,23 +334,46 @@ export async function getCartStock(
     return { productRows, variantRows };
   });
 
-  const productMap = new Map<string, StockRow>(
-    productRows.map((p) => [p.id, p as StockRow]),
-  );
-  const variantMap = new Map<string, StockRow>();
-  for (const v of variantRows) variantMap.set(v.id, v as StockRow);
+  const productMap = new Map(productRows.map((p) => [p.id, p]));
+  const variantMap = new Map(variantRows.map((v) => [v.id, v]));
 
-  return bounded.map((l) => {
+  // Each line carries its current picture (the first photo the product page
+  // offers for it) and, apart, the shopper's own photo when it is still one
+  // of those photos.
+  const checked = bounded.map((l) => {
     const product = productMap.get(l.productId);
     if (l.variantId) {
       // A variant line is valid only when BOTH the product and the variant
       // still exist in this store; the sellable SKU is the variant.
       const variant = variantMap.get(l.variantId);
-      if (!product) return toInfo(l.productId, l.variantId, undefined);
-      return toInfo(l.productId, l.variantId, variant);
+      if (!product || !variant) {
+        return {
+          info: toInfo(l.productId, l.variantId, undefined, null),
+          own: null,
+        };
+      }
+      const photos = cartLinePhotos(product, variant);
+      return {
+        info: toInfo(l.productId, l.variantId, variant, photos[0] ?? null),
+        own: shopperLinePhoto(photos, l.image),
+      };
     }
-    return toInfo(l.productId, null, product);
+    const photos = product ? cartLinePhotos(product, null) : [];
+    return {
+      info: toInfo(l.productId, null, product, photos[0] ?? null),
+      own: shopperLinePhoto(photos, l.image),
+    };
   });
+
+  // ★ Outside the scope above: the swap may load the blocked set through a
+  // scope of its own, and a scope is never opened inside another's callback.
+  // ★ ONE SWAP FOR BOTH. The shopper's own photo is kept only when the swap
+  // left it as it was (StoreMink has not blocked it); otherwise the line
+  // shows its current picture, which went through the same swap.
+  const masked = await maskBlockedMedia(checked);
+  return masked.map(({ info, own }, i) =>
+    own !== null && own === checked[i].own ? { ...info, image: own } : info,
+  );
 }
 
 // After a reserve fails, read how many units are actually left so the error can
@@ -1018,36 +1058,12 @@ export async function placeOrder(
   //    scoped to the host store so another store's products can't be smuggled in.
   const productIds = Array.from(new Set(items.map((i) => i.productId)));
 
+  // `readCartProducts` (lib/checkout/product-reads.ts) holds the columns,
+  // including the routing and offer-scoping ones, and leaves out a product
+  // StoreMink has blocked: that line is then refused below as "Product no
+  // longer available", exactly like a deleted one.
   const dbProducts = await withService((db) =>
-    db
-      .select({
-        id: products.id,
-        name: products.name,
-        selling_price: products.sellingPrice,
-        cost_price: products.costPrice,
-        store_id: products.storeId,
-        tax_class_id: products.taxClassId,
-        // Routing only: a location cannot be disqualified by a SKU that has no
-        // stock to run out of (roadmap Phase D).
-        track_inventory: products.trackInventory,
-        allow_backorder: products.allowBackorder,
-        sku: products.sku,
-        hsn_code: products.hsnCode,
-        requires_shipping: products.requiresShipping,
-        weight_grams: products.weightGrams,
-        length_cm: products.lengthCm,
-        width_cm: products.widthCm,
-        height_cm: products.heightCm,
-        // Offer scoping (docs/offers-plan.md). Selected here rather than in a
-        // second read: the offer engine needs it for every line, and a cart
-        // must not pay another round trip at ~46ms for a column this query is
-        // already positioned to return.
-        category_id: products.categoryId,
-      })
-      .from(products)
-      .where(
-        and(inArray(products.id, productIds), eq(products.storeId, storeId)),
-      ),
+    readCartProducts(db, storeId, productIds),
   );
 
   if (!dbProducts || dbProducts.length === 0) {
@@ -1320,37 +1336,13 @@ export async function placeOrder(
     const wanted = offerResult.gift;
     let giftUnitPrice = 0;
     const giftLine = await (async () => {
-      const [row] = await withService((db) =>
-        db
-          .select({
-            id: products.id,
-            name: products.name,
-            // ★ What the shopper would OTHERWISE have paid, which is what the
-            // gift costs this offer's budget — the same rule the shipping
-            // waiver's `offerWaivedAmount` follows. The LINE is still ₹0.
-            selling_price: products.sellingPrice,
-            tax_class_id: products.taxClassId,
-            category_id: products.categoryId,
-            sku: products.sku,
-            hsn_code: products.hsnCode,
-            requires_shipping: products.requiresShipping,
-            weight_grams: products.weightGrams,
-            length_cm: products.lengthCm,
-            width_cm: products.widthCm,
-            height_cm: products.heightCm,
-          })
-          .from(products)
-          // ★ STORE-SCOPED, like every other product read here. The offer row
-          // is store-scoped too, but a gift is the one product id that reaches
-          // this function without having been in the shopper's cart, so the
-          // predicate is doing real work rather than restating a guarantee.
-          .where(
-            and(
-              eq(products.id, wanted.productId),
-              eq(products.storeId, storeId),
-            ),
-          )
-          .limit(1),
+      // ★ `readGiftProduct` (lib/checkout/product-reads.ts) is store-scoped
+      // and leaves out a product StoreMink has blocked, so a blocked gift
+      // takes the vanished-gift branch below. Its `selling_price` is what the
+      // shopper would OTHERWISE have paid, which is what the gift costs this
+      // offer's budget; the LINE is still ₹0.
+      const row = await withService((db) =>
+        readGiftProduct(db, storeId, wanted.productId),
       );
       if (!row) return null;
 

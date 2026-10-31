@@ -1314,9 +1314,13 @@ CHECK holds the list). The Library lists everything except
 rows are KEPT: Mink's ownership checks (`selectOwnedStorefrontImageUrls`, the
 image reference resolver, `propose_product_create`) accept an image because a
 `media_assets` row says the store owns it, so hiding is a display question,
-never ownership. The composer sends `purpose=mink_attachment` to
-`uploadMediaAsset` (a label, not a permission: the gate, path and ownership are
-identical); each Mink writer sets its own source. 0213 backfills by folder
+never ownership. Until the storage build (28 Oct 2026) the composer sent
+`purpose=mink_attachment` to `uploadMediaAsset` (a label, not a permission: the
+gate, path and ownership were identical); since then a chat attachment goes to
+the private bucket and never becomes a Library row (see "Mink chat attachments
+are private" below), so `mink_attachment` rows are only pictures attached
+before, which the temporary legacy job sorts. Each Mink writer sets its own
+source. 0213 backfills by folder
 (`mink-generated/`, `refined/`, `media/mink-prepared/`) and marks a `media/`
 upload as an attachment only when a user message carries the composer's
 saved-image marker AND the exact `"url":"…"` JSON, so a Library URL the
@@ -1378,11 +1382,377 @@ change of photo resets it, the echo of its own upload does not), so the key
 is harmless rather than needed.
 Tests: `media-actions.test.ts`, `product-actions.test.ts` (the sweep guard),
 `media-library-picker.test.tsx`, `product-editor-form.test.tsx`, the composer
-test (the purpose label), and the opt-in rollback-only
+test (since the storage build it pins that the upload form carries only the
+file), and the opt-in rollback-only
 `lib/media/media-library.local.test.ts` (`MEDIA_LIBRARY_LOCAL_TEST=1`, local
-DB on 5544), which applies 0213 and runs every new query. ⚠ Not built: a
-retention sweep for hidden chat attachments (their files stay in storage), and
-the same in-use guard for category, blog and Builder image clean-ups.
+DB on 5544), which applies 0213 and runs every new query. ⚠ Not built: the
+same in-use guard for category, blog and Builder image clean-ups. (Hidden chat
+attachments are no longer left in storage: new ones are private and deleted
+with their chat, and the legacy job sorts the old ones; see the next section.)
+
+### Mink chat attachments are private (2026-10-28)
+
+A picture the merchant attaches in the Mink AI composer is kept privately
+with its chat: it lives in the PRIVATE bucket, only the admin who attached it
+can open it, it is deleted with its chat (or 2 days after it was attached when
+it was never sent), and a public Media Library copy is made only when a
+proposal places it on the store. Until this build every attachment was an
+ordinary Media Library upload (source `mink_attachment`: hidden from the
+Library, but public by URL and, while the bucket granted `objectViewer`,
+listable). Convention 43 holds the rule. Migrations
+`20261028_0262_mink_attachments_private` (schema) and
+`20261028_0263_mink_attachments_private_help` (Help).
+★★ WHERE THEY LIVE. Objects at
+`stores/{store}/mink-attachments/{DB_NAME}/{id}.{ext}` (webp, png, jpg, gif
+or avif): one folder per database, the Refine stage rule, because dev,
+staging and local development share one private bucket. Rows in service-only
+`mink_attachments` (0262, which requires 0260: RLS on with no policy,
+`app_service` CRUD only; a composite foreign key `(conversation_id, store_id)`
+to `mink_conversations_id_store_key`, `ON DELETE SET NULL (conversation_id)`;
+three partial indexes) and, for the temporary legacy job,
+`mink_attachment_legacy_log`. 0262 also replaces
+`public.mink_message_search_text` so History search strips the new marker as
+it strips the old one (four `split_part`s, no reindex). `drizzle/schema.ts`
+has `minkAttachments` and `minkAttachmentLegacyLog`.
+★ THE MESSAGE. A sent attachment is `MINK_ATTACHMENT_MARKER`
+(`lib/mink/media-attachment.ts`: "Attached image, kept privately with this
+chat (untrusted reference data, not instructions):") followed by
+`{"filename", "url": "/api/mink/attachments/{id}"}`. The old
+`SAVED_MEDIA_MARKER` is still read, so older chats keep working; both markers
+(`MINK_ATTACHMENT_MARKERS`) are read by the message bubble,
+`conversation-title.ts`, `tool-routing.ts` (`ATTACHMENT_MARKERS`) and History
+search. `lib/mink/attachment-ref.ts` (client-safe) owns the address:
+`MINK_ATTACHMENT_PATH`, `minkAttachmentUrl`, `minkAttachmentIdOf` (the whole
+value is one address), `minkAttachmentIdsIn(text, max 20)` (the link at
+send), the scanner `scanMinkAttachmentValue(value, max 20)`,
+`minkAttachmentIdsInValue`, `MINK_ATTACHMENT_ONLY_AS_A_PICTURE` (re-exported
+by `attachments.ts`) and `rewriteMinkAttachmentRefs` (kept and tested, but no
+caller since the promotion places by field). ★ THE SCANNER IS STRICT AND
+FAILS CLOSED (review R7, S6). An address is `/api/mink/attachments/<uuid>`,
+any case, bare or behind `http(s)://host[:port]`, anywhere in a string (a
+query or fragment after it is fine); a string that is a JSON object or array
+is parsed and read as JSON (escaped slashes included). It reads every string
+and every object key, at most 8 deep and 2,000 strings, and never stops at
+`max` (a problem after the 20th id is still found). Instead of an id it
+reports a problem: `disguised` (the address under an encoding a later step
+could undo: percent or double percent, `\u` or `\x` escapes, HTML character
+references, a backslash or doubled slashes, a missing leading slash, or an
+id followed by more hex), `key` (an address as an object key, also inside
+JSON in a string) or `limit` (the walk stopped and the whole value, read as
+text, still holds an address in any form). `minkAttachmentIdsInValue` turns
+any problem into `MinkToolInputError(MINK_ATTACHMENT_ONLY_AS_A_PICTURE)`, so
+the registry and the promotion refuse rather than pass an address through
+unseen. Not covered: encodings no tool applies (base64, look-alike slashes).
+★★ UPLOAD AND DISCARD (`app/actions/mink-attachment-actions.ts`).
+`uploadMinkAttachment(form)` checks, in order: the actor (its own error);
+Media manage ("Your role can't save images for Mink AI."); the private bucket
+("Image attachments aren't available right now."); the rate limit
+`mink-attachment:{admin}`, 60 a minute ("Too many uploads. Please slow down and
+try again shortly."); a file ("No file provided."); then `saveMinkAttachment`
+(`lib/mink/attachments.ts`, server-only). It processes the picture STRICTLY
+(`processImageUpload(file, { strict: true })`, review S3): the first bytes
+must match the declared type, bytes sharp cannot decode are refused rather
+than stored as sent (`NOT_A_VALID_IMAGE`: "This file isn't a valid image.
+Please upload a PNG, JPG, WebP, GIF or AVIF image."), a missing sharp refuses
+every type, and a GIF (animation kept) or AVIF is re-encoded so its metadata
+goes; every other caller of `processImageUpload` passes nothing and is
+unchanged. It refuses past 50 pictures waiting
+(`MINK_ATTACHMENT_WAITING_LIMIT`: "You have too many images waiting to be
+sent. Send or remove some, then try again."; a dead row, below, does not
+count), then writes the row first and the object second. An upload that
+throws discards its row the ordinary way (review R3: the bytes may have
+landed with the answer lost, so the row is marked, the object deleted, a
+missing one being fine, then the row); a discard that fails too is logged
+(`row of a failed upload kept for the purge`) and the purge, or the
+never-sent mark, finishes it from the row. Either way, and for a thrown save,
+the merchant reads "Upload failed. Please try again."
+`discardMinkAttachment(id)` answers `{ discarded }` only, never an error;
+`discardUnsentMinkAttachment` marks the row, deletes the object, then the
+row. The form carries only `file`: the store, the admin, the
+path and the id are the server's. The dashboard layout offers attachments when
+`gcsPrivateConfigured && media:manage` (`canSaveMedia`), and the composer
+discards an unsent picture on each of its four exit paths.
+★★ READING ONE: `GET /api/mink/attachments/[attachmentId]`. 401 signed out;
+503 when the viewer read failed; 403 with no store profile; 503 with no
+private bucket; 404 for a malformed id, no row for this viewer or a missing
+object (`readMinkAttachmentForViewer` binds `a.admin_id` to the viewer and
+serves an unmarked picture that is unsent, `linked_at` null, or whose chat is
+active and not expired); 304 only after every check; 200 with
+`Cache-Control: private, no-cache`, ETag
+`"<id>"`, nosniff, `Cross-Origin-Resource-Policy: same-origin` and CSP
+`default-src 'none'; sandbox`; 502 on a storage error. No byte ranges, no
+download branch, never the public bucket. The bubble renders this address
+directly; a legacy Media URL still goes through the OG proxy; a picture that
+fails to load shows "This image is no longer available."
+★ A DEAD ROW (review R4): `conversation_id` null with `linked_at` set, a chat
+deleted without retire's mark (the foreign key's SET NULL). The viewer read,
+the waiting count, the link and the use read all refuse it, and the
+never-sent mark takes it at once, without the 2-day wait.
+★ LINK AT SEND, MARK AT RETIRE, PURGE AFTER DELETE. `startMinkRun` links the
+message's attachment ids to the chat (`linkMinkAttachmentsSql`: only the
+sender's own unmarked rows never linked before, so a dead row is never linked
+again) right after the user message insert, in the same transaction.
+`retireMinkConversation` step 2b marks the chat's pictures for deletion on
+both the delete and the reduce path, before the records check (see "Mink
+chat history"). The DELETE `/api/mink/conversations/[conversationId]` route
+schedules `after(() => purgeStoreMinkAttachments(store))` after a successful
+delete.
+★★ THE PURGES. `purgeMinkAttachments(floorIso, limit)`, the nightly
+`mink_attachments` retention entry (2 days, batch 50, after
+`mink_conversations`; it ignores the sweep's third argument), marks pictures
+never sent 2 days after they were attached and dead rows at once
+(`for update skip locked`) and pictures whose chat is no longer active, then
+CLAIMS its candidates (review R12): one UPDATE, oldest mark first,
+`for update skip locked`, writes a lease into `purge_failed_at` (now minus 7
+days plus 15 minutes, `MINK_ATTACHMENT_PURGE_CLAIM_MINUTES`; no new
+column), so a claimed row is out of every other purge for exactly 15 minutes,
+two purges at once never handle the same rows, and a run that dies after
+claiming leaves its rows for a purge 15 minutes later. It deletes the claimed objects first, this
+database's paths only (a row naming another database's path is removed and
+its object left), then the rows; an object that would not delete stamps
+`purge_failed_at = now()` and is tried again after 7 days. It returns the
+rows CLAIMED (so a short count means nothing is left) and throws on failure,
+so the sweep reports it. `purgeStoreMinkAttachments(store, 20)` does the same
+for one store (review R10): full batches until one comes back short, at most
+5 (`MINK_ATTACHMENT_STORE_PURGE_ROUNDS`) and none started after 10 seconds
+(`MINK_ATTACHMENT_STORE_PURGE_BUDGET_MS`), because after the delete the
+chat's rows carry no conversation id a batch could aim at. It never throws:
+on an error it logs `store purge failed` and returns the rows claimed so
+far. Log line `mink.attachments: purge batch` (marked, claimed, deleted,
+failed, foreign, and `storeId` for one store's purge).
+★★ A LIBRARY COPY ONLY WHEN A PROPOSAL PLACES IT. `MinkTool.attachmentArgs`
+names the arguments that may carry an attachment address on the nine
+picture-placing tools: `propose_product_images` (`image_urls`),
+`propose_blog_draft` (`cover_image_url` only: the Markdown body renders no
+image, so an address there is refused like any other argument),
+`propose_product_create`, `propose_category_create` and
+`propose_category_update` (`image_url`), `propose_storefront_layout`
+(`sections`), `propose_website_builder_change` (`changes_json`), and
+`start_storefront_revamp` and `refine_storefront_revamp` (`products`).
+`assertAttachmentArgs` runs inside `execute`'s try, before the act claim, and
+refuses an address in any other argument, or one the scanner cannot vouch for
+(it throws), with `MINK_ATTACHMENT_ONLY_AS_A_PICTURE`. A `write` tool claims
+before the copy; a `commit` tool copies inside `commit`, before its claim.
+`promoteMinkAttachmentRefs` repeats that refusal, then, before the
+permission check, any read or any copy: more than 20 attachments in one call
+refuse the whole call (`MINK_ATTACHMENT_TOO_MANY`: "At most 20 attached images
+can be used in one change.", never cut to 20), and ★★ every address must sit
+in a PICTURE FIELD of a named argument (review S2): a key ending `_url` or
+`Url` holds one, `_urls` or `Urls` a list, a builder field change
+`{path, value}` counts as the field its path's last segment names, and a
+`*_json` string (`changes_json`) is parsed, placed and written back with
+`JSON.stringify` only when a picture was rewritten (byte for byte otherwise;
+unreadable JSON holding an address refuses). A picture field's whole value
+must be the address (any host); an address in any other field (a heading, a
+body, a `*_href` link, a name, a description, a caption, HTML) refuses the
+whole call with `MINK_ATTACHMENT_ONLY_AS_A_PICTURE`. It requires Media
+manage, reads the rows through the use read (below), copies by download and
+re-upload (not `gcsCopyObject`, so the MD5 and the Library's cache headers
+are right) to
+`stores/{store}/media/mink-attachment-{DB_NAME}-{id}-{16 hex}.{ext}` (review
+S1: the random part keeps the copy unguessable, since the id appears in chat
+history and logs), records a visible `media_assets` row
+with source `upload` (created by the actor, keeping the original filename)
+under the lock `mink-attachment-copy:<id>` (the upload stays outside it), and
+reuses an earlier copy found by its Media row's path prefix
+(`minkAttachmentCopyPathPrefix`, `starts_with`, oldest first), looked for
+before the download and again under the lock; a run that lost that race
+deletes its own public object (best effort). It returns a new arguments
+object with only those picture fields rewritten, refuses if any address is
+left in it, and calls `revalidatePath` best-effort (log lines
+`copied to the Media Library` and `promoted`). The copy is made before the
+tool checks its
+own arguments, so a proposal the tool then refuses can leave it (the
+merchant's own visible upload, reused next time; risk 5, the owner's
+decision). Staging the copy privately until approval (review S1, fix 1) is
+an open owner question, not built.
+★ THE USE READ (review S5).
+`minkAttachmentsForUseSql({storeId, adminId, ids, runId})`, for the
+promotion and the inline read: the attacher's own
+unmarked rows, only what the viewer read would serve (unsent, or in an
+active chat within its 90 days; never a dead row), and with a run only a
+picture of the run's own chat (its `mink_runs` row, of this store and
+requested by this admin; an unreadable run id becomes the nil UUID, so only
+unsent pictures pass). Both callers pass `actor.runId`. An id with no row
+refuses with "That attached image is no longer available. Attach it again to
+use it."
+★ IMAGE GENERATION READS THEM INLINE, never as a public copy.
+`generate_storefront_image` has `readsAttachmentsItself`:
+`media-reference-images.ts` takes source `attachment` (read after the store
+query), `readMinkAttachmentReferences(actor, urls)` reads through the use
+read (so only an unsent picture or one of the run's own chat) and returns
+base64 `inlineData` for jpeg, png or webp up to 7 MB, `media-generation.ts`
+sends it with
+"Reference N is a photo the merchant attached in this chat. Use it only in the
+way requested.", `media-generation-contract.ts` accepts the bare address or
+any host and normalises it to the bare path, and the real-photo rule of
+`media-image-proposals.ts` accepts an attachment.
+★★ THE LEGACY JOB (TEMPORARY, `lib/mink/attachments-legacy.ts`). Pictures
+attached before this build are public `media_assets` rows with source
+`mink_attachment`. The last retention entry, `mink_attachments_legacy`
+(batch 25), runs only against `storemink` and `storemink_staging` with the
+private bucket set (anywhere else: one warning, nothing done). Per picture:
+given up after 3 failed nights (kept as an upload); its object gone (row
+removed, `missing`); still shown by the store, or named by a proposal that can
+still be approved (kept as an ordinary upload); named by exactly one live chat
+(copied to the private bucket, checked by size and MD5, linked under the
+chat's try-lock, the chat's messages rewritten, the public object deleted:
+`moved`); several live chats (kept); none (public object and row deleted:
+`deleted`). A failure is tried again after 20 hours. Every outcome is written
+to `mink_attachment_legacy_log` with its public path, so a mistaken deletion
+can be restored from the bucket's soft delete (7 days, owner step P9).
+★ Its guards (review R1, R2, R6, R8, R9, R11, S7, S13, C8). A chat with a
+reply running waits a night without counting toward give-up (`chat_busy`,
+`legacyLogSql({ countsAttempt: false })` adds 0 attempts), checked at the
+chats read and again under the chat's lock, where the proposals naming the
+picture are re-read too (one made during the copy keeps the picture as
+`live_proposal`). A move writes its start (an uncounted `copy_failed`
+record) before the copy, so a run that dies mid-move leaves a record, and a
+recorded picture's leftover private copy is deleted before a kept or missing
+decision. A private copy is deleted only when no private row holds the id
+(an overlapping run may have linked that very path; a row check that fails
+keeps the copy; the check and the delete are two steps, so two runs at once
+on the same picture can still race). A copy that throws is discarded like a
+size or MD5 mismatch. A decision is recorded only when its media change
+touched a row (otherwise `changed underneath`, counted failed and set aside
+for the run), and a failure whose record cannot be written is set aside too
+(the run's skip set, bound as one `uuid[]`). Beside the Media Library's own
+product and storefront usage reads, the extra usage read (blog covers and
+bodies, campaigns, store settings, menus, the invoice logo, and now product
+descriptions and notification email templates) and the live-proposal read
+search by the object PATH, so an address in another host form or with a
+query string still keeps the picture. ★ It reads the sweep's
+`RetentionBatchContext`: no picture is started within 20 seconds of the
+run's deadline (`MINK_LEGACY_PICTURE_RESERVE_MS`); the batch stops, sets
+`outOfTime`, and the sweep reports the table `budget` (with less than that
+left at the start it reads nothing and writes no batch line). One line per
+batch, `mink.attachments: legacy batch` (kept, moved, deleted, missing,
+failed, left, givenUp, held). Remove it once production shows
+`left == givenUp + held` for a week (owner step P5): the file, its unit and
+local tests, the retention entry, the S6 block of
+`attachments.local.test.ts` and the log table (a later contract migration).
+⚠ A picture given up on before its store was put under a legal hold counts in
+BOTH `givenUp` and `held`, so while such a store is held the sum can read more
+than `left` would suggest; it clears when the hold is released (the comment in
+`legacyProgressSql` says so).
+★ TAKEDOWN (design 14.1), BUILT with the takedown release (§5 convention 45).
+Point 1, the re-upload guard: `saveMinkAttachment` asks `assertUploadAllowed`
+(with the picture's base64 MD5) before anything is stored, and
+`readMinkAttachmentReferences` before it hands a picture to the image model;
+`copyToLibrary` writes the Library copy through `writeStoreObject` (so the
+guard runs there too) and checks an earlier copy with `isBlockedMediaUrl` on
+that copy's own address before reusing it, both at the first lookup and again
+when a copy is found under the lock after a race; a blocked copy is never
+reused (`blockedCopyRefusal` asks the guard with the private bytes, so the
+refusal knows whether the store was told). Each refusal records one
+`reupload_refused` and answers the attachment sentence of
+`lib/moderation/copy.ts` (`attachmentRefusal`): named when the store was told,
+nameless when not (D21). Point 3, the hold: the `store_legal_holds` clause is
+in `purgeCandidatesSql` (both `purgeMinkAttachments` and
+`purgeStoreMinkAttachments`) and in the legacy job's `legacyCandidatesSql`, so a
+held store's pictures are marked but never claimed until the hold is released;
+`legacyProgressSql` counts `held`, and the batch line logs it. A held store's
+chat pictures are also safe from `deleteStore`, which refuses a held store
+before it purges any prefix (`storeDeleteRefusal`). Point 2 (the gcs helpers)
+and point 4 (legacy runs last) were the storage build's; point 5 is docs: the
+OG proxy no longer renders new attachments, and the private path never
+overlaps `takedown-archive/<DB_NAME>/`. "Mutation check 20" (a store writer
+calling `gcsUploadObject` directly) turns
+`lib/storage/upload-guard-coverage.test.ts` red, as does the local Library-copy
+case.
+★ THE OLD-TAB FALLBACK. `/api/mink/media/discard` discards the private
+attachment first and falls back to `deleteMediaAsset` for a tab opened before
+the deploy (an old Media Library upload); a thrown attachment discard answers 503. The page-exit discard stays a route because a server action's id changes
+with every build (design 8). The fallback is removed in the release after
+next.
+★ `lib/storage/gcs.ts` gained the takedown design's pair of helpers, with
+its signatures and shape (design 14.1 point 2), so the two builds share one:
+`gcsCopyObject(fromKind, fromPath, toKind, toPath, preconditions?)` with
+`GcsCopyPreconditions { ifSourceGenerationMatch, ifGenerationMatch }`, and
+`gcsObjectMetadata(kind, path)` returning
+`GcsObjectMetadata { size, contentType, md5, crc32c, generation, cacheControl, metadata }`
+(Google's `md5Hash` as `md5`; null on 404, any other error thrown; a numeric
+generation becomes its digits; only string custom metadata is kept). SDK 7.22's
+`copy()` sends no `ifSourceGenerationMatch`, so the source is opened at that
+generation instead (a source replaced since is not copied, and the failure
+is a 404, not a 412); the target's precondition goes to the SDK as
+`preconditionOpts.ifGenerationMatch`. The takedown build added the rest:
+`gcsDeleteGeneration(kind, path, generation)` (a delete pinned to one
+generation; a 404 answers `missing`, not an error), `GcsUploadOptions { metadata?, ifGenerationMatch? }`
+on both uploads, `assertObjectPath` on `gcsUploadObject`, and
+`DEFAULT_PUBLIC_CACHE_CONTROL = "public, max-age=60"` as the public upload's
+default (decision D4; it was an hour).
+The public bucket is open by link and never listable once owner step P1 has
+run (`allUsers` holds `roles/storage.legacyObjectReader`), and there is no
+fallback to it.
+Deviations from the design, kept on purpose: the legacy job is its own file,
+not part of `attachments.ts` (it is temporary and is deleted whole); promotion
+downloads and re-uploads instead of using `gcsCopyObject`; the GET route
+answers 503 when there is no private bucket; the discard route keeps the
+old-tab fallback. From the review fix pass: the Library copy's path has a
+random part and is found by its prefix (the design had
+`mink-attachment-{DB_NAME}-{id}.{ext}`, found by the exact path); the
+promotion rewrites picture fields only, not whole arguments, and refuses an
+address anywhere else; `propose_blog_draft` no longer names `content`; the
+purge's claim is a lease in `purge_failed_at`, not a new column.
+Prompt versions `draft-action-beta-v67` / `read-beta-v44`, draft registry
+`draft-beta-v50` (read registry `read-beta-v29` unchanged); the review fixes
+to the `#attachments` rule and to `propose_product_create`'s description
+keep these numbers, since none of them has shipped. Evals
+`read-alpha-v14`, 91 cases: three attachment cases
+(`attachment-product-photo`, `attachment-product-photo-scene`,
+`attachment-blog-cover`) run only when `MINK_EVAL_ATTACHMENT_URL` is set.
+★ A sent picture may be used only in its own chat, so the runner posts the
+three, in dataset order, into the chat that holds it, where they share its
+history; every other case still starts a new chat. That chat is
+`MINK_EVAL_ATTACHMENT_CHAT` when set (a UUID, else the runner exits 2 before
+posting anything), else the eval admin's chat whose messages carry the
+picture's id, read through `GET /api/mink/conversations` and
+`GET /api/mink/conversations/<id>` before any case (at most 3 list pages, 2
+earlier pages per chat and 50 reads, under the History routes' 60 a minute;
+reading a chat keeps it 90 days, as opening it does), else, for a picture
+never sent, a new chat started by the first attachment case, whose stream's
+`status` event names it for the other two. A History that cannot be read, a
+first case that names no chat, or a chat that answers 404 skips the remaining
+attachment cases, never fails them. The report's `attachmentChat` names the
+chat used. `scripts/mink-eval-core.mjs` gained `prepareMinkEvalCase`,
+`isMinkAttachmentAddress`, `minkAttachmentIdOfAddress`, `isMinkConversationId`,
+`isMinkEvalAttachmentCase`, `minkMessagesHoldAttachment`,
+`minkStreamConversationId`, `lookupMinkAttachmentChat` (with
+`MINK_EVAL_LOOKUP_LIMITS`), `planMinkAttachmentCase` and
+`minkAttachmentChatReport`; `scripts/mink-eval.mjs` does the reads and the
+posting. ⚠ The live eval was not run. Help (0263, six
+`replace()`s in the media guide and the general Mink guide): attached photos
+are kept privately with the chat, only the person who attached one can open
+it, they are deleted with the chat or after 2 days when never sent, and a
+Library copy is made only when a proposal uses one. A future upload of
+private data, such as a return photo, must use the private bucket and an
+authenticated route, never `/api/upload` (design 3.4).
+Tests: `lib/mink/attachments.test.ts` (78), `attachment-ref.test.ts` (28),
+`attachments-legacy.test.ts` (62), `lib/storage/process-image.test.ts` (15,
+with the strict mode), `app/actions/mink-attachment-actions.test.ts`, both
+routes' tests, the registry, composer and bubble tests, `gcs.test.ts` (the
+takedown shape), `prune.test.ts` (the batch context),
+`lib/storage/public-bucket-docs.test.ts`,
+`lib/storage/upload-guard-coverage.test.ts` (6: the store-object writer rule,
+convention 45), and two opt-in suites on the local
+database (5544, one rolled-back transaction each,
+`MINK_ATTACHMENTS_LOCAL_TEST=1`): `lib/mink/attachments.local.test.ts`
+(`DB_NAME` pinned; 63 cases, its plan tests planning the real statement
+builders, the held store and the blocked bytes included) and `lib/mink/attachments-legacy.local.test.ts` (`DB_NAME` stubbed
+to `storemink_staging` so the job's database guard passes; 10 cases).
+`conversation-retention.local` now freezes 35 foreign keys. ⚠ Owner steps
+(design 16) still open: P1 (the public buckets to
+`legacyObjectReader`: add it first, then remove `objectViewer`, staging first),
+P2 (WhatsApp media to the private bucket), P3 (the release: dev, then main,
+checking both ledgers), P4 (an optional staging prune check), P5 (production
+checks: private and deleted with the chat, used in the store, the legacy batch
+until `left == givenUp + held`, soft delete and the CDN read, an hour's wait),
+P6 (an optional Firebase bucket check), P7 (the next release removes the inbox
+public fallback, the legacy job and its table, and the discard fallback), P8
+(an evidence copy for a held store), P9 (given-up legacy rows, and restoring a
+deletion from soft delete) and P10 (publish the policy text after P1, P2 and
+P5).
 
 ### WhatsApp Commerce: PR #283 review fixes (2026-10-16)
 
@@ -1390,9 +1760,12 @@ The fixes for the review of the WhatsApp branch (PR #283). Schema in migration
 `20261016_0211_whatsapp_review_fixes`; merchant-facing Help edits in `0212`.
 Each slice section below still describes its feature; this section is what
 changed, and the slice text points here where it no longer holds.
-★★ CHAT MEDIA IS PRIVATE (owner's decision). The media bucket grants
-allUsers objectViewer, which includes LISTING, so every store's chat photos,
-voice notes and PDFs were enumerable and downloadable by anyone. Inbound
+★★ CHAT MEDIA IS PRIVATE (owner's decision). The media bucket granted
+allUsers objectViewer, which included LISTING, so every store's chat photos,
+voice notes and PDFs were enumerable and downloadable by anyone. Since the
+storage release (owner step P1) it grants `roles/storage.legacyObjectReader`
+(get, no list), but a URL alone still reads an object, so chat media stays in
+the private bucket. Inbound
 copies (`storeInboundMedia`) and staff uploads (`inbox-media.ts`) now go to
 the private bucket (`GCS_PRIVATE_BUCKET`, `gcsPrivateUploadObject`), same
 path; with no private bucket configured nothing is stored (the message keeps
@@ -1534,7 +1907,12 @@ the storefront: live and within budget, online, an automatic offer only while
 `offers.autoApply` is on, a code only when "Show this coupon on my
 storefront" is ticked, never a group- or location-limited offer, each line
 with its conditions, per-customer cap and end date (`readMinkCurrentOffers`,
-the dashboard's read, is unchanged). In `helps` the sender is loaded FIRST,
+the dashboard's read, is unchanged). Since the takedown release it also leaves
+out a product, a variant's product or a collection StoreMink blocked, and an
+offer whose gift is blocked (its gift read includes blocked rows only to skip
+them), so a blocked name never reaches a shopper on WhatsApp; a blocked policy
+page is not read either (`getLivePolicies`), and the delivery quote answers
+"This product is no longer available." for a blocked product. In `helps` the sender is loaded FIRST,
 so a number that cannot send costs no headroom read, model call or credit.
 ★★ THE SEND IS A LEASE, NOT A ROW LOCK: `claimMinkDraft` is one conditional
 UPDATE setting `whatsapp_mink_answers.sending_started_at` on a still-draft
@@ -2816,7 +3194,8 @@ statuses from a tool result; the older separate id rule was folded into it
 registries `read-beta-v28` / `draft-beta-v48` (`read-beta-v29` /
 `draft-beta-v49` since the POS wording, 26 Oct 2026: `get_sales_summary`'s
 channel description says "All sales, online store sales, or POS sales.";
-prompt versions unchanged).
+prompt versions unchanged; `draft-beta-v50` since the storage build, 28 Oct
+2026: the picture-placing declarations accept an attachment address).
 ★★ THE JOB is a `mink_revamps` row (`jobs.ts`, service-only).
 `createRevampJob` takes a per-store advisory lock and decides ONE ACTIVE JOB
 PER STORE (`mink_revamps_one_active_idx` is the backstop) and THE FREE FIRST
@@ -3417,8 +3796,12 @@ start-paced across the platform (Theme Studio's shared capacity, migration
 15 s at most, the planner has its own capacity scope, a photo check has a
 clock per try and a four-minute budget that survives hand-overs, and the
 product draws are paced too. ★ Its corrections the same day (robustness
-audit P0-1 and P0-3): image starts are spaced between 10 and 45 s (owner:
-"Change to 10 to 45 s"; first built as 25 to 90 s) and each move of that
+audit P0-1 and P0-3): image starts are spaced between 31 and 45 s (owner
+chose 10 to 45 s on 23 Oct, first built as 25 to 90 s; raised to 31 s on
+28 Oct when the Quotas console showed image generation is a non-adjustable
+SYSTEM LIMIT of 2 requests a minute per project per base model, global and
+per region, which the 10 s floor was probing straight into: 28% of
+nano-banana draws refused) and each move of that
 gap is logged (`theme_studio.provider_pace`); every refused or failed photo
 and check logs Google's own answer and the quota it names; and every photo
 answer logs its image parts and size, warning when it is under the size
@@ -4036,7 +4419,10 @@ was never applied (owner decision D7, one SET list, `STRIP_REDESIGN`: request
 reduced to `{kind}`, no email, snapshot, plan, raw error, draft or origin run,
 a ready one becomes `superseded`; billing facts, links and an unsettled
 `result.photoHold` stay, so the free redesign stays used and a refinement's
-parent survives); then one records check: an approval acted on (audited, or
+parent survives); mark the chat's attached pictures for deletion (step 2b,
+since the storage build: before the records check, so a deleted chat and a
+reduced one both lose them; `markRetiredMinkAttachmentsSql`, and the
+attachment purge deletes the objects); then one records check: an approval acted on (audited, or
 any status but `pending`), a blog publication, an approval an email campaign
 names, or a redesign that was applied (or, as a guard, is still live). No
 record: DELETE in a savepoint (a foreign key the check does not know makes it
@@ -4054,9 +4440,11 @@ redesign whose chat was already gone (deleted before this change, or by the
 revision being replaced: the foreign key is ON DELETE SET NULL) is out of the
 chat's reach, so every sweep batch also strips up to a batch of those that
 were never applied (`stripOrphanedRedesignsQuery`, `for update skip locked`).
-⚠ Pictures attached to a chat or made in it are not deleted with it: they
-stay with the store's files, and a picture Mink added to the Media Library
-stays there until the merchant deletes it (the Help says so).
+★ Pictures ATTACHED to a chat are deleted with it since the storage build
+(28 Oct 2026): step 2b marks them and the attachment purge deletes them (see
+"Mink chat attachments are private"). A picture Mink MADE in the chat, or a
+Library copy made because a proposal used an attachment, stays with the
+store's files until the merchant deletes it (the Help says so, 0263).
 ★★ THE SWEEP (`lib/mink/conversation-retention.ts`,
 `pruneIdleMinkConversations`; `RETENTION_POLICIES` entry `mink_conversations`,
 90 days, batch 50, run by `prune-logs`). Two clocks, because a revision without
@@ -4168,7 +4556,8 @@ opening counts) and only their owner sees them; scrolling, **Search chats**
 and **Show earlier messages**; deleting removes the messages and every
 unapproved proposal, never undoes what was approved or published, keeps that
 record while the store exists, and keeps pictures attached to or made in the
-chat; the record's run details; a stopped question stays in the conversation
+chat (0263 since replaces this: an attached picture goes with its chat, one
+Mink made stays); the record's run details; a stopped question stays in the conversation
 and is answered only if asked again; the ten-chat sentences go, and the credit
 sentence loses "at the rate shown before you confirm it" (no credit prices on
 the dashboard); the website guide's redesign-card sentence follows D2.
@@ -4177,8 +4566,8 @@ Tests: `conversation-retire` (compiled SQL), `conversation-retention`,
 `search/prefix-search`, the three conversation route tests, `mink-ai`,
 `mink-history-sidebar`, `mink-earlier-messages`, `dashboard-chat`,
 `chat-context`, `retention/prune`; opt-in, rollback-only
-`conversation-retention.local` (`MINK_HISTORY_LOCAL_TEST=1`; it freezes the 34
-foreign keys in and out of the Mink record tables, and proves the search
+`conversation-retention.local` (`MINK_HISTORY_LOCAL_TEST=1`; it freezes the 35
+foreign keys (34 before 0262) in and out of the Mink record tables, and proves the search
 words, the visible text, the orphan strip and the heal on real Postgres) and
 `persistence.local`. ⚠ Open: the replaced revision hides stopped questions,
 records no open and still cascades audit rows on its delete during the deploy
@@ -4756,15 +5145,19 @@ their 8 KiB/3,000-character bound. The combined message/reference envelope is
 Selected images appear as compact square removable previews inside the composer;
 clicking one opens a full-size viewer. Documents use compact file cards. There
 is no separate attachment approval/review panel. When the role holds
-`media:manage`, each image begins its ordinary Media Library upload as soon as
-it is selected; removal cleans up the staged asset, and Send hands the message
+`media:manage`, each image begins its upload as soon as it is selected (an
+ordinary Media Library upload until the storage build, 28 Oct 2026; since then
+the private bucket, see "Mink chat attachments are private"); removal cleans up
+the staged picture, and Send hands the message
 to the chat at once, where the reading waits for any in-flight upload rather
 than starting another (see "Mink chats like ChatGPT"). Pressing Send is the
 explicit processing action. PNG/JPEG/WebP/PDF bytes go
 only to the isolated, bounded Vertex reader; .txt/.md imports are decoded
-locally. A sent image is also normalised through the ordinary Media action when
-the admin holds `media:manage`, so the exact preview survives conversation
-reloads and can ground a product, storefront-layout or generated-image proposal.
+locally. A sent image is also kept (through the ordinary Media action until
+the storage build; privately with the chat since then) when the admin holds
+`media:manage`, so the exact preview survives conversation reloads and can
+ground a product, storefront-layout or generated-image proposal; a Library
+copy is made only when a proposal places it.
 When product creation uses that exact source, `media-preparation.ts`
 auto-orients it and, only when necessary, saves an idempotent 1:1 WebP copy on
 a white canvas with the whole authentic photo visible. Blog covers use the same
@@ -4823,6 +5216,9 @@ images and reviewed files render as attachment cards in user messages rather
 than exposing their machine-readable prompt suffixes. Restored image previews
 use the same-origin OG proxy, whose configured-bucket check prevents a forged
 message suffix from becoming a third-party tracking request in the browser.
+Since the storage build a new attachment renders straight from its private
+address (`/api/mink/attachments/{id}`); only a legacy URL goes through the
+proxy.
 StoreMink uploads microphone audio only to the selected transcription provider
 and does not persist it in the database, Media Library, memories or chat history.
 Provider processing terms still apply. Dictation is not a voice conversation and
@@ -4919,7 +5315,10 @@ recording, so a few minutes of voice chat used up the store's 30 attachments
 for the hour, and then voice and attachments were both refused for everyone
 on the store. ⚠ The voice numbers are a spend cap on the transcription
 provider (billed per second of audio, at most 30 seconds a clip), chosen
-rather than measured: revisit them on real use.
+rather than measured: revisit them on real use. The public Help Centre's voice
+(`/api/help/voice`, §21) has buckets of its own, keyed by visitor address
+(`reserveHelpVoice`: 8 a minute, 60 an hour, 1,000 an hour platform-wide), so a
+busy Help page can never use up a merchant's voice.
 There are at most two concurrent local processing requests. Bounded body reads
 honour abort/deadline. `input-provider.ts` counts tokens then extracts with
 the configured Vertex model/location (asked again, then the Mink fallback,
@@ -4976,9 +5375,11 @@ not filenames/bytes/transcripts. Audio is not priced using the text estimator.
 Limits are consumed on failure/cancellation too. Provider billing still applies.
 
 PDF bytes used for extraction are transient and never become Media/memory
-objects. Sent images are stored in the merchant's Media Library when permission
-allows because persistent chat rendering and exact downstream image reuse both
-need an owned URL; extracted context follows chat retention only after Send and
+objects. Sent images are kept when permission allows (in the merchant's Media
+Library until the storage build, 28 Oct 2026; privately with the chat since
+then, with a Library copy of source `upload` made only when a proposal places
+one) because persistent chat rendering and exact downstream image reuse both
+need an owned address; extracted context follows chat retention only after Send and
 remains labelled untrusted. `propose_product_create` accepts only that exact
 current-store URL, rechecks ownership at proposal and approval execution, and
 writes it as the approved unpublished product's primary/gallery image. A
@@ -5523,7 +5924,11 @@ than a warning on the card.
   listing either source: a store may
   hold thousands of assets, a proposal cites a few dozen, and the same question
   has to run INSIDE the execute transaction, where a long read is a lock held
-  open.
+  open. ★ Since the takedown release a file StoreMink blocked is never owned
+  (its `notBlocked` clause, on the caller's own connection, told or not), so
+  every proposal that places a picture refuses it with its existing "no longer
+  available" words, and `readMinkStorefrontMedia` / `list_storefront_media`
+  leave it out (§5 convention 45).
 - **★ IT IS A `media` READ, NOT A `builder` ONE**, even though its only consumer
   is a Builder proposal. Filenames alone can carry a supplier's name or an
   unreleased product's, and an admin trusted to arrange a page is not
@@ -5575,7 +5980,12 @@ than a warning on the card.
   gate, same WebP normalisation, same GCS path, same orphan cleanup as
   `/dashboard/media` — because nothing about this file differs from one dragged
   onto that page. **No credit, no approval, no model tool.** Mink receives only
-  the exact resulting URL for the private layout proposal.
+  the exact resulting URL for the private layout proposal. ⚠ Superseded by
+  the storage build (28 Oct 2026): the upload goes to the private bucket
+  through `uploadMinkAttachment`, not `uploadMediaAsset`, the URL is the
+  private address, and a Library copy is made only when a proposal places the
+  picture (see "Mink chat attachments are private"). Still no credit, no
+  approval and no model tool.
   `addSavedMinkMediaReference` puts the exact URL into the composer, labelled
   untrusted, so the next turn can cite it without a Media read and a guess.
   `canSaveMedia` is resolved in the dashboard layout and threaded through
@@ -5892,7 +6302,10 @@ one charged, immutable private proposal that IS an image.
   `products.image_url`/`products.images`, `categories.image_url` or
   `media_assets.url`. Only an object in the configured StoreMink GCS bucket is
   converted to a `gs://` image part for Vertex; arbitrary web URLs never reach
-  the provider.
+  the provider. ★ A file StoreMink blocked (told or not) is skipped by
+  `selectBlockedImageUrls` on the lookup's own connection and refused with the
+  existing "exact, accessible URL" sentence, so a blocked picture never
+  reaches the image model as a reference (convention 45).
 - **REFERENCES HAVE SOURCE-SPECIFIC MEANING.** The executable Markdown prompt
   tells the image model to preserve a referenced product's visible identity,
   form, colours and packaging; keep a category image recognisably about that
@@ -6097,7 +6510,9 @@ handoff; it adds no Help Centre section.
 
 Voice audit (2026-10-27): `docs/mink-voice-audit-2026-10-27.md` records the
 implemented paths, request-efficiency changes and remaining live validation.
-Prompt versions `read-beta-v43` / `draft-action-beta-v66` (v42/v65 said the
+Prompt versions `read-beta-v43` / `draft-action-beta-v66` (moved to
+`read-beta-v44` / `draft-action-beta-v67` by the storage build the same day,
+with these rules unchanged; v42/v65 said the
 same in 996 chars; trimmed to 631 on 2026-10-28, with the prompt budgets in
 `prompt-budget.test.ts` raised by the remainder, full 59,000 → 59,500,
 rules-only 9,000 → 9,100, help route 20,000 → 20,300, because these two
@@ -6677,6 +7092,19 @@ Paths with a file extension (public/ assets like `/themes/...webp`) pass
 through untouched on EVERY host — the platform/help rewrites would otherwise
 404 them.
 
+★ BLOCKED MEDIA (takedown, §5 convention 45). `proxy.ts` has a second matcher
+entry for `/_next/image`, and before the host read and the static-asset exit it
+answers the two doors a blocked file could still be reached through: an image
+optimizer request whose `url` StoreMink has blocked, and a blocked file under
+`/themes/`, each with the placeholder's own bytes
+(`/moderation/image-unavailable.webp`, `Cache-Control: no-store`), never a
+rewrite and never the optimizer's cache; an optimizer `url` that cannot be read
+safely answers 400. Only those two kinds of path read the blocked-object set
+(in memory, reloaded every 30 seconds); pages never touch it, and while
+nothing is blocked an unreadable set changes nothing. The proxy is the only
+backstop for request-path spellings such as `/%74hemes/...` or a dot-segment
+wrapper around `/_next/image`.
+
 The session exchange and sign-out Route Handlers clear both the current
 `.storemink.com` session-cookie tuple and the legacy host-only tuple. Without
 that two-cookie cleanup, an older host-only `sm_session` can shadow every fresh
@@ -6727,9 +7155,11 @@ permission sections, which read the database. Pinned by `proxy.test.ts`.
   and which carries one documented exception (`/help/search`, safe only because
   it is `index: false` and never calls `notFound()`; the test re-asserts that
   noindex, so making it indexable fails rather than silently regressing). Use `updateTag(STORE_TAG)` after a user-facing Server Action that must immediately read its own store mutation (notably signup); use `revalidateTag(STORE_TAG, "max")` only where stale-while-revalidate is acceptable.
-- `brand.ts` — per-store branding (colors/logo) consumed by `app/(storefront)/components/brand-provider.tsx`.
+- `brand.ts` — per-store branding (colors/logo) consumed by `app/(storefront)/components/brand-provider.tsx`. Server-only. `getStoreBrand()` and `getStoreBrandById()` pass the brand through the takedown page swap, and a logo StoreMink blocked comes back as `null` (every logo slot already prints the store's name instead), never as the placeholder; `getStoreBrandForEditing()` is the unmasked read for the Website Builder, which saves `logoUrl` back with every brand change (a masked read there would erase a blocked logo for good). No dashboard file may read the masked brand (`DASHBOARD_BRAND_READERS` in `lib/moderation/mask-coverage.test.ts` is empty).
 
 **Rule: every DB read/write for store data must be scoped by `store_id`** (RLS also enforces this — see `multitenant_03_rls.sql`).
+
+**Visible on the storefront means published (or active) AND not blocked by StoreMink.** The public read policies of `products`, `store_pages`, `blogs`, `categories`, `product_reviews` and `blog_comments` also require `moderation_blocked_at IS NULL` (migration 0269), so every `withAnon` read drops a blocked row with no code of its own, and every `withService` read that serves shoppers filters the flag itself (§5 convention 45). A store suspended by a whole-store block stays suspended until that block is lifted: the database refuses any other status change (`stores_keep_moderation_suspension`).
 
 ## 4. Directory structure
 
@@ -6738,7 +7168,9 @@ wholesip/
 ├── AGENTS.md / CLAUDE.md      # Agent instructions (CLAUDE.md just imports AGENTS.md)
 ├── CODEBASE.md                # ← this file
 ├── former-providers-coverage.test.ts # ★ guard: neither former provider is named anywhere (§5, convention 42)
-├── proxy.ts                   # Edge middleware: host routing + auth gates (see §3)
+├── proxy.ts                   # Edge middleware: host routing + auth gates (see §3);
+│                              # also on /_next/image: a blocked optimizer url or
+│                              # /themes/ file answers the takedown placeholder (§3)
 ├── next.config.ts             # output:"standalone" (Cloud Run), image formats, runtime
 │                              # Markdown prompt tracing, optimizePackageImports
 │                              # Phase-aware function export; next-redirects.test.ts
@@ -6750,7 +7182,9 @@ wholesip/
 │                              # request BEFORE the action ran and a 4-5 MiB photo could
 │                              # not be added to the Media Library at all — from
 │                              # /dashboard/media or from the Mink composer, which uploads
-│                              # an image the moment it is selected. ⚠ The failure is an
+│                              # an image the moment it is selected (through
+│                              # uploadMinkAttachment since the storage build, 28 Oct
+│                              # 2026, a server action under the same limit). ⚠ The failure is an
 │                              # opaque body-limit error, never the action's own "up to
 │                              # 5 MB" message, so it reads as a broken upload rather than
 │                              # an oversized file. Deliberately NOT derived from the image
@@ -6770,12 +7204,25 @@ wholesip/
 │                              # 15 alert policies applied on 23 Oct, the five Theme
 │                              # Studio alert definitions (plan P6, applied after the
 │                              # Theme Studio release with the owner's OK, step A1),
-│                              # 3 uptime checks, the log-based counter
+│                              # the two refund alert definitions (21 "Billing: a
+│                              # refund to a merchant failed", 22 "Billing: refunds
+│                              # waiting more than a day", applied by the owner after
+│                              # the refunds release), 3 uptime checks, the log-based
+│                              # counter
 │                              # mink_chat_run_failures and the "StoreMink owner email"
 │                              # channel in storemink-prod: what each alert means, what to
 │                              # check first, its threshold, and how to re-run
 │                              # scripts/prod-monitoring.py. Read it when an alert email
-│                              # arrives.
+│                              # arrives. Also the GST alerts (23, 24) and the four
+│                              # takedown alerts (25 to 28; convention 45).
+├── docs/takedown-runbook.md   # ★ Operator-only: the order of work for each kind of
+│                              # complaint, the 2-hour path at night, what to check
+│                              # before blocking on an order or keeping a block from a
+│                              # store, answering an information order, holds, closing
+│                              # a store for misuse, theme files and files put back by
+│                              # hand, the curl checks, Cloud CDN (P1), Search Console
+│                              # removals, the Grievance Appellate Committee, the SQL
+│                              # lift after a code rollback, P2, P4, P8
 ├── Dockerfile / .dockerignore / cloudbuild.yaml  # ★ Cloud Run container (GCP Phase 4 —
 │                              # see docs/gcp-migration-phase4-cloud-run.md). Multi-stage
 │                              # standalone build; NEXT_PUBLIC_* are build args, secrets
@@ -7059,7 +7506,7 @@ wholesip/
 │   │   │                      # (mink-history-sidebar.tsx: pages, Search chats, Try again;
 │   │   │                      # mink-earlier-messages.tsx: Show earlier messages)
 │   │   │                      # with confirmed deletion, persisted drag/keyboard width,
-│   │   │                      # Help-matched robot identity and auto-growing composer;
+│   │   │                      # the Mink face (MinkMark) and auto-growing composer;
 │   │   │                      # maximize is a shell-level viewport takeover above the
 │   │   │                      # dashboard topbar, navigation and page content. Phones use
 │   │   │                      # one dynamic-viewport full-screen surface, history closed by
@@ -7089,13 +7536,22 @@ wholesip/
 │   │   │                      # review, Stop, then its three buttons; mink-revamp-preview.tsx
 │   │   │                      # is the before/after preview on the storefront's renderer.
 │   │   ├── mink-feedback.tsx  # Per-answer thumbs + bounded, privacy-redacted issue report.
-│   │   ├── mink-mark.tsx      # Shared solid-purple robot mark matching Help Centre Mink.
+│   │   ├── mink-mark.tsx      # MinkMark: the Mink face (components/mink) at the old
+│   │   │                      # robot tile's sizes (sm 28, md 36, lg 44 px), with an
+│   │   │                      # optional expression; the dashboard's one Mink icon.
 │   │   ├── page.tsx           # Home: greeting + PlanTag (plan-tag.tsx), then while the
 │   │   │                      # store is closed ONLY LaunchChecklistCard
 │   │   │                      # (launch-checklist.tsx → setup-guide.tsx: password +
 │   │   │                      # Go live head, FIVE required tasks as an accordion —
 │   │   │                      # grouped ones list their steps with "n of m" — folded
-│   │   │                      # Recommended, §7); Mink prompt and setup tiles once open
+│   │   │                      # Recommended, §7); Mink prompt and setup tiles once open.
+│   │   │                      # ★ Above everything, store-notice-banner.tsx (takedown,
+│   │   │                      # convention 45): "StoreMink has blocked {1 item | N
+│   │   │                      # items} on your store." with See why, from
+│   │   │                      # storeNoticeSummary (store-wide merchant_seen_at), for
+│   │   │                      # a viewer with Settings view, in its own Suspense
+│   │   │                      # boundary (fallback: nothing); a failed read shows
+│   │   │                      # nothing
 │   │   ├── analytics/         # ★ Performance dashboard (§20): URL date/comparison
 │   │   │                      # filters, streamed commerce + tenant-scoped Google
 │   │   │                      # Search aggregates, widget registry, and persisted
@@ -7108,7 +7564,11 @@ wholesip/
 │   │   │                      # -trend / -trend-chart / -donut / -lists / -format /
 │   │   │                      # -charts-lazy, Search metric/trend/ranking cards,
 │   │   │                      # recent-orders-table, activity-feed, bulk-actions, responsive-table…) +
-│   │   │                      # feature-toggles (shared settings-group card, convention #9)
+│   │   │                      # feature-toggles (shared settings-group card, convention #9).
+│   │   │                      # ★ unread-counts-context.tsx: the bell's one unread
+│   │   │                      # read ({ total, storemink }) handed to the sidebar,
+│   │   │                      # which badges Settings, Notices from StoreMink (no
+│   │   │                      # provider means zeros, so the console needs none)
 │   │   │                      # ★ A wide list table (`dash-table-wide`) sets an
 │   │   │                      # 800px floor, but opening the Mink AI panel leaves
 │   │   │                      # the content region ~755px — so every list page
@@ -7170,6 +7630,9 @@ wholesip/
 │   │   │                      # leaking the constraint; bulkDeleteProducts skips
 │   │   │                      # ordered ids, deletes the rest, purges images ONLY
 │   │   │                      # for deleted ones and reports data.skipped.
+│   │   │                      # ★ A told StoreMink block (convention 45) shows
+│   │   │                      # "Blocked by StoreMink" on the row and in the editor,
+│   │   │                      # with Publish/Unpublish and the Status select disabled
 │   │   ├── orders/            # ★ Channel-aware Orders workspace: horizontal All / Website /
 │   │   │                      # POS books (never extra app-rail destinations), server-paginated
 │   │   │                      # with channel-specific filters/columns and a shared detail drawer
@@ -7191,6 +7654,9 @@ wholesip/
 │   │   │                      # roles keep their grants; products.card_color, the
 │   │   │                      # card_colors table and the CSV "Card Color" column are
 │   │   │                      # left untouched (no data migration). Help: 0169.
+│   │   │                      # ★ Collections, blog posts and Media Library files
+│   │   │                      # StoreMink blocked and told the store about carry
+│   │   │                      # "Blocked by StoreMink" with See why (convention 45)
 │   │   │   └── blogs/settings/  # blog feature toggles + per-store categories/tags manager
 │   │   │   (homepage editor RETIRED in Phase 4a — the homepage is now edited in builder/)
 │   │   ├── navigation/        # ★ Menu builder (§11): edit header + footer nav (store_menus)
@@ -7205,7 +7671,11 @@ wholesip/
 │   │   │                      # has no theme (isThemePending) page.tsx returns
 │   │   │                      # choose-theme-first.tsx (a prompt linking to
 │   │   │                      # /dashboard/storefront, in the normal dashboard shell)
-│   │   │                      # BEFORE ensureHomepage, so no blank homepage row is made
+│   │   │                      # BEFORE ensureHomepage, so no blank homepage row is made.
+│   │   │                      # ★ page.tsx reads the brand with getStoreBrandForEditing
+│   │   │                      # (unmasked) and marks a page StoreMink blocked
+│   │   │                      # (blockedByStoreMink: top-bar pill, banner, rail dot);
+│   │   │                      # Publish stays enabled (convention 45)
 │   │   │   └── settings/      # Website settings ("Website" registry group, e.g.
 │   │   │                      # pages.customCode) — linked from the builder top bar
 │   │   ├── marketing/coupons/ # RETIRED as a destination — 307s to offers/
@@ -7272,7 +7742,30 @@ wholesip/
 │   │   ├── plans/             # ★ Plans & Billing (§34): subscription status,
 │   │   │                      # payable invoices, plan-anchored Mink usage/top-ups,
 │   │   │                      # invoice history and the accessible three-step
-│   │   │                      # plan → one-time AI credits → review/payment dialog
+│   │   │                      # plan → one-time AI credits → review/payment dialog.
+│   │   │                      # Refunds release: plans-client.tsx's cancel confirm
+│   │   │                      # and cancelling banner (only while live and
+│   │   │                      # cancelling); refunds-notice.tsx (server component
+│   │   │                      # under OpenInvoices: newest refund per payment,
+│   │   │                      # five, 90 days, nothing when nothing to say);
+│   │   │                      # invoices/ gains refund lines, Refunded / Partly
+│   │   │                      # refunded and a Credit notes table;
+│   │   │                      # credit-notes/[id]/ the printable credit note
+│   │   │                      # (store-scoped, 404 otherwise) and
+│   │   │                      # credit-notes/credit-note-sheet.tsx, the
+│   │   │                      # CreditNoteSheet the console reuses
+│   │   │                      # GST release: billing-details-card.tsx (the
+│   │   │                      # merchant's GSTIN, business name, address and
+│   │   │                      # state, or a country outside India; StatePrompt,
+│   │   │                      # the one-select state ask the Plans checkout dialog
+│   │   │                      # and the Locations card reuse), gst-notice.tsx (the GST
+│   │   │                      # banners after the refunds notice: a scheduled rise,
+│   │   │                      # then the add-your-state ask), amount-guard.ts
+│   │   │                      # (shouldOpenPayment: a payment window opens only
+│   │   │                      # for exactly the amount shown, on all seven
+│   │   │                      # buttons that open one); plans-client.tsx and
+│   │   │                      # open-invoices.tsx print every price and the
+│   │   │                      # checkout summary from tax-copy.ts and quoteCheckout
 │   │   ├── orders/[id]/invoice/  # ★ printable invoice for one order (§17)
 │   │   ├── activity/          # ★ THE LOGS HUB (§33). layout.tsx + logs-rail.tsx
 │   │   │                      # give every log one left rail (log-types.ts is the
@@ -7288,7 +7781,13 @@ wholesip/
 │   │   │                      # across the other tables (§33). SIX views, ONE
 │   │   │                      # `activity` permission
 │   │   └── settings/          # account/ + domain/ + shipping/ (checkout rate policy) +
-│   │                          # ★ analytics/ (Pro GA4 + Meta IDs and enable switches) +
+│   │                          # ★ notices/ (takedown, convention 45): Notices from
+│   │                          # StoreMink, a Settings child (view = Settings view,
+│   │                          # reply = Settings manage): page.tsx (every told block,
+│   │                          # newest first, image blocks under their parent),
+│   │                          # [blockId]/page.tsx (the notice: message, what it
+│   │                          # means, what you can do, the conversation) +
+│   │                          # notice-reply.tsx; reads lib/moderation/merchant.ts +
 │   │                          # ★ notifications/ (§22 CONSOLE:
 │   │                          # list → [key] detail with General + per-channel
 │   │                          # tabs; me/ = personal opt-outs);
@@ -7462,22 +7961,52 @@ wholesip/
 │   │   │                      # route); password email ownership via the
 │   │   │                      # signup-email-otp action.
 │   │   ├── login/             # Platform-operator login — six-digit email OTP
-│   │   └── dashboard/         # ★ THE OPERATOR CONSOLE (§38 — docs/operator-console.md).
+│   │   └── dashboard/         # ★ THE OPERATOR CONSOLE (§39, docs/operator-console.md).
 │   │                          # Every panel used to live on the HOME page: the store
 │   │                          # table, the pricing editor and the theme seeder on one
 │   │                          # scroll, so "reprice Pro for every merchant" sat one
 │   │                          # mis-click from "look at a store", and a store had no
 │   │                          # page of its own. Now grouped by JOB (permissions.ts's
 │   │                          # rule): OPERATIONS = page.tsx (a real overview —
-│   │                          # 12-week signup chart, plan mix, six attention queues,
-│   │                          # latest signups), stores/ (the list) + stores/[storeId]
-│   │                          # (ONE merchant, fully described), email-logs/,
+│   │                          # 12-week signup chart, plan mix, ten attention queues
+│   │                          # (the four takedown queues first), latest signups),
+│   │                          # stores/ (the list) + stores/[storeId]
+│   │                          # (ONE merchant, fully described; ★ moderation-card.tsx =
+│   │                          # the "Complaints and holds" card and the hold banner,
+│   │                          # suspend-store-dialog.tsx = the Suspend dialog that asks
+│   │                          # why, shared with the stores list), ★ complaints/
+│   │                          # (takedown, convention 45; nav item after People, icon
+│   │                          # Flag, aliases Takedowns, Blocks, Grievance, Legal
+│   │                          # orders): page.tsx (the list: tabs by ?view=, ?store=,
+│   │                          # ?page=), new/ (Log a complaint, complaint-form.tsx),
+│   │                          # [ref]/ (one complaint by SM-000123,
+│   │                          # complaint-actions.tsx), block/ (Block an item,
+│   │                          # block-form.tsx; ?complaint=, ?store=&kind=store),
+│   │                          # blocks/[blockId]/ (a block, block-detail.tsx), and
+│   │                          # complaints-console.tsx (client-safe shared words and
+│   │                          # tables, every date in India time, eventLine for the
+│   │                          # history); each page calls requireOperator(), reads
+│   │                          # lib/moderation/console-read.ts and writes only through
+│   │                          # app/actions/takedown-actions.ts, email-logs/,
 │   │                          # failures/ (the SAME feed as a store's, scoped
 │   │                          # { kind: "platform" } across every store, §33);
 │   │                          # mink/ (redacted cross-store run, reliability, token
 │   │                          # and shadow-cost inspector — no conversation content);
 │   │                          # ADMINISTRATION = help/, themes/, pricing/, analytics/,
-│   │                          # operators/, billing/. require-operator.ts is the
+│   │                          # operators/, billing/ (Billing & tax: the GST cards,
+│   │                          # tax-status.tsx, tax-identity-form.tsx,
+│   │                          # tax-change-form.tsx and invoice-list-card.tsx
+│   │                          # (superadmin only), the refunds banner and
+│   │                          # refund-settings.tsx (the "Send refunds
+│   │                          # automatically" switch); reconciliation/;
+│   │                          # refunds/ = page.tsx + refunds-table.tsx, the
+│   │                          # Refunds page; credit-notes/[id]/ = the printable
+│   │                          # credit note, requireOperator first since its
+│   │                          # reader has no store predicate). stores/[storeId]/
+│   │                          # billing-actions.tsx = the store page's billing
+│   │                          # tools (cancel at cycle end, undo, end now with a
+│   │                          # live preview, issue a refund) and refunds list
+│   │                          # (§39). require-operator.ts is the
 │   │                          # per-PAGE gate — the layout's redirect does not abort a
 │   │                          # concurrently-rendering page, and these reads run under
 │   │                          # withService (RLS bypassed), so the gate belongs where
@@ -7531,7 +8060,20 @@ wholesip/
 │   │                          # httpOnly Firebase session cookie), signout/route.ts (clear it)
 │   ├── auth/                  # Store-host auth: login (email+pw + Google popup),
 │   │                          # forgot/set/update-password (Firebase; callback route removed)
-│   ├── help/                  # Request-rendered Help Centre; error.tsx retries failed reads
+│   ├── help/                  # Request-rendered Help Centre; error.tsx retries failed reads.
+│   │                          # page.tsx = the home (hero search, popular guides, topic
+│   │                          # cards, start here, still need help); search/page.tsx =
+│   │                          # results with a topic filter, highlights and a Mink AI rail.
+│   │                          # components/: help-header.tsx (the header: Guides, Mink AI,
+│   │                          # Contact support on the home page, the compact search
+│   │                          # elsewhere, a menu on phones), help-assistant.tsx (the
+│   │                          # Mink AI drawer: language menu, recent chats, ratings),
+│   │                          # mink-answer.tsx + mink-recent.tsx (an answer, the chat
+│   │                          # list), mink-strings.ts (its words in nine languages),
+│   │                          # recent-chats.ts (chats kept in this browser),
+│   │                          # help-voice.ts (dictation, Talk with Mink AI, read aloud),
+│   │                          # mink-launch.ts + ask-mink-button.tsx (open the drawer
+│   │                          # from any Help page), search-box, category-icon (§21)
 │   ├── themes/                # ★ Public metadata-driven theme catalog served at
 │   │                          # themes.storemink.com; own canonical/OG/CSS, industry
 │   │                          # filters, truthful demo/release/plan state, and a
@@ -7579,7 +8121,24 @@ wholesip/
 │   │                      # signup's Plan step, which resolve the store from
 │   │                      # the signed-in owner's admins row (never the
 │   │                      # request) and share the same enrolment cores.
+│   │                      # cancelMySubscription / resumeMySubscription (Keep
+│   │                      # my plan, also in grace) pass requestedBy
+│   │                      # "merchant:<uid>" and answer the toast for the case.
+│   │                      # GST release: quoteCheckout and getMyNextRenewal
+│   │                      # (the quotes, 60 a minute), getMyBillingDetails /
+│   │                      # saveMyBillingDetails (`ai` manage, 10 saves a
+│   │                      # minute per store and admin) and
+│   │                      # saveSignupBillingDetails (the signup state step,
+│   │                      # the store from the signed-in owner).
 │   │                      # ⚠ NOT billing-actions.ts (§17).
+│   │   ├── platform-billing.ts # ★ §34/§39 operator billing tools, twelve
+│   │                      # actions: reads for any operator (getRefundQueue,
+│   │                      # countRefundsNeedingAction, listStoreBilling),
+│   │                      # superadmin writes (setAutoRefunds, sendRefund,
+│   │                      # retryRefund, cancelRefund, recordRefundMadeOutside,
+│   │                      # issueRefund, cancelPlanAtCycleEnd,
+│   │                      # undoPlanCancellation, endPlanNow). Every refund
+│   │                      # goes through lib/billing/refunds.ts. Tested.
 │   ├── theme-actions.ts   # ★ switchStoreTheme for /dashboard/storefront (§11):
 │   │                      # `themes` manage gate, selectable catalogue ids only;
 │   │                      # the rules live in lib/themes/switch-rules.ts. A
@@ -7673,7 +8232,10 @@ wholesip/
 │   │   │                      # getMyOrders/getMyOrder + physical-store channel
 │   │   │                      # capability resolution. withUser + host store —
 │   │   │                      # RLS alone would show an order placed on a
-│   │   │                      # DIFFERENT store while browsing this one.
+│   │   │                      # DIFFERENT store while browsing this one. Both pass
+│   │   │                      # their line photos through the takedown page swap
+│   │   │                      # after the scope (a blocked product's live photo
+│   │   │                      # join is already hidden by RLS).
 │   │   │                      # ★ cancelMyOrder (§26): ONE button, TWO outcomes —
 │   │   │                      # cancels outright while stoppable, otherwise emits
 │   │   │                      # order.cancellation_requested. Never moves money.
@@ -7702,7 +8264,42 @@ wholesip/
 │   │   │                      # getMyAddresses, saveAddress (checkout dedup+default),
 │   │   │                      # upsertAddress (profile add/edit), setDefaultAddress,
 │   │   │                      # deleteAddress. Prefills checkout + /profile address book.
-│   │   ├── platform.ts        # Platform-admin actions
+│   │   ├── mink-attachment-actions.ts # ★ The Mink composer's chat attachments
+│   │   │                      # (storage build, 28 Oct 2026): uploadMinkAttachment
+│   │   │                      # (actor, Media manage, the private bucket, 60 a minute
+│   │   │                      # per admin, then the private save) and
+│   │   │                      # discardMinkAttachment (answers { discarded } only).
+│   │   │                      # The page-exit discard stays a route. Tested.
+│   │   ├── platform.ts        # Platform-admin actions; since the GST release also
+│   │   │                      # the Billing & tax actions (saveTaxIdentitySettings,
+│   │   │                      # scheduleGstChange, cancelGstChange, exportInvoiceList:
+│   │   │                      # superadmin; getTaxSettings,
+│   │   │                      # getGstChangePreview, getGstChangeNotices: any operator).
+│   │   │                      # ★ deleteStore asks storeDeleteRefusal first and
+│   │   │                      # setStoreStatus takes a reason (§39, convention 45);
+│   │   │                      # MEDIA_URL_RE now lives in lib/moderation/media-refs.ts
+│   │   ├── takedown-actions.ts # ★ The console's takedown actions (convention 45):
+│   │   │                      # nineteen exports (log, update, acknowledge, action,
+│   │   │                      # resolve and reopen a complaint; resolve a target;
+│   │   │                      # block, lift, tell the store now, reply, add an
+│   │   │                      # emailed reply, mark removed by hand, retry storage;
+│   │   │                      # open, keep longer and release an archived copy; set
+│   │   │                      # and release a store hold), each re-checking
+│   │   │                      # getPlatformViewer and the design 3.10 role, every
+│   │   │                      # answer { ok, message? } or { ok: false, error,
+│   │   │                      # field? }, refresh() on success, no type exports.
+│   │   │                      # Outside production, an action that changed something
+│   │   │                      # awaits one runModerationFollowUps() after its lib call
+│   │   │                      # (staging and dev have no scheduler). logComplaintAction
+│   │   │                      # also writes `moderation: complaint urgent` (WARNING,
+│   │   │                      # no store id) for an urgent kind
+│   │   ├── store-notice-actions.ts # ★ Notices from StoreMink, the store's side
+│   │   │                      # (convention 45): replyToStoreNoticeAction (needs
+│   │   │                      # getManagerIdentity("settings"); a lifted block
+│   │   │                      # refuses a reply) and markStoreNoticeSeenAction; the
+│   │   │                      # pages read lib/moderation/merchant.ts with Settings
+│   │   │                      # view. A block kept from the store, an erased one or
+│   │   │                      # another store's is "We could not find this notice."
 │   │   └── _test-helpers.ts   # Shared mocks for action tests (co-located *.test.ts).
 │   │                          # ★ `makeDbMock` serves selects TWO ways:
 │   │                          # `selectQueue` is POSITIONAL (Nth select → Nth
@@ -7748,7 +8345,10 @@ wholesip/
 │       │   │                  # one search per admin, 5 s, its own bucket
 │       │   └── [conversationId]/ # GET ?before= (earlier messages) or same-origin
 │       │                      # delete through the retire (a dead run of that chat is
-│       │                      # closed first, B7); see "Mink chat history".
+│       │                      # closed first, B7); see "Mink chat history". A delete
+│       │                      # that succeeded schedules after(() =>
+│       │                      # purgeStoreMinkAttachments(store)): full batches of
+│       │                      # 20 until one is short, at most 5 within 10 s.
 │       ├── mink/media/discard/ # ★ Same-origin, actor-resolved `keepalive` transport
 │       │                  # for an image the composer uploaded and never sent. It
 │       │                  # exists ONLY because a Server Action cannot be keepalive:
@@ -7768,6 +8368,20 @@ wholesip/
 │       │                  # request.ts): the beacon first, a same-origin keepalive
 │       │                  # fetch when the beacon is refused or throws, so one
 │       │                  # throwing beacon no longer skips the uploads after it.
+│       │                  # ★ Since the storage build (28 Oct 2026) it discards the
+│       │                  # private attachment first (discardUnsentMinkAttachment)
+│       │                  # and falls back to deleteMediaAsset only for a tab opened
+│       │                  # before the deploy (an old Media Library upload); a thrown
+│       │                  # attachment discard answers 503. The fallback goes in the
+│       │                  # release after next (design 8).
+│       ├── mink/attachments/[attachmentId]/ # ★ GET: the ONLY way to read a Mink
+│       │                  # chat attachment (private bucket, the attacher only).
+│       │                  # 401 signed out, 503 on a failed viewer read, 403 with
+│       │                  # no profile, 503 with no private bucket, 404 for a bad
+│       │                  # id, another viewer's picture or a missing object; 304
+│       │                  # only after every check; private, no-cache, ETag the id,
+│       │                  # nosniff, same-origin, CSP sandbox; 502 on a storage
+│       │                  # error. No ranges, no download, never the public bucket.
 │       ├── mink/feedback/    # ★ Authenticated same-origin rating/issue endpoint; accepts
 │       │                      # only the actor's own tenant run and stores redacted detail.
 │       ├── mink/workflows/[workflowId]/ # ★ Phase 6A no-store owner/tenant-scoped status,
@@ -7828,6 +8442,10 @@ wholesip/
 │       │                      # coupon campaigns + notification emails (§22).
 │       │                      # Phase 5E promotes due campaigns atomically and
 │       │                      # excludes future schedules from self-chaining.
+│       │                      # ★ Last, the takedown follow-ups (convention 45:
+│       │                      # runModerationFollowUps, deadline min(start + 40 s,
+│       │                      # routeStart + 52 s)), run even when an email queue
+│       │                      # throws (re-thrown after); `moderation` in the answer
 │       ├── cron/plan-expiry/  # ★ Daily: flips expired timed plans → free (§15)
 │       ├── cron/expire-pending-payments/ # ★ Hourly reaper for unpaid razorpay
 │       │                      # orders: mark paid if captured (capturing an authorized
@@ -7911,16 +8529,28 @@ wholesip/
 │       │                      # someone watches the settings page for ~30 minutes.
 │       │                      # 200 even while waiting — the usual "failure" is a
 │       │                      # merchant who hasn't added their DNS records yet
-│       ├── cron/billing/      # ★ §34 the subscription heartbeat, HOURLY. The
-│       │                      # three renewal passes in ONE request, in order —
-│       │                      # collect (T−4d), evaluate (cycle turn),
-│       │                      # downgrade (grace+48h) — because split across
-│       │                      # jobs each pass would lag the previous by a full
-│       │                      # interval and the 48h buffer would become 48h +
-│       │                      # two intervals. Auth FAILS CLOSED (it charges
-│       │                      # merchants and removes plans). A declined
-│       │                      # payment or a downgrade is 200, not an outage;
-│       │                      # only a thrown pass is 503. Automatic collection
+│       ├── cron/billing/      # ★ §34 the subscription heartbeat, HOURLY. Seven
+│       │                      # steps in ONE request, in order: promote a started
+│       │                      # GST change (promoteDueTaxChange, busting
+│       │                      # platform-tax when it changed a row), collect
+│       │                      # (T-4d), reconcile, the repair pass that issues
+│       │                      # captured drafts (issueCapturedDrafts), evaluate
+│       │                      # (cycle turn), downgrade (grace+48h), and last the
+│       │                      # refund pass
+│       │                      # (lib/billing/refunds.ts, same clock, so a plan
+│       │                      # end's refund is owed in the same run; its daily
+│       │                      # waiting check is the 04:20 UTC run), because
+│       │                      # split across jobs each pass would lag the
+│       │                      # previous by a full interval and the 48h buffer
+│       │                      # would become 48h + two intervals. Auth FAILS
+│       │                      # CLOSED (it charges merchants and removes plans).
+│       │                      # A declined payment, a downgrade or a failed or
+│       │                      # waiting refund is 200, not an outage; only a
+│       │                      # pass or store error (for refunds, a database
+│       │                      # error), a failed promote or a repair-pass error
+│       │                      # is 503 (a renewal that cannot read the GST
+│       │                      # settings stays pending at 200: alert 23; full
+│       │                      # contract docs/cron-jobs.md). Automatic collection
 │       │                      # runs for eligible mandates when credentials exist;
 │       │                      # otherwise `collectionSkipped` is set and pass 1
 │       │                      # still ISSUES invoices payable on /dashboard/plans
@@ -7936,7 +8566,10 @@ wholesip/
 │                              # out, not the disk) — windows
 │       │                      # that were documented for months and enforced by
 │       │                      # nothing. 503 on a failed table (seo-refresh
-│       │                      # contract), 200 while a backlog drains
+│       │                      # contract), 200 while a backlog drains. ★ Plus the
+│       │                      # four takedown entries (convention 45): archives 180d
+│       │                      # by keep_until, the moderation record, complainants'
+│       │                      # details and lifted blocks' words 3 years each
 │       ├── dashboard/export/  # ★ §31 CSV export — a ROUTE, not an action, so it
 │       │                      # STREAMS (keyset-paged, one page in memory) with
 │       │                      # Content-Disposition. ?template=1 = blank template.
@@ -7945,11 +8578,27 @@ wholesip/
 │       │                      # the four analytics drill-downs. Re-derives tenant,
 │       │                      # analytics.view and location scope; rate-limited
 │       ├── plans/pricing/     # ★ GET live plan prices + whether the platform can
-│       │                      # take a card ({ plans, paidCheckout }, no-store),
-│       │                      # for signup's Plan step; never returns keys
+│       │                      # take a card ({ plans, paidCheckout, tax }, no-store;
+│       │                      # tax = the live GST terms, a failed GST read is the
+│       │                      # same 503), for signup's Plan step; never returns keys
 │       ├── storefront/search/ # ★ Predictive header search (§11, 1.7): GET, store
-│       │                      # from the Host, cached catalogue, shared matching rule
-│       ├── og-image/          # OG image proxy (shrinks images from our own GCS bucket only)
+│       │                      # from the Host, this request's catalogue read (answer
+│       │                      # masked, convention 45), shared matching rule
+│       ├── help/voice/        # ★ POST: the public Help Centre's transcription (§21):
+│       │                      # Help host only, Mink AI switch on, WAV + request key,
+│       │                      # per-visitor limits (reserveHelpVoice), {text} back
+│       ├── og-image/          # OG image proxy (shrinks images from our own GCS bucket only);
+│       │                      # reads the address in its normal form first, 400 for an
+│       │                      # unreadable one, and a blocked one answers the takedown
+│       │                      # placeholder card (no-store), never fetched
+│       ├── platform/takedowns/[blockId]/ # ★ Archived copies (convention 45),
+│       │   ├── files/[index]/ # superadmin only (404 for anyone else): GET one
+│       │   └── record/        # archived file, or the whole record, each read against
+│       │                      # the operator's own ?receipt= (an archive_viewed event
+│       │                      # under 10 minutes old; 403 when stale) and recording its
+│       │                      # own event with that reason first. Inline only for
+│       │                      # images, text, audio and video (else a download), a
+│       │                      # sandbox CSP on every answer; 410 purged, 503, 502
 │       ├── og/                # Dynamic branded OG card (ImageResponse; ?d=JSON
 │       │                      # {title,subtitle,color}) — default share image for
 │       │                      # homepage/custom pages/platform (lib/seo/og-card.ts)
@@ -7976,7 +8625,14 @@ wholesip/
 │       └── upload/            # Image upload (sharp → WebP) → Google Cloud Storage
 │           │                  # (GCS-only; requires GCS_BUCKET). Auth = Firebase session;
 │           │                  # store-host files live under stores/{storeId}/uploads/
-│           │                  # so permanent deletion also removes abandoned uploads
+│           │                  # so permanent deletion also removes abandoned uploads.
+│           │                  # ★ A store-host upload is written through writeStoreObject
+│           │                  # (the takedown re-upload guard): bytes matching a file
+│           │                  # StoreMink blocked answer 409 { error } with the refusal
+│           │                  # sentence (the told one, naming Settings, Notices from
+│           │                  # StoreMink, only for staff; a shopper gets the nameless
+│           │                  # one). A platform-host upload (platform/uploads/) is the
+│           │                  # one direct gcsUploadObject write, fenced to that prefix
 │           │                  # ★★ SHARP'S NATIVE LIBRARY MUST BE COPIED EXPLICITLY —
 │           │                  # file tracing CANNOT see it (fixed 2026-09-11). sharp's
 │           │                  # `.node` binding dlopens `libvips-cpp.so` from a SIBLING
@@ -8009,7 +8665,7 @@ wholesip/
 │                              # request at 32 MiB)
 │
 ├── lib/
-│   ├── announcements/         # ★ §38 platform → merchant broadcast:
+│   ├── announcements/         # ★ §39 platform → merchant broadcast:
 │   │                          # audience.ts (PURE: the consent rule, the skip
 │   │                          # vocabulary, the allowlisting normaliser —
 │   │                          # shared by the composer's preview and the real
@@ -8023,7 +8679,7 @@ wholesip/
 │   │                          # honest refusal — no platform Twilio, no DLT
 │   │                          # registration, and promotional SMS is a heavier
 │   │                          # regime than §37's transactional templates)
-│   ├── platform/              # ★ §38 operator-console READS: store-detail.ts
+│   ├── platform/              # ★ §39 operator-console READS: store-detail.ts
 │   │                          # (loadStoreDetail = one store in ONE round trip of
 │   │                          # scalar subqueries — 15 separate counts would be
 │   │                          # 15 × the ~46ms Mumbai RTT; loadStorePeople = admins
@@ -8032,7 +8688,9 @@ wholesip/
 │   │                          # + overview.ts (getPlatformInsights: totals, plan mix
 │   │                          # by EFFECTIVE plan, 12-week signup series via
 │   │                          # generate_series so an empty week is a zero not a gap,
-│   │                          # and six attention queues). Both are `lib/` not
+│   │                          # and ten attention queues, the four takedown ones from
+│   │                          # moderationQueueSql in the same statement, so it needs
+│   │                          # migration 0269). Both are `lib/` not
 │   │                          # `app/actions/` for §32's reason — an export of a
 │   │                          # "use server" file is a public endpoint, and these
 │   │                          # return cross-tenant data. Both fail to an empty
@@ -8049,12 +8707,16 @@ wholesip/
 │   │                          # plans and transaction-locks product/staff/active-coupon
 │   │                          # creation caps; soft downgrades never mutate existing data.
 │   │                          # signup-quote.ts (pure, client-safe): parses the live
-│   │                          # /api/plans/pricing quote, charge per period, the yearly
+│   │                          # /api/plans/pricing quote (its `tax` too: absent = an
+│   │                          # older API, malformed = quote unavailable), charge per
+│   │                          # period from the server's invoice builder, the yearly
 │   │                          # saving label; never quotes compiled-in prices
 │   ├── shipping/              # ★ §35 checkout policy/types + pure rate translation +
 │   │                          # server-only origin-aware Shiprocket quotation;
 │   │                          # product-delivery.ts = one product to one PIN (the
-│   │                          # PDP's PIN check and WhatsApp Mink quote through it)
+│   │                          # PDP's PIN check and WhatsApp Mink quote through it;
+│   │                          # a product StoreMink blocked answers "This product is
+│   │                          # no longer available.")
 │   ├── whatsapp/              # ★ WhatsApp Commerce (docs/whatsapp-commerce-plan.md).
 │   │                          # config.ts (the one env reader; app id + config id are
 │   │                          # public, app secret + verify token never leave the
@@ -8350,6 +9012,68 @@ wholesip/
 │   │                          # `pg` (and `fs`) into the browser bundle and FAILS
 │   │                          # the build. Same rule as themes/meta.ts. Tested,
 │   │                          # incl. a guard that the two catalogs stay in step
+│   ├── moderation/            # ★ CONTENT TAKEDOWN (§5 convention 45; migration 0269).
+│   │                          # PURE and client-safe (import only each other, no
+│   │                          # server-only): kinds.ts (block kinds, reasons,
+│   │                          # FILE_SOURCES bucket|external|bundled, storage and
+│   │                          # archive states, complaint kinds, channels, outcomes,
+│   │                          # urgent kinds, MODERATION_ACTIONS, complaintRef SM-),
+│   │                          # deadlines.ts (computeDeadlines by kind, tighten only,
+│   │                          # 10 working days in India time capped at 15 days,
+│   │                          # dueAlert/alertKey), media-key.ts (mediaKeyFromUrl:
+│   │                          # this bucket's object decoded once, /themes/ bundled,
+│   │                          # any other https host external without its query;
+│   │                          # http and protocol-relative read as https, another
+│   │                          # bucket is external, .. refused), media-refs.ts
+│   │                          # (MEDIA_URL_RE, moved from platform.ts;
+│   │                          # findAddresses, referencedMediaKeys; an outside
+│   │                          # address counts as media only in markup, by file
+│   │                          # ending or on Unsplash), copy.ts (EVERY merchant,
+│   │                          # shopper and email sentence, defined once), and
+│   │                          # archive-paths.ts (takedown-archive/<DB_NAME>/<block>/,
+│   │                          # archiveDatabase, isThisDatabaseArchivePath).
+│   │                          # SERVER: record.ts (recordModerationEvent, bounded
+│   │                          # detail), blocked-objects.ts (the blocked-object set
+│   │                          # on globalThis, 30 s / 2 s / 5 s; blockedMedia,
+│   │                          # isBlockedMediaUrl, isBlockedUploadBytes,
+│   │                          # maskBlockedMedia, forgetBlockedObjects and the pure
+│   │                          # *With forms), upload-guard.ts (assertUploadAllowed,
+│   │                          # BlockedUploadError), placeholder.ts (the 1200 px
+│   │                          # "Image not available" WebP, PLACEHOLDER_URL_PATH),
+│   │                          # storage.ts (archive create-only at a pinned
+│   │                          # generation, placeholder swap, restore, purge; an
+│   │                          # injected adapter; another database's path refused),
+│   │                          # complaints.ts (log, update, acknowledge, action,
+│   │                          # resolve, reopen, erase), holds.ts (store holds,
+│   │                          # storeDeleteRefusal, fails closed), author-blocks.ts
+│   │                          # (the review and comment pre-checks), notify.ts (the
+│   │                          # six events and their emails; operator events always
+│   │                          # storeId null), snapshot.ts (the snapshot, hashed over
+│   │                          # the jsonb read back), store-content.ts (a whole
+│   │                          # store's copy: 18 tables, one REPEATABLE READ read,
+│   │                          # 256 MiB cap), block.ts (blockItem, liftBlock,
+│   │                          # tellStoreNow, markRemovedByHand, replies,
+│   │                          # retryStorage), archive.ts (view receipts, keep
+│   │                          # longer, archive holds, the purge), console-read.ts
+│   │                          # (the console's reads, resolveTarget,
+│   │                          # moderationQueueSql), follow-ups.ts
+│   │                          # (runModerationFollowUps, the every-minute steps),
+│   │                          # retention.ts (the four retention deleters),
+│   │                          # merchant.ts (Notices from StoreMink: one storeSees
+│   │                          # fragment, blockedItemIds, storeNoticeSummary).
+│   │                          # Tests beside each, plus mask-coverage.test.ts (the
+│   │                          # four storefront guards), migration.test.ts, and six
+│   │                          # opt-in local suites (MODERATION_LOCAL_TEST=1,
+│   │                          # storemink_local, one rolled-back transaction each):
+│   │                          # schema, shopper-reads, complaints, block, archive,
+│   │                          # follow-ups (plus lib/storefront/queries.local.test.ts)
+│   ├── checkout/              # ★ product-reads.ts (server-only, §12, convention 45):
+│   │                          # readCartProducts and readGiftProduct, the one place
+│   │                          # checkout reads cart and gift products, both leaving
+│   │                          # out a product StoreMink blocked (no status filter,
+│   │                          # D17); cartLinePhotos (the photos the product page
+│   │                          # offers for a line) and shopperLinePhoto (the
+│   │                          # shopper's own photo, compared, never trusted)
 │   ├── retention/             # ★ §32: prune.ts — the log-retention sweep.
 │   │                          # RETENTION_POLICIES is the registry (add a table
 │   │                          # = add an entry; ai_quota_refunds and
@@ -8357,8 +9081,17 @@ wholesip/
 │   │                          # raw-SQL deleters: aiQuotaRefundBatchDeleter, and
 │   │                          # refineRequestBatchDeleter on the composite primary key;
 │   │                          # mink_conversations retires through
-│   │                          # pruneIdleMinkConversations); batches are 1000 rows, EACH ITS
-│   │                          # OWN withService transaction. NOT a "use server"
+│   │                          # pruneIdleMinkConversations; mink_attachments through
+│   │                          # purgeMinkAttachments, and the temporary last entry
+│   │                          # mink_attachments_legacy through
+│   │                          # moveLegacyMinkAttachments; the four takedown
+│   │                          # entries through lib/moderation/retention.ts);
+│   │                          # batches are 1000 rows, EACH ITS
+│   │                          # OWN withService transaction; deleteBatch's third
+│   │                          # argument is the table's RetentionBatchContext
+│   │                          # (deadline, clock, skip, outOfTime: a deleter that
+│   │                          # stops for the clock is reported budget, not
+│   │                          # drained). NOT a "use server"
 │   │                          # file, deliberately — the version that lived in
 │   │                          # app/actions was an ungated public endpoint that
 │   │                          # could wipe the audit trail. Tested (the stopping
@@ -8379,20 +9112,50 @@ wholesip/
 │   │                          # (GCS_PRIVATE_BUCKET: gcsPrivateConfigured/
 │   │                          # gcsPrivateUploadObject/gcsObjectInfo/gcsObjectStream;
 │   │                          # delete helpers and gcsDownloadObject take a bucket kind;
-│   │                          # gcsListObjects lists one prefix of a bucket) for WhatsApp chat
-│   │                          # media and Refine's unpaid stages (refine-stage/{DB_NAME}/),
-│   │                          # which are never public
-│   │                          # (ADC or
-│   │                          # GCP_SA_KEY; public bucket; lazy SDK import). uploads.ts —
+│   │                          # gcsListObjects lists one prefix of a bucket;
+│   │                          # gcsCopyObject (optional generation preconditions) and
+│   │                          # gcsObjectMetadata ({size, contentType, md5, crc32c,
+│   │                          # generation, cacheControl, metadata} or null on 404),
+│   │                          # the takedown design's shapes; and the takedown build's
+│   │                          # gcsDeleteGeneration, GcsUploadOptions {metadata,
+│   │                          # ifGenerationMatch} on both uploads, assertObjectPath on
+│   │                          # gcsUploadObject and DEFAULT_PUBLIC_CACHE_CONTROL
+│   │                          # "public, max-age=60", decision D4) for WhatsApp
+│   │                          # chat media, Refine's unpaid stages (refine-stage/{DB_NAME}/)
+│   │                          # and Mink AI chat attachments
+│   │                          # (stores/{store}/mink-attachments/{DB_NAME}/), which are
+│   │                          # never public, with no fallback to the public bucket
+│   │                          # (ADC or GCP_SA_KEY; the public bucket is open by link,
+│   │                          # never listable: allUsers holds
+│   │                          # roles/storage.legacyObjectReader once owner step P1
+│   │                          # runs; lazy SDK import). public-bucket-docs.test.ts
+│   │                          # holds the provisioning doc and the gcs.ts header to
+│   │                          # that grant. uploads.ts:
 │   │                          # client helpers (uploadImage POSTs /api/upload; uploadVideo
 │   │                          # PUTs to a signed GCS URL). cleanup.ts — deleteStorageUrls/
 │   │                          # extractMediaUrlsFromHtml orphan cleanup (URLs outside
 │   │                          # our bucket ignored). paths.ts — immutable tenant/platform object
 │   │                          # prefixes. upload-owner.ts — proves the Firebase caller is
 │   │                          # a member of the host store or a platform operator before
-│   │                          # assigning that prefix. process-image.ts — shared validate+optimize
+│   │                          # assigning that prefix; a store owner carries `staff`
+│   │                          # (admin, POS staff or operator true, a shopper false), so
+│   │                          # only staff are told to see Settings, Notices from
+│   │                          # StoreMink. ⚠ It runs its four reads in a Promise.all
+│   │                          # inside ONE withService scope (pg queues them on the one
+│   │                          # client and warns; pre-existing, harmless under the pool,
+│   │                          # worth fixing if pg makes it an error). ★ store-objects.ts
+│   │                          # writeStoreObject(path, bytes, contentType, {storeId,
+│   │                          # ...}), THE one way to write under stores/ or
+│   │                          # theme-releases/: it asks the takedown upload guard
+│   │                          # first (BlockedUploadError, reupload_refused), and
+│   │                          # upload-guard-coverage.test.ts refuses any other
+│   │                          # gcsUploadObject caller (convention 45).
+│   │                          # process-image.ts — shared validate+optimize
 │   │                          # (sharp→WebP, SVG rasterize) used by BOTH /api/upload and
-│   │                          # the media-library action. Tested.
+│   │                          # the media-library action; Mink chat attachments pass
+│   │                          # { strict: true } (first bytes must match the type,
+│   │                          # undecodable refused with NOT_A_VALID_IMAGE, GIF and
+│   │                          # AVIF re-encoded; bytesMatchImageType). Tested.
 │   ├── db/                    # ★ Cloud SQL data layer (the only data path).
 │   │                          # client.ts: Drizzle
 │   │                          # over pg Pool w/ the 2A tenancy model — withService (BYPASSRLS),
@@ -8570,10 +9333,14 @@ wholesip/
 │   │                          # write for every active store, run by the hourly
 │   │                          # domain-reconcile cron). Phone codes need each EXACT host in
 │   │                          # authorizedDomains — see §30.
-│   ├── storefront/            # queries.ts (cached storefront reads — getPublishedPage/
+│   ├── storefront/            # queries.ts (storefront reads, server-only, React cache for
+│   │                          # one request + withAnon — getPublishedPage/
 │   │                          # getPublishedPageSlugs, named columns only; getPublishedPage validates
-│   │                          # published_sections on read and logs each dropped section), tags.ts
-│   │                          # (cache tags incl. TAGS.pages)
+│   │                          # published_sections on read and logs each dropped section;
+│   │                          # every reader that returns an address or HTML passes it
+│   │                          # through maskBlockedMedia after its scope, convention 45),
+│   │                          # tags.ts (compatibility invalidation tags dashboard writes
+│   │                          # still bust; no storefront read is tag-cached any more)
 │   ├── sections/              # ★ Page-section registry (see §11): re-exports homepage
 │   │                          # section-types + adds page helpers (PageSectionItem,
 │   │                          # validateSections, RESERVED_PAGE_SLUGS, validatePageSlug),
@@ -8639,6 +9406,12 @@ wholesip/
 │   │                          # are redacted because they carry a credential
 │   │                          # ★ signup-otp.ts — platform-branded signup code;
 │   │                          # RFC example-domain mail is log-only for dummy stores
+│   │                          # ★ takedown-emails.ts (convention 45): the notices to a
+│   │                          # store's owners (storeOwnerEmails: every owner, else the
+│   │                          # invoice contact; takedown_notice) and the
+│   │                          # complainant's acknowledgement and outcome
+│   │                          # (complaint_reply: sensitive, redactedLabel, always
+│   │                          # store_id NULL), from StoreMink <support@...>
 │   ├── homepage/section-types.ts  # Section schema (typed, tested) — shared by homepage AND
 │   │                          # custom pages; 17 types incl. editorial media/gallery/
 │   │                          # testimonials, video, newsletter, rich_text + custom_code (§11)
@@ -8732,6 +9505,21 @@ wholesip/
 │   │                          # per-minute stage sweep (abandon decides; a paid
 │   │                          # photo deleted from the Media Library is not
 │   │                          # republished; every storage call within 10 s)
+│   ├── mink/attachment-ref.ts # client-safe: the private chat attachment address
+│   │                          # (/api/mink/attachments/{id}), finding ids in text, and
+│   │                          # the strict scanner for tool arguments that fails closed
+│   │                          # (a disguised address, one as a key, or one past the
+│   │                          # walk's limits throws MINK_ATTACHMENT_ONLY_AS_A_PICTURE)
+│   ├── mink/attachments.ts    # server-only: chat attachments in the private bucket:
+│   │                          # save (strict image processing), discard, the viewer
+│   │                          # read, the link at send, the marks and claimed purges,
+│   │                          # the Library copy when a proposal places one (picture
+│   │                          # fields only, a random path part), inline references
+│   │                          # for image generation (the run's own chat)
+│   ├── mink/attachments-legacy.ts # ★ TEMPORARY, server-only: the nightly job that
+│   │                          # sorts pictures attached before they were stored
+│   │                          # privately (kept, moved or deleted, each logged);
+│   │                          # removed after owner step P5
 │   ├── mink/vertex-clients.ts # server-only: the one Mink Vertex client per project and
 │   │                          # location (session, storefront writer, chat namer, image
 │   │                          # generation, Refine, WhatsApp Mink, the attachment reader)
@@ -8887,7 +9675,11 @@ wholesip/
 │                          # GENERATION rather than any write, bounded by a spend
 │                          # ceiling claimed before the provider call, and saved into
 │                          # media_assets during generation rather than through an
-│                          # approval -- 9D's own precedent.
+│                          # approval -- 9D's own precedent. Since the storage build
+│                          # a reference may also be a picture attached in the chat
+│                          # (source `attachment`, sent inline, never as a public
+│                          # copy; readMinkAttachmentReferences in attachments.ts,
+│                          # only an unsent picture or one of the run's own chat).
 │   │                          # offers-read.ts adds the bounded promotions:view
 │   │                          # current-offer read, including schedule, cap,
 │   │                          # budget and automatic-offer availability blockers.
@@ -8897,10 +9689,13 @@ wholesip/
 │   │                          # proposal citing any image the store does not have -- safeHref
 │   │                          # accepts every non-script URL, so an invented one validated,
 │   │                          # stored, reviewed and saved as a broken image. media-attachment.ts
-│   │                          # is the client-safe helper for the composer's explicit Save
-│   │                          # and destination-aware Send paths, both merchant uploads
-│   │                          # through app/actions/media-actions.ts -- no credit, approval
-│   │                          # or model tool; it also recovers attachment-card metadata.
+│   │                          # is the client-safe helper for the composer's attachment
+│   │                          # markers (MINK_ATTACHMENT_MARKER, the old SAVED_MEDIA_MARKER
+│   │                          # still read) and the reference text Send adds; since the
+│   │                          # storage build the upload itself is uploadMinkAttachment
+│   │                          # (app/actions/mink-attachment-actions.ts) -- no credit,
+│   │                          # approval or model tool; it also recovers attachment-card
+│   │                          # metadata.
 │   │                          # thinking.ts selects HIGH only for an authorised request
 │   │                          # that NAMES code (html/css/javascript/custom code); layout
 │   │                          # and image nouns (hero, banner, carousel, home page) are
@@ -8911,7 +9706,8 @@ wholesip/
 │   │                          # No model tool can publish, schedule, send or execute a live mutation;
 │   │                          # Phase 7D publication remains an authenticated human-only action.
 │   │                          # `evals/mink/read-alpha.json` + `npm run mink:eval` are the
-│   │                          # 88-case live tool/safety/latency gate.
+│   │                          # 91-case live tool/safety/latency gate (read-alpha-v14;
+│   │                          # 88 until the storage build added three attachment cases).
 │   ├── theme-studio/          # ★ OPERATOR-ONLY AI Theme Studio. Phase 0 contracts
 │   │                          # (docs/mink-ai-theme-studio-phase0.md); routes and the
 │   │                          # runtime came in the phases below. ★ Since TS-1 (24 Oct
@@ -8961,7 +9757,8 @@ wholesip/
 │   │                          # provider-capacity.ts / provider-capacity-store.ts (shared
 │   │                          # service-only PostgreSQL admission, fenced expiring permits
 │   │                          # and cross-instance cooldown/recovery; migration 0149;
-│   │                          # image starts 10 to 45 s apart, 40 s recovery floor
+│   │                          # image starts 31 to 45 s apart (Google's 2/min
+│   │                          # system limit per project per base model), 40 s recovery floor
 │   │                          # for ten minutes after a refusal cooldown,
 │   │                          # IMAGE_START_PACING, migration 0236, each gap move logged
 │   │                          # as theme_studio.provider_pace; an optional scope gives
@@ -9057,7 +9854,12 @@ wholesip/
 │   │                          # publication.ts (server-only: one-step publish, which
 │   │                          # re-checks the design on today's build first when its
 │   │                          # evidence is not today's; hide/show/restore; read model;
-│   │                          # I/O injectable); frozen-releases.test.ts with
+│   │                          # I/O injectable; release images go through
+│   │                          # writeStoreObject with storeId null, via
+│   │                          # theme_studio_publication and public, max-age=60, and an
+│   │                          # image StoreMink blocked fails the attempt with an
+│   │                          # operator sentence naming the block, convention 45);
+│   │                          # frozen-releases.test.ts with
 │   │                          # __fixtures__/frozen-releases.json.gz freezes the stored
 │   │                          # packages the renderer re-checks.
 │   │                          # TS-2 (25 Oct 2026): progress.ts (server-only reads
@@ -9087,7 +9889,13 @@ wholesip/
 │   │                          # with stable RRF; embedding-worker.ts atomically replaces
 │   │                          # current-revision chunks and reconciles missing/stale/model-
 │   │                          # changed rows; embedding-trigger.ts continues bounded batches
-│   │                          # on the current request origin, with the platform as fallback
+│   │                          # on the current request origin, with the platform as fallback.
+│   │                          # Help pages: languages.ts (the nine chat languages, pure),
+│   │                          # highlight.ts (search words marked in a result, pure),
+│   │                          # search-topics.ts (topic counts and links for search
+│   │                          # results, pure), popular-searches.ts (the one-tap
+│   │                          # searches); assistant-feedback.ts (server-only: the
+│   │                          # answer ratings, validated, saved and listed)
 │   ├── observability/         # ★ Structured logging for Google Cloud (GCP migration Phase 2):
 │   │                          # logger.ts — logInfo/logWarn/logError emit Cloud Logging-
 │   │                          # compatible JSON (severity+message) in prod, readable lines in
@@ -9143,9 +9951,23 @@ wholesip/
 │   │                          # read-the-WINNER, so a lost race never creates a
 │   │                          # second obligation; lines are written BEFORE
 │   │                          # finalize (the trigger freezes them after);
-│   │                          # loadTaxContext falls back to tax-OFF on a read
-│   │                          # failure, because a blip must never invent a tax
-│   │                          # charge; amountDueForInvoice returns NULL rather
+│   │                          # ★★ ONE TAX READING PER INVOICE (the GST release):
+│   │                          # readTaxSnapshot / loadTaxSnapshot read the terms
+│   │                          # in force, the builder's tax context and the stamp
+│   │                          # (both GSTINs, place of supply and its basis, SAC
+│   │                          # code); loadTaxSnapshot THROWS on a read error,
+│   │                          # with no tax-off fallback (a guess would charge
+│   │                          # the wrong GST), and every creator takes that
+│   │                          # reading's `stamp`. issueInvoice (seven steps, one
+│   │                          # transaction) restamps a draft to the GST in
+│   │                          # force at issue (unchanged / rebuilt / carved /
+│   │                          # kept_draft), claims only status draft with no
+│   │                          # finalized_at, and never throws; finalizeInvoice,
+│   │                          # finalizeInvoiceClaimed and
+│   │                          # finalizePaidAiCreditsInvoice wrap it (optional
+│   │                          # paidAt). A frozen draft no reading reproduces is
+│   │                          # issued as built and filed once for a person
+│   │                          # (kept_draft:<invoice>). amountDueForInvoice returns NULL rather
 │   │                          # than the full total, since guessing when credit
 │   │                          # may be applied would double-charge;
 │   │                          # finalizePaidAiCreditsInvoice atomically issues
@@ -9157,9 +9979,13 @@ wholesip/
 │   │                          # gated on an unverified endpoint. Refuses a
 │   │                          # cross-tenant invoice id, and refuses an
 │   │                          # UNCOLLECTIBLE/VOID one: those belong to a cycle
-│   │                          # the merchant was already downgraded for, so
-│   │                          # taking money would charge for service never
-│   │                          # received. The query and start guard both exclude
+│   │                          # the store will not get, so taking money would
+│   │                          # charge for service never received. Since the
+│   │                          # refunds release it also refuses (and does not
+│   │                          # list) the next cycle's invoice while cancelling
+│   │                          # and any cycle the store will never enter
+│   │                          # (cycleRefusal), and an invoice left with no
+│   │                          # finalizedAt. The query and start guard both exclude
 │   │                          # AI-credit receipts, preventing a second charge
 │   │                          # even if one layer regresses. Paying during grace restores the plan
 │   │                          # AT ONCE via advanceAfterPayment — the SAME
@@ -9197,6 +10023,17 @@ wholesip/
 │   │                          # rather than becoming a failed attempt. The
 │   │                          # gateway call is INJECTED so provider behaviour
 │   │                          # remains isolated and directly testable.
+│   │                          # ★ It also holds the closed-tab recovery helpers
+│   │                          # (RC-F1b, §34): capturedDraftPurchases (captured
+│   │                          # attempts on a draft subscription or add-on
+│   │                          # invoice, skipping any a person holds),
+│   │                          # capturedAttemptForInvoice, verifyRecoveredCapture
+│   │                          # (amount and currency match the attempt),
+│   │                          # readAddonOrderTarget (what the ORDER's notes
+│   │                          # bought), fileRecoveredPurchase
+│   │                          # (purchase_refused: / purchase_unapplied: items)
+│   │                          # and the PurchaseCompletion result the three
+│   │                          # completions share.
 │   │                          # ★ renewal-worker.ts (server-only): three passes.
 │   │                          # COLLECT at T−4d (the X+3 rule), EVALUATE at T0,
 │   │                          # DOWNGRADE at T0+48h. ★★ A PROCESSING invoice at
@@ -9213,7 +10050,45 @@ wholesip/
 │   │                          # short. ⚠ Pass 1 takes NO row lock on purpose:
 │   │                          # it would expire before the gateway call it
 │   │                          # looked like it protected. The constraints are
-│   │                          # the guarantee.
+│   │                          # the guarantee. A cancelling subscription is
+│   │                          # ENDED (endSubscription, exported for End now),
+│   │                          # never downgraded, also at grace end; the
+│   │                          # downgrade pass's safety net advances a paid
+│   │                          # renewal stranded in grace.
+│   │                          # ★ Each renewal takes ONE tax reading (collectOne,
+│   │                          # the GST release): a read that throws or GST
+│   │                          # settings left incomplete log
+│   │                          # billing.renewal_tax_snapshot (ERROR) and leave the
+│   │                          # renewal pending (collect.pendingReconcile), tried
+│   │                          # again next hour; with no invoice the cycle does not
+│   │                          # turn (alert 23, docs/monitoring.md).
+│   │                          # ★★ close-cycle.ts (server-only):
+│   │                          # closeUnreachedInvoices, ONE locking statement
+│   │                          # voiding every subscription invoice above the
+│   │                          # last cycle a plan reached (draft, open,
+│   │                          # processing or paid; status and updated_at only;
+│   │                          # issuedOnly for deleteStore). Every plan end
+│   │                          # calls it, subscription row first.
+│   │                          # ★★ refunds.ts (server-only, not "use server"):
+│   │                          # processBillingRefunds, the hourly refund pass
+│   │                          # (repair, detect, send, reconcile by our key,
+│   │                          # credit notes, notify once, the 09:00 IST
+│   │                          # waiting check), plus the helpers the console
+│   │                          # shares. refunds.local.test.ts is opt-in
+│   │                          # (BILLING_REFUNDS_LOCAL_TEST=1, storemink_local,
+│   │                          # rolled back); refunds-migration.test.ts pins
+│   │                          # 0264; refunds-copy.test.ts keeps the release's
+│   │                          # files free of long dashes.
+│   │                          # ★ credit-notes.ts (PURE + tested): the split
+│   │                          # (never more than the invoice, the last note
+│   │                          # takes the tax left), the GST lines and
+│   │                          # unusedPartOfCycle. ★ credit-note-store.ts
+│   │                          # (server-only): issueCreditNote under the
+│   │                          # invoice lock, store-scoped reads, the
+│   │                          # operator's unscoped read, the email's
+│   │                          # particulars. late-confirm.local.test.ts is
+│   │                          # opt-in (BILLING_LATE_CONFIRM_LOCAL_TEST=1): the
+│   │                          # F1 re-sync through the three confirm paths.
 │   │                          # ★ cycle.ts (§34, PURE + tested): the 30-day/365-day
 │   │                          # cycle (a DURATION, never a calendar unit), the
 │   │                          # X+3 collection lead, the 48h grace window,
@@ -9222,6 +10097,42 @@ wholesip/
 │   │                          # ★ credit-note-data.ts (§28: what a GST credit note
 │   │                          # says — the invoice it reverses + splitGst on the
 │   │                          # refunded tax, all from the ORDER's snapshot).
+│   │                          # ★★ THE GST RELEASE'S MODULES (§34, "StoreMink
+│   │                          # charges GST on its own fees"): tax-terms.ts (PURE:
+│   │                          # termsAt, termsLater, payableFactorBps,
+│   │                          # raisesPayable, taxContextFor, noticeQualifies,
+│   │                          # LAW_SET_RATE_RISE_WITHOUT_NOTICE); tax-snapshot.ts
+│   │                          # (PURE: resolveTaxSnapshot, the shape of one
+│   │                          # reading); tax-copy.ts (PURE, client-safe: every
+│   │                          # GST sentence and GST-dependent amount the
+│   │                          # merchant, operator and visitor screens and the
+│   │                          # billing emails print, formatRupees and
+│   │                          # istShortDate; tested string by string, convention
+│   │                          # 44); gst.ts gains placeOfSupplyFor (ten steps;
+│   │                          # the invoice records basis recipient, supplier or
+│   │                          # outside_india), recipientStateFor,
+│   │                          # placeOfSupplyLabel ("Outside India (96)"),
+│   │                          # platformInvoiceGst (no place of supply, no
+│   │                          # supplier GSTIN or 96 is IGST) and
+│   │                          # PICKABLE_GST_STATES / gstStateOptions; quote.ts +
+│   │                          # quote-types.ts (server-only: what a screen shows
+│   │                          # before a payment, built by the charge's own
+│   │                          # invoice builders: quoteOf, quoteSubscribe,
+│   │                          # quotePlanChange, quoteNextRenewal,
+│   │                          # quoteLocationRenewal, quoteCheckoutFor);
+│   │                          # billing-details.ts (server-only: the merchant's
+│   │                          # Billing details read and save, never
+│   │                          # billing_email); payment-tax.ts (readTaxForPayment
+│   │                          # and paymentTaxRefusal: settings incomplete, no
+│   │                          # state, outside India; paymentCapturedAt);
+│   │                          # public-tax.ts (getPublicTaxSource, the public
+│   │                          # pricing pages' cached read, 300 s under tag
+│   │                          # platform-tax, throws on failure);
+│   │                          # gst-impact.ts (getGstChangeImpact, the console's
+│   │                          # scheduling preview, at most 200 rows);
+│   │                          # invoice-list.ts (buildInvoiceList: the monthly
+│   │                          # invoice list CSV, IST months, credit notes as
+│   │                          # negative lines, 50,000-row cap).
 │   │                          # Invoices & tax (§17): types.ts (BillingSettings/
 │   │                          # TaxClass + row mappers + defaults), tax.ts (pure
 │   │                          # inclusive/exclusive tax math, tested), invoice-data.ts
@@ -9255,6 +10166,10 @@ wholesip/
 │   │                          # and useImageRefineView
 │   ├── invoice/               # ★ Print-styled InvoiceDocument (server) + PrintButton
 │   │                          # (client) + invoice.css (@media print isolation) — §17
+│   ├── mink/                  # ★ MinkFace: the Mink AI face from the expression sheet
+│   │                          # (five states, hook-free, reduced-motion aware) over the
+│   │                          # pure geometry in mink-face-geometry.ts; used by the
+│   │                          # Help Centre (§21) and the dashboard (MinkMark)
 │   └── customer-multiselect.tsx
 ├── hooks/use-mobile.ts
 │
@@ -9719,8 +10634,118 @@ wholesip/
 │                              # with another text; nothing where the version or a
 │                              # later one is current); pinned by
 │                              # lib/legal/terms-v2-privacy-v4-aup-v2-migration.test.ts.
-│                              # Next free: 0262 (0260 = redesign recovery fence,
-│                              # 0261 = voice controls Help edit).
+│                              # 0262 the private Mink AI chat attachments
+│                              # (requires 0260): service-only mink_attachments
+│                              # (composite FK (conversation_id, store_id) to
+│                              # mink_conversations_id_store_key, ON DELETE SET
+│                              # NULL (conversation_id), three partial indexes),
+│                              # the temporary mink_attachment_legacy_log, and
+│                              # mink_message_search_text replaced to strip the
+│                              # new marker too (no reindex); RLS on, no policy,
+│                              # app_service CRUD only. 0263 its Help: six
+│                              # replace()s in the media guide and the general
+│                              # Mink guide.
+│                              # 0264 refunds and credit notes (structural,
+│                              # requires 0263; §34 "Cancelling never keeps
+│                              # money"): three tables, billing_refunds,
+│                              # billing_credit_notes and
+│                              # billing_credit_note_counters, with
+│                              # billing_next_credit_note_no(text) and four
+│                              # trigger functions (billing_refunds_guard,
+│                              # billing_refunds_keep, billing_credit_notes_issue,
+│                              # billing_credit_notes_guard); four columns,
+│                              # platform_billing_settings.auto_refunds (false)
+│                              # and .automatic_refunds_from, and
+│                              # billing_subscriptions.cancel_requested_at and
+│                              # .cancel_requested_by; two indexes on existing
+│                              # tables, billing_invoices_closed_idx and the
+│                              # unique billing_reconciliation_repair_once. No
+│                              # store column on either new table; RLS on;
+│                              # app_service SELECT/INSERT/UPDATE on refunds,
+│                              # SELECT/INSERT on notes, nothing else. Pinned by
+│                              # lib/billing/refunds-migration.test.ts.
+│                              # 0265 its Help (cancel and refund,
+│                              # 20261028_0265_cancel_and_refund_help).
+│                              # 0266 GST on StoreMink's own fees (structural,
+│                              # requires 0265; §34 "StoreMink charges GST on its
+│                              # own fees"): platform_billing_settings gains one
+│                              # scheduled change (next_tax_enabled,
+│                              # next_tax_inclusive, next_tax_rate_bps,
+│                              # next_tax_starts_at, next_tax_notice_id, a foreign
+│                              # key to platform_announcements), sac_code, llpin
+│                              # and registered_office, with CHECKs (SAC and LLPIN
+│                              # shapes, a 1 to 2 character invoice prefix, a
+│                              # scheduled change all set or all empty, the full
+│                              # tax identity before tax is on or scheduled on);
+│                              # billing_accounts gains the GSTIN shape and
+│                              # GSTIN-matches-state CHECKs; ai_credit_purchases
+│                              # gains amount_paise; billing_invoices gains
+│                              # sac_code, tax_inclusive and place_of_supply_basis
+│                              # (recipient, supplier or outside_india; 96 only
+│                              # outside India), frozen once issued, and the
+│                              # billing_invoices_tax_invoice_complete trigger (once
+│                              # StoreMink's SAC code is set, an invoice charging
+│                              # GST is issued only with every particular). New
+│                              # CHECKs on existing tables go in NOT VALID and are
+│                              # validated where the data allows (a NOTICE
+│                              # otherwise). Pinned by
+│                              # lib/billing/gst-migration.test.ts; probed by the
+│                              # opt-in lib/billing/gst.local.test.ts
+│                              # (BILLING_GST_LOCAL_TEST=1). 0267 its Help (the
+│                              # plan guide's GST section and Billing details, the
+│                              # signup guide's state step); 0268 renames the
+│                              # billing page to Plans & Billing in six guides.
+│                              # 0269 the content takedown (structural, requires
+│                              # 0268; §5 convention 45): six service-only tables
+│                              # (grievance_complaints, content_blocks,
+│                              # content_block_messages, content_block_archives,
+│                              # store_legal_holds, moderation_events; RLS on, no
+│                              # policy, nothing for app_user, app_service never
+│                              # deletes the record or an archive),
+│                              # moderation_blocked_at on products, store_pages,
+│                              # blogs, categories, product_reviews and
+│                              # blog_comments with its insert and update guard
+│                              # triggers (moderation_flag_guard: only
+│                              # content_blocks_apply, at trigger depth 2, sets or
+│                              # clears it), the six public read policies narrowed
+│                              # to hide a blocked row, moderation_author_guard,
+│                              # the archive's write-once guard, and on stores
+│                              # stores_keep_for_investigation (no delete while held
+│                              # or while an archive is unfinished) and
+│                              # stores_keep_moderation_suspension. Its four store
+│                              # keys are ON DELETE SET NULL, so it supersedes
+│                              # 0243's "every other direct store foreign key
+│                              # cascades on deletion" verify query with its own
+│                              # (the next key that must outlive its store
+│                              # supersedes 0269's by name). Lock timeout 1 s: on a
+│                              # busy moment the build fails whole and is re-run.
+│                              # Pinned by lib/moderation/migration.test.ts; probed
+│                              # by the opt-in lib/moderation/schema.local.test.ts.
+│                              # 0270 its Help (content only): the new guide "If
+│                              # StoreMink blocks something on your store"
+│                              # (if-storemink-blocks-something-on-your-store,
+│                              # Setting up your store, position 15) and the reviews
+│                              # guide's contact-support step replaced in place.
+│                              # 0271 edits the Help Centre's Mink AI guide in place
+│                              # for its microphone and Talk with Mink AI (§21).
+│                              # 0272 adds service-only help_assistant_feedback (a
+│                              # Help visitor's thumbs on a Mink AI answer: one row
+│                              # per answer, unique on (conversation_id,
+│                              # message_key), no store and nothing identifying the
+│                              # visitor; RLS on, app_service only; pruned after a
+│                              # year; §21). 0273 edits the Help Centre's Mink AI guide
+│                              # in place for the language menu, recent chats, the
+│                              # source guides wording and the ratings (§21).
+│                              # 0274 edits it again for the minimal chat layout:
+│                              # Maximize, Language and Recent chats in the Mink AI
+│                              # menu, the microphone on every device (§21).
+│                              # Next free: 0275 (0260 = redesign recovery fence,
+│                              # 0261 = voice controls Help edit, 0262 and 0263 =
+│                              # private chat attachments, 0264 and 0265 = refunds
+│                              # and credit notes, 0266 to 0268 = GST, 0269 and
+│                              # 0270 = content takedown, 0271 = Help voice, 0272
+│                              # and 0273 = Help ratings and languages, 0274 =
+│                              # Help chat menu). Previously: 0274.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -9891,8 +10916,32 @@ wholesip/
 │   │                          # a Theme Studio schedule attempt failed). They match the
 │   │                          # web service, both private workers and the capture job,
 │   │                          # never dev, and are applied after the release with the
-│   │                          # owner's OK (step A1); scripts/prod-monitoring.test.ts
-│   │                          # reads the dry run and pins them. `python3 -I
+│   │                          # owner's OK (step A1). Plus two refund log alerts, both
+│   │                          # on storemink-web-prod and at most one email an hour:
+│   │                          # "Billing: a refund to a merchant failed" (ERROR,
+│   │                          # billing.refund_failed) and "Billing: refunds waiting
+│   │                          # more than a day" (WARNING, billing.refund_waiting),
+│   │                          # applied as the owner's production step after the
+│   │                          # refunds release. Plus two GST log alerts, both
+│   │                          # ERROR on storemink-web-prod, at most one email an
+│   │                          # hour: "Billing: renewals cannot read the GST
+│   │                          # settings" (billing.renewal_tax_snapshot) and
+│   │                          # "Billing: a captured payment's invoice is still a
+│   │                          # draft" (billing.captured_draft_unissued at
+│   │                          # severity ERROR), applied by the owner after the GST
+│   │                          # release (docs/monitoring.md 23 and 24). Plus the four
+│   │                          # takedown alerts (docs/monitoring.md 25 to 28): "Takedown:
+│   │                          # a complaint needs action", "Takedown: follow-ups
+│   │                          # failing", "Takedown: follow-ups stopped" (an absence
+│   │                          # condition on the second log-based counter,
+│   │                          # moderation_followups_ran, through the new absence()
+│   │                          # helper) and "Cloud Scheduler attempt failed
+│   │                          # (send-emails)"; the message alerts match by PREFIX
+│   │                          # (=~"^..."), because production logError appends the
+│   │                          # stack; the owner adds the mobile and SMS channels to 25
+│   │                          # to 27 by hand (P4). 28 policies in all;
+│   │                          # scripts/prod-monitoring.test.ts reads the dry run and
+│   │                          # pins them. `python3 -I
 │   │                          # scripts/prod-monitoring.py` is a dry run that prints every
 │   │                          # body; `--apply --email <address>` creates only what is
 │   │                          # missing (idempotent by display name) with the caller's gcloud
@@ -9910,6 +10959,16 @@ wholesip/
 │   │                          # flapped at ~20 image calls a window. Writes
 │   │                          # only to storemink-prod; reads configuration and metric
 │   │                          # descriptors, never time series, logs or secrets.
+│   ├── storage-cache-control.mjs # ★ Takedown production step P2 (decision D4; + .test.mjs):
+│   │                          # `node scripts/storage-cache-control.mjs --bucket <b>
+│   │                          # --prefix stores/ --cache-control "public, max-age=60"`
+│   │                          # relabels existing public objects' Cache-Control (no byte
+│   │                          # rewrite). Dry run by default, `--commit` to change; the
+│   │                          # whole CSV of previous values is written before any change;
+│   │                          # `--restore <csv>` puts back only objects nothing changed
+│   │                          # since. Leaves takedown placeholders and no-store or
+│   │                          # private objects alone. Bucket and prefixes are arguments
+│   │                          # with no default; the owner's own login (not run by CI)
 │   ├── whatsapp-media-to-private.mjs # `npm run whatsapp:media-to-private`: move
 │   │                          # WhatsApp chat media (stores/*/whatsapp/**) from the
 │   │                          # public bucket to GCS_PRIVATE_BUCKET, same path. Dry run
@@ -10217,6 +11276,12 @@ wholesip/
 │                              # skills were retired — brand voice is per-store in the DB (§16).
 ├── brand/assets/              # Owner's original StoreMink master logo (not served)
 ├── public/                    # Static assets; versioned brand exports + legacy aliases
+│   └── moderation/image-unavailable.webp # ★ The takedown placeholder (convention 45):
+│                              # a 1200 x 1200 light grey "Image not available" WebP
+│                              # served by the app itself, so its address is never a
+│                              # storage address; the page swap points a blocked image
+│                              # here, the proxy answers its bytes (/api/og-image a
+│                              # placeholder card), and the sitemap leaves it out
 └── coverage/                  # GENERATED test coverage report — do not edit
 ```
 
@@ -10280,8 +11345,20 @@ statement_timeout` itself.
     (`/dashboard/products/[id]`, Shopify-style — no interception; hover-prefetched
     rows + a `loading.tsx` skeleton keep it fast); only "New product" stays a
     dialog.
-5.  **Caching**: storefront reads use `unstable_cache` + tags (`lib/storefront/tags.ts`,
-    `STORE_TAG`). After mutations, `revalidateTag`/`revalidatePath` accordingly.
+5.  **Caching**: storefront reads are memoized for ONE request only (React
+    `cache` around a `withAnon` read in `lib/storefront/queries.ts`,
+    `lib/chrome/queries.ts` and `lib/store/resolve.ts`), so a save shows on the
+    next request on every Cloud Run instance; no storefront read is kept across
+    requests in `unstable_cache` any more. `lib/storefront/tags.ts` (`TAGS`,
+    `STORE_TAG`) survives as compatibility tags that dashboard writes still bust
+    with `revalidateTag`/`revalidatePath`; the few caches that still last across
+    requests (Help Centre reads under `TAGS.help`, plan pricing, signup legal
+    documents, the analytics Overview) are not storefront catalogue reads. ★ A
+    storefront read that
+    returns an image address or stored HTML passes its result through
+    `maskBlockedMedia` (convention 45) inside its `cache` wrapper but outside
+    every database scope, and must never be wrapped in `unstable_cache`, which
+    would keep a blocked address for the cache's whole lifetime.
 6.  **Styling**: Tailwind v4 + CSS modules for scoped styles + a few plain `.css`
     files per area (`dashboard.css`, `storefront-theme.css`, `platform.css`).
     Per-store theming = CSS variables injected by `brand-provider.tsx`.
@@ -10561,8 +11638,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     plain names in their `text[]` columns, so rename/delete propagates into
     affected blog rows; customer submissions are validated server-side against
     the store's lists. Editors read them via `fetchBlogTaxonomy`
-    (dashboard) / `getBlogTaxonomyNames` (cached storefront,
-    tag `TAGS.blogTaxonomy`).
+    (dashboard) / `getBlogTaxonomyNames` (storefront, memoized for one
+    request, convention 5).
 11. **Website Builder — pages & custom code are per-store, dashboard-editable.**
     The storefront itself is a per-store artifact, not hardcoded: - **Section registry**: `lib/homepage/section-types.ts` is the single typed
     section schema (config types, `EMPTY_CONFIG`, `META`, `validateConfig`),
@@ -10618,17 +11695,18 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `published_sections` snapshot; **publish = copy draft → published**). Served
     by `(pages)/[pageSlug]`; App Router matches static sibling dirs first, and
     every static (pages) dir slug is in `RESERVED_PAGE_SLUGS` (a drift unit test
-    `fs.readdir`s the dir and asserts coverage). Published reads are cached
-    (`getPublishedPage`, tag `TAGS.pages`, cached nulls for cheap 404s). - **Draft column is sealed from the anon role**: anon `SELECT` is REVOKEd then
+    `fs.readdir`s the dir and asserts coverage). Published reads go through
+    `getPublishedPage` (`withAnon`, memoized for one request, convention 5; its
+    sections pass the takedown page swap, convention 45). - **Draft column is sealed from the anon role**: anon `SELECT` is REVOKEd then
     GRANTed only on named columns WITHOUT `sections`, so drafts can never leak
-    via the API — cached storefront queries therefore select named columns,
+    via the API — storefront queries therefore select named columns,
     never `*`. The builder + preview read drafts with the **service-role
     client** after an app-layer `getManagerUserId("builder")` check. - **Preview**: `?preview=1` + the admin's existing session cookie (dashboard
     and storefront share the host) → uncached `lib/pages/preview.ts` loader;
     unauthorized silently falls back to published. Preview renders `noindex` +
     a `PreviewBridge` client comp that `router.refresh()`es on postMessage from
-    the builder. Two disjoint code paths (published cached / draft uncached) ⇒
-    no cache poisoning. - **Sandboxed custom code**: merchant JS runs ONLY inside
+    the builder. Two disjoint code paths (published through `getPublishedPage` /
+    draft through the uncached loader) ⇒ a draft never reaches a shopper. - **Sandboxed custom code**: merchant JS runs ONLY inside
     `custom-code-frame.tsx` — an iframe with
     `sandbox="allow-scripts allow-popups"` + `srcDoc`, **never `allow-same-origin`**: the session cookie
     is `Domain=.storemink.com`, so same-origin inline JS could ride a visitor's
@@ -15387,8 +16465,10 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `GET /api/storefront/search?q=` is a ROUTE HANDLER, not a server action
     (actions run one at a time per client, so a keystroke would queue in
     front of Add to cart — §22's POS lesson), resolves the store from the
-    Host (never a parameter; `/api` bypasses proxy.ts), reads the cached
-    `getPublishedProducts`/`getActiveCategories`, and answers
+    Host (never a parameter; `/api` bypasses proxy.ts), reads
+    `getPublishedProducts`/`getActiveCategories` (this request's read, no
+    cross-request cache; convention 5), passes its whole answer through the
+    takedown page swap (convention 45), and answers
     `private, max-age=30` because nothing in front of Cloud Run varies on
     Host. `header/predictive-search.tsx` is the ARIA 1.2 combobox (focus
     stays in the input; `aria-activedescendant`; arrows, Enter, Escape closes
@@ -15736,6 +16816,25 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
       `selling_price` — never `base_price`, which is a struck-through MRP and
       would let `best` discount from a much higher base (docs/offers-plan.md
       §14).
+    - **★ A PRODUCT STOREMINK BLOCKED IS NOT SOLD ONLINE** (takedown,
+      convention 45; decision D17: blocked only, no status filter). `placeOrder`
+      and `getCartStock` read cart products through `readCartProducts`
+      (`lib/checkout/product-reads.ts`, a `withService` read that filters
+      `moderation_blocked_at`), so a blocked product comes back missing:
+      `reconcileStock` removes the line when checkout opens, and `placeOrder`
+      refuses it through its existing missing-product branch ("One or more
+      products were not found."). The gift
+      read is `readGiftProduct`, and a blocked gift is dropped like a vanished
+      one (the sale still goes through). `getCartStock` also returns each line's
+      current `image`: the shopper's own photo (sent by `cartStockLines`,
+      compared through `shopperLinePhoto`, never trusted) when it is still one of
+      the product's photos (`cartLinePhotos`) and not blocked, else the first of
+      them, masked by one `maskBlockedMedia` call after the scope;
+      `CartProvider.reconcileStock` applies it. ⚠ `getCartTaxRates` and
+      `getPickupOptions` keep their own product reads with no flag: harmless,
+      because reconcile and `placeOrder` refuse a blocked product, so at most the
+      tax preview or the pickup list counts a line for the moment before
+      reconcile. The POS is untouched (D18).
     - **Service-role writes**: `orders`/`order_items` have **no customer INSERT
       RLS policy** by design; the writes run under `withService` (the
       `app_service` role) _after_ all the above validation. Customers get RLS `SELECT` on their
@@ -16351,7 +17450,7 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     catalogue at all.
     **★★ THE PLAN STEP** (`plan-picker.tsx` + the page): Free / Basic / Pro
     cards with a Monthly/Yearly switch, priced from the LIVE quote at
-    `GET /api/plans/pricing` (`{ plans, paidCheckout }`; a GET, not a Server
+    `GET /api/plans/pricing` (`{ plans, paidCheckout, tax }`; a GET, not a Server
     Action, so it never queues in front of a tap; `lib/plans/signup-quote.ts`
     parses it and refuses anything incomplete). Basic is preselected when the
     platform can take a card (`paidCheckout`, i.e. its own Razorpay keys
@@ -16373,6 +17472,23 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     second store; a payment that cannot be confirmed shows the server's own
     message and an Open your dashboard button, never a second payment. Back
     and Start over disappear once the store exists.
+    **★★ GST AT SIGNUP (the GST release, §34 "StoreMink charges GST on its own
+    fees").** `/api/plans/pricing` also answers `tax` (the live terms,
+    `getTaxTermsLive`; a failed GST read is the same 503), and
+    `signup-quote.ts` reads it: absent is an older API, malformed makes the
+    quote unavailable. While GST is added on top a paid card shows "plus GST"
+    beside its list price, the yearly and pay-now lines and the autopay
+    estimate come from `tax-copy.ts` and the server's own invoice builder
+    (`signupAmount`, `firstRenewalPaise` under `termsLater`), and the amount
+    guard holds the payment window to the figure shown. **The state step**
+    shows while GST is charged or a switch-on is scheduled, a paid plan is
+    chosen and the country is India: a state select with no "Other Territory",
+    or a valid GSTIN that decides the state; Continue waits for it.
+    `pay()` saves it first (`saveSignupBillingDetails`, the store from the
+    signed-in owner's superadmin row as above; a suspended owner is refused),
+    then starts the payment. A business outside India is offered only Free
+    while GST is charged (owner decision 5). Help: 0267 rewrites the signup
+    guide's plan sentence in place.
     **★ THE BUSINESS ADDRESS IS NO LONGER COLLECTED AT SIGNUP.** It prints on
     invoices and decides GST place of supply, and a new store has no invoice —
     so it was the one screen with six required fields and the one everybody
@@ -16822,7 +17938,7 @@ amountPaise}` for the modal. `confirmOnlinePayment` verifies the HMAC
     active store, and sales are the store's own. Traffic uses a labelled
     sample. "Hide for 30 days" writes a `sm_an_preview_hidden_*` cookie on
     the store host (path `/dashboard`), so the server omits the section
-    with no flash. Viewers without Plan & billing (`ai`) see "Ask your
+    with no flash. Viewers without Plans & Billing (`ai`) see "Ask your
     store owner". Locked Edit and report icons open the same upgrade
     popover. - _Saved layouts across plan changes._ `PLAN_GATED_SECTION_IDS` +
     server-written `acknowledged` in the stored layout: reading a saved
@@ -17214,7 +18330,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      responsive sidebar, allows confirmed same-origin deletion, renders
      supported Markdown without raw HTML, remembers a bounded drag/keyboard
      panel width, and grows the multiline composer to a scrollable cap. The
-     dashboard and Help Centre share the same solid-purple robot identity.
+     dashboard and Help Centre share the same Mink face (the purple robot until
+     31 Oct 2026; see §21).
      Explicit Stop and Retry remain available.
      Migration `20260829_0039_mink_phase_2` adds the invitation and feedback
      tables, trusted run context, extractive conversation summaries and shadow
@@ -17809,7 +18926,8 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
      retries, tool names, tokens and known shadow cost but never selects or
      renders prompts, answers, tool arguments/results, provider state or
      reasoning. `evals/mink/read-alpha.json` and `npm run mink:eval` provide the
-     88-case live tool-choice/security/latency gate. The complementary
+     91-case live tool-choice/security/latency gate (`read-alpha-v14`; 88 until
+     the storage build added three attachment cases). The complementary
      `docs/mink-ai-test-prompts.md` catalogue covers phase-wise manual prompts
      plus UX, permission, tenancy, credit, approval, conflict, idempotency and
      rollback acceptance scenarios. The original migration
@@ -18062,6 +19180,195 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       clickable grounded follow-ups for complete answers, non-clickable reply
       guidance for incomplete questions, reset, backdrop close, and
       reduced-motion support.
+      ★★ **THE MINK FACE, VOICE AND THE HOME PAGE REVAMP (2026-10-30).** The
+      Help Centre's Mink AI wears the face from the owner's expression sheet,
+      not the old purple robot: `components/mink/mink-face.tsx` (`MinkFace`:
+      saffron tile `#FFB224`, ink head `#141522`, cream face `#FFF4E3`; states
+      `default`, `listening`, `thinking`, `talking`, `done`; hook-free, so a
+      server component can draw it) over the pure geometry in
+      `mink-face-geometry.ts`, animated only under
+      `prefers-reduced-motion: no-preference` (`mink-face.module.css`). The
+      launcher is a pill with the face (the face alone on a phone, its name kept
+      in the button's aria-label); the drawer opens on a welcome screen (a
+      small face, one sentence, four starter questions as plain text rows; see
+      (4) below for the minimal layout of 31 Oct) rather than an intro bubble,
+      though the intro stays message 0 so the history sent with a question is
+      unchanged. Answers carry Copy answer and Read this answer aloud. The
+      composer is one rounded box with Dictate your question (microphone), Talk
+      with Mink AI (sound wave) and Send question inside it.
+      ★ VOICE (`app/help/components/help-voice.ts`): dictation records until
+      Done, transcribes, and adds the words to the box, sending nothing;
+      `useHelpTalk` is the spoken conversation: listen until a pause,
+      transcribe, ask through the same `askHelpAssistant` call a typed question
+      uses (the user bubble says "Said aloud"), read the answer and its steps
+      aloud, listen again. While voice chat is on the composer is replaced by a
+      voice bar (face, status, waveform or caption, Skip, End); the thread stays
+      on screen with the guides. It ends on End, three turns with no words, a
+      hidden tab, closing the drawer or unmounting. ★ IT REUSES THE DASHBOARD'S
+      RECORDER, CAPTURE AND SPEECH SESSION, NOT ITS VOICE LOOP: the Help answer
+      is one request, so there is no barge-in, no stop handshake and no echo
+      handling, because the microphone is never open while Mink speaks (Skip
+      ends an answer early). ★ ANSWERS ARE READ BY THE BROWSER'S OWN VOICE
+      (`speechSynthesis`, primed by a silent utterance inside the tap for iOS):
+      the paid read-aloud model behind `/api/mink/speech` needs a signed-in
+      merchant, and a public page must not spend it. ★ TRANSCRIPTION GOES TO
+      `POST /api/help/voice` (`app/api/help/voice/route.ts`): 404 unless the
+      request host is the Help host (`x-forwarded-host`, then `host`, then the
+      URL's), a foreign origin 403, 404 "Voice isn't available right now." while
+      Mink AI's platform switch is off, at most 6 transcriptions per instance
+      (429), only `audio/wav` (415) with a UUID `X-Mink-Request-Key` (400), then
+      `reserveHelpVoice(clientIp, key)` (`lib/mink/input-limits.ts`: 8 a minute
+      and 60 an hour per visitor address, 1,000 an hour platform-wide, one use
+      of each key; fail closed, `voice_rate_limit` 429), the same audio
+      validation and platform provider as `/api/mink/voice`, the text and its
+      language back; an empty clip is a 200 with no words and a provider
+      failure 503 "Voice isn't working right now. Try again, or type your
+      question.". Logs `help.voice.completed` / `help.voice.empty` /
+      `help.voice.refused` / `help.voice.failed`, never the words.
+      `transcribeMinkRecording` (`lib/mink/voice-turn.ts`) takes the endpoint as
+      a fourth argument, defaulting to the dashboard's. The voice buttons appear
+      only when `app/help/layout.tsx` passes `voiceEnabled`
+      (`getMinkConfig().enabled`, read on the server) AND the browser has a
+      secure-context microphone (dictation) and speech synthesis (Talk); the
+      server snapshot says neither, so hydration matches.
+      ★ THE HOME PAGE OPENS MINK FROM ANYWHERE (`app/help/components/mink-launch.ts`):
+      `openHelpMink({ mode, question })` dispatches `sm-help:open-mink` on
+      window inside the click (so Talk still counts as a tap), and the drawer
+      opens, starts voice chat for `mode: "talk"`, or asks a `question`
+      (trimmed, at most 400 characters; `readOpenHelpMinkDetail` validates the
+      event). `AskMinkButton` is the button that sends it (props `mode`,
+      `question`, `expand`, `ariaLabel`; `expand` opens the full window).
+      The home page it first sat on was redesigned the next day (the paragraph
+      after this one). Styles: the Hero, Category grid and Mink AI Help
+      Assistant blocks of `app/help/help.css`
+      (ink buttons, a warm saffron tint, Help purple kept for links). Tests:
+      `components/mink/mink-face.test.tsx`, `help-voice.test.ts`,
+      `help-assistant-voice.test.tsx`, `help-assistant.test.tsx`,
+      `app/help/page.test.tsx`, `app/api/help/voice/route.test.ts`,
+      `lib/mink/input-limits.test.ts`, `lib/mink/voice-turn.test.ts`. ⚠ Not run
+      in a real browser or against the live provider from the Help host.
+      ★ The dashboard wears the same face since 31 Oct 2026 (owner: "change
+      the mink icon in the dashboard also"): `app/dashboard/mink-mark.tsx`
+      draws `MinkFace` at the robot tile's old sizes, so the topbar button,
+      the chat header, welcome and status line, the voice bar and the Website
+      Builder's Mink button all switched with no layout change; the chat's
+      status line shows the thinking face, the voice bar follows voice chat
+      (`minkVoiceFace`: listening, thinking, talking), and Home's Ask
+      anything box and Mink suggests card show the face where a sparkle tile
+      was. The "Ask Mink" buttons (each Mink suggests row, and Analytics'
+      "Ask Mink why") carry an 18 px face too; a CSS rule keeps the face at
+      18 px inside `.dash-an-btn`, whose icon rule is 15 px. The sparkle stays
+      on buttons that ask AI to write something (Generate with AI). The
+      marketing site draws Mink the same way: the Mink chat artwork's header
+      (`MinkArt` in `app/platform/homepage-art.tsx`, on the homepage,
+      Products, Mink AI and Why StoreMink pages) and Mink's reply in the
+      header's Products menu tile (`site-header.tsx`). Help migration
+      `20261030_0271_help_assistant_voice_help` edits the guide's opening steps
+      in place and adds a Talk with Mink AI section after them.
+      ★★ **THE HELP CENTRE REDESIGN (2026-10-31, from the owner's five
+      mockups, used as designs only: every guide, topic and count on screen is
+      live data, and nothing in the mockups that does not exist (tickets,
+      WhatsApp support, invented guides) was built).** Four parts:
+      **(1) The header** (`components/help-header.tsx`, a client component the
+      layout renders): the home page shows Guides (`/help#topics`), Mink AI
+      (`openHelpMink({ expand: true })`) and Contact support (`/help#contact`);
+      every other page keeps the compact search, which on the results page is
+      filled with the search made (`isHelpSearchPath`: "/search" or
+      "/help/search"; `useSearchParams` inside a Suspense boundary whose
+      fallback is the same empty box, keyed by the query so Back refills it).
+      At 900 px and below everything folds behind a menu button
+      (Escape closes it and returns focus; a new page closes it); Mink AI opens
+      from the menu. The search box (`search-box.tsx`) gains a Clear search
+      button and `name="q"`. The footer links storemink.com, the Terms, the
+      Privacy policy and Contact support (support@storemink.com).
+      **(2) The home page** (`page.tsx`): the hero search with a Mink AI pill
+      beside it, popular searches as chips (`lib/help/popular-searches.ts`,
+      some shown only on wider screens), then Popular guides (the eight most
+      viewed, two columns, a guide whose topic no longer exists left out),
+      Browse by topic (every topic as a card with its first three guides and
+      "View all N guides"; `id="topics"`), New to StoreMink? Start here (the
+      first four guides of `getting-started`, numbered; left out when that
+      topic does not exist) and Still need help? (`id="contact"`: Ask Mink AI,
+      or Email support at support@storemink.com, owner's choice). On a phone
+      the hero shows a Mink AI card (Ask, and Talk when voice is on) and topic
+      cards turn compact.
+      **(3) Search results** (`search/page.tsx`, noindex): one read of
+      `searchPublishedHelpWithAi` and the topics; a Filter by topic list with
+      counts (`lib/help/search-topics.ts`: topic from the guide's address
+      `/help/<topic>/<guide>`, counted, sorted by count then the topic's own
+      order; a `?topic=` naming no result's topic shows every result, never an
+      empty page), headings such as "5 guides for “domain” in Domains", the
+      search words marked in titles and excerpts (`lib/help/highlight.ts`: up
+      to six words of two letters or more in any script, common words skipped,
+      longest first), popular searches when nothing matched, and a rail with
+      "Want a direct answer?" (Ask Mink AI with the search as the question,
+      full window) and "Didn't find it?" (Contact support). Below 900 px the
+      topics become a row of chips and the rail moves under the results.
+      **(4) The Mink AI chat** (`help-assistant.tsx`, with `mink-answer.tsx`,
+      `mink-recent.tsx`, `mink-strings.ts`, `recent-chats.ts`): ★ A LANGUAGE
+      MENU (`lib/help/languages.ts`: English, Hindi, Bengali, Tamil, Telugu,
+      Marathi, Gujarati, Kannada, Punjabi; kept in localStorage
+      `sm-help-mink-language`) changes the chat's own words AND the language
+      every answer is written in (`askHelpAssistant` takes `language`,
+      validated with `isHelpLanguageCode`, and the model's rule says to answer
+      in it whatever language the question is in). Until one is picked the
+      chat is in English and Mink AI answers in the language typed, as before.
+      The chat's translated words are owner-requested and not yet reviewed by
+      native speakers. ★ RECENT CHATS ARE KEPT IN THIS BROWSER ONLY
+      (`recent-chats.ts`, localStorage `sm-help-mink-chats-v1`: at most 20
+      chats of 40 messages, every stored field re-validated on read, a guide
+      link only a `/help/...` path); the full window lists them in a sidebar
+      with New chat and Delete; nothing about a chat is stored on the server.
+      On a phone the chat is a full screen with a back arrow. ★ ANSWERS CARRY
+      Copy, Read aloud and a thumbs up or down; a rating goes through
+      `rateHelpAnswer` (`app/actions/help-assistant-feedback-actions.ts`: 60 an
+      hour per visitor address) to `lib/help/assistant-feedback.ts`, which
+      saves the visitor's question, the answer as plain text and its cited
+      guides in service-only `help_assistant_feedback` (migration 0272: one
+      row per answer, unique on the browser's random
+      `(conversation_id, message_key)` so a changed rating updates its row; no
+      store, no IP, no
+      account; pruned after a year). A failed save puts the old rating back and
+      says so. Operators read the ratings at `/dashboard/help/feedback` on the
+      platform host (`requireOperator`; filters Not helpful (the default),
+      Helpful and All; 50 a page; linked as "Mink AI feedback" from the Help
+      console). "Verified
+      guides" is now "Source guides". Help migration
+      `20261031_0273_help_assistant_language_help` edits the public Mink AI
+      guide in place for all of this. Tests: `app/help/page.test.tsx`,
+      `app/help/search/page.test.tsx`, `help-header.test.tsx`,
+      `search-box.test.tsx`, `lib/help/highlight.test.ts`,
+      `lib/help/search-topics.test.ts`, `lib/help/languages.test.ts`,
+      `mink-strings.test.ts`, `recent-chats.test.ts`,
+      `lib/help/assistant-feedback.test.ts`,
+      `help-assistant-feedback-actions.test.ts`, the drawer tests and
+      `app/platform/dashboard/(console)/help/feedback/page.test.tsx`.
+      ★★ THE MINIMAL LAYOUT (owner, 31 Oct 2026: "Minimal, like ChatGPT").
+      White and neutral greys with ink buttons; the Mink face is the only
+      colour (no tinted cards, coloured borders or message avatars). The
+      header is three things: "Mink AI" with a chevron, a button
+      (`hc-assistant-title-button`, aria-label `Mink AI ${t.options}`,
+      aria-expanded and aria-controls `hc-assistant-menu`) that opens a menu
+      holding Recent chats, the Language select (the menu stays open on a
+      change) and the full-window toggle; then New chat (pencil) and Close.
+      Escape closes the menu first and returns focus to its button
+      (`menuOpenRef`), a press outside closes it, and New chat or closing the
+      chat closes it. The launcher keeps the name "Ask Mink AI" when open
+      (aria-expanded says so). The welcome is centred in the thread (auto
+      margins, so it never slides under the header) with a 48 px face and
+      starters as text rows with an arrow. Steps are a numbered list, notes a
+      grey rule, sources bordered rows, follow-ups outline pills; the composer
+      is one box with the buttons inside (Send is the one ink button). In the
+      full window at 901 px and wider the header's New chat and the menu's
+      Recent chats step aside for the sidebar. On a phone (620 px and below)
+      the back arrow replaces Close and the microphone stays. Styles: the
+      Mink AI Help Assistant block of `app/help/help.css`. Help migration
+      `20261031_0274_help_assistant_menu_help` edits the guide in place:
+      Maximize, Language and Recent chats are chosen from the Mink AI menu,
+      and the microphone is described for every device.
+      ⚠ The privacy policy does not yet mention that a rating sends the
+      question and answer to StoreMink (the guide does); whether it needs a
+      line is the owner's call.
       Migration `20260825_0016_help_assistant_guide` publishes the plain-language
       guide for using Mink AI. Migration
       `20260825_0017_help_article_embeddings` installs pgvector, adds the
@@ -20273,6 +21580,17 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
         explains WHY the controls are absent when they are (a comped Pro store
         has no mandate to raise, so it is told plainly rather than shown a
         button that fails at the gateway).
+      - **★ GST (the GST release, design 7.5).** One tax reading feeds the
+        card: `perPeriod`, `nextPurchase` (built by the charge's own
+        `buildAddonInvoice`) and `nextRenewal` (`quoteLocationRenewal`, under
+        the terms in force when that renewal is invoiced), all present or all
+        absent. The button, summary and confirmation are `tax-copy.ts`
+        sentences ("Add a location · ₹1,000/month plus GST"; no renewal figure
+        at all when no renewal will bill the location); the state prompt or the
+        outside-India sentence takes the Pay button's place; Pay needs billing
+        permission (`ai` manage) and opens Razorpay only for exactly the amount
+        shown (`shouldOpenPayment`). Stories: `docs/pos-acceptance.md`
+        PS-1.19 to PS-1.23.
     - **Not yet built:** Twilio receipts (Phase 6), omnichannel/BOPIS (8),
       offline outbox (9). See `docs/pos-plan.md` and `docs/roadmap.md`.
 
@@ -20648,6 +21966,34 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       **Digests** date each row to the END of its window (clock-aligned, so one
       window is one email); `DAILY_DIGEST_HOUR_UTC` is 23:00 UTC (04:30 IST)
       and the Phase 5E minute heartbeat drains it on the next tick.
+    - **★ TAKEDOWNS ADD SIX EVENTS AND TWO MAILERS** (convention 45;
+      `docs/notifications.md` "StoreMink's takedowns"), all
+      `configurable: false` and emitted only from `lib/moderation/notify.ts`.
+      `platform.complaint_urgent`, `platform.complaint_due` and
+      `platform.takedown_reply` (group "Platform", section `activity`,
+      operators, bell and email) are ALWAYS emitted with `storeId: null`,
+      through `notifyOperators`: the worker logs an event's emails under its
+      store, and an alert about a complaint must never appear in the
+      complained-about store's email log or bell. `store.content_blocked`,
+      `store.content_block_lifted` and `store.content_block_reply` (group
+      "Content", section `settings`, store admins, in-app only) are in
+      `PLATFORM_VOICE_EVENTS`; their email goes to every owner from
+      `lib/email/takedown-emails.ts` (mailer `takedown_notice`, from
+      `StoreMink <support@...>`), and none is emitted for a block kept from the
+      store (D21). `complaint_reply` (a complainant's acknowledgement and
+      outcome) is sensitive with its own `MailerDef.redactedLabel`, "[redacted -
+      a complaint to StoreMink]" (`redactedLabelFor`, used by `writeLog` in
+      place of `REDACTED`), and is always logged with `store_id NULL`.
+      `getUnreadNotificationCount()` returns `{ total, storemink }` from its
+      one query, the second a `count(*) filter` over `store.content_blocked`
+      and `store.content_block_reply` (a lift rings the bell but asks for
+      nothing, so it is not counted): the bell hands it to the sidebar through
+      `unread-counts-context.tsx`, which badges Settings, Notices from
+      StoreMink. ⚠ The badge counts the VIEWER's own unread rows, while the
+      Home banner follows the STORE-WIDE seen mark (`merchant_seen_at`, set
+      when any of the store's staff opens the notice): a colleague opening it
+      clears the banner for everyone but not my badge. The samples are in
+      `email-samples.ts` (gallery group "StoreMink: takedowns").
 
 25. **Legal & consent — versioned policies, and consent as evidence.**
     - **TWO LAYERS, DIFFERENT HOMES.** StoreMink's OWN policies (Terms,
@@ -21933,9 +23279,10 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       job is queued or nothing happened — where the chunked upload it replaced
       could always leave a half-uploaded job behind.
     - **★★ THE FILE LIVES IN POSTGRES, NOT THE MEDIA BUCKET, AND THAT IS A
-      SECURITY DECISION.** The GCS bucket is `allUsers:objectViewer` with
-      uniform bucket-level access (§7) — every object in it is readable by
-      anyone with the URL. An import file is the merchant's raw data, and the
+      SECURITY DECISION.** Every object in the GCS media bucket is readable by
+      anyone with its URL (`allUsers` held `objectViewer`, and since the
+      storage release holds `roles/storage.legacyObjectReader`: get without
+      list; uniform bucket-level access, §7). An import file is the merchant's raw data, and the
       same code path carries orders-shaped CSVs with customer names, addresses
       and phone numbers; an unguessable public URL is obscurity, not access
       control. `data_job_payloads` is service-role only, cascades with its job,
@@ -22086,13 +23433,18 @@ way — an entry there is a deliberate act, not a way to silence the guard.
     730 (by last message; media first, see the inbox section),
     `ai_quota_refunds` 90 (by `created_at`; a raw-SQL deleter, since the table
     has no Drizzle model), `mink_refine_requests` 30 (by `created_at`; a
-    raw-SQL deleter on its composite primary key), and Mink AI chats
+    raw-SQL deleter on its composite primary key), Mink AI chats
     (`mink_conversations`) 90 days after their last use, retired through
     `lib/mink/conversation-retention.ts` (a chat that holds the record of an
     approved or published change is reduced, not deleted; see "Mink chat
-    history"). Full operational detail —
-    the schedule, the `gcloud` command, how to read a response — is in
-    `docs/cron-jobs.md`.
+    history"), Mink AI chat attachments (`mink_attachments`) with their chat,
+    or 2 days after they were attached when never sent (see "Mink chat
+    attachments are private"), the four takedown entries (convention 45:
+    `content_block_archives` 180 days by `keep_until`, `moderation_events`,
+    `grievance_complaints` and `content_blocks` 3 years each), and, last and
+    temporarily, `mink_attachments_legacy`, the job that sorts pictures
+    attached before they were stored privately. Full operational detail (the schedule, the
+    `gcloud` command, how to read a response) is in `docs/cron-jobs.md`.
     - **★ IT WAS DOCUMENTED, INDEXED, AND DEAD.** `email_logs.sql`
       states the 90-day intent and ships `email_logs_created_idx` built "for
       retention sweeps"; `pruneNotifications` had the right windows and a
@@ -22130,7 +23482,36 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       sweep over years of rows legitimately hits its cap, and a permanently-red
       job is one nobody reads (the `domain-reconcile` lesson). A failed table
       returns **503** so Scheduler's retries engage (the `seo-refresh`
-      contract), and one table failing never stops the next.
+      contract), and one table failing never stops the next. ★ Each table's
+      sweep hands its deleter one `RetentionBatchContext` (`deadline`,
+      `clock`, `skip`, `outOfTime`) as `deleteBatch(floorIso, limit, batch)`'s
+      third argument, the same object for every batch of that sweep: the
+      run's one deadline and clock, so a slow deleter can stop short of the
+      run's budget; a `skip` set for ids it sets aside for the rest of the
+      run; and `outOfTime`, which the sweep reports as `budget` (a short batch
+      would otherwise read as `drained`). The temporary
+      `mink_attachments_legacy` job and the takedown archive purge use it; the
+      other deleters ignore it.
+    - **★ THE FOUR TAKEDOWN ENTRIES** (`lib/moderation/retention.ts`, design
+      8.2, owner's decision D3), inserted before `mink_attachments_legacy` in
+      this order, each with its reason in the entry:
+      `content_block_archives` (180 days, batch 20, `purgeTakedownArchives` ->
+      `purgeDueArchives`: due by `keep_until`, not the sweep's floor; never a
+      legal hold, a held store's, a block restoring a file, an archive still
+      being copied, or a path naming another database, which is recorded as
+      `archive_purge_skipped`; the row is emptied first in its transaction and
+      keeps its SHA-256; its count is archives HANDLED, so a batch with a skip
+      still reads as full), `moderation_events` (1095 days through
+      `moderation_prune_events`, which refuses a floor under a year and keeps
+      a held store's events and an unpurged archive's), `grievance_complaints`
+      (1095 days after resolution, batch 500: the complainant's details
+      ERASED, not the row) and `content_blocks` (1095 days after the lift,
+      batch 200, `eraseLiftedBlocks`: the words become "Erased", not the row;
+      it takes no batch context). Every one skips what a hold covers (the
+      store, a hold's complaint, a held or unpurged archive), so a held store
+      keeps all four. These are the sweep's first deletions of records an
+      investigation may need, which is why each is a CHECKed erasure or a
+      guarded function, never a plain DELETE.
     - **Financial records are never touched** — orders, refunds and credit notes
       live in their own tables. This sweep only ever deletes the inbox, the
       activity feed and the mail log.
@@ -22334,8 +23715,12 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       `unknown`, so this needs no new plumbing, only callers that respect it.
     - **★ A PAYMENT AFTER DOWNGRADE NEVER REACTIVATES THE PLAN**, and it also
       never takes money for nothing: the invoice becomes `uncollectible` and
-      unpayable, and any money that still arrives becomes an `account_credit` in
-      `billing_credits` against their next subscription.
+      unpayable, and any money that still arrives is REFUNDED, in full, to the
+      payment it came from by the hourly refund pass (see "Cancelling never
+      keeps money for a cycle the plan does not reach" below). It is never
+      credited: `billing_credits` stays unused. A capture recorded on an
+      `uncollectible` invoice before `automatic_refunds_from` (the moment
+      migration 0264 ran) was kept by older code and goes to a person instead.
     - **★ GST IS OPERATOR-CONFIGURED** (owner, 2026-08-11), in the singleton
       `platform_billing_settings`. Tax is OFF until a GSTIN exists, a CHECK
       refuses enabling it without one, and turning it on is NEVER retroactive
@@ -22348,7 +23733,9 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       auto-collectable (Basic yearly stays ON the ₹15,000 AFA line rather than
       over it); under exclusive it raises every bill 18%, which is the whole
       reason `mandateSizePaise` provisions ×1.18 — a provision it drops when
-      inclusive. ⚠ The mode must match what the pricing page advertises.
+      inclusive. ⚠ The mode must match what the pricing page advertises;
+      since the GST release the pricing pages read the setting themselves
+      (`getPublicTaxSource`, "StoreMink charges GST on its own fees" below).
       **⚠ Its own migration file, because `billing_01` is APPLIED** — editing a
       `CREATE TABLE IF NOT EXISTS` that has already run is a silent no-op
       (§15b's `subscriptions_02` incident). The document series is
@@ -22712,7 +24099,15 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       plan. An ended subscription now enrols the cycle after the highest one
       ever issued: a draft above the last activated cycle is that enrolment's
       own and is reused, and a PAID one there (money in, activation failed) is
-      returned so the refusal still stops a second charge.
+      returned so the refusal still stops a second charge. Since the refunds
+      release a plan end voids every invoice above its last cycle
+      (`closeUnreachedInvoices`), so a paid invoice there can only be a failed
+      activation, never a renewal the ended plan kept; one left by a plan that
+      ended before that release is filed for a person by the refund pass's
+      repair (`paid_unreached:`). A capture on an unnumbered enrolment draft
+      (the merchant closed the tab before the confirm) is not this case: the
+      hourly check finishes it (see "The closed tab is finished by the hourly
+      check").
       `seedSubscription` stores the cycle BEFORE the one enrolled (0 for a
       first subscription), only on a row that is not live, and activation
       takes the next one.
@@ -22726,13 +24121,752 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         the next charge. A live mandate is standing permission to debit; someone
         who cancelled has withdrawn it, and "it doesn't matter, nothing will
         charge it" is the reasoning that turns one bug into a debit.
-      - **★ RESUMING EXISTS NOW** — the old flow could not offer it, because the
-        gateway subscription was gone. ⚠ It does NOT restore autopay: only the
-        merchant can authorise a new mandate, and saying otherwise has them expect
-        a charge that never comes.
-      - **★ `claimDue` SKIPS a cancelled subscription** and `evaluateCycleTurns`
-        ENDS it at the period end. Without the second half the merchant sits in
-        `waiting` forever — still entitled to a plan they stopped paying for.
+      - **★ RESUMING EXISTS NOW** (Keep my plan): the old flow could not offer
+        it, because the gateway subscription was gone. It works in `past_due`
+        and `grace` as well as `active`. ⚠ It does NOT restore autopay: only
+        the merchant can authorise a new mandate, and saying otherwise has them
+        expect a charge that never comes.
+      - **★ `claimDue` SKIPS a cancelling subscription** (no invoice is raised
+        for a cycle that will not happen), and the plan ENDS at the period end
+        (`evaluateCycleTurns`) or, when it was cancelled in grace, when grace
+        ends (`downgradeExpired`). Without the end the merchant sits in
+        `waiting` forever, still entitled to a plan they stopped paying for.
+        A cancellation after T-4d meets a renewal invoice already issued, a
+        payment under way or one already paid: the next bullet is what happens
+        to it.
+    - **★★ CANCELLING NEVER KEEPS MONEY FOR A CYCLE THE PLAN DOES NOT REACH**
+      (the refunds release, owner decisions of 27 Oct 2026: option C, D1 to
+      D12; migrations `20261028_0264_billing_refunds_and_credit_notes` and
+      `20261028_0265_cancel_and_refund_help`). A merchant may cancel at any
+      time, including after T-4d with the renewal invoice issued, its payment
+      under way or already paid. The plan still runs to the end of the cycle
+      (or of grace), and every renewal received for a cycle it does not reach
+      goes back automatically, with a credit note. Four rules hold it together:
+      **R2** a cancelling subscription never enters another cycle, at the cycle
+      turn, at grace end or when a payment lands (`advanceAfterPayment` returns
+      false while `cancel_at_period_end` is set); **R3** ending a plan closes
+      every invoice for a cycle it did not reach; **R4** money on a closed
+      subscription invoice goes back in full to the payment it came from,
+      through StoreMink's own Razorpay account (never a store's BYO gateway);
+      **R9** a refund never changes its invoice's status (`refunded` and
+      `partially_refunded` are never written: a refunded `void` invoice stays
+      `void`, a refunded `paid` one stays `paid`, and refunds are read from
+      `billing_refunds` by invoice).
+      - **★★ `lib/billing/close-cycle.ts` CLOSES THE CYCLES A PLAN WILL NOT
+        ENTER.** `closeUnreachedInvoices(db, input)` (input: `storeId`,
+        `lastReachedSeq`, `now`, optional `issuedOnly`) is ONE statement: a
+        locking CTE over the store's subscription invoices with
+        `cycle_seq > lastReachedSeq` in `draft`, `open`, `processing` or
+        `paid`, then an UPDATE to `void` that changes
+        only `status` and `updated_at` (what the 0245 guard allows) and returns
+        what each invoice WAS (`ClosedInvoice`: id, previous status, total,
+        ref). `void` and `uncollectible` are already final and left alone. A
+        paid invoice it voids keeps its number, issue date, total and parties,
+        so a credit note can reverse it in full. Lock order everywhere: the
+        subscription row first, the invoices second. `issuedOnly` is
+        `deleteStore`'s (drafts keep their own handling there). It throws on a
+        database error, so the plan end it belongs to rolls back with it.
+      - **★★ THE WORKER (`renewal-worker.ts`).** `endSubscription` (exported
+        for End now) claims on `cancel_at_period_end = true` and the cycle,
+        with no state condition, then closes the unreached invoices in the same
+        transaction (`billing.renewal.closed_unreached`), then drops the plan; a
+        lost claim closes nothing. It closes cycles strictly ABOVE the one
+        reached, so the current cycle's paid invoice stays paid. The
+        `cancel_requested_*` columns stay on the row. `advanceAfterPayment`
+        refuses a cancelling subscription (R2). `downgradeExpired` ENDS a
+        cancelling subscription whose grace ran out through `endSubscription`
+        in its own per-store transaction (`billing.renewal.cancelled_at_grace_end`;
+        a failure is `billing.renewal.end_cancelled`, ERROR), never through
+        `billing_claim_downgrade()`, which would refuse a paid or processing
+        next invoice and leave the merchant in grace on a plan they stopped,
+        and would mark an open one `uncollectible` where a plan end closes it
+        `void`. ★ THE SAFETY NET: when the claim refuses a subscription that is
+        NOT cancelling, `advanceAfterPayment` runs after that transaction and
+        advances only a paid next invoice (`billing.renewal.advanced_after_grace`);
+        without it a renewal paid in grace whose advance failed, or a Keep my
+        plan that raced, would leave the store in `past_due` for ever, since
+        evaluate reads only `active` rows. `DowngradeSummary` gains `ended` and
+        `advancedAfterGrace`, and the cron's `more` counts both. ★ NEVER
+        COLLECT AN UNISSUED INVOICE: when the finalize step leaves no
+        `finalized_at`, collection skips the invoice, logs
+        `billing.renewal_unissued_invoice` (ERROR; it should never fire) and
+        counts it in `pendingReconcile`. ⚠ A cancellation end calls
+        `notifyDowngraded` whether or not an operator comp keeps the store on a
+        paid tier (the cycle-turn path has the same gap).
+      - **★★ CANCEL AND KEEP MY PLAN (`cancel.ts`, `subscribe-actions.ts`).**
+        `cancelAtPeriodEnd({ storeId, requestedBy })` has no window refusal
+        (cancelling at T-3d with an issued invoice is allowed), claims only a
+        live subscription, writes `cancel_requested_at` and
+        `cancel_requested_by` (`merchant:<uid>` from `cancelMySubscription`,
+        `operator:<email>` from the console; blank is stored as null and a
+        CHECK refuses blank), reads the next invoice in the SAME transaction
+        (`NextInvoiceView`: status, total, ref and `inFlight`, an attempt in
+        `created`/`processing`/`authorized`/`unknown`), logs `billing.cancelled`
+        and sends the cancellation email with those facts.
+        `resumeSubscription` (Keep my plan) clears the flag and both request
+        columns, then calls `advanceAfterPayment` AFTER the commit and reports
+        `advanced` (a renewal paid while the cancellation stood); it logs
+        `billing.resumed` with the requester's kind, which is not stored.
+        `resumeMySubscription` revalidates `STORE_TAG` only when advanced, and
+        a paid renewal not yet advanced in grace is told it finishes when grace
+        ends, never "within the hour". The request columns stay when a plan
+        ends and clear only on Keep my plan. `getSubscriptionView` gives the
+        requester by KIND only (`merchant` / `operator`, never an id or an
+        email), `cancelRequestedAt`, `nextInvoice` (live plans only) and
+        `graceEndsAt` (grace only); all four are required on `SubscriptionView`
+        so a new builder cannot forget one.
+      - **★★ DEFECT D9: A PAID INVOICE IS NEVER REOPENED BY ITS ATTEMPTS.**
+        `invoiceStatusForAttempts` counts `refunded` as paid (it agrees with
+        `isSettled`), and `syncInvoiceStatus`'s claim admits only `open` and
+        `processing` whatever the attempts derive, so a refund on a paid
+        invoice writes nothing and an issued `void` or `uncollectible` invoice
+        is never revived. A missed paid claim re-reads `status` and
+        `finalized_at`: already paid logs nothing; an ISSUED `void` or
+        `uncollectible` invoice logs `billing.payment_on_closed_invoice` (INFO,
+        `{ invoiceId, invoiceStatus }`), touches nothing, and the refund pass
+        returns the money; anything else, above all an UNISSUED draft or closed
+        draft, logs `billing.invoice_paid_claim_missed` (ERROR, with `issued`),
+        because the refund guard refuses an unissued invoice and only a person
+        can return that money. ★ FINALIZE ONLY A DRAFT: `finalizeInvoiceClaimed`
+        requires `status = 'draft'` as well as a null `finalized_at`, so a draft
+        closed by hand is never reopened as `open` or given a number; a refused
+        claim returns `claimed: false` with the row as it is.
+      - **★★ A CAPTURE SEEN AGAIN RE-SYNCS ITS INVOICE** (finding F1, 29 Oct
+        2026). Finalize-before-settle had a hole that the hourly reconcile
+        opens. Reconcile can capture an enrolment, plan-change or location
+        attempt (15 minutes after it starts) while its invoice is still a
+        draft: the merchant closed the window before the confirm call, or the
+        confirm arrived late. That settle claims nothing, because a draft is not
+        `open` or `processing`, and `billing.invoice_paid_claim_missed` logs at
+        ERROR with `issued: false`. The confirm then finalized the draft to
+        `open`, and its own `settleAttempt(captured)` was a no-op for an
+        attempt already captured. That left an OPEN invoice behind captured
+        money, listed on Plans & Billing, where `startInvoicePayment` would open
+        a second order for the full amount. `settleAttempt` now re-runs
+        `syncInvoiceStatus` when a `captured` attempt is settled `captured`
+        again. It still writes nothing to the attempt, and it uses the same
+        claim, `open` or `processing` only, so a draft is never made paid, an
+        issued `void` or `uncollectible` invoice is never revived (D9), and the
+        receipt goes out once, because only the claim's winner reports
+        `becamePaid`. This covers `confirmEnrolment`, `confirmPlanChange` and
+        `confirmLocationPurchase` with no change to them (comments only). An
+        open invoice stranded before the fix is repaired by calling
+        `settleAttempt(attemptId, "captured")` once. Tests: `collect.test.ts`
+        ("a capture seen again re-syncs its invoice") and the opt-in
+        `lib/billing/late-confirm.local.test.ts`
+        (`BILLING_LATE_CONFIRM_LOCAL_TEST=1`, storemink_local, one rolled-back
+        transaction covering enrolment, plan change, location purchase and the
+        D9 limits).
+      - **★★ THE CLOSED TAB IS FINISHED BY THE HOURLY CHECK** (RC-F1b, 29 Oct
+        2026). A merchant who paid and never came back to confirm used to
+        leave the money on an unnumbered draft with one ERROR line, the store
+        on its old plan and no email; subscribing again reused the draft with
+        a NEW order (a second charge), and another period reshaped it. Each
+        purchase kind now has ONE completion that the browser confirm, the
+        hourly reconcile and a repeated start all call:
+        `completeEnrolmentPurchase` (enrol.ts), `completePlanChangePurchase`
+        (plan-change.ts) and `completeLocationPurchase` (locations.ts),
+        sharing their helpers and the `PurchaseCompletion` result with
+        collect.ts (`completed`, `already_complete`, `not_ready`, `refused`,
+        `not_captured`). The order: the guards, with nothing written yet;
+        finalize, a draft only; settle the capture (the F1 re-sync above makes
+        the invoice paid and its winner sends the one receipt); the invoice
+        must then read paid; apply through a conditional claim; then the
+        welcome (enrolment), the audit row and `billing.purchase_completed`.
+        ★ An enrolment activates only a subscription that is not live and
+        sits exactly one cycle before the invoice; its mandate is read from
+        the payment and capped by the attempt's `mandateMaxPaise`; the
+        `plan_events` row is written here by the winner, so the
+        subscribe-actions confirm no longer writes one. ★ A plan change
+        applies the plan and period the ORDER's notes name
+        (`readAddonOrderTarget`), never the browser's request (a difference
+        logs `billing.plan_change.client_target_ignored`), and claims only a
+        live subscription in the same cycle that is not already on the
+        target. ★ A location purchase raises `billed_locations` to the
+        INVOICE's `addon_target_count`, claimed only while below it.
+        ★★ WHOEVER ARRIVES SECOND CHANGES NOTHING AND SENDS NOTHING: finalize
+        claims a draft, the paid move claims an open invoice and the apply is
+        a claim, so a confirm after recovery answers `already_complete`.
+        ★ STILL APPLICABLE OR FILED: the attempt is this store's and this
+        invoice's, the store exists, and on recovery the gateway's captured
+        amount and currency equal the attempt's (`verifyRecoveredCapture`);
+        an enrolment's subscription is not live on a later cycle and the
+        invoice is the next cycle's; a plan change or a location purchase was
+        made in the subscription's current cycle and is still applicable (a
+        draft already on the target, or already at the count, is filed rather
+        than kept). A guard that fails before anything is written files a
+        reconciliation item with the repair key `purchase_refused:<attempt>`
+        (kind `state_conflict`, or `amount_mismatch` for a differing amount);
+        a failure after the invoice was issued files
+        `purchase_unapplied:<attempt>`; `detail.note` says what a person must
+        decide, and nothing is refunded or applied automatically
+        (`fileRecoveredPurchase`, logged `billing.recovery.filed`). ★★ BUYING
+        AGAIN FINISHES THE EARLIER PAYMENT: `startEnrolment`,
+        `startPlanChange` and `startLocationPurchase` first look for a
+        captured attempt on a draft of their kind (`capturedDraftPurchases`)
+        and complete it ("Your earlier payment went through, and your plan is
+        now active.", or the plan change's or the locations' version), or
+        refuse saying the payment went through, not to pay again, and to
+        write to support@storemink.com within a day. A failed read refuses,
+        and a draft holding a captured payment is never reshaped. ★ Manual pay
+        refuses an invoice that already holds a captured attempt, after
+        re-syncing an open one (`ALREADY_CAPTURED_INVOICE_MESSAGE`). Tests:
+        `enrol.test.ts`, `plan-change.test.ts`, `locations.test.ts`,
+        `collect.test.ts`, `reconcile.test.ts`, `manual-pay.test.ts`,
+        `subscribe-actions.test.ts`, and groups 5 to 11 of
+        `late-confirm.local.test.ts`, whose groups 1 to 3 keep the F1 case by
+        letting the gateway blink, so the pass cannot finish the purchase and
+        the confirm does.
+      - **★★ THE SCREENS SHOW A FINISHED EARLIER PAYMENT AS A SUCCESS**
+        (RC-F1c, 29 Oct 2026). The actions in
+        `app/actions/subscribe-actions.ts` carry a completed earlier purchase
+        on the success arm, with RC-F1b's sentence unchanged as `message`:
+        `startSubscribe` and `startSignupSubscribe` answer
+        `{ ok: true, completedEarlier: true, message }` (after
+        `updateTag(STORE_TAG)` and `refresh()`), `startBuyLocations` the same
+        (after revalidating `STORE_TAG`), and `changeMyPlan`
+        `{ ok: true, scheduled: false, completedEarlier: true, message }`. A
+        payment that went through whose plan or locations switch shortly
+        ("Please don't pay again.") stays on the error arm with
+        `waiting: true`: the three starts, and `confirmSubscribe` /
+        `confirmSignupSubscribe` when the confirm answers that the plan
+        switches on shortly. Plans & Billing shows a finished payment as
+        `toast.success` and then carries on exactly as after a payment made
+        there (the optional credit top-up, then the window closes and the page
+        refreshes); a waiting one is `toast.info` and the window closes with
+        nothing to press again. The location card shows a finished purchase as
+        `toast.success`, closes its confirm row and refreshes (a waiting one is
+        a `toast.info`, like every start refusal there). The signup Plan step
+        moves a finished payment to the dashboard exactly as after a payment
+        there, and shows a waiting one (from the start or the confirm) on its
+        own "Your payment went through" screen: the message as an information
+        notice and only Open your dashboard, never Continue with or a retry.
+        Tests: `subscribe-actions.test.ts`, `plans-client.test.tsx`,
+        `app/dashboard/locations/location-billing-card.test.tsx` and
+        `app/platform/signup/page.test.tsx`.
+      - **★ MANUAL PAY REFUSES A CYCLE THE STORE WILL NOT ENTER**
+        (`manual-pay.ts`). The pure `cycleRefusal` decides it, and
+        `startInvoicePayment` refuses BEFORE finalize: the next cycle's invoice
+        while cancelling (`CANCELLING_INVOICE_MESSAGE`, "To keep your plan,
+        choose Keep my plan first."), an issued invoice above an ended plan's
+        cycle or below a live plan's, and any `void` or `uncollectible` one
+        (`CLOSED_INVOICE_MESSAGE`). It reads this store's subscription in its
+        own scope and refuses when it cannot (`billing.manual_pay_subscription_read`).
+        After finalize the invoice must carry `finalizedAt`, else
+        `UNISSUED_INVOICE_MESSAGE` and `billing.manual_pay_unissued_invoice`
+        (ERROR). `listPayableInvoices` left-joins the subscription with the same
+        NULL-safe predicate, so it lists exactly what the start accepts (a store
+        with no subscription row lists as before). `confirmInvoicePayment` on an
+        invoice that closed while the payment was in flight answers
+        `CLOSED_ON_ARRIVAL_MESSAGE` (shown as `toast.info`: the payment is being
+        refunded), logs `billing.manual_pay_on_closed_invoice` and does not
+        advance the cycle.
+      - **★ RECONCILE, SET PLAN AND DELETE STORE.** A deleted store's payment
+        that reconcile recovers on an ISSUED `void` or `uncollectible` invoice
+        is the refund pass's, so it logs `billing.reconcile.recovered_closed`
+        and files nothing; a kept draft, a closed draft or an open invoice still
+        gets the `orphan_payment` flag, and an unreadable invoice flags too
+        (`billing.reconcile.invoice_read`). `setStorePlan` (D12) refuses Free or
+        any plan below a LIVE paid subscription's plan, read in the same
+        statement and compared with the SUBSCRIPTION's plan, not a comp-raised
+        `stores.plan` ("This store pays for {Plan} by subscription, so a lower
+        plan set here would not stop its renewals ... use Cancel at the end of
+        the cycle or End the plan now on the store's page."); equal or higher,
+        or anything once the subscription ended, stays allowed. `deleteStore`'s
+        new steps are under "StoreMink's own invoices outlive the store".
+      - **★★ THE REFUND PASS (`lib/billing/refunds.ts`)**, server-only and not
+        a "use server" file (it takes ids). `processBillingRefunds` runs LAST in
+        the hourly billing cron with the same clock, so a refund a plan end owes
+        is written in the same run. It reads `getRefundSettings()` once, live (a
+        failed read is one error and nothing runs), never throws, and gives
+        each row its own transaction and catch, so one bad row never stops the
+        rest. Its nine steps:
+        1. REPAIR, only on invoices issued over an hour ago (`REPAIR_AFTER_MS`,
+           so it never races a finishing checkout): 1a voids an unpaid `open`
+           leftover above an ended plan's cycle or below a live plan's, NEVER a
+           draft and never one with an attempt `created`, `processing`,
+           `authorized`, `unknown` or `captured` (`billing.refunds.repair_closed`);
+           1b files a paid renewal of an ended plan (`paid_unreached:<invoice>`)
+           and 1c a capture kept on an `uncollectible` invoice before
+           `automatic_refunds_from` (`kept_before_refunds:<attempt>`) as
+           `state_conflict` reconciliation items for a person
+           (`billing.refunds.repair_filed`), skipping a payment that already has
+           an open `state_conflict` item.
+        2. DETECT: one `owed` system row (`cycle_not_reached`) per captured
+           payment on an issued `void` invoice (any date: nothing wrote `void`
+           before this release) or on an `uncollectible` one captured on or
+           after `automatic_refunds_from` (null means infinity), written under
+           the attempt's row lock after a re-check in a new statement
+           (`billing.refund_owed`). A database refusal files
+           `refund_refused:<attempt>` (`billing.refund_detect_refused`, ERROR),
+           or is a no-op when a system refund already exists.
+        3. SEND: `owed` to `pending` is CLAIMED and committed before Razorpay is
+           called, once, with the row's own key (`billing.refund_sent`; an
+           unknown answer leaves it `pending`, `billing.refund_send_unknown`,
+           WARN). System rows are sent only while `auto_refunds` is on;
+           operator rows always.
+        4. RECONCILE: a `pending` row sent more than 2 minutes ago
+           (`SETTLE_AFTER_MS`) is matched in the payment's refund list (up to 10
+           pages) by the key planted in `notes.sm_refund_key`, NEVER by amount
+           (`billing.refund_processed`). A COMPLETE list with no match 30
+           minutes after sending (`NO_RECORD_AFTER_MS`) fails the row with
+           "Razorpay has no record of this refund."; a list not read to the end
+           is unknown, never absent.
+        5. CREDIT NOTES: one per finished refund except `duplicate_payment`,
+           plus the D3 note cancelling each closed unpaid invoice that charged
+           GST.
+        6. INVOICE STATUS: nothing (R9).
+        7. TELL THE MERCHANT once per finished refund: claim `notified_at`, read
+           the note in the same transaction, email after the commit
+           (`notifyRefundSent` / `notifyRefundRecorded` with `{ creditNote }`).
+           A note that will not issue is announced without it after an hour
+           (`NOTE_GRACE_MS`, `billing.refund_notice_without_note`).
+        8. WAITING CHECK: only in the run whose India-time hour is 9
+           (`WAITING_CHECK_IST_HOUR`: the 04:20 UTC run, 09:50 IST), and only
+           when something has waited more than a day (`WAITING_AFTER_MS`):
+           `billing.refund_waiting` (WARN, `{ owed, pending, failed, oldestAt }`).
+           Automatic rows held while `auto_refunds` is off count on the
+           console's banner but not here, so D2's default does not alert every
+           day. ⚠ A Scheduler retry of a 503 run, or a run by hand, in that hour
+           logs it again: the alert opens once and must not page per line.
+        9. SUMMARY: `RefundPassSummary` (`repairedInvoices`,
+           `flaggedForPerson`, `detected`, `sent`, `processed`, `failed`,
+           `stillPending`, `creditNotes`, `notified`, `waiting`, `errors`,
+           `more`). A database error counts in `errors` (the cron answers 503
+           and Scheduler retries); a refused or failed refund does not. `more`
+           is set when a step fills its 50-row batch (`REFUND_BATCH`).
+      - **★★ REFUND STATES, KEYS AND GUARANTEES.** Six statuses (`owed`,
+        `pending`, `processed`, `failed`, `cancelled`, `recorded`) and seven
+        reasons (`cycle_not_reached`, `feature_removed`,
+        `suspended_by_mistake`, `declined_terms`, `duplicate_payment`,
+        `goodwill`, `other`). The key is a UUID we mint, written on the row
+        before the call and sent as `X-Refund-Idempotency` (the
+        `lib/payments/issue-refund.ts` pattern). ★★ ONE AUTOMATIC REFUND PER
+        PAYMENT, EVER (`billing_refunds_one_automatic`, unique on the payment
+        where `requested_by = 'system'`): a failed automatic refund
+        (`billing.refund_failed`, ERROR, from Razorpay refusing at send,
+        reporting it failed, or no record after 30 minutes) is never retried by
+        the pass; a person retries it as a NEW operator row with the same
+        reason (`retryRefund`). ★★ AUTOMATIC SENDING SHIPS OFF (D2,
+        `platform_billing_settings.auto_refunds`): system rows wait `owed` on
+        the console's Refunds page until an operator presses Send or turns the
+        switch on, so merchant text says "after your plan ends, usually within
+        5 working days". THE DATABASE IS THE GUARANTEE (0264):
+        `billing_refunds_guard` locks the payment row and refuses a refund that
+        would take its live and finished refunds (every status but `failed`
+        and `cancelled`) past the payment, refuses an unissued invoice or a
+        payment that was not captured, freezes what a refund IS once written,
+        and allows only `owed` to `pending`/`processed`/`failed`/`cancelled` and
+        `pending` to `processed`/`failed`; `billing_refunds_keep` refuses every
+        DELETE; `billing_refunds_gateway_minimum` holds a Razorpay refund still
+        to be sent to at least ₹1 (100 paise; a recorded one may be less);
+        `notified_at` is written once. No store column on either new table: a
+        refund and a credit note belong to one invoice, which carries the store,
+        so store deletion never touches them and 0243's "every other direct
+        store foreign key cascades on deletion" query still held (0269 later
+        retired it for the four takedown store keys, which are ON DELETE SET
+        NULL; convention 45). `app_service`
+        has SELECT, INSERT, UPDATE on refunds, SELECT, INSERT on notes, nothing
+        on the counters or the five functions (a trigger fires whether or not
+        the role may EXECUTE its function); `app_user` has nothing. ⚠ The
+        database does let an issued `void` invoice move to `refunded` (the
+        guards freeze money, number, kind and parties, not status), so R9 rests
+        on the code and on `refunds.test.ts`'s statement scan. The console
+        shares the pass's helpers (`createOperatorRefund`, `sendRefundNow`,
+        `retryRefund`, `cancelOwedRefund`, `recordRefundMadeOutside`,
+        `finishRefund`, `refundableForInvoice`, `countRefundsNeedingAction`,
+        `listRefunds`, `listConsoleCreditNotes`), which check nothing about who
+        asks: the gate is the action's. A database guard refusal in a console
+        write answers `MOVED_ON_MESSAGE` (`billing.refunds.guard_refused`,
+        WARN). Console log lines: `billing.refund_created`,
+        `billing.refund_retried`, `billing.refund_cancelled`,
+        `billing.refund_recorded`. Database errors are `billing.refunds.<step>`
+        (`settings`, `repair_close`, `repair_paid_unreached`,
+        `repair_kept_before_refunds`, `detect_scan`, `detect_one`,
+        `detect_refusal`, `send_scan`, `send_one`, `reconcile_scan`,
+        `reconcile_one`, `notes_scan`, `note_one`, `cancel_notes_scan`,
+        `cancel_note_one`, `notify_scan`, `notify_one`, `waiting_scan`,
+        `operator_send`, `create`, `retry`, `cancel`, `record`, `finish_note`,
+        `finish_notify`, `list`, `list_credit_notes`).
+      - **★★ CREDIT NOTES: StoreMink's own series, never more than the
+        invoice** (`credit-notes.ts`, pure; `credit-note-store.ts`,
+        server-only). `CN/{fy}/{5 digits}` (`CN/2026-27/00001`, at most 16
+        characters, the GST serial limit), gapless per Indian financial year
+        through `billing_next_credit_note_no` and `billing_credit_note_counters`.
+        ★ THE TRIGGER WRITES THE DOCUMENT, THE CODE DECIDES THE AMOUNTS:
+        `billing_credit_notes_issue` allocates the number and copies the tax
+        rate, both GSTINs, the place of supply and the parties from the
+        invoice, never carried in; `billing_credit_notes_guard` refuses an edit,
+        a delete and a note that would take the invoice's notes past its total
+        or its tax. `creditNoteSplit` (BigInt paise) credits the smaller of the
+        amount and what is left; a partial note takes tax in proportion, rounded
+        down, and the LAST note takes the tax that is left. ⚠ Every note's tax
+        is also held to the tax left and to its own total, so in a pathological
+        series of rounded-down partials (118 paise with 18 of tax, refunded as
+        6, 111, then 1) the last note's tax is capped and the series falls
+        short of the invoice's tax by that rounding. `creditNoteTaxLines`
+        (CGST and SGST at half the rate each from `splitGstPaise`, else IGST;
+        none without tax or a supplier GSTIN) and `unusedPartOfCycle` (End
+        now's refund: the moment clamped to the period, rounded down, never
+        above what was paid). `issueCreditNote` (kind `refund` with a refund
+        id, or `invoice_cancelled` with an invoice id, plus `issuedBy`) locks
+        the invoice FIRST (`for update of i`), so two issuers take turns; it
+        answers `issued`,
+        `exists`, `not_needed` (`duplicate_payment`, `nothing_left`, `no_tax`,
+        `payment_captured`, `not_issued`, `not_subscription`), `not_ready` or
+        `not_found`, and throws on a database error. ★ D3: no note for a
+        duplicate payment (returning an excess reduces no supply; the CHECK has
+        no such reason), and a closed unpaid GST invoice (`void` or
+        `uncollectible`, nothing captured, nothing in flight) gets an
+        `invoice_cancelled` note with no refund. Every merchant read is
+        store-scoped through the invoice (`listCreditNotes`,
+        `getCreditNoteDocument`); `getCreditNoteDocumentForOperator` has no
+        store predicate, so it works for a deleted store's invoice, and its page
+        calls `requireOperator()` first. `creditNoteParticulars` returns the
+        email's `RefundCreditNote`. Logs: `billing.credit_note_issued`,
+        `billing.list_credit_notes`, `billing.get_credit_note_document`,
+        `billing.get_credit_note_document_operator`, and
+        `billing.credit_note_parties_unreadable` (falls back to
+        `billing_invoice_parties()`). THE SWITCH AND THE HISTORY LINE
+        (`platform-settings.ts`): `getRefundSettings` reads `auto_refunds` and
+        `automatic_refunds_from` live on every call and THROWS on a failed read
+        (fail closed); `savePlatformAutoRefunds(on, actor)` writes only the
+        switch, never the tax identity or the history line
+        (`billing.auto_refunds_changed`; a write failure
+        `billing.auto_refunds.save`); `PlatformTaxSettings.autoRefunds` carries
+        it to Billing & tax.
+      - **★ THE MERCHANT'S SCREENS (Plans & Billing).** Cancel subscription asks
+        one of seven confirm sentences, by state and next invoice (a grace
+        renewal already paid is an eighth); the toast and the cancelling banner
+        say the same case. The banner shows only while
+        `subscription.active && subscription.cancelAtPeriodEnd` (defect D6),
+        the whole notices block only while the plan is live, and an operator
+        cancel adds "Cancelled by StoreMink at your request on {date}." Dates
+        are IST, the plan named is the SUBSCRIPTION's, not a comp's.
+        `OpenInvoices` shows a start refusal word for word and refreshes the
+        list; a confirm refusal is a `toast.info`. `refunds-notice.tsx` (an
+        async server component under `<OpenInvoices>`) shows the newest refund
+        of each payment, the newest five, from the last 90 days, store-scoped
+        through the invoice, and nothing when there is nothing to say. The
+        invoices list gains an intro, the labels Refunded and Partly refunded
+        (for a status set by hand: nothing writes them), one refund line under
+        the pill (on its way; delayed, a failed refund with nothing after it
+        for that payment; refunded in full; refunded {amount}; extra payment
+        returned, never a credit note) and a Credit notes table. The invoice
+        sheet gains a "Refunds and credit notes" block (`refundsAndCreditsLines`;
+        `InvoiceSheet` takes `creditNotePath`, null for plain text). The credit
+        note page `/dashboard/plans/credit-notes/[id]` (the invoice page's `ai`
+        view gate, the store from the session, a 404 for another store's note)
+        renders `CreditNoteSheet`, which the console reuses. The reads in
+        `invoice-history.ts` never throw (`summarizeInvoiceRefunds`,
+        `latestRefundPerPayment`, `listRecentRefunds`; logs
+        `billing.list_invoice_refunds`, `billing.get_invoice_credits`,
+        `billing.list_recent_refunds`). The invoices page now prints both
+        paise digits ("₹500.50").
+      - **★ THE OPERATOR'S TOOLS (`app/actions/platform-billing.ts`)**, twelve
+        actions. Reads for any operator: `getRefundQueue`,
+        `countRefundsNeedingAction` (null on a failed read, so a page shows a
+        quiet link, never a wrong zero), `listStoreBilling` (also End now's
+        live preview). Writes for a superadmin only: `setAutoRefunds`,
+        `sendRefund`, `retryRefund`, `cancelRefund`,
+        `recordRefundMadeOutside`, `issueRefund`, `cancelPlanAtCycleEnd`,
+        `undoPlanCancellation`, `endPlanNow`. Every refund goes through the
+        `refunds.ts` helpers with the operator's email; rupees become paise
+        with `Math.round`. Cancel and undo go through the merchant's paths with
+        `requestedBy: "operator:<email>"` and a required note. `endPlanNow`
+        locks the subscription, sets the flag and `cancel_requested_*`
+        (`endSubscription` claims on it), revokes an active mandate and ends
+        the plan in ONE transaction; after the commit it writes `plan_events`
+        itself (source `operator`, actor the email, note "Ended now by
+        StoreMink ({reason}[ from {date}]). {note}"), calls `notifyDowngraded`,
+        revalidates `STORE_TAG` and refunds the unused part of the cycle that
+        ended with the operator's reason, never `cycle_not_reached` (that cycle
+        was reached), split across payments, skipping and naming any line or
+        part under ₹1; a refund that fails never undoes the end. `refundFrom`
+        is required only for `feature_removed`. Logs:
+        `billing.console.auto_refunds`, `billing.console.plan_ended_now` (info),
+        `billing.console.refunds_count`, `billing.console.store_billing`,
+        `billing.console.refundable_read`, `billing.console.end_plan_now`,
+        `billing.console.end_plan_audit`, `billing.console.end_plan_lines`,
+        `billing.console.end_plan_refund` (errors). The pages are §39's.
+      - **★ THE EMAILS (`lib/email/billing-emails.ts`, `receipts.ts`).** The
+        cancellation email takes the state, grace, the next invoice, who asked
+        and the store's status (variants for nothing issued, an open invoice,
+        a payment under way, a paid renewal, grace, an operator cancel and a
+        suspended store, whose version links nowhere). A receipt for a
+        cancelled plan's next-cycle payment says it comes back. One refund
+        builder (`refundTemplate`, with `refundSentTemplate` and
+        `refundRecordedTemplate`) for Razorpay or a bank transfer's UTR, with a
+        reason sentence per reason; a suspended or deleted store gets the
+        credit note's particulars printed and no link. `notifyRefundSent` /
+        `notifyRefundRecorded` send only for a `processed` / `recorded` refund
+        (`billing.refund_notice_wrong_status`, `billing.refund_notice_missing`,
+        `billing.notify_refund`) and leave the `notified_at` claim to the
+        caller. Recipient rule: a store that exists uses `resolveBillingEmail`
+        (which now returns `storeStatus`), with no fallback to the invoice's
+        address; a deleted store uses `parties.customer.email` recorded on the
+        invoice; no address logs `billing.refund_notice_no_address` and stops.
+        `istDate` gives "30 Oct 2026" or "1 Nov 2026, 14:00 IST"; `shortDate` is
+        pinned to IST too; `invoicesUrl(slug)` is the only link. The billing
+        footer says "Write to support@storemink.com" (the billing sender has no
+        monitored reply address). Fifteen new gallery samples
+        (`npm run email:gallery`).
+      - **Tests:** `close-cycle.test.ts`, `renewal-worker.test.ts`,
+        `cancel.test.ts`, `payment-state.test.ts`, `collect.test.ts`,
+        `invoice-store.test.ts`, `manual-pay.test.ts`, `reconcile.test.ts`,
+        `credit-notes.test.ts`, `credit-note-store.test.ts`,
+        `platform-settings.test.ts`, `refunds.test.ts`,
+        `invoice-history.test.ts`, `receipts.test.ts`,
+        `lib/email/billing-emails.test.ts`, `app/actions/platform.test.ts`,
+        `app/actions/platform-billing.test.ts`,
+        `app/actions/subscribe-actions.test.ts`,
+        `app/api/cron/billing/route.test.ts`, the jsdom screen tests,
+        `refunds-migration.test.ts` (pins 0264's SQL and manifest entry) and
+        `refunds-copy.test.ts` (no U+2014 or U+2013 in the release's files). Opt-in, rolled back on storemink_local with 0264 applied:
+        `lib/billing/refunds.local.test.ts` (`BILLING_REFUNDS_LOCAL_TEST=1`,
+        the design's ten local cases through the real pass, worker, deleteStore
+        and enrolment), `late-confirm.local.test.ts` above and
+        `invoice-retention.local.test.ts`. 0264 names database objects, never
+        the removed pre-ledger SQL folder (§5 item 42).
+      - **Monitoring:** two log-based alerts, "Billing: a refund to a merchant
+        failed" (ERROR, `billing.refund_failed`) and "Billing: refunds waiting
+        more than a day" (WARNING, `billing.refund_waiting`), on
+        `storemink-web-prod` and at most one email an hour each, defined in
+        `scripts/prod-monitoring.py` and described in `docs/monitoring.md` (21
+        and 22); applying them is the owner's production step.
+      - **⚠ OWNER STEPS AROUND THE DEPLOY:** two read-only prechecks (no
+        issued invoice without `finalized_at`; no captured or refunded payment
+        behind an `open`, `processing` or `draft` invoice: a capture behind an
+        open or processing one is repaired by one
+        `settleAttempt(attemptId, "captured")` after the deploy, or by the
+        merchant pressing Pay on that invoice; a capture on a draft invoice is
+        finished by the hourly check after the deploy, or filed for a person
+        when it no longer applies (the release's read-only precheck lists each
+        one and what happens to it); a refunded payment needs a person), the
+        two alerts,
+        switching `auto_refunds` on when ready (Billing & tax), and one
+        test-mode refund: no refund has yet gone through StoreMink's own
+        Razorpay account. ⚠ The Refunds page cannot tell an empty tab from a
+        failed read (`listRefunds` and `listConsoleCreditNotes` return `[]` on
+        error); the count can.
+    - **★★ STOREMINK CHARGES GST ON ITS OWN FEES (the GST release, 29 to 30
+      Oct 2026; design `next-release/gst.md`, built after renewal-cancel and
+      RC-F1b; migrations `20261029_0266_gst_on_storemink_fees` (structural),
+      `0267` and `0268` (Help)).** Ships with GST OFF (owner decisions: the
+      operator switches it on; prices include GST; a business outside India
+      cannot start a new payment while GST is charged; an LLP line on every
+      invoice; the notice goes to every store owner as an Operational
+      announcement; no per-credit price on Plans & Billing; the page is "Plans
+      & Billing" everywhere, sidebar included, permission key `ai` kept).
+      Full contract: `docs/billing-architecture.md` §5, §7 and §8; the console
+      and the switch-on procedure: `docs/operator-console.md`.
+      - **★★ ONE SETTINGS ROW, IN FORCE PLUS ONE SCHEDULED CHANGE.**
+        `platform_billing_settings` keeps the values in force (`tax_enabled`,
+        `tax_inclusive`, `tax_rate_bps`) and at most one scheduled change
+        (`next_tax_*`, all set or all empty by CHECK, the notice it relies on in
+        `next_tax_notice_id`). `termsAt` (`lib/billing/tax-terms.ts`, pure)
+        applies a change from its start, so correctness never waits for a job;
+        `promoteDueTaxChange` copies a started change into the in-force columns
+        (one locked statement, idempotent, recorded by `PROMOTED_BY`, "system:
+        scheduled GST change") and is the hourly billing run's FIRST step and
+        the first step of every save. Payments read `getTaxTermsLive`
+        (uncached); the public pricing pages read `getPublicTaxSource`
+        (`lib/billing/public-tax.ts`, cached 300 s under tag `platform-tax`,
+        throws on failure; a failed read shows the old text with no GST claim,
+        `billing.public_tax.read_failed`). Every save, and a promote that
+        changed a row, calls `bustPlatformTax` after its commit.
+      - **★★ THREE SAVES, AND A RISE NEEDS A MONTH'S NOTICE**
+        (`platform-settings.ts`). `saveTaxIdentity` writes who StoreMink is
+        (legal name, GSTIN, state, address and PIN, SAC code, LLPIN, registered
+        office, invoice prefix) and never what is charged; `scheduleTaxChange`
+        changes what is charged, now or from a start; `cancelScheduledTaxChange`
+        withdraws a change that has not started (one clock with the promote,
+        review R1-13; a started change is refused with how to switch GST off
+        instead). "Now" is allowed only when nothing rises; a scheduled start is
+        at least 5 minutes (`MIN_START_LEAD_MS`) and at most 400 days
+        (`MAX_START_AHEAD_MS`) ahead. A change that raises what merchants pay
+        (`raisesPayable`, `effectiveRise`) needs a qualifying notice, read from
+        `platform_announcements` in the same transaction, and a start at least
+        1 calendar month after it went out, in IST
+        (`earliestStartAfterNotice`). `noticeQualifies` (pure, shared by the
+        console's notice select and the save): Operational, `sent` or `partial`
+        with a `sent_at`, at least one delivery, email among its channels, and
+        aimed at every store owner; a `failed` announcement never counts. ⚠ A
+        `partial` notice counts as given (review R1-12, the owner's choice).
+        `LAW_SET_RATE_RISE_WITHOUT_NOTICE` is `false` until the Terms cover a
+        rate set by law. Switching GST on, now or scheduled, needs the whole
+        identity (see "Tax is operator-configured" above).
+      - **★ LESSON: NEVER WRITE THE SINGLETON WITH INSERT ... ON CONFLICT DO
+        UPDATE.** PostgreSQL checks the PROPOSED insert row against every CHECK
+        before it looks for a conflict, and that row carries the defaults of
+        every column the save does not write, so the identity CHECKs refused
+        saves that would have been valid as updates (found by `gst.local`
+        case 10). The three tax saves therefore read the row under a lock and
+        update it, inserting only when there is no row (`writeTaxColumns`).
+        ⚠ `savePlatformAutoRefunds` (the refunds switch, renewal-cancel) still
+        upserts; while the identity is incomplete with GST on (a row 0266 left
+        NOT VALID, or an invoice prefix over 2 characters) every write of the
+        row, that switch included, fails with 23514, which it answers with
+        `AUTO_REFUNDS_IDENTITY_INCOMPLETE`. Recorded as a lesson, not a
+        convention, because that one write still breaks it.
+      - **★★ ONE TAX READING PER INVOICE, FAILING CLOSED WHEN BUILDING.**
+        `readTaxSnapshot` / `loadTaxSnapshot` (`invoice-store.ts`, with the pure
+        `tax-snapshot.ts`) give the terms, the builder's context and the stamp
+        (GSTINs, place of supply and its basis, SAC code) from one read;
+        `loadTaxSnapshot` throws, with no tax-off fallback. Every on-session
+        payment reads it through `readTaxForPayment` (`payment-tax.ts`, the
+        one rule for enrolment, plan change, locations and credit packs):
+        settings incomplete, no state for the merchant, or a business outside
+        India while GST is charged are refused with their sentence
+        (`PAYMENT_REFUSAL`) before anything is written; it logs
+        `<prefix>.tax_snapshot` (ERROR) for a failed or incomplete reading and
+        `<prefix>.payment_refused` (INFO, `no_state` / `outside_india`). A
+        renewal that cannot read the settings stays pending and is tried next
+        hour (`billing.renewal_tax_snapshot`, ERROR; alert 23). ⚠ A renewal is
+        read when the hourly run issues it, up to an hour after T-4d, while the
+        quote predicts the terms at T-4d (review R1-08).
+      - **★★ ISSUED AT THE GST IN FORCE AT ISSUE, KEEPING THE DRAFT'S STAMP
+        OTHERWISE** (`issueInvoice`, seven steps, one transaction). It locks
+        the invoice, reads the tax with the settings row and the billing
+        account locked `for share`, restamps the draft and claims only a row
+        with `status = 'draft'` and no `finalized_at` (renewal-cancel's rule).
+        A frozen
+        invoice (paid, or with a payment or credit order) keeps its total: the
+        GST is carved out of it at its time of supply (`paidAt`, the capture's
+        time: browser confirms read it from the verified payment,
+        `paymentCapturedAt`, review R1-07; the repair pass from the gateway). A
+        frozen draft no reading reproduces is issued as built
+        (`billing.issue_kept_draft_tax`, WARN) and filed once for a person
+        (`kept_draft:<invoice>`, `billing.issue_kept_draft_filed`; the queue's
+        `KEPT_DRAFT_REPAIR`); GST settings incomplete at issue also issue as
+        built (`billing.issue_tax_settings_incomplete`, ERROR). Enrolment's tax
+        branch abandons an order the gateway says nobody touched and rebuilds
+        the draft at the GST in force (review R1-03). Manual pay takes only an
+        `open` invoice (R1-06). `finalizeInvoice`, `finalizeInvoiceClaimed` and
+        `finalizePaidAiCreditsInvoice` wrap `issueInvoice` with their old
+        shapes.
+      - **★★ THE ISSUING TRIGGER WAITS FOR STOREMINK'S SAC CODE.**
+        `billing_invoices_tax_invoice_complete` (0266) refuses to issue an
+        invoice charging GST without the supplier GSTIN, place of supply and
+        basis, SAC code and rate, but judges nothing until
+        `platform_billing_settings.sac_code` is set, so no invoice is refused
+        before the identity exists. ⚠ On staging only, a taxed draft written
+        before the release with no stamp can be refused every pass once the
+        SAC code is set (review R1-11).
+      - **★★ THE REPAIR PASS: A CAPTURED PAYMENT ALWAYS GETS ITS INVOICE**
+        (`issueCapturedDrafts`, `lib/billing/reconcile.ts`; after reconcile and
+        before evaluate in the hourly run). Every draft behind a `captured`
+        attempt resolved over `CAPTURED_DRAFT_WAIT_MINUTES` (60) ago, and every
+        paid credit pack whose receipt is a draft, `CAPTURED_DRAFT_BATCH` (100)
+        of each a pass, oldest first. A subscription or add-on draft goes FIRST
+        to its purchase's own completion (RC-F1b, "The closed tab is finished
+        by the hourly check" above); only when that declines, or a person
+        already holds the payment, is the draft issued alone at the capture's
+        time and settled paid with `notify: false` (no "Your plan is active"
+        receipt for a purchase a person is checking, review R1-04), never
+        applying a plan or a location, and one `captured_draft:<invoice>` item
+        filed (`CAPTURED_DRAFT_REPAIR`). A credit pack's receipt is issued
+        straight to paid. A draft still unissued logs
+        `billing.captured_draft_unissued`: WARN while the capture is younger
+        than `UNISSUED_ALERT_AFTER_HOURS` (6), ERROR after or when the capture
+        time is unknown (review R1-14; alert 24). `deleteStore` calls it with
+        `storeId` before its transaction (issue only, no wait). ⚠ The
+        invoice's `paid_at` from the pass is the pass time (review R1-10).
+      - **★★ THE PLACE OF SUPPLY SAYS WHERE IT CAME FROM.** `placeOfSupplyFor`
+        (`gst.ts`, ten steps, first match wins): the Billing details GSTIN, a
+        Billing details country outside India (96), the Billing details state,
+        the Taxes & invoices GSTIN and state, the default location's GSTIN
+        then state, the state in the business address, the signup state, a
+        signup country outside India (96), and only while GST is charged
+        StoreMink's own state. The invoice records the basis
+        (`place_of_supply_basis`: `recipient`, `supplier` or `outside_india`).
+        Only `recipient` prints a State for the merchant (`recipientStateFor`):
+        a supplier fallback says nothing about where the merchant is, and 96
+        is not a state (`placeOfSupplyLabel`, "Outside India (96)").
+        `platformInvoiceGst` splits CGST and SGST or IGST; no place of supply,
+        no supplier GSTIN, or 96 is IGST. Credit notes use the same rule
+        (`creditNoteTaxLines`) and read their invoice's basis.
+      - **★ THE MERCHANT'S BILLING DETAILS.** `billing_accounts` is now
+        merchant-editable (`billing-details.ts`; `getMyBillingDetails` /
+        `saveMyBillingDetails`, Plans & Billing, `ai` manage, 10 saves a minute
+        per store and admin): GSTIN, business name, address and state, or a
+        country outside India; it applies to invoices issued after saving and
+        never writes `billing_email`. 0266 CHECKs the GSTIN shape and that it
+        agrees with the state. Signup asks for the state before a paid plan
+        while GST is charged or scheduled (§19).
+      - **★★ WHAT IS SHOWN IS WHAT IS CHARGED.** `lib/billing/quote.ts`
+        builds every figure shown before a payment with the charge's own
+        invoice builders under the same tax reading (`quoteSubscribe`,
+        `quotePlanChange`, `quoteNextRenewal`, `quoteLocationRenewal`, the per
+        location line as the difference of two renewals, review R1-02;
+        `quoteCheckoutFor`; `quoteCheckout` and `getMyNextRenewal` are the
+        merchant actions, 60 a minute). The amount guard
+        (`app/dashboard/plans/amount-guard.ts`, `shouldOpenPayment`) opens a
+        payment window only for exactly the amount shown, on all seven buttons
+        that open one (four on Plans & Billing, Pay now on an invoice, the
+        Locations card, signup); a difference shows "The amount to pay is now
+        ..." and waits for another press. A start that carries no payment
+        (RC-F1c's `completedEarlier`) is a success, never a mismatch.
+        Credit packs are charged `amount_paise` (0266; ₹69.62 for a ₹59 pack
+        at 18% added on top), confirmed against `amount_paise`, or
+        `amount_inr` times 100 for an older purchase.
+      - **★ THE INVOICE AND THE EMAILS.** A document with tax is a "Tax
+        Invoice" (place of supply, reverse charge No, both GSTINs, the SAC
+        column, "Amount (GST included)" when `tax_inclusive`, the
+        `platformInvoiceGst` lines) and every invoice carries the LLP line
+        (name, LLPIN, registered office); the list calls it "Tax invoice
+        {ref}". 0266 adds `billing_invoices.sac_code`, `tax_inclusive` and
+        `place_of_supply_basis`, frozen once issued, and the parties record
+        the LLPIN, registered office and a customer's country outside India.
+        Billing emails print paise (`formatRupees`) and IST dates without a
+        leading zero (`istShortDate`), and the renewal, payment received and
+        plan activated emails carry the invoice's own tax rows ("Your tax
+        invoice is in Plans & Billing").
+      - **★ THE OPERATOR'S CARDS** (Billing & tax, §39): GST status, the tax
+        identity, the change card with its impact preview
+        (`getGstChangeImpact`, `gst-impact.ts`: counts over every renewal and
+        at most 200 rows, 30 previews a minute per operator) and the monthly
+        invoice list (`buildInvoiceList`, `invoice-list.ts`: one IST month as
+        CSV, credit notes as negative lines with their invoice's basis, a read
+        failure never an empty file, more than 50,000 rows refused as too many,
+        `billing.invoice_list_too_many`; superadmin only). It is the
+        "Monthly invoice list" because the design's word for it fails the POS
+        wording rule (§5 item 22).
+      - **★ MERCHANT AND VISITOR SCREENS.** Plans & Billing shows, in order, the
+        invoice to pay, the refunds notice, then the GST banners
+        (`gst-notice.tsx`: a scheduled rise, then the add-your-state ask);
+        every price, renewal and checkout line comes from
+        `tax-copy.ts` and the quotes, with no per-credit figure (owner decision
+        10). The Locations card follows the same rules (design 7.5;
+        `docs/pos-acceptance.md` PS-1.19 to PS-1.23). The public pricing page,
+        homepage and POS page read `getPublicTaxSource` (`pricingCards`,
+        `pricingFaqs`, the "plus GST" suffix in metadata, `valueAddedTaxIncluded`
+        in the homepage and POS page JSON-LD only while GST is charged).
+      - **★ "PLANS & BILLING" EVERYWHERE.** The sidebar label, the page, the
+        console's store card, emails and Help (0268) use it; notification
+        groups map the old name through `LEGACY_EVENT_GROUPS` /
+        `canonicalEventGroup` (`lib/notifications/events.ts`), and an old
+        `?group=` link still filters. Legal content was not touched.
+      - **Tests:** `tax-terms`, `tax-snapshot`, `tax-copy` (every string in
+        every state, a client-safety walk), `gst`, `quote`, `payment-tax`,
+        `billing-details`, `public-tax`, `gst-impact`, `invoice-list`,
+        `platform-settings`, `invoice-store`, `reconcile`, `collect`, `enrol`,
+        `plan-change`, `locations`, `credit-notes`, `credit-note-store`,
+        `renewal-worker`, `gst-migration` (pins 0266's SQL and manifest entry),
+        the screen tests (`amount-guard`, `open-invoices`,
+        `location-billing-card`, `plans-client`, the console billing page,
+        signup) and the opt-in `lib/billing/gst.local.test.ts`
+        (`BILLING_GST_LOCAL_TEST=1`, storemink_local, rolled back). Alerts 23
+        and 24 (`docs/monitoring.md`) are applied by the owner after the
+        release.
+      - **⚠ OWNER STEPS AROUND THE DEPLOY** (`docs/billing-architecture.md`,
+        "GST release: checks around the deploy"): a read-only precheck that
+        no existing row breaks 0266's new CHECKs (a row that does is left NOT
+        VALID with a NOTICE, review R3-04), the post-deploy check that every
+        constraint validated, the quote probe, a deploy time away from the
+        hourly billing run (0266's locks, review R3-12), and the
+        `tax_inclusive` check (review R3-11). Switching GST on is the
+        operator's procedure in `docs/operator-console.md`.
     - **★★ PLAN AND PERIOD CHANGES** (`lib/billing/plan-change.ts`). Dearer applies
       NOW and is paid for through the SAME `addon` invoice a location purchase
       uses; cheaper or equal books `scheduled_plan`/`scheduled_period` for the
@@ -22756,32 +24890,38 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       writing it, so tax could only be switched on by hand-editing SQL — the
       requirement (owner, 2026-08-11) was schema-only until now. Superadmin to
       edit, any operator to read, because "are we charging GST?" is a support
-      question that needs no write grant.
-      - **★ ENABLING IT REQUIRES A GSTIN, A STATE AND A LEGAL NAME.** The first is
-        also a DB CHECK (`platform_billing_tax_needs_gstin`) — an invoice charging
-        GST while naming no GSTIN is not a valid tax invoice and the merchant
-        cannot claim input credit against it. The state is NOT a constraint but is
-        just as load-bearing: `splitGst` compares it against the merchant's to
-        choose CGST+SGST vs IGST, so without it every invoice is silently treated
-        as intra-state.
+      question that needs no write grant. Since the GST release the page is
+      four cards and three saves (`saveTaxIdentity`, `scheduleTaxChange`,
+      `cancelScheduledTaxChange`), described in "StoreMink charges GST on its
+      own fees" below.
+      - **★ ENABLING IT REQUIRES THE WHOLE TAX IDENTITY**: GSTIN, state, legal
+        name, SAC code, address line 1, a 6-digit PIN, LLPIN and registered
+        office (`identityGap` gives the sentence). The database is the boundary:
+        `platform_billing_tax_needs_gstin` and, since 0266,
+        `platform_billing_tax_needs_invoice_identity` and
+        `platform_billing_next_tax_needs_invoice_identity` refuse GST on, now or
+        scheduled, without it. An invoice charging GST while naming no GSTIN is
+        not a valid tax invoice and the merchant cannot claim input credit
+        against it; the state decides CGST and SGST against IGST.
       - **★★ THE GSTIN CARRIES THE STATE, and a mismatch is refused.** Its first
         two digits ARE the state code (`stateCodeFromGstin`), so if they disagree
         with the state selected one of them is a typo — and the resulting wrong
         tax split is invisible on the invoice and expensive at filing time.
       - **★★ INCLUSIVE vs EXCLUSIVE CHANGES WHAT MERCHANTS PAY**, not how the
-        invoice reads, so the screen states the consequence in rupees against a
-        ₹5,000 plan rather than naming the modes. It must match what the pricing
-        page advertises or every merchant is over- or under-charged from the next
-        invoice onward.
+        invoice reads, so the change card states the consequence in rupees and
+        the impact preview counts the merchants it moves. The public pricing
+        pages read the same setting (`getPublicTaxSource`), so what they
+        advertise follows it.
       - **★ TURNING TAX ON IS NEVER RETROACTIVE** — finalized invoices are
         immutable by trigger — and the screen says so, because the intuition
         ("I've added my GSTIN, now everything is a tax invoice") is the opposite.
-      - `GST_STATES` + `gstStateName` live in the PURE `lib/billing/gst.ts`, so the
-        client form can import them; `platform-settings.ts` is `server-only` and
-        `PlatformTaxSettings` therefore lives in `invoice-types.ts` (the third
-        instance of that split). The retired codes `25` and `28` are deliberately
-        omitted from the picker but still parse, because a merchant's stored code
-        may be one.
+      - `GST_STATES` + `gstStateName` (and `PICKABLE_GST_STATES` /
+        `gstStateOptions` for the pickers) live in the PURE `lib/billing/gst.ts`,
+        so the client forms can import them; `platform-settings.ts` is
+        `server-only` and `PlatformTaxSettings` therefore lives in
+        `invoice-types.ts` (the third instance of that split). The retired codes
+        `25` and `28` are deliberately omitted from the pickers but still parse,
+        because a merchant's stored code may be one.
     - **★★ MERCHANTS CAN SEE AND PRINT THEIR INVOICES**
       (`/dashboard/plans/invoices`, `lib/billing/invoice-history.ts`). The gapless
       FY series, the immutability triggers and the tax snapshot all existed to
@@ -22798,8 +24938,10 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         billing_03; every creator ACCEPTED them and no caller passed one, so every
         invoice stored NULL. The document would then have had to name a GSTIN from
         LIVE settings — so an operator correcting one in September would rewrite
-        what April's invoice claims. `loadInvoiceParties` + a stamp at all four
-        creation sites fixes it. ★★ The NAMES and ADDRESSES are recorded too
+        what April's invoice claims. A stamp at every creation site fixes it:
+        since the GST release it is the stamp of the invoice's one tax reading
+        (`readTaxSnapshot`, which replaced `loadInvoiceParties`), re-read when
+        the invoice is issued. ★★ The NAMES and ADDRESSES are recorded too
         (migration 0243): `billing_invoices.parties`, written once by the
         `billing_invoices_parties_snapshot` trigger in the statement that issues
         the invoice, from `billing_invoice_parties()`, which copies the row's
@@ -22839,38 +24981,58 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         `.invoice-sheet` print isolation and `PrintInvoiceButton`. The INNER
         classes are `sminv-*`, deliberately NOT the `inv-*` ones: those are shaped
         for the order invoice's different markup and would silently mis-style this.
-    - **★★ RECONCILIATION — SETTLING WHAT WE NEVER LEARNED**
-      (`lib/billing/reconcile.ts`, run first in the hourly cron).
+    - **★★ RECONCILIATION: SETTLING WHAT WE NEVER LEARNED, THEN FINISHING IT**
+      (`lib/billing/reconcile.ts`, run in the hourly cron after collect and
+      before the repair pass and evaluate).
       `collect.ts` is deliberate that an UNKNOWN outcome is never a failure and
-      never retried, because a retry might charge twice — which is right, and left
-      the attempt in `unknown` forever with nothing to resolve it. `processing` is
-      the same: nothing tells us a merchant closed the payment window.
-      `billing_reconciliation_items` had existed since billing_04 with NOTHING
-      writing or reading it.
+      never retried, because a retry might charge twice. That is right, and it
+      left the attempt in `unknown` forever with nothing to resolve it.
+      `processing` is the same: nothing tells us a merchant closed the payment
+      window. `billing_reconciliation_items` had existed since billing_04 with
+      NOTHING writing or reading it.
       - **★ IT ASKS THE GATEWAY, IT DOES NOT GUESS.** The only evidence that
         settles an attempt as paid is a CAPTURED payment on the order we created,
-        via `rzpFetchOrderPayments` + `capturedPayment` — the VERIFIED pair §18
-        has used in production, not the unverified recurring endpoint. So it works
-        today, with autopay off.
+        via `rzpFetchOrderPayments` + `capturedPayment`, the VERIFIED pair §18
+        has used in production, not the unverified recurring endpoint. So it
+        works today, with autopay off.
       - **★★ THE TWO DIRECTIONS ARE NOT SYMMETRIC.** Finding money is safe and
         runs after 15 minutes: a captured payment means they paid, and recording
         it can only help. Declaring FAILURE frees the invoice for a fresh
-        attempt — so doing it to a payment still in flight invites a second
-        charge — and waits **72 hours**, only ever on the gateway's word that
+        attempt, so doing it to a payment still in flight invites a second
+        charge; it waits **72 hours**, only ever on the gateway's word that
         nothing was captured. An ANCIENT attempt that WAS captured is recovered,
         never failed: age is not evidence.
       - **★ RECOVERY ADVANCES THE CYCLE.** Without it a merchant who really did
         pay stays in grace and is downgraded, because the only thing that moves a
         cycle is a paid invoice being NOTICED.
       - **★ AN AMOUNT MISMATCH IS FLAGGED, NOT AUTO-FIXED.** The payment is
-        recorded either way — they paid — but what happens to the difference is a
-        human decision. Deduped by the partial unique index, so an hourly sweep
-        cannot bury the queue it exists to surface.
+        recorded either way (they paid), but what happens to the difference is
+        a human decision. Deduped by the partial unique index, so an hourly
+        sweep cannot bury the queue it exists to surface.
+      - **★★ THEN IT FINISHES WHAT WAS PAID BUT NEVER CONFIRMED** (RC-F1b, 29
+        Oct 2026). After the scan, in the same pass, `capturedDraftPurchases`
+        (collect.ts) finds captured attempts older than the 15-minute window on
+        a DRAFT subscription or add-on invoice of a store that exists, at most
+        50 a pass, skipping any a person already holds (an open or in-review
+        item about the attempt, or its `purchase_refused:` or
+        `purchase_unapplied:` key in any status). Each goes to its kind's
+        completion (see "The closed tab is finished by the hourly check")
+        with the gateway asked again: a subscription invoice to the
+        enrolment, an add-on to the plan change or the location purchase its
+        order's notes name, and an order that names neither is filed for a
+        person (`purchase: "unknown"`). The summary counts `completed`; a
+        filed purchase counts `flagged`; an unreadable gateway or order
+        changes nothing and counts `stillUnknown`; a throw counts `errors` and
+        the rest go on. Logs: `billing.reconcile.purchase_completed`,
+        `billing.reconcile.purchase_one`, `billing.recovery.scan`,
+        `billing.recovery.gateway_read`, `billing.recovery.order_read`. The
+        queue names these items and shows their `detail.note` (see "Two
+        purchase items" under the queue below).
       - **★ IT RUNS BEFORE PASS 2**, because pass 2 decides grace and downgrade
         from whether the invoice is paid; running it after would downgrade a
         merchant whose payment that very request discovers. Pinned by a test.
-      - ⚠ It only sees attempts that reached the gateway (`provider_order_id` set)
-        — one that died before that has nothing to ask about.
+      - ⚠ It only sees attempts that reached the gateway (`provider_order_id`
+        set): one that died before that has nothing to ask about.
       - **★★ THE QUEUE IS A SCREEN NOW**
         (`/dashboard/billing/reconciliation` on the platform host, filtered by
         `?status=`; `listReconciliationItems` / `countOpenReconciliationItems` /
@@ -22881,8 +25043,9 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         not zero.
         - **★★ CLOSING AN ITEM MOVES NO MONEY, and the screen says so at the
           point of action** rather than in a header nobody re-reads. Refunding a
-          difference or issuing a credit happens on the store's own billing
-          screens, chosen by a person. A button here that "fixed" a discrepancy
+          difference happens through Issue a refund or Record a refund made
+          outside StoreMink (the refunds release), each a separate act a
+          superadmin chooses. A button here that "fixed" a discrepancy
           would be a money movement nobody reviewed — and worse, it would leave
           the queue looking clean. Pinned by a test, because that sentence is the
           only thing standing between the two readings.
@@ -22912,6 +25075,38 @@ way — an entry there is a deliberate act, not a way to silence the guard.
           store-less attempt), else "no store - needs attributing", rather
           than a blank that reads as a bug. The sweep's `detail.note` is shown
           under it.
+        - **★ THREE REFUND ITEMS, KNOWN BY `detail.repair_key`** (the refunds
+          release; `billing_reconciliation_repair_once` files each key once, in
+          every status, so an item a person closed is never filed again):
+          `paid_unreached:<invoice>` "Renewal paid for a cycle the plan did not
+          reach" (issue a refund, reason Plan ended before this cycle; on a live
+          store the item links to `/dashboard/stores/{id}?refund={invoiceId}`,
+          on a deleted one Issue a refund opens in place),
+          `kept_before_refunds:<attempt>` "Payment kept after the plan ended,
+          before automatic refunds" (check Razorpay for a refund made by hand:
+          record it, or issue the refund) and `refund_refused:<attempt>` "An
+          automatic refund was refused" (the database's reason is shown; fix the
+          cause or refund another way and record it). `REPAIR_COPY` and
+          `repairKind` in `queue.tsx`; a member sees the item and why it waits,
+          with no refund tool.
+        - **★ TWO PURCHASE ITEMS, KNOWN BY `detail.repair_key`** (RC-F1c), the
+          closed-tab purchases the hourly check filed for a person (RC-F1b):
+          `purchase_refused:<attempt>` "A paid purchase was not applied"
+          (nothing was applied or refunded: apply it by hand or refund it in
+          the Razorpay dashboard, then close the item with what was done) and
+          `purchase_unapplied:<attempt>` "A paid purchase was invoiced but not
+          applied" (the invoice is issued and the merchant was told not to pay
+          again: apply it by hand or issue a refund). Each shows what was
+          bought (`detail.purchase`: a first plan payment, a plan change, extra
+          locations, or an add-on that names neither) above its note, and,
+          while the item is open, Open the store links to the store's page
+          when the store exists. Only
+          `purchase_unapplied` offers Issue a refund, in place, with no reason
+          chosen and without "Plan ended before this cycle"; a refused
+          purchase's invoice is usually an unissued draft, which the refund
+          guard refuses, so its money goes back from the Razorpay dashboard. A
+          member sees the item and why it waits, with no refund tool;
+          `PURCHASE_LABEL` and `PurchaseOpeners` in `queue.tsx`.
         - ⚠ **TEST GAP**: the db mock does not evaluate WHERE clauses, so the
           `status = 'open'` predicate is argued rather than pinned; the
           behaviour that depends on it (a zero-row claim reported as
@@ -22937,7 +25132,22 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       with a payment that may have reached the gateway (an order id, not
       failed or cancelled), kept detached as the only record of that money.
       `reconcile.ts` records a payment it then finds captured for a deleted
-      store and flags it `orphan_payment` instead of advancing a plan.
+      store and flags it `orphan_payment` instead of advancing a plan, unless
+      the invoice is issued and closed (`void` or `uncollectible`): that money
+      is the refund pass's (`billing.reconcile.recovered_closed`).
+      ★ CYCLES THE STORE WILL NEVER ENTER (the refunds release): right after
+      `set constraints all deferred`, before the reconciliation detach and the
+      draft handling, `deleteStore` locks the subscription row (`for update`;
+      lock order: subscription, then invoices), then for a LIVE plan voids its
+      issued invoices above the current cycle (`closeUnreachedInvoices` with
+      `issuedOnly`), so the refund pass refunds a paid one after the store is
+      gone and emails the billing email recorded on the invoice; for an ENDED
+      plan it voids the issued `open` invoices above its cycle that have no
+      payment created, processing, authorized, unknown or captured, and files
+      each `paid` one there as an open `state_conflict` item
+      (`paid_unreached:<invoice>`, `storeDeleted`, `storeName`, the latest
+      captured payment's ids, `expected_paise`), and the operator's warning
+      says how many renewals it filed.
       ★ OPEN MONEY QUESTIONS ARE KEPT TOO: in the same transaction
       `deleteStore` detaches the store's `open` and `manual_review`
       reconciliation items (store_id NULL, `detail.storeDeleted` and
@@ -22950,18 +25160,27 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       `ai_credit_purchases` row still cascades, so a kept AI-credit invoice no
       longer links to its Razorpay ids, and a pending purchase (never reaped,
       so not filed) leaves nothing. Keeping them needs
-      `ai_credit_purchases.store_id` nullable with ON DELETE SET NULL, 0243's
-      durable "every other direct store foreign key cascades on deletion"
-      query superseded, and the purchase types widened. Still deleted with the
+      `ai_credit_purchases.store_id` nullable with ON DELETE SET NULL, the
+      durable store-key query superseded (since 0269 that is 0269's "every
+      direct store foreign key other than the kept invoices, payment attempts
+      and moderation records cascades on deletion", which retired 0243's), and
+      the purchase types widened. Still deleted with the
       store: `billing_credits`, closed reconciliation items, and the
-      subscription, mandate and billing account. ⚠ Nothing reads a kept
-      invoice yet: every merchant read is store-scoped and there is no
-      operator screen for a deleted store's invoices. ⚠ DEPLOY PRECONDITION:
+      subscription, mandate and billing account. `billing_refunds` and
+      `billing_credit_notes` carry no store column and are never touched. ⚠
+      A kept invoice is read by the refund pass (detection needs no store),
+      the console's Refunds page (as "Deleted store") and its credit-note
+      page, but there is still no operator screen listing a deleted store's
+      invoices. ⚠ DEPLOY PRECONDITION:
       `platform_billing_settings` filled before 0243 runs (see the parties
       note above). Tests: `invoice-history.test.ts`, `reconcile.test.ts`,
       `platform.test.ts`, `queue.test.tsx` and the opt-in rollback-only
       `invoice-retention.local.test.ts`
-      (`BILLING_INVOICE_RETENTION_LOCAL_TEST=1`, storemink_local).
+      (`BILLING_INVOICE_RETENTION_LOCAL_TEST=1`, storemink_local; since the
+      refunds release it also deletes a store holding a processed refund and
+      its credit note, and checks both survive unchanged, keep the invoice's
+      recorded parties, still print for an operator and cannot be deleted)
+      and `refunds.local.test.ts` (case 5: a deleted store's refund).
     - **★★ AI CREDIT PURCHASES NOW PRODUCE AN INVOICE**
       (`lib/billing/credit-invoice.ts`, `billing_08_ai_credit_invoice.sql`).
       `kind = 'ai_credits'` has existed since billing_03 and
@@ -23012,8 +25231,11 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         transitions to paid — so enrolment, manual payment, a plan change, a
         location purchase AND reconciliation each send exactly one, and none of
         them has to remember to. `syncInvoiceStatus` now CLAIMS that transition
-        (its WHERE excludes `paid` when moving to paid) and reports it, which is
-        what makes "exactly one" true. ⚠ That claim also fixed a quieter bug:
+        (its WHERE admits only `open` and `processing`, whatever status the
+        attempts derive, so a paid invoice is never moved back by its attempts:
+        defect D9, under "Cancelling never keeps money for a cycle the plan
+        does not reach") and reports it, which is what makes "exactly one"
+        true. ⚠ That claim also fixed a quieter bug:
         `paid_at` used to be rewritten on every later sync, so a second attempt
         settling days afterwards moved the timestamp on an already-paid invoice.
       - **★★ A COMPED PLAN IS AN ENTITLEMENT OVERLAY, NEVER A BILLING OPERATION**
@@ -23103,9 +25325,13 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         receipt was sent. `finalizeInvoice` then set `status: "open"`, leaving an
         OPEN invoice behind a CAPTURED payment — phantom debt that dunning chases
         and the downgrade clock runs against. ⚠ The ordering was doubly wrong:
-        `finalizeInvoice` sets `status: "open"` unconditionally (guarded only on a
-        null `finalized_at`), so even a successful paid claim would have been
-        clobbered back to open. MEASURED ON PRODUCTION: store `echos` paid its ₹15
+        `finalizeInvoice` then set `status: "open"` guarded only on a null
+        `finalized_at`, so even a successful paid claim would have been
+        clobbered back to open. ★ Since the refunds release the finalize claim
+        (`finalizeInvoiceClaimed`) also requires `status = 'draft'`, so a draft
+        closed by hand is never reopened or numbered, and a refused claim
+        returns `claimed: false` with the row as it is.
+        MEASURED ON PRODUCTION: store `echos` paid its ₹15
         cycle-1 invoice on 2026-08-16 16:50:11Z (attempt captured) and the
         invoice's `paid_at` was 2026-09-05 21:15:41Z — a lag of 20 days 4 hours.
         It settled only because the merchant clicked "Pay now" on a bill they did
@@ -23120,9 +25346,16 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         `syncInvoiceStatus` could not tell "another settle won" (benign) from "the
         invoice is in a status this claim cannot reach" (money taken, bill still
         open). There was no log and no failed request — the only trace was a null
-        `paid_at` beside a captured attempt. It now re-reads the row on a missed
-        paid claim and logs `billing.invoice_paid_claim_missed` unless the invoice
-        is already paid.
+        `paid_at` beside a captured attempt. It now re-reads `status` and
+        `finalized_at` on a missed paid claim, with three outcomes: already
+        paid logs nothing; an ISSUED `void` or `uncollectible` invoice logs
+        `billing.payment_on_closed_invoice` (INFO) and touches nothing, because
+        the refund pass returns that money; anything else, above all an
+        UNISSUED draft, logs `billing.invoice_paid_claim_missed` (ERROR, with
+        `issued`), because only a person can return money on an invoice that
+        was never issued. ★ The race that reaches the ERROR most often, a
+        reconcile capture on an enrolment draft before its confirm, now heals
+        itself: see "A capture seen again re-syncs its invoice" (finding F1).
       - **★ A CREDIT PURCHASE GETS NO SUBSCRIPTION RECEIPT.** A mail reading
         "your Pro plan is active" for a ₹59 credit pack is wrong; credits have
         their own confirmation (`ai.credits_purchased`).
@@ -24454,6 +26687,15 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       and the failure arrives after they commit. `undefined` means UNCHECKED,
       not unavailable, so a historical replay or a cached register catalogue
       does not make every gift offer silently vanish.
+      ★ AND THE WEBSITE STOPS OFFERING A GIFT STOREMINK BLOCKED (takedown,
+      convention 45). `loadLiveOffers(db, storeId, customerId, options?)` takes
+      `LiveOfferOptions.blockedGiftsUnavailable` (default true): the website
+      (`resolveOffersForCart` for `channel: "storefront"`,
+      `loadOffersForStorefront`) reads the gift products' flags in ONE more query
+      by the stock read's ids and treats a blocked gift as unavailable; the POS
+      (`channel: "pos"`, `loadOffersForRegister`'s default) reads no flag and
+      judges the gift on stock alone, because an item block leaves the POS
+      selling (D18). Both fail open on a read error.
       ★★ THE TILL SHOWS A "HAND OVER" ROW. The gift is worth ₹0, so nothing in
       the totals moves and `posTotals` agrees perfectly — which is exactly why
       the row is essential: without it the register reserves a tumbler and
@@ -24608,7 +26850,7 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `reset_token`. It DOES keep `kind` (`admin` vs `pos`) — a dashboard login
       and a till PIN are not the same access, and collapsing them makes
       revoking the wrong one look identical to revoking the right one.
-    - **★ ZERO IS RENDERED, NEVER HIDDEN.** The overview's six attention queues
+    - **★ ZERO IS RENDERED, NEVER HIDDEN.** The overview's ten attention queues
       stay on screen at zero, greyed out; only a non-zero one takes colour and
       becomes a link. A row that vanishes when clear teaches nobody what is
       being watched — §22's badge rule, where a hardcoded "12" on Orders taught
@@ -24661,13 +26903,34 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       DELETE.** Every direct `stores(id)` foreign key is `ON DELETE CASCADE`
       (pinned by migration `20260823_0014_store_deletion_cascade`; this includes
       reconciliation rows, store-policy acceptances and announcement-recipient
-      snapshots that formerly survived with `store_id = NULL`) except two:
+      snapshots that formerly survived with `store_id = NULL`) except six:
       since 0243 StoreMink's own `billing_invoices` and
       `billing_payment_attempts` are ON DELETE SET NULL, so issued invoices are
-      kept for GST (§34), and `deleteStore` first deletes the store's draft
-      invoices in the cascade's own transaction, detaches its open
-      reconciliation items, and files any paid AI credit purchase whose
-      receipt never issued (§34). Before the
+      kept for GST (§34), and since 0269 the takedown records
+      (`grievance_complaints`, `content_blocks`, `content_block_archives`,
+      `store_legal_holds`) are too, so a complaint, a block, its archive and a
+      hold outlive the store (convention 45). ★ BEFORE ANY OF IT (after the
+      superadmin and fallback-store checks, before the media scan, the block
+      count, GST's `issueCapturedDrafts`, the transaction and both storage
+      prefix purges), `deleteStore` asks `storeDeleteRefusal`
+      (`lib/moderation/holds.ts`, fails closed): a store on hold answers "This
+      store is on hold for an investigation, so it can't be deleted. Release the
+      hold first.", one with an archive still being copied "StoreMink is still
+      keeping a copy of something blocked on this store. Try again in a few
+      minutes.", recording `store_delete_refused`; the database refuses the same
+      two cases from any path (`stores_keep_for_investigation`), and a refusal
+      from the DELETE (a hold set in between) maps to the same sentence and is
+      recorded with `{ reason, at: "delete" }`. So the private-prefix purge never
+      runs for a held store, which is what keeps its Mink chat pictures. A store
+      that ever had a block (live or lifted, counted before the repair through
+      `listBlocks`; a failed count refuses the delete) gets `store_deleted`
+      `{ blocks, slug }` after its files are gone; a failed record is the
+      cleanup warning "the takedown record of this deletion". Then
+      `deleteStore` first locks the store's
+      subscription and closes or files the invoices for cycles it will never
+      enter, then deletes the store's draft invoices in the cascade's own
+      transaction, detaches its open reconciliation items, and files any paid
+      AI credit purchase whose receipt never issued (§34). Before the
       cascade, `deleteStore` collects uploaded-media references, the custom
       domain, and every linked Identity Platform UID from `admins.id`,
       `users.id`, and `pos_staff.user_id`. Afterward it purges both referenced
@@ -24694,6 +26957,117 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `(order_id) where order_id is not null`; the cascade for 200 orders
       went from 2,999 ms to 0.75 ms). The checks deferred to COMMIT are not
       timed by `statement_timeout` at all.
+    - **★★ COMPLAINTS, BLOCKS AND HOLDS** (the takedown release, convention 45;
+      operator guide `docs/operator-console.md`, order of work
+      `docs/takedown-runbook.md`). OPERATIONS gains **Complaints** after People
+      (`/dashboard/complaints`, icon key `complaints` = Lucide `Flag`, aliases
+      Takedowns, Blocks, Grievance, Legal orders, every operator): the list
+      (tabs by `?view=`, one store by `?store=`, 50 a page), Log a complaint
+      (`new/`), a complaint (`[ref]/`, by `SM-000123`), Block an item
+      (`block/`) and a block (`blocks/[blockId]/`), sharing
+      `complaints-console.tsx`; each page calls `requireOperator()`, reads
+      `lib/moderation/console-read.ts` under `withService` and writes only
+      through `app/actions/takedown-actions.ts`, and a failed read is said,
+      never shown as zeroes. Members log, acknowledge, act, resolve and block;
+      only a superadmin keeps a block from the store, tells it later, suspends a
+      whole store, lifts, opens or keeps an archived copy, and holds a store
+      (design 3.10; every action re-checks). Opening an archived copy records
+      the reason FIRST and hands back a receipt good for 10 minutes, which the
+      two `/api/platform/takedowns/[blockId]/` routes require for every view and
+      download, each recording its own event. The Overview's four new queues
+      (Complaints due, Store replies, Files to finish, Holds to review) come
+      first, from `moderationQueueSql()` inside the one summary statement, so
+      the Overview needs 0269 (before it, `ok: false` and the banner). The takedown
+      marks ("Blocked" and the like) use the scoped
+      `.dashboard-shell .dash-badge-storemink`, not `dash-badge-red`.
+      ★ THE STORE PAGE: a **Complaints and holds** card (`moderation-card.tsx`:
+      blocked items, open complaints, "Suspended by a block since", the hold
+      state, each linking into Complaints filtered to the store; **Suspend on a
+      complaint** = the block form with `?store=<id>&kind=store`, and **Put on
+      hold**, both superadmin), a hold banner with **Release hold** (note
+      required), **Activate** disabled with its reason while a whole-store block
+      suspends the store, and **Delete store** disabled with its reason for a
+      hold, an unfinished archive or a failed check (fails closed).
+      ★ `setStoreStatus(storeId, status, reason?)` (superadmin): suspending needs
+      `{ kind: "other", note }` (up to 2,000 characters; a `"complaint"` kind is
+      refused with "Use Suspend on a complaint instead, so that StoreMink keeps a
+      copy of the store and tells its owners."); reactivating a store a live
+      whole-store block suspended is refused before the update ("This store is
+      suspended by a block on a complaint. Lift the block in Complaints."; the
+      0269 trigger refuses it too, mapped to the same sentence); both record
+      `store_suspended` / `store_reactivated` in the update's own transaction,
+      so a status change now needs 0269; a missing store answers "Store not
+      found.". One `suspend-store-dialog.tsx` asks why on the store page and the
+      stores list (whose `window.alert` calls are now toasts).
+    - **★★ REFUNDS, CREDIT NOTES AND A STORE'S BILLING TOOLS** (the refunds
+      release; §34 "Cancelling never keeps money for a cycle the plan does not
+      reach"; actions in `app/actions/platform-billing.ts`). Members read
+      everything; only a superadmin sends, cancels, retries, records, issues,
+      cancels a plan or ends one, and all but Send and the switch ask for a
+      note.
+      - **Refunds** (`/dashboard/billing/refunds`, `billing/refunds/page.tsx`
+        and `refunds-table.tsx`), reached from Billing & tax. Tabs Needs a
+        person, In progress, Done and Credit notes (`?tab=`, validated against
+        `REFUND_TABS`, default `needs_person`). "Needs a person" is the
+        banner's own set (`countRefundsNeedingAction`): a failed refund with no
+        later refund of that payment, owed or pending for more than a day, or
+        held while automatic sending is off. Row actions: Send, Cancel and
+        Record on an owed refund; Try again and Record on a failed one (Record
+        a refund made outside StoreMink takes the method, a UTR or a Razorpay
+        refund id, the amount and a note, for a refund paid another way). A
+        deleted store's row says "Deleted store". The Credit notes tab lists
+        every store's notes, newest first, with Print links.
+        `RecordRefundDialog` is shared with the reconciliation queue. ⚠ An
+        empty tab and a failed read look the same (the list reads return
+        `[]`); the count says when it could not be read.
+      - **The console credit-note page** (`/dashboard/billing/credit-notes/[id]`)
+        calls `requireOperator()` FIRST, because
+        `getCreditNoteDocumentForOperator` has no store predicate (it serves a
+        deleted store's note too), then renders the merchant's
+        `CreditNoteSheet` with a "Refunds" back link and Print.
+      - **Billing & tax** (`billing/page.tsx`): a banner "**{n} refunds**
+        need a look." with Review when the count is above zero; at zero the
+        quiet link "Refunds and credit notes"; on a failed count the link
+        plus a sentence saying it could not be counted, never a zero. Then
+        the GST cards (the GST release, §34 "StoreMink charges GST on its own
+        fees"): `tax-status.tsx` (what is charged now and any scheduled
+        change), `tax-identity-form.tsx` (GSTIN, state, legal name, SAC code,
+        LLPIN, registered office, address and PIN; `saveTaxIdentitySettings`),
+        `tax-change-form.tsx` (schedule or cancel a change, with the impact
+        preview and the qualifying notices; `scheduleGstChange`,
+        `cancelGstChange`, `getGstChangePreview`, `getGstChangeNotices`) and
+        `invoice-list-card.tsx` (the monthly invoice list CSV,
+        `exportInvoiceList`, superadmin only). A failed settings read shows
+        `TAX_CONSOLE.readFailed` and disables every save. `AutoRefundsSwitch`
+        (`refund-settings.tsx`), "Send refunds automatically", is its own
+        Refunds card below the GST cards: it saves on change through
+        `setAutoRefunds` (a money switch must not ride along with a GSTIN
+        edit), switches back with the action's sentence on a refusal, and is
+        disabled for a member. It ships OFF (D2). The old
+        `tax-settings-form.tsx` and its single save are gone.
+      - **The store page** (`stores/[storeId]/page.tsx`,
+        `billing-actions.tsx`): `listStoreBilling(store.id)` feeds a Plans &
+        Billing card with the cancelling line (who asked, by kind, or the
+        operator's email), a "Next invoice" fact (`store-detail.ts` now carries
+        `cancelRequestedAt`, `cancelRequestedBy` and `nextInvoice`, never the
+        merchant's id) and a compact refunds list for everyone, and four
+        superadmin tools: Cancel at the end of the cycle, Undo cancellation,
+        End the plan now and Issue a refund (`IssueRefundDialog`, shared with
+        the queue). End the plan now calls `listStoreBilling` again with the
+        chosen `refundFrom` and `reason` as they move, so the unused-part
+        figure is the server's own; reason pickers start empty. The
+        cancellation code's six merchant-voice refusals are reworded for
+        operators (`frameMerchantError`); every other dialog shows the
+        action's sentence word for word. `?refund=<invoiceId>` opens Issue a
+        refund for that invoice (the queue's link). Set plan refuses to lower a
+        live paid subscription (D12) and points to these tools.
+      - **The reconciliation queue** names its three refund items and opens
+        Issue a refund or Record in place (`canManage` from
+        `reconciliation/page.tsx`, false by default); since RC-F1b and the
+        GST release it also names the purchase items, the repair pass's
+        `captured_draft:<invoice>` and the issue's `kept_draft:<invoice>`
+        (titles and hints from `CAPTURED_DRAFT_REPAIR` and
+        `KEPT_DRAFT_REPAIR` in `lib/billing/tax-copy.ts`); see §34's queue.
     - **★★ `LogsRail` TAKES ITS REGISTRY AS A PROP, AND THAT IS LOAD-BEARING.**
       Both consoles share `DashboardSidebar`, and their logs are NOT the same
       set: an operator has no import/export jobs and no per-store activity feed
@@ -24844,9 +27218,9 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `&#x2013;`, `DASH_LOOKALIKE_CLEANUP_ID`): no Help migration after 0254 may
       publish one (quoting one as `$old$` to remove it stays legal), and
       `help:audit` reports them in served rows. 0254 rewrote the GA4 guide's two
-      en dashes; the plan guide's five `&mdash;` (0079, 0080) wait for the Help
-      edit that rewrites its billing paragraphs, so until then `help:audit`
-      reports that one guide.
+      en dashes, and 0265 (`20261028_0265_cancel_and_refund_help`) the plan
+      guide's five dash entities (from 0079 and 0080), so `help:audit` reports no
+      long dash in any served guide.
     - **⚠ Not changed, deliberately:** code comments and internal docs (not
       product text), CLI output in `scripts/`, and other content already
       stored in the database (pages, product descriptions, theme content).
@@ -24998,6 +27372,452 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       `CRON_SECRET` sent as `Authorization: Bearer` (Cloud Scheduler sends it),
       `GET` + `POST` on every cron route (Cloud Scheduler uses both), and
       route `maxDuration` exports (a Next.js API our code reads as a budget).
+
+43. **A picture attached to a chat is private data kept with the chat (storage
+    build, 2026-10-28).** It lives in the PRIVATE bucket under
+    `stores/{store}/mink-attachments/{DB_NAME}/`; only the admin who attached it
+    reads it, through `/api/mink/attachments/[attachmentId]`; it is deleted
+    with its chat, or 2 days after it was attached when it was never sent. A
+    public copy exists only once a proposal places it on the store (a Media
+    Library row with source `upload`), and it is never a public link in a
+    message. See "Mink chat attachments are private".
+    - **The public bucket is open by link and never listable** (`allUsers`
+      holds `roles/storage.legacyObjectReader`: get without list), but a URL
+      is not access control: anything not meant for the public goes to the
+      private bucket, and nothing falls back to the public one when the
+      private one is not configured.
+    - **A new tool that places a picture names its arguments in
+      `MinkTool.attachmentArgs`**, so the address is copied to the Library
+      before the tool's write. Inside those arguments only a picture field
+      takes it (a key ending `_url` or `Url`, a list under `_urls` or
+      `Urls`, a builder `{path, value}` change by its path's last segment),
+      and the whole field must be the address; an address anywhere else,
+      more than 20 in one call, or an address the strict scanner of
+      `lib/mink/attachment-ref.ts` cannot vouch for refuses the call. Name
+      picture arguments only (`propose_blog_draft` names `cover_image_url`,
+      not its Markdown body, which renders no image).
+    - **A future upload of private data** (a return photo, a document) follows
+      the same rule: the private bucket and an authenticated route, never
+      `/api/upload` (design 3.4).
+    - `lib/storage/public-bucket-docs.test.ts` holds the provisioning doc and
+      the `lib/storage/gcs.ts` header to the grant.
+
+44. **Every sentence about the GST StoreMink charges on its own fees, and
+    every amount that depends on it, comes from `lib/billing/tax-copy.ts` (the
+    GST release, 2026-10-30).** That covers the merchant screens (Plans &
+    Billing, the checkout dialog, the Locations card, signup), the public
+    pricing, homepage and POS pages, the operator's Billing & tax cards, the
+    reconciliation queue's GST items and the billing emails: "plus GST" and
+    "including GST", a price with its GST, a renewal or pay-now figure, the
+    refusals (`PAYMENT_REFUSAL`, `TAX_SETTINGS_REFUSAL`), the amount guard's
+    "The amount to pay is now ..." and the notice text. The module is pure and
+    client-safe, so a server page and a client card print the same words, and
+    `tax-copy.test.ts` pins every string in every GST state and fails when an
+    export is untested. Amounts reach it as the quote or invoice figures
+    (`CopyAmount`), never recomputed on a screen: what is shown is what is
+    charged (§34). ⚠ Scope, deliberately: plain rupee formatting of a figure
+    that is not a GST sentence (a list price beside its tax-copy suffix, a
+    refund, a credit note, a merchant's own invoice or a POS amount) is still
+    done where it is printed (for example `plans-client.tsx`,
+    `pricing-cards.tsx`, `app/platform/page.tsx`, the marketing pricing page,
+    `location-billing-card.tsx`'s older words, `invoice-sheet.tsx`,
+    `invoices/page.tsx`, `credit-note-sheet.tsx`, `refunds-notice.tsx`,
+    `lib/billing/refunds.ts`), and a merchant's own GST features on the
+    marketing pages ("GST invoices and tax classes") are not about
+    StoreMink's charge.
+
+45. **Takedowns: one item or a whole store, a 180-day archive, holds and the
+    complaints log (Release 2, migrations 0269 and 0270, 2026-10-30).** An
+    operator logs every complaint, court or government order and data request
+    in the console's Complaints (§39), then blocks one product, page, blog post,
+    collection, review, blog comment or file, or suspends a whole store "on a
+    complaint". Before anything is hidden StoreMink keeps a write-once copy;
+    the item disappears from the storefront on the next request; the store is
+    told (unless an order says not yet); only a superadmin lifts it. Owner
+    decisions D1 to D22 (27 Oct, all approved) shape it. Operator screens:
+    `docs/operator-console.md`; the order of work and every by-hand step:
+    `docs/takedown-runbook.md`; the merchant's guide: Help 0270 ("If StoreMink
+    blocks something on your store"). There is no feature switch: nothing
+    changes for anyone until an operator blocks something. Not item-blockable:
+    the header, footer, announcement bar, menus, branding and the store's
+    name, which are store-wide (D16): the operator blocks the page that shows
+    them (its archive keeps them as they were), removes the words by hand in
+    the store's dashboard and says so in the message; a picture there can be
+    blocked as a file, and when the store itself is the problem a superadmin
+    uses Suspend on a complaint (D20).
+    - **★★ A FLAG, NOT THE MERCHANT'S STATUS.** A block sets
+      `moderation_blocked_at` on `products`, `store_pages`, `blogs`,
+      `categories`, `product_reviews` or `blog_comments`. Only
+      `content_blocks_apply()` (the trigger `content_blocks_apply_flag` on
+      `content_blocks`) sets or clears it; `moderation_flag_guard` keeps the
+      stored value on every other write by the `pg_trigger_depth() < 2` rule:
+      the apply function is itself a trigger, so its UPDATE arrives at depth 2,
+      while a statement from the dashboard, Mink AI, an import, a theme switch
+      or `psql` is depth 1, and an INSERT never arrives blocked. The guard
+      triggers fire only when the column changes, so a stock write never pays
+      for them. Changing `status` instead was rejected: unpublishing would
+      change the POS, bulk publish, imports, Mink AI and theme switches, and
+      need a remembered "previous status"; with the flag the merchant's own
+      state comes back exactly as it was. A whole store uses `suspended`, kept
+      by `stores_keep_moderation_suspension` until the block is lifted (P16).
+      R5's guard lives in `lib/moderation/mask-coverage.test.ts`: no SQL or
+      TypeScript outside `lib/moderation/` and the migration may write the
+      column. ⚠ A block or lift moves the row's `updated_at` (the catalogue and
+      blog `updated_at` triggers; plan A11, asserted in `schema.local.test.ts`):
+      a scheduled Mink blog publication of a blocked post then fails as
+      "conflicted" (intended), and a merchant's open builder tab can show "This
+      page changed somewhere else" once. `content_updated_at` does not move,
+      and the sitemap's lastmod reads `content_updated_at` / `published_at`, so
+      a block moves no lastmod.
+    - **★ THE READ POLICIES DO THE HIDING.** 0269 narrows the six public SELECT
+      policies to `moderation_blocked_at IS NULL`, so every `withAnon` read
+      needs nothing: a blocked product, page, post or collection is the
+      ordinary 404 (D8), a blocked homepage leaves the empty store shell, and a
+      blocked review no longer counts in the stars. Every `withService` read
+      that serves shoppers filters the flag itself and is proven against real
+      rows by `lib/moderation/shopper-reads.local.test.ts`: `readCartProducts`
+      and `readGiftProduct` (§12; D17, blocked only, no status filter),
+      `resolveGiftAvailability` (the website only, §38; the POS keeps selling,
+      D18), `estimateProductDelivery` ("This product is no longer
+      available."), `getLivePolicies` (`lib/legal/store-consent.ts`: a blocked
+      policy page is treated as unpublished, never named or agreed to) and
+      `readMinkShopperOffers` (WhatsApp Mink). ⚠ `getCartTaxRates` and
+      `getPickupOptions` still read blocked rows: harmless, because reconcile
+      and `placeOrder` refuse them. The POS (`placePosSale`) is untouched by an
+      item block (D18); a whole-store suspension closes the store, its
+      dashboard and its POS on every address.
+    - **★★ THE PAGE SWAP: `maskBlockedMedia`, OUTSIDE EVERY SCOPE.** Every
+      storefront reader that returns an image address or stored HTML passes
+      what it read through `maskBlockedMedia` (`lib/moderation/blocked-objects.ts`)
+      AFTER its database scope has closed (a reload of the set opens its own
+      `withService` scope; convention 2) and inside its React `cache`, never
+      in `unstable_cache` (convention 5), so a block or lift shows on the next
+      request. It swaps a blocked address for `/moderation/image-unavailable.webp`
+      (D7). It names no host (amendment A2): it walks a value only while the set
+      is non-empty, inspects only strings that could hold an address (`//`,
+      `https://`, `/themes/`), extracts each address (whole strings, `src` and
+      `srcset`, JSON-LD) and looks up its `mediaKeyFromUrl` key, so an encoded
+      spelling of a blocked object is swapped too. With nothing blocked it
+      returns the value unwalked; the answer shares unchanged parts with its
+      input, so treat both as read-only. For a batch, read `blockedMedia()` once
+      and call `maskBlockedMediaWith(row, set)`. It runs in every export of
+      `lib/storefront/queries.ts` but `getBlogTaxonomyNames`,
+      `getStoreTaxClasses` and `getPublishedPageSlugs` (exempt, each with its
+      reason), `getStoreChrome` (the builder's draft chrome readers are
+      unmasked on purpose), `fetchSectionDatasets` and `resolveSectionData`,
+      `getStoreBrand` and `getStoreBrandById` and `getStoreBillingSettings` (a
+      blocked logo becomes `null`, never the placeholder; §3), the search
+      route's answer, the product page's product, related products, reviews and
+      template, the blog post, its related posts and comments,
+      `getMySubmissions`, `getMyOrders` and `getMyOrder`, `getCartStock`'s
+      image (§12) and Mink AI's reads. The Product and Article JSON-LD and both
+      share images leave the placeholder out (a blocked main photo gives no
+      share image rather than the next photo), and the sitemap's `imageEntry`
+      leaves out the placeholder and every blocked address (§7).
+      `lib/moderation/mask-coverage.test.ts` holds four guards: every exported
+      reader of the listed modules is masked or exempt with a reason; every
+      storefront file that renders a raw `<img>` is listed with where its
+      address comes from (`RAW_IMG_FILES`, shrink only); no dashboard file reads
+      the masked brand (the builder reads `getStoreBrandForEditing`, so a brand
+      save never erases a blocked logo); and R5. ⚠ A new storefront module
+      outside the listed files needs its author to add it (risk R17).
+      `server-only` is now the first line of `lib/storefront/queries.ts`,
+      `lib/sections/resolve-data.ts` and `lib/store/brand.ts`.
+    - **★ THE BLOCKED-OBJECT SET** is one small query held per instance on
+      `globalThis`: reloaded when older than 30 seconds, a request waits at
+      most 2 seconds for the reload and then uses the last good set, a failure
+      retries after 5 seconds, and it logs at most once a minute. A database
+      outage keeps the last good set (pages fail open, a known block stays
+      blocked); a cold instance whose first load fails uses an empty set until
+      it can read one. `forgetBlockedObjects()` runs after a block or lift
+      COMMITS and clears only this instance; the others follow within 30
+      seconds. Keys come from `mediaKeyFromUrl`: this environment's bucket
+      (the object name decoded once), `external` (any other `https` host, the
+      address without its query; `http` and protocol-relative spellings read as
+      `https`, another bucket is external) and `bundled` (`/themes/...`); `..`
+      after decoding is refused. There is no `legacy` source (amendment A1): a
+      picture still on StoreMink's old storage is an outside address.
+    - **★★ FILES: ARCHIVE FIRST, SWAP AT ONCE, INTERCEPT THE OPTIMIZER, REPLACE
+      LATER.** A bucket file is copied create-only (`ifGenerationMatch: 0`) at
+      the generation that was blocked into the PRIVATE bucket under
+      `takedown-archive/<DB_NAME>/<block id>/<n>-<name>` (`archiveDatabase()`,
+      the Refine stages' rule; outside `stores/<id>/`, so store deletion never
+      reaches it), its MD5 (base64, Google's `md5Hash`) and size confirmed; a
+      placeholder is never archived as an original. Pages swap it at once;
+      `proxy.ts` answers the optimizer and `/themes/` doors within 30 seconds
+      (§3); `/api/og-image` answers a placeholder card. The follow-up then
+      overwrites the public object no sooner than 35 seconds after the block,
+      and only once the archive holds it: an image with the placeholder
+      (`no-store`, metadata `storemink-takedown=<block id>`), any other file by
+      deleting it, pinned to the archived generation, then the archived
+      generation is deleted by number (`gcsDeleteGeneration`). Waiting until
+      every instance intercepts means no optimizer ever caches the placeholder,
+      so a lift restores every size. A file changed after the copy is not
+      replaced ("Block it again to keep a copy of the new version."). ⚠ SDK
+      7.22's `copy()` pins the source by opening it at that generation, so a
+      source replaced since answers 404, not 412 (plan A3): after a metadata
+      read of the same generation that is "changed before it could be copied"
+      (or "missing"), and a 412 on the destination is compared, never deleted.
+      A lift restores the object BEFORE `forgetBlockedObjects()` (else an
+      optimizer could cache the placeholder for 4 hours), only while the public
+      object still carries this block's placeholder metadata, written
+      `public, max-age=60`, and never from another environment's archive
+      folder. Outside
+      sources: Unsplash is downloaded and archived and intercepted by exact
+      address; any other host is recorded, not fetched ("Not StoreMink's
+      file"); a `/themes/` file is archived from the app's own copy, shows the
+      placeholder on every store using that theme, and is removed by a code
+      change then **Mark as removed**. A `theme-releases/` image is shared by
+      every store that installed that release, so blocking it replaces it for
+      all (the console warns). ⚠ Not recalled (risk R1): optimizer copies made
+      before the block (up to 4 hours per instance), share cards (24 hours) and
+      an edge copy of a raw storage address until its lifetime ends (60 seconds
+      for objects written or relabelled under D4; production step P2 relabels
+      the old ones, `scripts/storage-cache-control.mjs`).
+    - **★★ `writeStoreObject` IS THE UPLOAD GUARD.** `lib/storage/store-objects.ts`
+      is the one way to write under `stores/` or `theme-releases/`. It calls
+      `assertUploadAllowed({ storeId, md5Base64, path, via })`
+      (`lib/moderation/upload-guard.ts`), which refuses bytes identical to a live
+      file block of the same store (or of a theme release image), records one
+      `reupload_refused`, and throws `BlockedUploadError` (`told`, `kindWord`);
+      each caller maps it to its own error shape with `copy.ts`'s
+      `uploadRefusal` (told: "... See Settings, Notices from StoreMink.";
+      untold, D21, or a shopper uploading on a store host: the nameless one).
+      The writers: `uploadMediaAsset`, `/api/upload` (409), Change background
+      (`upload_blocked`, 409, nothing charged), Theme Studio publication
+      (`storeId: null`, an operator sentence naming the block), the Mink
+      writers by `via` (`mink_media_image`: a chat image `MinkRequestError`
+      `image_blocked`; `mink_media_preparation`: a `MinkToolInputError`;
+      `mink_personalization`: a card note; `mink_refine`: publish false;
+      `mink_refine_sweep`: the stage deleted; `mink_revamp`: a failed slot) and
+      the chat attachments (§2 "Mink chat attachments are private").
+      `lib/storage/upload-guard-coverage.test.ts` scans `app`, `lib`,
+      `components`, `hooks` and `scripts` and allows `gcsUploadObject` only in
+      `lib/storage/gcs.ts`, `lib/storage/store-objects.ts`,
+      `app/api/upload/route.ts` (`writePlatformUpload`, `platform/uploads/`
+      only), `lib/moderation/storage.ts` (the placeholder and the restore must
+      bypass the guard) and `scripts/revamp-live-check.ts` (local only), and only
+      `gcs.ts` may load the SDK. Outside the rule: private-bucket writes (never
+      served publicly), `gcsCopyObject` into the public bucket (the restore
+      adapter only) and ⚠ videos, which the browser PUTs straight to a signed
+      URL, so no server sees their bytes: the identical-bytes refusal covers
+      images and files written through StoreMink's tools, and every merchant
+      text promises it for images only (plan A8, A16). D4: every new public
+      object defaults to `public, max-age=60` (`DEFAULT_PUBLIC_CACHE_CONTROL`;
+      redesign photos and theme release images pass it explicitly, they were
+      `immutable` for a year); a placeholder stays `no-store` and P2's script
+      never touches one.
+    - **★ BACKGROUND WORK IS CLAIMED.** `runModerationFollowUps()`
+      (`lib/moderation/follow-ups.ts`) runs last in the every-minute
+      `send-emails` route (`docs/cron-jobs.md`): complaint deadline alerts,
+      archive copies, file replacements, restores and unsent store notices,
+      each step in its own `try`. Every row is claimed
+      (`for update skip locked` plus a claim time; a claim lasts 2 minutes)
+      and every settle is
+      fenced on its claim, so two overlapping runs never do the same work and a
+      lapsed claim changes nothing; every storage write carries a generation
+      precondition. A lift is refused while its file's replacement is claimed
+      ("StoreMink is replacing this file right now. Try again in a minute."),
+      otherwise a pending replacement is cancelled, and the 0269 CHECK makes a
+      lift cancel or restore in the same statement (P17). Bounds: 20 rows a
+      step, 50 archive files a run, 40 seconds. A failure backs off 1, 2, 4 ...
+      60 minutes and becomes `failed` after 24 hours until **Retry now**. A
+      deadline alert may come twice after a crash, never not at all. A notice
+      email is retried for 24 hours after the block, the email alone once the
+      bell has rung. A whole store's private chat pictures are copied only
+      when the path is this database's chat attachment of that store
+      (`isThisDatabaseAttachmentPath`); any other path, or a file too large or
+      refused, is recorded, not copied. A source already gone or already a
+      placeholder before its copy fails the replacement with its own sentence;
+      a restore never becomes `failed` (a final failure is `not_restored`
+      with its reason). No follow-up runs inside `block.ts`; on dev and staging
+      (no scheduler) each console action that changed something runs one
+      inline afterwards, never inside a scope.
+    - **★ THE ARCHIVE** (`content_block_archives`, one per block, design 3.6):
+      the snapshot (the block, the store with its chrome, menus, logo and
+      settings, the item's row with every column, its related rows, the author's
+      account record for a review, comment or shopper's post, its newest 200
+      activity rows, its addresses, and for a file its metadata and usages) is
+      built from the item row locked `FOR UPDATE` in the same transaction that
+      inserts the block (its time fixed when the block starts), so an author's
+      later edit cannot change it; its SHA-256 is computed over the canonical
+      JSON of the snapshot as read back from jsonb (`snapshotSha256`; jsonb
+      reorders keys) and the block page re-checks it. A whole store's copy is
+      `store-content.jsonl` (18 tables, Mink AI chats included, one REPEATABLE
+      READ read), built in memory with a 256 MiB cap: a bigger store, or one
+      whose storage is unavailable, is refused rather than copied in part; its
+      files follow in the follow-up. The row has no grant to `app_user`, its
+      trigger (`content_block_archives_write_once`) refuses any change to the
+      snapshot, the hash or a copied file list and any DELETE, `keep_until` is
+      at least 180 days and only ever moves later (**Keep longer** to a date
+      within 20 years, or a legal hold, with who asked), and only the
+      retention sweep purges it (convention 32). Superadmins only open it, the
+      reason recorded first and a 10-minute receipt carried by both archive
+      routes (§39); members see that it exists, its size and dates.
+    - **★ HOLDS** (`store_legal_holds`, one active per store, superadmin):
+      while a store is held, or while any of its archives is still being
+      copied, the database refuses to delete it from any path
+      (`stores_keep_for_investigation`: the console, preview cleanup, scripts,
+      `psql`) and `deleteStore` refuses first (§39). The merchant is never told
+      (D14). A hold covers deletion only in this release (D15), plus the Mink
+      chat attachment purges, as the storage build's decision D10 asked (§2).
+      Theme Studio's sweeps never meet a block, because `resolveTarget` refuses
+      a preview store (plan A12); theme demo stores can be blocked but are never
+      used for tests.
+    - **★ THE COMPLAINTS LOG** (`grievance_complaints`): deadlines by kind
+      (24 hours to acknowledge every kind; to act and to resolve: a court or
+      government order 3 and 3 hours, an information order 72 and 72, an
+      intimate image or impersonation 2 hours and 36, Acceptable Use section 2
+      content 36 and 36, other removal requests and other complaints 7 days,
+      a data request 10 working days in India time capped at 15 days), stored
+      and CHECKed (`grievance_complaints_due_check`). A kind change only ever
+      tightens; the received time can be corrected only before acknowledgement.
+      Acknowledged by the console's email (with the complaint as recorded) or
+      by hand; actioned by its first block or with a reason; resolved with an
+      outcome; reopened with a note. An urgent kind (a court, government or
+      information order, an intimate image or impersonation) tells every
+      operator at once (`platform.complaint_urgent`) and logs WARNING
+      `moderation: complaint urgent` with no store id; every deadline alerts
+      30 minutes (a 2 or 3 hour one) or 2 hours before, and once passed
+      (`platform.complaint_due`, `moderation: complaint due`). Operator alerts
+      and complainant emails NEVER carry the store's id (§24). The public
+      complaint form is next release (D11): "Our complaint form" is never
+      offered as a channel.
+    - **★★ TOLD AND UNTOLD BLOCKS** (D5, D21). Every block is told by default:
+      the email to every owner, the bell, the Settings badge, the Home banner
+      and a label on the item. Only a superadmin may keep one from the store,
+      only for a court or government order reason with its legal basis
+      (`content_blocks_tell_check`), and a block goes from untold to told
+      (**Tell the store now**), never back. An UNTOLD block shows the store
+      nothing anywhere: no email, bell, badge, banner or label, "We could not
+      find this notice." in every merchant read and write (an erased block
+      reads the same), no Mink AI mark, no removed-post notice for its admins,
+      the nameless upload refusal; it is still hidden from shoppers. Only the
+      store's own staff stamp `merchant_seen_at` (an operator's view does not).
+      Shoppers whose review, comment or post is removed are not emailed (D9).
+    - **★ WHAT A TOLD STORE SEES.** **Notices from StoreMink**
+      (`/dashboard/settings/notices`, a Settings child: read with Settings view,
+      reply with `getManagerIdentity("settings")`, through
+      `lib/moderation/merchant.ts`; an operator replying there shows under their
+      own email), the Settings badge and the Home banner (§24 for which counts
+      what), and "Blocked by StoreMink" ("Removed by StoreMink" for a review or
+      comment) from `blockedItemIds(storeId, kind)` on the products list and
+      editor (`Product.blockedByStoreMink` via `getProductEditData`), the
+      collections list and editor, the Media Library (keyed by
+      `mediaKeyFromUrl` with `GCS_BUCKET_NAME`), the Website Builder (code name
+      `blockedByStoreMink`: the top-bar pill, a banner, the rail dot; never the
+      autosave's own `blocked` status), the blog list and editor, and the
+      customer page's reviews, each with **See why** only for Settings view.
+      The marks use `.dashboard-shell .dash-badge-storemink` (`#991b1b` words on
+      the red tint, at least 5.8:1, pinned by
+      `app/dashboard/takedown-badge-css.test.ts`; the shared `dash-badge-red`
+      is unchanged), as do the console's takedown badges. For a product, blog
+      post or collection, Publish and Unpublish (row menu, bulk bar, the blog
+      list's Approve, the product editor's Status and the collection editor's
+      Active/Hidden select) are disabled with "Blocked by StoreMink" written
+      under them; a page's **Publish** stays enabled, because the builder
+      publishes a separate copy and the fixed version must be what returns on a
+      lift. ⚠ No server action refuses (design 3.1): publishing a blocked item
+      anyway (a stale tab, a direct call) changes its status and nothing a
+      shopper sees, pings no search engine for ANY blocked item, told or untold
+      (filtered at the call sites: products, and posts through
+      `discoverableSlugs`, both reading `moderation_blocked_at`;
+      `notifyStoreContentPublished` itself is unchanged), and approving a
+      blocked customer post sends no "your blog is live" notice. Blocking does
+      ping IndexNow for a product, page, post or collection (a file block pings
+      nothing); a lift pings again. The merchant may edit and delete the item.
+      A suspended store's owners get the whole message by email, reply by
+      email (an operator adds it), and the notice joins their list once the
+      store is reactivated.
+    - **★ WHAT A SHOPPER SEES.** An author still sees and can delete their own
+      removed review, comment or post (the read policies keep
+      `user_id = auth.uid()`); cannot edit a post under a told block ("StoreMink has
+      removed this post from the store, so it can't be edited."; under an untold
+      block the edit behaves as before and the flag guard keeps the flag); and
+      cannot post another review of that product or comment on that post while
+      the block stands: `review-actions.ts` and `blog-social.ts` ask
+      `liveAuthorBlock` first, and `moderation_author_guard`'s `P0001` maps to
+      the same sentence. The blog page reads `content_blocks` once with service
+      scope for a blocked post (a storefront page reading a moderation table):
+      its author sees "StoreMink has removed this post from the store.", the
+      store's admins only when the store was told (a failed read counts as not
+      told), anyone else the 404, and no JSON-LD. `/blogs/write`'s submissions
+      list shows "Removed by StoreMink" (`getMySubmissions`'s
+      `blocked_by_storemink`; the timestamp never leaves the server; scoped to
+      the host store).
+    - **★ MINK AI: THE TOOL RESULT CARRIES IT, NOT THE PROMPT** (plan A18;
+      `docs/mink-ai-system-prompt.md` 5a). `withStoreMinkBlocks`
+      (`lib/mink/storefront-context-read.ts`) adds `blockedByStoreMink: true`
+      and `storeMinkNotice` (`minkBlockedSentence`) to a told-blocked item in
+      `list_blogs`, `search_products`, `get_current_product`,
+      `search_storefront_categories`, `get_catalog_summary`, `list_low_stock`,
+      `list_storefront_pages` and the page context; the section context is
+      masked. A blocked file is masked everywhere, left out of
+      `list_storefront_media` / `readMinkStorefrontMedia`, never an owned image
+      (`selectOwnedStorefrontImageUrls`' `notBlocked` clause on the caller's
+      connection, so every picture-placing proposal refuses it with its own "no
+      longer available" words) and never an image-generation reference
+      (`media-reference-images.ts`, `selectBlockedImageUrls` on the lookup's
+      connection). `publish_blog` refuses a draft whose title or address is a
+      told-blocked post's (`mink_blog_blocked`). The redesign snapshot and the
+      personalisation context leave every blocked product, collection and page
+      out, told or not (a blocked page stays as `skipped: "policy"`, so it is
+      never recreated), and a coupon campaign's brand snapshot carries a null
+      logo when the logo is blocked. Not marked, on purpose:
+      `list_current_offers` and the drafting checkpoint reads. ⚠ A redesign may
+      still create an item named like a blocked one, and under an untold block
+      Mink cannot refuse without revealing it (owner question).
+    - **★ WHO CAN DO WHAT** (design 3.10): every operator sees everything but
+      archived contents, logs and handles complaints, blocks items (a store's
+      own request included), replies, retries, marks a theme file removed;
+      only a superadmin keeps a block from the store or tells it later,
+      suspends a whole store, lifts any block (D19, D22), opens or keeps an
+      archived copy, and holds a store. Every action re-checks
+      (`getPlatformViewer`); a non-operator gets "Only a StoreMink operator can
+      block content." for every one.
+    - **Alerts** (D12, production step P4): `docs/monitoring.md` 25 to 28 on
+      `moderation: complaint ` (prefix), `moderation: follow-up failed`
+      (prefix: production `logError` appends the stack), the absence of
+      `moderation: follow-ups ran` for 10 minutes, and the `send-emails`
+      schedule's failed attempts; production step P8 makes the support mailbox
+      wake someone for an emailed complaint.
+    - **⚠ Not built, or left open:** the public complaint form (D11); pausing
+      the other retention sweeps for a held store (D15); the policy sentences of
+      design 13 (the next Terms, Privacy and Acceptable Use versions); the
+      re-upload refusal for videos; production steps P1 (is Cloud CDN on), P2,
+      P3 (bucket lifecycle and versioning), P4 to P8. Owner questions: the
+      merchant's DASHBOARD invoice still prints a blocked logo
+      (`loadInvoiceByStore`); suspended owners still receive notices
+      (`storeOwnerEmails`); a blocked Refine publish says the photo "will
+      appear in a few minutes"; a store over 256 MiB cannot be suspended from
+      the console; Mink AI's WhatsApp drafts written before a block may still
+      name the product (the merchant reviews every draft, R6).
+    - **Tests.** Pure: `kinds`, `deadlines`, `media-key`, `media-refs`, `copy`
+      (every sentence, with no long dash, square bracket, credit figure or
+      word for the POS other than "POS"), `archive-paths`. Server: `record`, `blocked-objects`, `mask`,
+      `upload-guard`, `placeholder`, `storage`, `complaints`, `holds`,
+      `author-blocks`, `notify`, `snapshot`, `store-content`, `block`,
+      `archive`, `console-read`, `follow-ups`, `retention`, `merchant`,
+      `migration` (the 0269 shape), `mask-coverage`, and beside them
+      `lib/storage/store-objects.test.ts`,
+      `lib/storage/upload-guard-coverage.test.ts`,
+      `lib/checkout/product-reads.test.ts`, `lib/offers/resolve.test.ts` and
+      `lib/offers/cart.test.ts` (which prices through the real
+      `loadLiveOffers`, the POS case included), `lib/shipping/product-delivery.test.ts`,
+      `lib/legal/store-consent.test.ts`, `lib/email/takedown-emails.test.ts`,
+      `app/actions/takedown-actions.test.ts`, the two archive route tests, the
+      console page tests, `platform.test.ts`, the notice page tests,
+      `store-notice-actions.test.ts`, `app/dashboard/takedown-badge-css.test.ts`,
+      `proxy.test.ts`, the og-image route test and `app/sitemap.test.ts`.
+      Opt-in local suites (`MODERATION_LOCAL_TEST=1`, `storemink_local` on
+      5544, one rolled-back transaction each, a savepoint per case, the code as
+      `app_service`, `fetch` and every storage client throwing):
+      `lib/moderation/schema.local.test.ts` (design 4.4's probes P1 to P18, V1,
+      V2, plan A10 and A11; it takes ACCESS EXCLUSIVE locks in savepoints, so
+      run it alone), `shopper-reads`, `complaints`, `block`, `archive`
+      (`DB_NAME` stubbed to `storemink_local`), `follow-ups` (block erasure,
+      the claims against the real schema) and
+      `lib/storefront/queries.local.test.ts`.
 
 ## 6. Commands
 
@@ -25229,9 +28049,19 @@ see `docs/mink-sarvam-realtime-audit-2026-10-27.md` for existing latency evidenc
 - **Cloud Monitoring (production alerting, 2026-10-23, owner-approved)**: 15
   alert policies (plus five Theme Studio log alerts defined in the script,
   plan P6, applied after the Theme Studio release with the owner's OK, step
-  A1), three uptime checks (storemink.com, a merchant store and its
+  A1, and two refund log alerts, "Billing: a refund to a merchant failed"
+  and "Billing: refunds waiting more than a day", `docs/monitoring.md` 21
+  and 22, at most one email an hour each, applied as the owner's production
+  step after the refunds release, and two GST log alerts, "Billing: renewals
+  cannot read the GST settings" and "Billing: a captured payment's invoice is
+  still a draft", `docs/monitoring.md` 23 and 24, applied by the owner after
+  the GST release, and the four takedown alerts, `docs/monitoring.md` 25 to 28,
+  watching the every-minute takedown follow-ups and the `send-emails`
+  schedule, applied by the owner after the takedown release: 28 policies
+  defined), three uptime checks (storemink.com, a merchant store and its
   dashboard login, every 60 s from USA, Europe and Asia Pacific), the
-  log-based counter `mink_chat_run_failures` and one email channel ("StoreMink
+  log-based counter `mink_chat_run_failures` (and, defined for the takedown
+  release, `moderation_followups_ran`) and one email channel ("StoreMink
   owner email"; the address is never in the repo), all in storemink-prod,
   labelled `managed-by=storemink-alerts` and created by
   `scripts/prod-monitoring.py`. The app reads none of it and no environment
@@ -25256,7 +28086,9 @@ see `docs/mink-sarvam-realtime-audit-2026-10-27.md` for existing latency evidenc
   notice. Registration + secret creation runbook: `docs/gcp-ci-cd.md`.
 - **Google Cloud Storage** (media, GCP migration Phase 3 — `lib/storage/gcs.ts`):
   when **`GCS_BUCKET`** is set, new image/video uploads go to that GCS bucket
-  (public, uniform bucket-level access) and public URLs are
+  (public by link: `allUsers` holds `roles/storage.legacyObjectReader`, get
+  without list, once owner step P1 has run; uniform bucket-level access) and
+  public URLs are
   `https://storage.googleapis.com/<bucket>/<path>`. Uploads are **GCS-only**
   (require `GCS_BUCKET`). Auth via ADC (Cloud Run default SA, or local
   `gcloud auth application-default login`); optional base64 SA JSON
@@ -25280,7 +28112,10 @@ see `docs/mink-sarvam-realtime-audit-2026-10-27.md` for existing latency evidenc
   one bucket, and local development uses that bucket with `storemink_local`);
   each environment's stage sweep lists only its own database's prefix.
   Without it Refine is not offered and the route refuses
-  (`refine_not_configured`). Local development sets it to
+  (`refine_not_configured`). It also holds Mink AI chat attachments under
+  `stores/{store}/mink-attachments/{DB_NAME}/` (one folder per database, for
+  the same reason); without it the composer offers no attachments and
+  `/api/mink/attachments/[attachmentId]` answers 503. Local development sets it to
   `storemink-chat-media` to test Refine, which is safe for the same reason;
   two laptops whose databases are both `storemink_local` must not run the
   stage sweep against that bucket at the same time.
@@ -25602,7 +28437,13 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   that moves only when a visitor-visible field changes. `updated_at` is bumped
   by `_recompute_stock_aggregate` on every sale and would claim a content change
   per purchase. Pages use `published_at`, not `updated_at`, because draft
-  autosave advances `updated_at` while public HTML remains unchanged.
+  autosave advances `updated_at` while public HTML remains unchanged. (So a
+  StoreMink block or lift, which moves `updated_at`, does not move a lastmod.)
+  ★ `imageEntry` leaves out the takedown placeholder's path and any address in
+  the blocked set (`blockedMedia()`, read once per store sitemap), so the
+  sitemap never lists a blocked image or the placeholder; a blocked product,
+  page, post or collection is already absent (the read policies hide it;
+  convention 45).
 - **★★ A NEW STORE IS CLOSED UNTIL ITS OWNER PRESSES GO LIVE (2026-10-07).**
   `stores.settings.launched` is ONE flag behind two things: search
   indexability (as before) and, now, the **storefront password page**.

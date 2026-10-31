@@ -26,6 +26,34 @@ vi.mock("@/lib/payments/refund-reconcile", () => ({
   refundDueForOrder: vi.fn(async () => 0),
 }));
 
+// The takedown page swap, real (the pure half) over a set this file chooses:
+// outside addresses only, so no bucket configuration is involved. Mocked so
+// the real loader never opens a scope of its own against the db mock below.
+const blocked = vi.hoisted(() => ({ addresses: [] as string[] }));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  return {
+    ...actual,
+    maskBlockedMedia: vi.fn(async (value: unknown) =>
+      actual.maskBlockedMediaWith(
+        value,
+        actual.buildBlockedMediaSet(
+          blocked.addresses.map((objectPath, i) => ({
+            id: `block-${i}`,
+            objectPath,
+            fileSource: "external",
+            storeId: "store-1",
+            objectMd5: null,
+            tellStore: true,
+          })),
+          { bucket: null, loadedAt: Date.now() },
+        ),
+      ),
+    ),
+  };
+});
+
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
 vi.mock("@/lib/db/client", () => ({
   withUser: vi.fn((_id: any, fn: any) =>
@@ -44,7 +72,13 @@ import { refundDueForOrder } from "@/lib/payments/refund-reconcile";
 import { withService, withUser } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
 import { sqlParamValues } from "./_test-helpers";
-import { cancelMyOrder, getMyOrder } from "./customer-order-actions";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
+import {
+  cancelMyOrder,
+  getMyOrder,
+  getMyOrders,
+} from "./customer-order-actions";
 
 const USER = { id: "cust-1", email: "ada@example.test" };
 const HOUR = 3_600_000;
@@ -82,6 +116,7 @@ function seedOrder(over: Record<string, unknown> = {}, agoHours = 1) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  blocked.addresses = [];
   (getServerUser as any).mockResolvedValue(USER);
   (getStoreSettings as any).mockResolvedValue(settings());
   (rateLimit as any).mockResolvedValue({ allowed: true });
@@ -461,5 +496,195 @@ describe("getMyOrder", () => {
       expect.any(Error),
       { orderId: "o1" },
     );
+  });
+});
+
+// ── Takedown (stage T8b): order line photos go through the page swap ─────────
+
+const BLOCKED_PHOTO = "https://cdn.example.com/blocked-shake.jpg";
+const SHOWN_PHOTO = "https://cdn.example.com/cookies.jpg";
+
+/**
+ * Counts every scope still open (shopper or service) at each page swap. The
+ * swap may open its own service scope to reload the blocked set, so it must
+ * run with nothing open: anything but 0 is a scope inside another's callback.
+ */
+function trackMaskScopes() {
+  let open = 0;
+  const maskOpenedInside: number[] = [];
+  (withUser as any).mockImplementation(async (_id: any, fn: any) => {
+    open++;
+    try {
+      return await fn(dbHolder.current.db);
+    } finally {
+      open--;
+    }
+  });
+  (withService as any).mockImplementation(async (fn: any) => {
+    open++;
+    try {
+      return await fn(dbHolder.current.db);
+    } finally {
+      open--;
+    }
+  });
+  const real = (maskBlockedMedia as any).getMockImplementation();
+  (maskBlockedMedia as any).mockImplementation(async (value: unknown) => {
+    maskOpenedInside.push(open);
+    return real(value);
+  });
+  return maskOpenedInside;
+}
+
+describe("getMyOrder: order line photos are masked (takedown)", () => {
+  const ORDER = {
+    id: "o1",
+    order_ref: "ORD10011027",
+    created_at: "2026-10-20T10:00:00.000Z",
+    status: "pending",
+    payment_status: "paid",
+    payment_method: "razorpay",
+    total: 840,
+    currency: "INR",
+    subtotal: 800,
+    tax: 40,
+    shipping: 0,
+    discount: 0,
+    applied_coupon_code: null,
+    shipping_address: { name: "Ada" },
+    notes: null,
+    fulfilment_type: "delivery",
+    pickup_status: null,
+    sales_channel: "online",
+    pickup_ready_at: null,
+    pickup_expires_at: null,
+    pickup_code: null,
+    pickup_location_name: null,
+    pickup_location_address: null,
+    sale_location_name: null,
+    sale_location_address: null,
+  };
+  const LINES = [
+    {
+      id: "i1",
+      name: "Almond shake",
+      variant_name: null,
+      quantity: 2,
+      price: 300,
+      total: 600,
+      image: BLOCKED_PHOTO,
+    },
+    {
+      id: "i2",
+      name: "Cookies",
+      variant_name: null,
+      quantity: 1,
+      price: 200,
+      total: 200,
+      image: SHOWN_PHOTO,
+    },
+  ];
+
+  function seed() {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        orders: [[ORDER]],
+        order_items: [LINES],
+        shipments: [[]],
+      },
+    });
+  }
+
+  it("★ swaps a blocked line photo for the placeholder and keeps the rest", async () => {
+    blocked.addresses = [BLOCKED_PHOTO];
+    seed();
+
+    const res = await getMyOrder("o1");
+
+    expect(res.error).toBeUndefined();
+    expect(res.order?.items.map((i) => i.image)).toEqual([
+      PLACEHOLDER_URL_PATH,
+      SHOWN_PHOTO,
+    ]);
+    // Names, counts and money are untouched by the swap.
+    expect(res.order).toMatchObject({
+      item_count: 3,
+      first_item: "Almond shake",
+    });
+    expect(JSON.stringify(res)).not.toContain(BLOCKED_PHOTO);
+  });
+
+  it("★ runs the swap once both scopes have closed", async () => {
+    blocked.addresses = [BLOCKED_PHOTO];
+    seed();
+    const maskOpenedInside = trackMaskScopes();
+
+    await getMyOrder("o1");
+
+    expect(maskOpenedInside).toEqual([0]);
+  });
+
+  it("leaves every photo alone when nothing is blocked", async () => {
+    seed();
+    const res = await getMyOrder("o1");
+    expect(res.order?.items.map((i) => i.image)).toEqual([
+      BLOCKED_PHOTO,
+      SHOWN_PHOTO,
+    ]);
+  });
+});
+
+describe("getMyOrders: history thumbnails are masked (takedown)", () => {
+  const ROW = {
+    id: "o1",
+    order_ref: "ORD10011027",
+    created_at: "2026-10-20T10:00:00.000Z",
+    status: "pending",
+    payment_status: "paid",
+    payment_method: "razorpay",
+    total: 840,
+    currency: "INR",
+    fulfilment_type: "delivery",
+    pickup_status: null,
+    sales_channel: "online",
+  };
+  const SUMMARIES = [
+    { orderId: "o1", name: "Almond shake", quantity: 2, image: BLOCKED_PHOTO },
+    { orderId: "o1", name: "Cookies", quantity: 1, image: SHOWN_PHOTO },
+  ];
+
+  function seed() {
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        orders: [[ROW]],
+        order_items: [SUMMARIES],
+      },
+    });
+  }
+
+  it("★ swaps a blocked thumbnail for the placeholder", async () => {
+    blocked.addresses = [BLOCKED_PHOTO];
+    seed();
+
+    const res = await getMyOrders();
+
+    expect(res.error).toBeUndefined();
+    expect(res.orders).toHaveLength(1);
+    expect(res.orders[0]).toMatchObject({
+      item_count: 3,
+      first_item: "Almond shake",
+      thumbnails: [PLACEHOLDER_URL_PATH, SHOWN_PHOTO],
+    });
+    expect(JSON.stringify(res)).not.toContain(BLOCKED_PHOTO);
+  });
+
+  it("★ runs the swap once the shopper's scope has closed", async () => {
+    blocked.addresses = [BLOCKED_PHOTO];
+    seed();
+    const maskOpenedInside = trackMaskScopes();
+
+    await getMyOrders();
+
+    expect(maskOpenedInside).toEqual([0]);
   });
 });

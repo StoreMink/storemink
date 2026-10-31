@@ -59,6 +59,7 @@ import {
   MapPin,
   Truck,
   SwatchBook,
+  Flag,
   type LucideIcon,
   Mail,
 } from "lucide-react";
@@ -113,6 +114,8 @@ export const navIcons = {
   pos: Store,
   location: MapPin,
   shipping: Truck,
+  // The operator console's Complaints (takedown design 6.1).
+  complaints: Flag,
 } satisfies Record<string, LucideIcon>;
 
 export type NavIconKey = keyof typeof navIcons;

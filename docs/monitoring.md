@@ -6,7 +6,13 @@ checks and no notification channels in production or staging (robustness
 audit, 23 Oct). Five Theme Studio alerts (16 to 20) were defined on 25 Oct
 2026 (Theme Studio plan P6) and are applied after the Theme Studio release
 with the owner's OK (step A1). Alert 10 (Google AI refusals) was made quieter
-on 25 Oct 2026, also with the owner's OK.
+on 25 Oct 2026, also with the owner's OK. Two refund alerts (21 and 22) are
+defined with the refunds release (decision D10); applying them is the owner's
+production step after that release. Two GST alerts (23 and 24) are defined with
+the GST release; applying them is likewise the owner's production step after
+that release. Four takedown alerts (25 to 28) and a second log-based counter are
+defined with the content takedown release (decision D12, production step P4);
+the owner applies them after that release is deployed.
 
 Everything below lives in the **storemink-prod** project, carries the label
 `managed-by=storemink-alerts`, and emails one channel named **"StoreMink owner
@@ -14,12 +20,12 @@ email"**. The address is never written into the repo. Every alert email
 carries a "What it means" and a "First thing to check" paragraph and points
 back here.
 
-| What                       | How many              | Notes                                                                        |
-| -------------------------- | --------------------- | ---------------------------------------------------------------------------- |
-| Email notification channel | 1                     | "StoreMink owner email"                                                      |
-| Uptime checks              | 3                     | below                                                                        |
-| Log-based counter          | 1                     | `mink_chat_run_failures`                                                     |
-| Alert policies             | 15 applied, 5 defined | below, in the order the script creates them; 16 to 20 are applied at step A1 |
+| What                       | How many               | Notes                                                                                                                                                                                                                                      |
+| -------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Email notification channel | 1                      | "StoreMink owner email"                                                                                                                                                                                                                    |
+| Uptime checks              | 3                      | below                                                                                                                                                                                                                                      |
+| Log-based counters         | 2                      | `mink_chat_run_failures`; `moderation_followups_ran` (applied with alert 27)                                                                                                                                                               |
+| Alert policies             | 15 applied, 13 defined | below, in the order the script creates them; 16 to 20 are applied at step A1, 21 and 22 by the owner after the refunds release, 23 and 24 by the owner after the GST release, 25 to 28 by the owner after the takedown release is deployed |
 
 The repo copy of what created them is
 [`scripts/prod-monitoring.py`](../scripts/prod-monitoring.py); read it for the
@@ -32,7 +38,14 @@ exact filter of any policy. How to run it is at the end of this page.
   both times. Alert 10 is the exception: it emails only when it opens, and
   closes itself after an hour with no data.
 - A log-based alert (marked **log** below) fires on a matching log entry,
-  emails at most once an hour, and closes itself after 30 minutes.
+  emails at most once an hour, and closes itself after 30 minutes. Alert 25
+  is the exception: it emails at most once every 5 minutes for each complaint
+  and deadline stage, so two complaints falling due in the same hour both
+  arrive.
+- Alert 27 (marked **absence**) watches for silence: it opens when its
+  counter has had no point for 10 minutes, emails when it opens and when it
+  closes, and closes on its own only after 7 days. It can open only once the
+  counter has had a point since the policy was created.
 - Severity is one of WARNING, ERROR or CRITICAL. CRITICAL means shoppers,
   merchants or tills are probably affected right now.
 - The alerts watch the production web service (`storemink-web-prod`) and the
@@ -40,8 +53,9 @@ exact filter of any policy. How to run it is at the end of this page.
   `storemink_staging` database). The Google AI and Cloud Run quota alerts
   cover the whole project. The Theme Studio alerts (16 to 20) also match the
   two private Theme Studio workers and the capture job in production, and
-  the Theme Studio schedules' own attempt log. The dev service, the dev
-  capture job and the storemink-staging project are not watched.
+  the Theme Studio schedules' own attempt log. Alert 28 reads the
+  `storemink-send-emails` schedule's own attempt log. The dev service, the
+  dev capture job and the storemink-staging project are not watched.
 
 ## Uptime checks
 
@@ -354,7 +368,238 @@ definitions in the script until step A1.
   studio worker route failed" (runs) or "theme studio: QA worker failed"
   (qa).
 
-## Four things to know
+Alerts 21 and 22 watch the refunds StoreMink owes merchants
+([`billing-architecture.md`](billing-architecture.md), the refunds release).
+Each matches one log line the hourly billing run (`/api/cron/billing`) writes
+in `storemink-web-prod`, never dev, with `jsonPayload.message:` ("has"), not
+`=`, because `logError` puts the stack after the message in production. They
+are definitions in the script until the owner applies them after the refunds
+release.
+
+### 21. Billing: a refund to a merchant failed (ERROR, log)
+
+- **Fires on** a `billing.refund_failed` log line (`lib/billing/refunds.ts`):
+  Razorpay refused a refund StoreMink owes a merchant when it was sent,
+  reported it failed, or had no record of it 30 minutes after it was sent.
+  The line carries `refundId`, `invoiceId`, `attemptId`, `amountPaise` and
+  `automatic` (true when the refund run raised it rather than an operator).
+- **Means** the money is still with StoreMink. The refund run never tries an
+  automatic refund again; a person does.
+- **Check first** storemink.com console, Billing & tax, Refunds, the "Needs a
+  person" tab: the reason is on the row. Press Try again, or pay by bank
+  transfer and use "Record a refund made outside StoreMink", then write to
+  the merchant within 2 working days.
+- **Applying it is the owner's production step** after the refunds release:
+  `python3 -I scripts/prod-monitoring.py --apply --email <alert address>`
+  with the owner's gcloud login (it creates only what is missing). To roll
+  back, find the policy with
+  `gcloud alpha monitoring policies list --project=storemink-prod --filter='displayName="Billing: a refund to a merchant failed"' --format='value(name)'`,
+  delete it with
+  `gcloud alpha monitoring policies delete <that name> --project=storemink-prod`,
+  and remove it from the script so a later `--apply` does not recreate it.
+  The build does not run either command.
+
+### 22. Billing: refunds waiting more than a day (WARNING, log)
+
+- **Fires on** a `billing.refund_waiting` log line, which the billing run
+  writes once a day, in the run that falls in the 09:00 IST hour (the 04:20
+  UTC run, about 09:50 IST), and only when something waits. Its fields:
+  `owed`, `pending` and `failed` (the counts) and `oldestAt` (the oldest
+  one's date).
+- **Means** at least one refund has been owed, or sent without Razorpay
+  confirming it, for more than 24 hours, or failed with nothing done since.
+  Merchants were told it comes after their plan ends, usually within 5
+  working days. While "Send refunds automatically" is off, an owed automatic
+  refund counts here once it is a day old.
+- **Check first** storemink.com console, Billing & tax, Refunds: the "Needs a
+  person" and "In progress" tabs. If "Send refunds automatically" is off,
+  press Send on each owed refund or switch it on.
+- A billing run retried by Cloud Scheduler (after a 503) or started by hand
+  in the same hour writes the line again. The alert emails at most once an
+  hour, so that is one email, not one per line.
+- **Applying it is the owner's production step** after the refunds release,
+  with the same `--apply` command as alert 21; roll it back the same way,
+  with `displayName="Billing: refunds waiting more than a day"`.
+
+Alerts 23 and 24 watch the GST StoreMink charges on its own invoices
+([`billing-architecture.md`](billing-architecture.md), the GST release). Each
+matches one log line the hourly billing run writes in `storemink-web-prod`,
+never dev, with `jsonPayload.message:` ("has"). They are definitions in the
+script until the owner applies them after the GST release.
+
+### 23. Billing: renewals cannot read the GST settings (ERROR, log)
+
+- **Fires on** a `billing.renewal_tax_snapshot` log line
+  (`lib/billing/renewal-worker.ts`, always ERROR): the billing run could not
+  read the GST terms for a renewal invoice it was about to raise (`reason`
+  `read_failed`), or the settings charge GST without StoreMink's GSTIN, state
+  or SAC code (`reason` `settings_incomplete`). The line carries `storeId` and
+  `reason`.
+- **Means** that renewal invoice was not raised this hour. Nothing is written
+  and nothing is lost: the next hourly run tries again, and the merchant keeps
+  their plan, because a renewal invoice is raised four days before the cycle
+  turns. If it keeps failing past the cycle end the cycle does not turn: the
+  store stays on its plan, unbilled, until the settings can be read. There is
+  deliberately no tax-off fallback; an invoice is never issued on a guess.
+- **Check first** storemink.com console, Billing & tax, GST status. For
+  `read_failed`: Cloud SQL health and the logs at that minute (one store or
+  all of them). For `settings_incomplete`: fill in the missing GSTIN, state or
+  SAC code under StoreMink's tax identity; the next hourly run issues the
+  waiting invoices.
+- **Applying it is the owner's production step** after the GST release, with
+  the same `--apply` command as alert 21; roll it back the same way, with
+  `displayName="Billing: renewals cannot read the GST settings"`.
+
+### 24. Billing: a captured payment's invoice is still a draft (ERROR, log)
+
+- **Fires on** a `billing.captured_draft_unissued` log line at ERROR
+  (`lib/billing/reconcile.ts`, the repair pass `issueCapturedDrafts`): a
+  merchant paid, the payment is captured, and the invoice behind it is still
+  an unnumbered draft six hours after the capture (`UNISSUED_ALERT_AFTER_HOURS`),
+  or the capture time is unknown. The same line is a WARNING for the first six
+  hours, while each hourly pass retries it; the filter adds `severity>=ERROR`,
+  so the alert ignores those. The line carries `invoiceId`, `attemptId` (or
+  `purchaseId` for a Mink credit pack), `storeId` and `waitedHours`; its
+  message says why: no gateway credentials to finish it, its completion was
+  not ready, the invoice could not be issued, or the credit pack's invoice
+  could not be issued.
+- **Means** the merchant has paid and holds no numbered invoice for it. The
+  plan or credits may already be theirs (the completion applies them); the
+  document is what is missing.
+- **Check first** Logs Explorer in storemink-prod: search
+  `billing.captured_draft` for that `invoiceId` to see each pass's step. Then
+  storemink.com console, Billing & tax, Reconciliation, for a `captured_draft`
+  or `kept_draft` item about that payment. A missing GSTIN, state or SAC code
+  under Billing & tax stops every issue (`billing.issue_tax_settings_incomplete`
+  in the logs); fill it in and the next run issues the drafts.
+- **Not on `billing.invoice_paid_claim_missed`**, deliberately: that line also
+  fires for a closed-tab purchase the hourly completion then finishes on its
+  own, so it would email for payments that need nobody.
+- **Applying it is the owner's production step** after the GST release, with
+  the same `--apply` command as alert 21; roll it back the same way, with
+  `displayName="Billing: a captured payment's invoice is still a draft"`.
+
+Alerts 25 to 28 watch the content takedown work (decision D12, production
+step P4; the operator's side is in
+[`takedown-runbook.md`](takedown-runbook.md)). Alerts 25 to 27 match the
+every-minute takedown follow-up, which `/api/cron/send-emails` runs last
+(`lib/moderation/follow-ups.ts`), in `storemink-web-prod`, never dev; 28
+reads Cloud Scheduler's own attempt log for that route. They are definitions
+in the script until the owner applies them after the takedown release is
+deployed. Alerts 25, 26 and 27 are the ones meant to wake someone at night:
+after applying, add a "Google Cloud console (mobile)" channel and, as a
+backup, an SMS channel to those three in the console (Monitoring, Alerting,
+Edit notification channels), then use "Send test notification" on each
+channel. The script itself only ever adds the email channel.
+
+### 25. Takedown: a complaint needs action (ERROR, log)
+
+- **Fires on** a line at WARNING or above whose message starts
+  `moderation: complaint ` (`jsonPayload.message=~"^moderation: complaint "`).
+  Two lines do: `moderation: complaint due`, which the follow-up writes when a
+  logged complaint's deadline is 30 minutes away (a 2 or 3 hour deadline), 2
+  hours away (any other) or has passed, and `moderation: complaint urgent`,
+  which the console writes the moment an urgent complaint is logged (below).
+  Both carry `ref` (such as SM-000123), `kind`, `stage` (acknowledge, act or
+  resolve), `phase` (soon, overdue, or logged for the urgent line) and `dueAt`,
+  and never a store id; the first four are the notification's labels.
+- **Means** a complaint needs an operator before its legal deadline. Every
+  operator also got it in the bell and by email.
+- **Check first** storemink.com console, Complaints: open the complaint named
+  by `ref` and do what is due. The takedown runbook gives the order of work
+  for each kind, including the 2-hour path at night.
+- **Emails at most once every 5 minutes for each complaint and stage** (the
+  labels), not once an hour, so a second complaint falling due in the same
+  hour still arrives. Error lines about complaints never page here
+  (`moderation.complaints: log failed`, the console's
+  `moderation: log complaint action failed`): they are not deadlines, and the
+  person who pressed the button reads them on screen.
+- An urgent complaint (a court, government or information order, or an
+  intimate-image or impersonation complaint) pages the moment it is logged:
+  `logComplaintAction` (app/actions/takedown-actions.ts) writes
+  `moderation: complaint urgent` (WARNING; `stage` act, `phase` logged) after
+  the bell and email, and writes it even when they fail.
+- **Applying it is the owner's production step P4** after the takedown
+  release: `python3 -I scripts/prod-monitoring.py --apply --email <alert address>`
+  with the owner's gcloud login (it creates only what is missing), then the
+  mobile and SMS channels above. To roll back, find the policy with
+  `gcloud alpha monitoring policies list --project=storemink-prod --filter='displayName="Takedown: a complaint needs action"' --format='value(name)'`,
+  delete it with
+  `gcloud alpha monitoring policies delete <that name> --project=storemink-prod`,
+  and remove it from the script so a later `--apply` does not recreate it.
+  The build does not run either command.
+
+### 26. Takedown: follow-ups failing (ERROR, log)
+
+- **Fires on** an ERROR line whose message starts
+  `moderation: follow-up failed`
+  (`jsonPayload.message=~"^moderation: follow-up failed"`): one step of the
+  every-minute takedown follow-up threw (its `step` field: alerts, archives,
+  replacements, restores or notices), or one row of a step did (with
+  `blockId` or `complaintId`). It matches the start of the message, never the
+  whole of it: in production `logError` puts the stack after the message, so
+  an exact match would never fire.
+- **Means** the steps after it still ran, and claimed rows are tried again
+  once their claim lapses (2 minutes). When the step is `alerts`, complaint
+  deadline alerts (25) may not be going out.
+- **Check first** Logs Explorer in storemink-prod: search
+  "moderation: follow-up failed" for the step, its `error` and `cause`, then
+  "moderation: follow-ups ran" at the same minute for `failedSteps` and the
+  counts. A database or storage outage shows in alerts 2 to 4 at the same
+  time.
+- **Applying it** is the same owner's step as alert 25; roll it back the same
+  way, with `displayName="Takedown: follow-ups failing"`.
+
+### 27. Takedown: follow-ups stopped (ERROR, absence)
+
+- **Fires when** the log-based counter `moderation_followups_ran` has had no
+  point for 10 minutes (600 s; Google's floor is 2 minutes in whole minutes).
+  The counter counts the INFO line `moderation: follow-ups ran`, which every
+  run writes in a `finally`, even when a step failed, so silence means the
+  follow-up is not running at all. The condition adds the counter up across
+  every server and revision (`REDUCE_SUM`, no grouping), so a deploy never
+  leaves an old revision's series behind to open it.
+- **Means** complaint deadline alerts, file replacements, restores and
+  notices all wait, and so do order and notification emails: they ride on the
+  same route, `/api/cron/send-emails`, every minute.
+- **Check first** Cloud Scheduler, `storemink-send-emails`: is it enabled, and
+  what did its last attempts answer (alert 28)? Then Logs Explorer in
+  storemink-prod for `/api/cron/send-emails` at that time, and Cloud Run
+  storemink-web-prod's health.
+- It stays open while the silence lasts (closing on its own only after 7
+  days) and emails again when the counter comes back.
+- **Applying it** is for after the takedown release is deployed: an absence
+  condition can open only after its metric has had a point since the policy
+  was created, so applied earlier it watches nothing until then. The same
+  `--apply` creates the counter, then the policy. Check
+  within ten minutes: Metrics Explorer, `logging/user/moderation_followups_ran`
+  on storemink-web-prod, one point a minute. To roll back, delete the policy as
+  for alert 25 (`displayName="Takedown: follow-ups stopped"`), then the counter:
+  `gcloud logging metrics delete moderation_followups_ran --project=storemink-prod`.
+
+### 28. Cloud Scheduler attempt failed (send-emails) (WARNING, log)
+
+- **Fires on** Cloud Scheduler's own attempt log (there is no app line):
+  `resource.type="cloud_scheduler_job"`, the log
+  `cloudscheduler.googleapis.com/executions` at ERROR or above, for
+  `storemink-send-emails` (every minute,
+  `https://storemink.com/api/cron/send-emails`).
+- **Means** the route answered an error (it re-throws when an email queue
+  throws, after the takedown follow-ups have run; 401 when the shared secret
+  does not match) or did not answer within the attempt deadline. Queued
+  emails, SMS and WhatsApp messages wait for the next call that succeeds, a
+  minute later; nothing is lost.
+- **Check first** Cloud Scheduler, `storemink-send-emails`: its last attempts
+  and their status. Then Logs Explorer in storemink-prod at that minute for
+  the route's error. If the attempts keep failing for 10 minutes and the
+  follow-ups stop too, alert 27 opens.
+- A WARNING with no mobile channel: one failed minute is covered by the next
+  call, and alert 27 is the one that pages when it lasts. It reads the
+  schedule's own log, so it works from the moment it is applied.
+- **Applying it** is the same owner's step as alert 25; roll it back the same
+  way, with `displayName="Cloud Scheduler attempt failed (send-emails)"`.
+
+## Seven things to know
 
 1. **Alert 8 assumes a maximum of 4 web servers.** If `_MAX_INSTANCES` on the
    production trigger changes, change that alert's threshold (in the console
@@ -365,11 +610,26 @@ definitions in the script until step A1.
    alerts stay silent until it is deployed; silence before then proves
    nothing.
 3. **The channel only emails.** There is no SMS, phone call or chat message,
-   so an alert at night is read in the morning.
+   so an alert at night is read in the morning. The exception is what the
+   owner adds by hand at production step P4: the mobile app and SMS channels
+   on alerts 25, 26 and 27.
 4. **Alerts 16 to 20 are definitions until step A1.** The dry run prints
    them; an `--apply` run before then creates them too. Alert 18 watches
    `theme_studio.qa_waiting`, which arrives with the Theme Studio release,
    so it is silent until then.
+5. **Alerts 21 and 22 are definitions until the owner applies them after the
+   refunds release.** An `--apply` run before then creates them too; the
+   lines they watch arrive with that release, so they stay silent until it is
+   deployed.
+6. **Alerts 23 and 24 are definitions until the owner applies them after the
+   GST release**, the same way. Alert 24 pages only once the hourly repair
+   pass has failed for six hours; the warnings before that are in the logs,
+   not in email.
+7. **Alerts 25 to 28 are definitions until the owner applies them after the
+   takedown release is deployed.** An `--apply` run before then creates them
+   too; the lines 25 to 27 watch arrive with that release, so they stay
+   silent until it is deployed, and alert 27 can open only once its counter
+   has had a point.
 
 ## Not watched yet
 
@@ -445,6 +705,60 @@ theme for the distinctness check could not be read` (warnings): a full
   unchecked before a design review; and
   `theme_studio.operator_notice_failed` (ERROR) when the in-app notice and
   email to the operator who started a theme could not be recorded.
+- GST on StoreMink's own invoices (with the GST release):
+  `billing.cron.promote_tax_change` (ERROR) when the billing run could not make
+  a scheduled GST change current (the run answers 503 and Scheduler retries);
+  `billing.platform_tax.bust_failed` (a warning) when the public pricing pages
+  could not be told the GST changed (they catch up within 5 minutes);
+  `billing.public_tax.read_failed` (ERROR) when a pricing page could not read
+  the GST terms and showed its prices with no GST wording; `billing.issue_tax_settings_incomplete`
+  (ERROR) when an invoice could not be issued because GST is on without
+  StoreMink's GSTIN, state or SAC code; `billing.issue_kept_draft_tax` and
+  `billing.issue_kept_draft_filed` (warnings) when a paid draft was issued with
+  the GST it was priced with because the GST in force had changed, and
+  `billing.issue_kept_draft_file` (ERROR) when the reconciliation item for it
+  could not be filed; `billing.invoice_list_too_many` (a warning) when the
+  monthly invoice list was asked for more than 50,000 rows; `billing.rate_limited`
+  (a warning) for a merchant asking for quotes or saving billing details too
+  fast; and `<prefix>.tax_snapshot` (ERROR) and `<prefix>.payment_refused` for a
+  first payment, plan change, location purchase or credit pack (`billing.enrol`,
+  `billing.plan_change`, `billing.locations`, `billing.credit_pack`) that could
+  not read the GST terms or was refused for a missing state.
+- Content takedown (with the takedown release, decision D12):
+  - A complaint that arrives by email and nobody has logged raises nothing in
+    the app: the mailbox has to wake someone (production step P8) until the
+    public complaint form exists (decision D11).
+  - Failures the person who pressed the button reads on screen, so they get
+    no alert of their own (`logError` puts each in Error Reporting with its
+    stack): the console's `moderation: <action> action failed` (one per
+    action, such as `moderation: block action failed` or
+    `moderation: lift action failed`), `moderation: archive receipt not read`,
+    `moderation: archive file not read` and
+    `moderation: archive record not read`, and the library lines behind them
+    (`moderation: block failed`, `moderation: lift failed`,
+    `moderation.complaints: log failed` and the other
+    `moderation.complaints:` failure lines, `moderation.holds: set failed`);
+    and the store's notice page (`moderation: store reply action failed`,
+    `moderation: notice seen action failed`). A block that fails at night
+    still leaves its complaint unactioned, so alert 25 keeps firing for it.
+  - Rows inside the follow-up that are tried again by design:
+    `moderation: notice failed`, `moderation: notice settle failed`,
+    `moderation: restore settle failed`, and the warnings
+    `moderation: archive copy settled late`,
+    `moderation: replacement settled late`,
+    `moderation: archived generation not deleted`,
+    `moderation: mismatched archive copy kept` and
+    `moderation: archive copy not discarded`. A step that throws is alert 26.
+  - `moderation.blocked_objects: reload failed` (ERROR, at most once per
+    failure): a server kept its last good list of blocked files because it
+    could not read the new one; the database outage behind it is alerts 2
+    to 4.
+  - The nightly retention sweep's `moderation.archive: purge failed` and
+    `moderation.archive: purge left for the next night`: the archive copy is
+    kept and tried again the next night.
+  - Besides the two Theme Studio schedules (20), only `storemink-send-emails`
+    has its attempts watched (28); the other schedules' failed attempts
+    (prune-logs, billing and the rest) are not.
 
 ## Re-running the script
 
@@ -465,8 +779,12 @@ python3 -I scripts/prod-monitoring.py --update "<display name>" --apply
 ```
 
 - It writes only to storemink-prod: the channel, the three uptime checks, the
-  log counter and the 20 policies (16 to 20 only once the owner approves step
-  A1). It reads only configuration (channels,
+  two log counters and the 28 policies (16 to 20 only once the owner approves
+  step A1, 21 and 22 only once the owner applies them after the refunds
+  release, 23 and 24 only once the owner applies them after the GST release,
+  25 to 28 only once the owner applies them after the takedown release is
+  deployed).
+  It reads only configuration (channels,
   checks, policies, log metrics) and metric descriptors, never time series,
   log entries or secrets.
 - `--apply` is idempotent by display name: an existing channel (matched by

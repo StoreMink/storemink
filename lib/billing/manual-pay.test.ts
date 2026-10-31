@@ -12,7 +12,10 @@
 //   • paying during grace restores the plan AT ONCE, not at the next cron tick.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock, sqlParamValues } from "@/app/actions/_test-helpers";
+import { billingInvoices, billingSubscriptions } from "@/drizzle/schema";
+import { logError, logInfo } from "@/lib/observability/logger";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -45,6 +48,8 @@ vi.mock("./invoice-store", () => invStore);
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // RC-F1b: no captured attempt on the invoice unless a test says so.
+  capturedAttemptForInvoice: vi.fn(async (): Promise<unknown> => null),
 }));
 vi.mock("./collect", () => collect);
 
@@ -52,7 +57,13 @@ const worker = vi.hoisted(() => ({ advanceAfterPayment: vi.fn() }));
 vi.mock("./renewal-worker", () => worker);
 
 import {
+  ALREADY_CAPTURED_INVOICE_MESSAGE,
+  CANCELLING_INVOICE_MESSAGE,
+  CLOSED_INVOICE_MESSAGE,
+  CLOSED_ON_ARRIVAL_MESSAGE,
+  UNISSUED_INVOICE_MESSAGE,
   confirmInvoicePayment,
+  cycleRefusal,
   listPayableInvoices,
   startInvoicePayment,
 } from "./manual-pay";
@@ -77,6 +88,25 @@ function openInvoice(over: Record<string, unknown> = {}) {
 
 function seed(rows: any[][] = []) {
   dbHolder.current = makeDbMock({ selectQueue: rows });
+}
+
+/** The store's subscription row, as startInvoicePayment reads it. */
+function subscription(over: Record<string, unknown> = {}) {
+  return {
+    state: "active",
+    currentCycleSeq: 1,
+    cancelAtPeriodEnd: false,
+    ...over,
+  };
+}
+
+/** A store whose subscription read returns this row (or rejects). */
+function seedSubscription(row: Record<string, unknown> | Error | null) {
+  dbHolder.current = makeDbMock({
+    selectByTable: {
+      billing_subscriptions: [row instanceof Error ? row : row ? [row] : []],
+    },
+  });
 }
 
 beforeEach(() => {
@@ -149,7 +179,9 @@ describe("startInvoicePayment", () => {
     const res = await startInvoicePayment(args);
     expect(res.ok).toBe(false);
     if (res.ok) return;
-    expect(res.error).toMatch(/closed unpaid/i);
+    // ★ "Closed", not "closed unpaid": a void invoice may have been paid and
+    //   refunded (design 8.4).
+    expect(res.error).toBe(CLOSED_INVOICE_MESSAGE);
     expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
   });
 
@@ -237,6 +269,184 @@ describe("startInvoicePayment", () => {
   });
 });
 
+describe("cycleRefusal (design 6.5)", () => {
+  const live = (over: Record<string, unknown> = {}) =>
+    subscription({ currentCycleSeq: 4, ...over }) as any;
+  const issued = (cycleSeq: number | null) => ({ cycleSeq, issued: true });
+
+  it("refuses the next cycle's invoice while a cancellation stands", () => {
+    expect(cycleRefusal(live({ cancelAtPeriodEnd: true }), issued(5))).toBe(
+      "cancelling",
+    );
+    // ★ Issued or not: the next cycle is not entered either way.
+    expect(
+      cycleRefusal(live({ cancelAtPeriodEnd: true }), {
+        cycleSeq: 5,
+        issued: false,
+      }),
+    ).toBe("cancelling");
+  });
+
+  it("the same invoice is payable again once Keep my plan clears the flag", () => {
+    expect(cycleRefusal(live({ cancelAtPeriodEnd: false }), issued(5))).toBe(
+      null,
+    );
+  });
+
+  it("a cancellation leaves the current cycle's own invoice alone", () => {
+    expect(
+      cycleRefusal(live({ cancelAtPeriodEnd: true }), issued(4)),
+    ).toBeNull();
+  });
+
+  it.each(["cancelled", "downgraded"])(
+    "★ refuses an issued invoice above a %s plan's last cycle",
+    (state) => {
+      expect(cycleRefusal(live({ state }), issued(5))).toBe("unreachable");
+      // Its own last cycle and earlier are not "above".
+      expect(cycleRefusal(live({ state }), issued(4))).toBeNull();
+    },
+  );
+
+  it.each(["active", "past_due", "grace"])(
+    "★ refuses an issued invoice below a %s plan's current cycle",
+    (state) => {
+      expect(cycleRefusal(live({ state }), issued(3))).toBe("unreachable");
+      expect(cycleRefusal(live({ state }), issued(5))).toBeNull();
+    },
+  );
+
+  it("★ a DRAFT is judged only by the cancellation rule (enrolment owns its drafts)", () => {
+    expect(
+      cycleRefusal(live({ state: "cancelled" }), {
+        cycleSeq: 5,
+        issued: false,
+      }),
+    ).toBeNull();
+    expect(
+      cycleRefusal(live({ state: "active" }), { cycleSeq: 3, issued: false }),
+    ).toBeNull();
+  });
+
+  it("no subscription, or no cycle, refuses nothing", () => {
+    expect(cycleRefusal(null, issued(5))).toBeNull();
+    expect(cycleRefusal(live({ state: "cancelled" }), issued(null))).toBeNull();
+  });
+});
+
+describe("★★ startInvoicePayment refuses a cycle the store will never enter", () => {
+  const args = { storeId: STORE, invoiceId: INVOICE, now: NOW };
+
+  it("★★ the next invoice while a cancellation stands, with the 8.4 sentence", async () => {
+    seedSubscription(subscription({ cancelAtPeriodEnd: true }));
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: CANCELLING_INVOICE_MESSAGE });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ after Keep my plan (flag cleared) the same invoice opens a payment", async () => {
+    seedSubscription(subscription({ cancelAtPeriodEnd: false }));
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(true);
+    expect(rzp.rzpCreateOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ an issued invoice above an ended plan's cycle is closed to payment", async () => {
+    seedSubscription(subscription({ state: "cancelled", currentCycleSeq: 1 }));
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: CLOSED_INVOICE_MESSAGE });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ an issued invoice below a live plan's cycle is closed to payment", async () => {
+    seedSubscription(subscription({ state: "past_due", currentCycleSeq: 3 }));
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: CLOSED_INVOICE_MESSAGE });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★★ refuses BEFORE finalize, so a refused draft never takes a number", async () => {
+    invStore.getInvoice.mockResolvedValue(openInvoice({ finalizedAt: null }));
+    seedSubscription(subscription({ cancelAtPeriodEnd: true }));
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: CANCELLING_INVOICE_MESSAGE });
+    expect(invStore.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("★ reads this store's subscription, never another's", async () => {
+    seedSubscription(subscription());
+    await startInvoicePayment(args);
+    const where = new PgDialect().sqlToQuery(dbHolder.current.calls.where[0]);
+    expect(where.sql).toBe('"billing_subscriptions"."store_id" = $1');
+    expect(where.params).toEqual([STORE]);
+  });
+
+  it("★ an unreadable subscription refuses, and nothing is charged", async () => {
+    seedSubscription(new Error("db down"));
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toBe(
+      "We couldn't check your plan just now. Please try again.",
+    );
+    expect(logError).toHaveBeenCalledWith(
+      "billing.manual_pay_subscription_read",
+      expect.any(Error),
+      expect.objectContaining({ storeId: STORE }),
+    );
+    expect(invStore.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+});
+
+describe("★★ startInvoicePayment never charges an invoice with no issue date", () => {
+  const args = { storeId: STORE, invoiceId: INVOICE, now: NOW };
+
+  it("★★ refuses when finalize leaves the invoice unissued, and logs it", async () => {
+    // An `open` row with a null finalized_at: finalize claims only a draft, so
+    // it comes back unnumbered (RC2's finding). No code writes that state; a
+    // hand edit could, and taking money against it has no document behind it.
+    invStore.getInvoice.mockResolvedValue(openInvoice({ finalizedAt: null }));
+    invStore.finalizeInvoice.mockResolvedValue(
+      openInvoice({ finalizedAt: null, invoiceRef: null }),
+    );
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: UNISSUED_INVOICE_MESSAGE });
+    expect(invStore.finalizeInvoice).toHaveBeenCalledTimes(1);
+    expect(invStore.amountDueForInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(
+      "billing.manual_pay_unissued_invoice",
+      expect.any(Error),
+      expect.objectContaining({ invoiceId: INVOICE, status: "open" }),
+    );
+  });
+
+  it("★★ R1-06: a draft is an offer, not a debt: refused, never issued or charged", async () => {
+    // A crafted call on an enrolment draft used to finalize and charge it past
+    // the payment-time tax refusals, without activating the plan.
+    invStore.getInvoice.mockResolvedValue(
+      openInvoice({ status: "draft", finalizedAt: null }),
+    );
+    invStore.finalizeInvoice.mockResolvedValue(openInvoice());
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: "That invoice can't be paid." });
+    expect(invStore.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("a finalize read failure still says the invoice couldn't be issued", async () => {
+    invStore.getInvoice.mockResolvedValue(openInvoice({ finalizedAt: null }));
+    invStore.finalizeInvoice.mockResolvedValue(null);
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: "Couldn't issue that invoice." });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+});
+
 describe("listPayableInvoices", () => {
   it("★★ queries subscription debt only, never one-time credit receipts", async () => {
     seed([[]]);
@@ -244,6 +454,90 @@ describe("listPayableInvoices", () => {
     expect(sqlParamValues(dbHolder.current.calls.where[0])).toEqual(
       expect.arrayContaining([STORE, "subscription", "open", "processing"]),
     );
+  });
+
+  it("★ LEFT joins the store's subscription, so a store without one still lists", async () => {
+    seed([[]]);
+    await listPayableInvoices(STORE);
+    const [table, on] = dbHolder.current.calls.leftJoin[0];
+    expect(table).toBe(billingSubscriptions);
+    expect(new PgDialect().sqlToQuery(on).sql).toBe(
+      '"billing_subscriptions"."store_id" = "billing_invoices"."store_id"',
+    );
+  });
+
+  it("★★ drops every invoice for a cycle the store will not enter (the cycleRefusal rule, in SQL)", async () => {
+    seed([[]]);
+    await listPayableInvoices(STORE);
+    const sql = new PgDialect()
+      .sqlToQuery(dbHolder.current.calls.where[0])
+      .sql.replace(/\s+/g, " ");
+    // ★ NOT over a coalesce: with no subscription row every comparison is
+    //   NULL, and a bare NOT would hide all the store's invoices.
+    expect(sql).toContain("not coalesce(");
+    expect(sql).toContain(", false)");
+    // The next cycle while a cancellation stands (Keep my plan clears the flag,
+    // and the invoice is listed again).
+    expect(sql).toContain(
+      '("billing_subscriptions"."cancel_at_period_end" and "billing_invoices"."cycle_seq" = "billing_subscriptions"."current_cycle_seq" + 1)',
+    );
+    // Above an ended plan's last cycle.
+    expect(sql).toContain(
+      `("billing_subscriptions"."state" in ('cancelled', 'downgraded') and "billing_invoices"."cycle_seq" > "billing_subscriptions"."current_cycle_seq")`,
+    );
+    // Below a live plan's current cycle.
+    expect(sql).toContain(
+      `("billing_subscriptions"."state" in ('active', 'past_due', 'grace') and "billing_invoices"."cycle_seq" < "billing_subscriptions"."current_cycle_seq")`,
+    );
+  });
+
+  // GST design 5.9: the "invoice to pay" panel says what of the total is GST,
+  // so the list carries the invoice's own tax figures, never a recomputation.
+  it("★ selects the invoice's tax figures and hands them over as stored", async () => {
+    const ROW = {
+      id: INVOICE,
+      invoiceRef: "SM/2026-27/00007",
+      status: "open",
+      totalPaise: 1_180_00,
+      periodStart: "2026-09-01T00:00:00.000Z",
+      periodEnd: "2026-10-01T00:00:00.000Z",
+      dueAt: "2026-09-01T00:00:00.000Z",
+      createdAt: "2026-08-28T00:00:00.000Z",
+      taxPaise: 180_00,
+      taxRateBps: 1800,
+      taxInclusive: false,
+    };
+    seed([[ROW]]);
+    const rows = await listPayableInvoices(STORE);
+    const projection = dbHolder.current.calls.select[0];
+    expect(projection.taxPaise).toBe(billingInvoices.taxPaise);
+    expect(projection.taxRateBps).toBe(billingInvoices.taxRateBps);
+    expect(projection.taxInclusive).toBe(billingInvoices.taxInclusive);
+    expect(rows).toEqual([ROW]);
+  });
+
+  it("★ keeps a null rate (an invoice that recorded no GST) as null", async () => {
+    seed([
+      [
+        {
+          id: INVOICE,
+          invoiceRef: "SM/2026-27/00008",
+          status: "open",
+          totalPaise: 1_000_00,
+          periodStart: null,
+          periodEnd: null,
+          dueAt: null,
+          createdAt: "2026-08-28T00:00:00.000Z",
+          taxPaise: 0,
+          taxRateBps: null,
+          taxInclusive: false,
+        },
+      ],
+    ]);
+    const [row] = await listPayableInvoices(STORE);
+    expect(row.taxPaise).toBe(0);
+    expect(row.taxRateBps).toBeNull();
+    expect(row.taxInclusive).toBe(false);
   });
 });
 
@@ -353,5 +647,110 @@ describe("confirmInvoicePayment", () => {
   it("refuses with no platform credentials", async () => {
     provider.getPlatformRazorpayCreds.mockReturnValue(null);
     expect((await confirmInvoicePayment(args)).ok).toBe(false);
+  });
+
+  it.each(["void", "uncollectible"])(
+    "★★ a payment that lands on a %s invoice reports the refund, never 'Paid'",
+    async (status) => {
+      // The plan ended while the checkout was open (design 4.3 edge case 2):
+      // the invoice is closed, the capture cannot reopen it, and the refund
+      // pass returns the money.
+      seedAttempt();
+      invStore.getInvoice.mockResolvedValue(openInvoice({ status }));
+      const res = await confirmInvoicePayment(args);
+      expect(res).toEqual({ ok: false, error: CLOSED_ON_ARRIVAL_MESSAGE });
+      // The money is recorded before the re-read; nothing advances a plan
+      // that has ended.
+      expect(collect.settleAttempt).toHaveBeenCalledWith(
+        "att-1",
+        "captured",
+        expect.anything(),
+      );
+      expect(collect.settleAttempt.mock.invocationCallOrder[0]).toBeLessThan(
+        invStore.getInvoice.mock.invocationCallOrder[0],
+      );
+      expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+      expect(logInfo).toHaveBeenCalledWith(
+        "billing.manual_pay_on_closed_invoice",
+        expect.objectContaining({ invoiceId: INVOICE, invoiceStatus: status }),
+      );
+    },
+  );
+
+  it("★ an unreadable re-read changes nothing: the advance still decides", async () => {
+    seedAttempt();
+    invStore.getInvoice.mockResolvedValue(null);
+    const res = await confirmInvoicePayment(args);
+    expect(res.ok).toBe(true);
+    expect(worker.advanceAfterPayment).toHaveBeenCalledWith(STORE, NOW);
+  });
+});
+
+describe("★★ startInvoicePayment refuses an invoice that already holds a captured payment (RC-F1b)", () => {
+  const args = { storeId: STORE, invoiceId: INVOICE, now: NOW };
+
+  it("★★ re-syncs an open invoice first, and says it is paid when it now is", async () => {
+    collect.capturedAttemptForInvoice.mockResolvedValue({
+      id: "att-old",
+      providerPaymentId: "pay_old",
+    });
+    invStore.getInvoice
+      .mockResolvedValueOnce(openInvoice())
+      .mockResolvedValueOnce(openInvoice({ status: "paid" }));
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: "That invoice is already paid." });
+    expect(collect.settleAttempt).toHaveBeenCalledWith(
+      "att-old",
+      "captured",
+      expect.objectContaining({ now: NOW }),
+    );
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★★ a draft with a captured payment is refused, and never charged twice", async () => {
+    collect.capturedAttemptForInvoice.mockResolvedValue({
+      id: "att-old",
+      providerPaymentId: "pay_old",
+    });
+    invStore.getInvoice.mockResolvedValue(
+      openInvoice({ status: "draft", finalizedAt: null }),
+    );
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE });
+    expect(ALREADY_CAPTURED_INVOICE_MESSAGE).toMatch(/don't pay it again/);
+    expect(ALREADY_CAPTURED_INVOICE_MESSAGE).toMatch(/support@storemink\.com/);
+    // A draft is not open, so nothing is re-synced; nothing is issued either.
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(invStore.finalizeInvoice).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ an open invoice that stays unpaid after the re-sync is still refused", async () => {
+    collect.capturedAttemptForInvoice.mockResolvedValue({
+      id: "att-old",
+      providerPaymentId: null,
+    });
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+
+  it("★ fails CLOSED when the payments cannot be read", async () => {
+    collect.capturedAttemptForInvoice.mockResolvedValue(undefined);
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/couldn't check this invoice's payments/);
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("asks about this store's invoice only", async () => {
+    await startInvoicePayment(args);
+    expect(collect.capturedAttemptForInvoice).toHaveBeenCalledWith(
+      INVOICE,
+      STORE,
+    );
   });
 });

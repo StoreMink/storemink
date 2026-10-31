@@ -3,6 +3,7 @@ import { getActingStoreId, getViewerAccess } from "@/app/dashboard/lib/access";
 import { SECTIONS } from "@/app/dashboard/lib/permissions";
 import { navIcons } from "@/app/dashboard/nav-icons";
 import { getStoreAnalyticsTimeZone } from "@/lib/analytics/settings";
+import { NOTICES } from "@/lib/moderation/copy";
 import { BusinessTimeZoneForm } from "./business-time-zone-form";
 
 export const metadata = { title: "Settings" };
@@ -38,6 +39,10 @@ const BLURB: Record<string, string> = {
   shipping: "Choose what delivery costs and dates customers see at checkout.",
   analytics:
     "Connect consent-aware Google Analytics 4 and Meta Pixel tracking.",
+  // The Settings child "Notices from StoreMink" (permissions.ts). Its line is
+  // the notices page's own intro, so the two can never say different things
+  // (takedown design 7.1; every takedown sentence lives in copy.ts).
+  notices: NOTICES.intro,
 };
 
 export default async function SettingsPage() {

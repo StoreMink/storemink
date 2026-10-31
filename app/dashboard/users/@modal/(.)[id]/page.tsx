@@ -15,5 +15,11 @@ export default async function InterceptedCustomerPage({
   const { id } = await params;
   const customer = await getCustomer(id);
   if (!customer) return null;
-  return <CustomerDetailModal customer={customer} canManage={canManage} />;
+  return (
+    <CustomerDetailModal
+      customer={customer}
+      canManage={canManage}
+      canSeeNotices={access.can("settings", "view")}
+    />
+  );
 }

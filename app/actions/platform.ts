@@ -19,9 +19,14 @@ import { authIdsInUse } from "@/lib/auth/identity-usage";
 import { removeAuthorizedHosts } from "@/lib/auth/authorized-domains";
 import { storeAuthHosts } from "@/lib/auth/store-auth-hosts";
 import { logError } from "@/lib/observability/logger";
+import { rateLimit } from "@/lib/rate-limit";
 import { getServerUser } from "@/lib/auth/server-user";
-import { withService } from "@/lib/db/client";
-import { isUniqueViolation } from "@/lib/db/errors";
+import { withService, type Db } from "@/lib/db/client";
+import {
+  isSchemaNotReady,
+  isUniqueViolation,
+  loggableError,
+} from "@/lib/db/errors";
 import {
   admins,
   aiCreditBalances,
@@ -34,6 +39,7 @@ import {
   billingSubscriptions,
   cardColors,
   categories,
+  contentBlocks,
   emailCampaigns,
   homepageSections,
   mediaAssets,
@@ -43,6 +49,7 @@ import {
   planEvents,
   planPrices,
   platformAdmins,
+  platformAnnouncements,
   posStaff,
   productReviews,
   productVariants,
@@ -68,22 +75,50 @@ import {
 } from "@/lib/platform/merchant-stores";
 import {
   countOpenReconciliationItems,
+  issueCapturedDrafts,
   listReconciliationItems,
   resolveReconciliationItem,
   type ReconciliationItem,
 } from "@/lib/billing/reconcile";
 import {
+  cancelScheduledTaxChange,
+  earliestStartAfterNotice,
   getPlatformTaxSettings,
-  savePlatformTaxSettings,
+  saveTaxIdentity,
+  scheduleTaxChange,
   type PlatformTaxSettings,
-  type TaxSettingsInput,
+  type TaxChangeResult,
 } from "@/lib/billing/platform-settings";
+import {
+  getGstChangeImpact,
+  type GstImpactResult,
+} from "@/lib/billing/gst-impact";
+import { buildInvoiceList } from "@/lib/billing/invoice-list";
+import {
+  INVOICE_LIST_CARD,
+  TAX_SETTINGS_REFUSAL,
+} from "@/lib/billing/tax-copy";
+import { noticeQualifies, type NoticeCheck } from "@/lib/billing/tax-terms";
 import { deleteStorageUrls } from "@/lib/storage/cleanup";
 import { gcsDeletePrefix, gcsPrivateConfigured } from "@/lib/storage/gcs";
 import { storeStoragePrefix } from "@/lib/storage/paths";
 import { cleanupDetachedDomain } from "@/lib/domains/cleanup";
+import { closeUnreachedInvoices } from "@/lib/billing/close-cycle";
+import { MEDIA_URL_RE } from "@/lib/moderation/media-refs";
+import {
+  deleteRefusalForError,
+  storeDeleteRefusal,
+} from "@/lib/moderation/holds";
+import { listBlocks } from "@/lib/moderation/console-read";
+import { recordModerationEvent } from "@/lib/moderation/record";
 import { ROOT_DOMAIN } from "@/lib/store/host";
-import { PLAN_IDS, PLAN_META, normalizePlan, type Plan } from "@/lib/plans";
+import {
+  PLAN_IDS,
+  PLAN_META,
+  PLAN_RANK,
+  normalizePlan,
+  type Plan,
+} from "@/lib/plans";
 import {
   EXTRA_LOCATION_KEY,
   bustPlanPricing,
@@ -375,9 +410,50 @@ export interface ActionResult {
 
 // Suspend / reactivate a store (platform superadmin only). A suspended store
 // stops resolving on the storefront (Read stores policy requires status=active).
+//
+// ★ THE PLAIN SUSPEND IS FOR EVERYTHING EXCEPT A COMPLAINT (takedown design
+// 6.7, plan A13). Suspending a store over a complaint, an order or content
+// that breaks our policies goes through "Suspend on a complaint" (a whole
+// store block), which keeps a copy of the store and tells its owners; this
+// path does neither, so it refuses a `"complaint"` reason and asks for a note
+// with any other.
+// ★ A STORE SUSPENDED BY A BLOCK STAYS SUSPENDED UNTIL THE BLOCK IS LIFTED.
+// Reactivating one is refused here, before the update, with the sentence the
+// operator can act on; the trigger `stores_keep_moderation_suspension`
+// (migration 0269) refuses it anyway, and its error maps to the same
+// sentence (a block made between this read and the update).
+// ★ Both directions are recorded in `moderation_events` (`store_suspended`,
+// `store_reactivated`) with the reason chosen, in the update's own
+// transaction, so a change is never left without its record.
+export type StoreStatusReason = { kind: "complaint" | "other"; note: string };
+
+const SUSPEND_STATUS_TEXT = {
+  useBlock:
+    "Use Suspend on a complaint instead, so that StoreMink keeps a copy of the store and tells its owners.",
+  noteMissing: "Write why you are suspending this store.",
+  noteLong: "Keep the note under 2,000 characters.",
+  suspendedByBlock:
+    "This store is suspended by a block on a complaint. Lift the block in Complaints.",
+  failed: "Could not update the store. Please try again.",
+} as const;
+
+/** The trigger's message (`stores_guard_moderation_status`), without the id. */
+const SUSPENDED_BY_BLOCK_TRIGGER = "is suspended by a StoreMink block";
+const STATUS_NOTE_MAX = 2000;
+
+/** Whether an error, or the error Drizzle wraps in `cause`, says `fragment`. */
+function errorSays(err: unknown, fragment: string): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { message?: unknown; cause?: { message?: unknown } };
+  return [e.message, e.cause?.message].some(
+    (m) => typeof m === "string" && m.includes(fragment),
+  );
+}
+
 export async function setStoreStatus(
   storeId: string,
   status: "active" | "suspended",
+  reason?: StoreStatusReason,
 ): Promise<ActionResult> {
   const viewer = await getPlatformViewer();
   if (viewer?.role !== "superadmin") {
@@ -386,14 +462,68 @@ export async function setStoreStatus(
   if (!["active", "suspended"].includes(status)) {
     return { error: "Invalid status." };
   }
-  try {
-    await withService((db) =>
-      db.update(stores).set({ status }).where(eq(stores.id, storeId)),
-    );
-  } catch (err) {
-    console.error("setStoreStatus:", err instanceof Error ? err.message : err);
-    return { error: "Could not update the store. Please try again." };
+  const kind = reason?.kind === "complaint" ? "complaint" : "other";
+  const note = typeof reason?.note === "string" ? reason.note.trim() : "";
+  if (status === "suspended") {
+    if (reason?.kind === "complaint") {
+      return { error: SUSPEND_STATUS_TEXT.useBlock };
+    }
+    if (reason?.kind !== "other" || !note) {
+      return { error: SUSPEND_STATUS_TEXT.noteMissing };
+    }
   }
+  if (note.length > STATUS_NOTE_MAX) {
+    return { error: SUSPEND_STATUS_TEXT.noteLong };
+  }
+  let outcome: "done" | "blocked" | "missing";
+  try {
+    outcome = await withService(async (db) => {
+      if (status === "active") {
+        // The pre-check (design 6.7): a live whole-store block keeps the
+        // store suspended, so the operator is sent to lift it instead.
+        const [block] = await db
+          .select({ id: contentBlocks.id })
+          .from(contentBlocks)
+          .where(
+            and(
+              eq(contentBlocks.itemKind, "store"),
+              eq(contentBlocks.itemId, storeId),
+              isNull(contentBlocks.liftedAt),
+            ),
+          )
+          .limit(1);
+        if (block) return "blocked";
+      }
+      const [row] = await db
+        .update(stores)
+        .set({ status })
+        .where(eq(stores.id, storeId))
+        .returning({ id: stores.id });
+      if (!row) return "missing";
+      await recordModerationEvent(db, {
+        actor: viewer.email,
+        action:
+          status === "suspended" ? "store_suspended" : "store_reactivated",
+        storeId,
+        detail:
+          status === "suspended"
+            ? { reason: kind, note }
+            : note
+              ? { note }
+              : {},
+      });
+      return "done";
+    });
+  } catch (err) {
+    if (errorSays(err, SUSPENDED_BY_BLOCK_TRIGGER)) {
+      return { error: SUSPEND_STATUS_TEXT.suspendedByBlock };
+    }
+    logError("setStoreStatus", loggableError(err), { storeId, status });
+    return { error: SUSPEND_STATUS_TEXT.failed };
+  }
+  if (outcome === "blocked")
+    return { error: SUSPEND_STATUS_TEXT.suspendedByBlock };
+  if (outcome === "missing") return { error: "Store not found." };
   revalidateTag(STORE_TAG, "max");
   emitEvent({
     type: "platform.store_suspended",
@@ -405,7 +535,11 @@ export async function setStoreStatus(
   return { success: true };
 }
 
-// Set a store's plan (platform superadmin only) — ANY direction, optionally
+/** Subscription states with a paid cycle running (billing_subscriptions). */
+const LIVE_SUBSCRIPTION_STATES = ["active", "past_due", "grace"];
+
+// Set a store's plan (platform superadmin only): any direction except below a
+// plan the store pays for by subscription (see the refusal), optionally
 // time-boxed. Downgrades are soft (existing data is never deleted; creating
 // new rows past the smaller plan's caps is what gets blocked — lib/plans.ts).
 // `expiresAt` bounds the grant: an ISO timestamp in the future, or null for
@@ -447,13 +581,35 @@ export async function setStorePlan(
         plan_expires_at: stores.planExpiresAt,
         comp_plan: stores.compPlan,
         comp_expires_at: stores.compExpiresAt,
+        sub_state: billingSubscriptions.state,
+        sub_plan: billingSubscriptions.plan,
       })
       .from(stores)
+      .leftJoin(
+        billingSubscriptions,
+        eq(billingSubscriptions.storeId, stores.id),
+      )
       .where(eq(stores.id, storeId))
       .limit(1),
   ).catch(() => []);
   const store = storeRows[0];
   if (!store) return { error: "Store not found." };
+
+  // ★★ A PAID PLAN IS NOT LOWERED HERE (renewal-cancel, owner decision D12).
+  // This writes stores.plan only: the subscription keeps renewing at its own
+  // plan, and the next cycle turn writes that plan back. So a lower plan set
+  // here would take the merchant's paid features away while they kept paying
+  // for them. Ending a paid plan is the store page's Cancel at the end of the
+  // cycle or End the plan now. The same or a higher plan stays allowed (a comp
+  // is a floor), and anything goes once the subscription has ended.
+  if (store.sub_state && LIVE_SUBSCRIPTION_STATES.includes(store.sub_state)) {
+    const paidPlan = normalizePlan(store.sub_plan);
+    if (PLAN_RANK[target] < PLAN_RANK[paidPlan]) {
+      return {
+        error: `This store pays for ${PLAN_META[paidPlan].name} by subscription, so a lower plan set here would not stop its renewals and would be raised again at the next one. To end it, use Cancel at the end of the cycle or End the plan now on the store's page.`,
+      };
+    }
+  }
 
   const current = normalizePlan(store.plan);
   if (
@@ -633,15 +789,9 @@ export async function getStoreAudit(
   }
 }
 
-// Any media public URL in Google Cloud Storage (storage.googleapis.com/<bucket>/…).
-// Historical GCS media was not always store-prefixed, so scrape every URL from
-// the store's rows before they cascade; deleteStorageUrls deletes what is in
-// our bucket and counts the rest for the operator. A URL ends at a backslash:
-// the rows are scanned as JSON, which writes an HTML attribute's quote as \"
-// and a newline as \n, and URL parsing would read that backslash as a slash
-// and ask to delete `<path>/`, an object that never exists.
-const MEDIA_URL_RE =
-  /https?:\/\/[^"'\s)\\]*storage\.googleapis\.com\/[^/"'\s)\\]+\/[^"'\s)\\]+/g;
+// Any media public URL in Google Cloud Storage is found with `MEDIA_URL_RE`,
+// which lives in lib/moderation/media-refs.ts (takedown design 5.7) with its
+// explanation: the block form and the archive find addresses the same way.
 
 // Every store-scoped table that can hold an uploaded image (product/variant
 // galleries, category tiles, blog covers+bodies, both generations of builder
@@ -668,6 +818,101 @@ const MEDIA_TABLES = [
   users,
 ];
 
+/**
+ * Close the subscription invoices of cycles this store will never enter, inside
+ * deleteStore's transaction, before the store row goes (renewal-cancel, design
+ * 6.9 and 4.3 edge case 5). Returns how many paid renewals it filed for a
+ * person.
+ *
+ * ★★ THE SUBSCRIPTION ROW IS LOCKED FIRST, the order the hourly passes take
+ * (subscription, then invoices), so a delete racing the billing run waits for
+ * it and the two never wait on each other. The row is deleted with the store
+ * (its foreign key cascades), which is why this cannot wait for the refund
+ * pass's repair: afterwards nothing could tell which cycle the plan reached.
+ *
+ * - A live plan (active, past_due, grace): every ISSUED invoice above its
+ *   current cycle becomes void, paid or not. The refund pass then refunds a
+ *   captured payment on it after the store is gone (it needs no store).
+ * - An ended plan (cancelled, downgraded): an issued open invoice above its
+ *   cycle with no payment in flight or captured becomes void, and each paid one
+ *   is filed for a person (repair_key `paid_unreached:`), the item the refund
+ *   pass's repair files for a store that still exists, marked storeDeleted.
+ *
+ * Drafts keep deleteStore's own handling, which is why the live-plan close is
+ * `closeUnreachedInvoices` with `issuedOnly` (the one close every plan end uses,
+ * limited to issued invoices). Not exported: every export of this "use server"
+ * file is a public endpoint.
+ */
+async function closeUnreachedCyclesForDelete(
+  db: Db,
+  storeId: string,
+): Promise<number> {
+  const locked = await db.execute(sql`
+    select state, current_cycle_seq
+      from public.billing_subscriptions
+     where store_id = ${storeId}
+     for update`);
+  const sub = locked.rows[0] as
+    | { state: string; current_cycle_seq: number }
+    | undefined;
+  if (!sub) return 0;
+  const seq = Number(sub.current_cycle_seq);
+  const at = new Date();
+  const now = at.toISOString();
+
+  if (LIVE_SUBSCRIPTION_STATES.includes(sub.state)) {
+    await closeUnreachedInvoices(db, {
+      storeId,
+      lastReachedSeq: seq,
+      now: at,
+      issuedOnly: true,
+    });
+    return 0;
+  }
+
+  if (!["cancelled", "downgraded"].includes(sub.state)) return 0;
+
+  await db.execute(sql`
+    update public.billing_invoices i
+       set status = 'void', updated_at = ${now}
+     where i.store_id = ${storeId}
+       and i.kind = 'subscription'
+       and i.cycle_seq > ${seq}
+       and i.status = 'open'
+       and i.finalized_at is not null
+       and not exists (
+         select 1 from public.billing_payment_attempts a
+          where a.invoice_id = i.id
+            and a.state in ('created', 'processing', 'authorized', 'unknown', 'captured'))`);
+  const filed = await db.execute(sql`
+    insert into public.billing_reconciliation_items
+      (store_id, kind, status, invoice_id, attempt_id, provider_payment_id,
+       provider_order_id, expected_paise, detail)
+    select null, 'state_conflict', 'open', i.id, a.id, a.provider_payment_id,
+           a.provider_order_id, i.total_paise,
+           jsonb_build_object(
+             'repair_key', 'paid_unreached:' || i.id,
+             'note', 'renewal paid for a cycle the plan did not reach',
+             'invoiceRef', i.invoice_ref,
+             'storeDeleted', true,
+             'storeName', s.name)
+      from public.billing_invoices i
+      join public.stores s on s.id = i.store_id
+      left join lateral (
+        select pa.id, pa.provider_payment_id, pa.provider_order_id
+          from public.billing_payment_attempts pa
+         where pa.invoice_id = i.id and pa.state = 'captured'
+         order by pa.created_at desc
+         limit 1) a on true
+     where i.store_id = ${storeId}
+       and i.kind = 'subscription'
+       and i.cycle_seq > ${seq}
+       and i.status = 'paid'
+    on conflict do nothing
+    returning id`);
+  return filed.rows.length;
+}
+
 // PERMANENTLY delete a store and everything belonging to it (platform
 // superadmin only). Irreversible. Every store-scoped table FKs stores(id) with
 // ON DELETE CASCADE, so one DELETE removes all DB rows, except StoreMink's own
@@ -687,6 +932,24 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   // it be deleted from the console.
   if (storeId === FALLBACK_STORE_ID) {
     return { error: "The WholeSip fallback store can't be deleted." };
+  }
+
+  // ★★ A HELD STORE, OR ONE WHOSE BLOCKED FILES ARE STILL BEING COPIED, IS
+  // REFUSED BEFORE ANYTHING ELSE (takedown design 3.7, plan A7): before the
+  // scan, before GST's repair (`issueCapturedDrafts`, which issues invoices)
+  // and before every renewal-cancel step, so a refusal changes nothing.
+  // `storeDeleteRefusal` reads in its own scope and, given the actor, records
+  // `store_delete_refused` there (its only write); it throws on a failed read,
+  // so a delete never goes ahead on a check that did not happen. A database
+  // without migration 0269 answers null (and has no trigger either).
+  // ★ It also keeps a held store's private files (Mink chat pictures, chat
+  // media) from the prefix purge below, which no hold clause reaches.
+  try {
+    const refusal = await storeDeleteRefusal(storeId, { actor: viewer.email });
+    if (refusal) return { error: refusal.message };
+  } catch (err) {
+    logError("deleteStore (hold check)", loggableError(err), { storeId });
+    return { error: "Could not delete the store. Please try again." };
   }
 
   const mediaUrls = new Set<string>();
@@ -766,6 +1029,39 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
     return { error: "Could not delete the store. Please try again." };
   }
 
+  // ★ HOW MANY BLOCKS THE STORE HAD, read before the transaction: the cascade
+  // sets `content_blocks.store_id` to NULL, so after it nothing says the
+  // blocks were this store's. A store with any block, live or lifted, gets a
+  // `store_deleted` record once its files are gone (design 3.8). Read through
+  // the console's own list (one row, its total) so the delete adds no
+  // statement of its own; a database without migration 0269 has no blocks,
+  // and any other failure refuses the delete rather than lose the record.
+  // ★ Before GST's repair below, so this refusal too changes nothing.
+  let blockCount = 0;
+  try {
+    blockCount = (await listBlocks({ storeId, view: "all", limit: 1 })).total;
+  } catch (err) {
+    if (!isSchemaNotReady(err)) {
+      logError("deleteStore (block count)", loggableError(err), { storeId });
+      return { error: "Could not delete the store. Please try again." };
+    }
+  }
+
+  // ★★ MONEY STOREMINK TOOK LEAVES AN ISSUED INVOICE (GST design 5.5). A
+  // draft behind a captured payment (a merchant who paid and closed the tab
+  // before the confirm, a credit pack whose receipt never issued) is issued
+  // now, for this store only and with no wait, so the cascade below keeps it
+  // as a GST document with store_id NULL (migration 0243) instead of deleting
+  // a draft. A credit pack's receipt is issued straight to paid; a purchase
+  // draft is issued alone, never applied (there is no store left to apply it
+  // to), and filed as a captured_draft item, which the transaction below
+  // detaches like any other open item. What could not be issued is filed
+  // below as before. ⚠ Before the transaction and outside every scope it
+  // opens: the repair opens its own scopes, one at a time, and nesting it in
+  // the delete's would hold two pooled connections
+  // (lib/db/nested-scope-coverage.test.ts). It never throws.
+  const repair = await issueCapturedDrafts({ storeId });
+
   // Delete the store — FK ON DELETE CASCADE wipes every store-scoped row except
   // StoreMink's own invoices (below).
   //
@@ -818,16 +1114,25 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   // ★ A PAID AI CREDIT PURCHASE WHOSE RECEIPT NEVER ISSUED has no invoice to
   // keep and no payment attempt, and its purchase row cascades, so it is filed
   // as an open orphan_payment item first: the payment ids and the amount
-  // survive for whoever settles the missing receipt. ⚠ A PENDING purchase is
+  // survive for whoever settles the missing receipt. Since GST the repair
+  // above issues such receipts first, so this files only one it could not
+  // issue, at the amount charged: `amount_paise` (GST included when the price
+  // excludes it), else the list price of a purchase made before the column
+  // existed. ⚠ A PENDING purchase is
   // not filed (an abandoned checkout is never reaped and would bury the
   // queue), and a purchase row behind an ISSUED receipt still cascades: the
   // kept invoice no longer links to its Razorpay ids. Keeping
   // ai_credit_purchases needs a migration (owner's decision).
+  // ★★ FIRST OF ALL, THE CYCLES THIS STORE WILL NEVER ENTER ARE CLOSED, with
+  // the subscription row locked before any invoice (closeUnreachedCyclesForDelete):
+  // a paid next renewal becomes void and is refunded after the store is gone.
   let unissuedReceipts = 0;
+  let paidUnreached = 0;
   try {
     await withService(async (db) => {
       await db.execute(sql`set local statement_timeout = '5min'`);
       await db.execute(sql`set constraints all deferred`);
+      paidUnreached = await closeUnreachedCyclesForDelete(db, storeId);
       await db
         .update(billingReconciliationItems)
         .set({
@@ -849,7 +1154,7 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
           (store_id, kind, status, provider_payment_id, provider_order_id,
            expected_paise, detail)
         select null, 'orphan_payment', 'open', p.rzp_payment_id, p.rzp_order_id,
-               p.amount_inr::bigint * 100,
+               coalesce(p.amount_paise, p.amount_inr::bigint * 100),
                jsonb_build_object(
                  'note', 'AI credit purchase paid, receipt never issued',
                  'storeDeleted', true,
@@ -876,6 +1181,30 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
       await db.delete(stores).where(eq(stores.id, storeId));
     });
   } catch (err) {
+    // ★ A hold set, or an archive started, between the pre-check above and
+    // this DELETE: the trigger `stores_keep_for_investigation` (migration
+    // 0269) refused it, and the operator reads the same sentence as the
+    // pre-check's (design 3.7). Recorded like the pre-check's refusal, in a
+    // scope of its own now the transaction has ended; a failed record is
+    // logged and never changes the answer.
+    const refused = deleteRefusalForError(err);
+    if (refused) {
+      try {
+        await withService((db) =>
+          recordModerationEvent(db, {
+            actor: viewer.email,
+            action: "store_delete_refused",
+            storeId,
+            detail: { reason: refused.reason, at: "delete" },
+          }),
+        );
+      } catch (recordErr) {
+        logError("deleteStore (refusal record)", loggableError(recordErr), {
+          storeId,
+        });
+      }
+      return { error: refused.message };
+    }
     // A Drizzle error's `message` is only "Failed query: …"; the reason is on
     // `cause` (the §15b lesson).
     console.error(
@@ -942,6 +1271,29 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
     );
     if (privateCleanup.error || privateCleanup.failed > 0) {
       cleanupFailures.push("store private media prefix");
+    }
+  }
+
+  // ★ THE RECORD THAT A STORE WITH BLOCKS WAS DELETED (design 3.8), once its
+  // files are gone. `moderation_events.store_id` has no foreign key, so the
+  // row outlives the store, beside the blocks and archives that keep their
+  // label. A failed record is cleanup that needs attention, never a failed
+  // delete: the store is already gone.
+  if (blockCount > 0) {
+    try {
+      await withService((db) =>
+        recordModerationEvent(db, {
+          actor: viewer.email,
+          action: "store_deleted",
+          storeId,
+          detail: { blocks: blockCount, slug: storeSlug },
+        }),
+      );
+    } catch (err) {
+      logError("deleteStore (deletion record)", loggableError(err), {
+        storeId,
+      });
+      cleanupFailures.push("the takedown record of this deletion");
     }
   }
 
@@ -1021,6 +1373,22 @@ export async function deleteStore(storeId: string): Promise<ActionResult> {
   if (unissuedReceipts > 0) {
     notes.push(
       `${unissuedReceipts === 1 ? "1 paid AI credit purchase has" : `${unissuedReceipts} paid AI credit purchases have`} no issued receipt. ${unissuedReceipts === 1 ? "It is" : "They are"} now in Billing & tax > Reconciliation, so the payment is not lost.`,
+    );
+  }
+  if (paidUnreached > 0) {
+    notes.push(
+      `${paidUnreached === 1 ? "1 renewal was" : `${paidUnreached} renewals were`} paid for a cycle the ended plan did not reach. ${paidUnreached === 1 ? "It is" : "They are"} now in Billing & tax > Reconciliation, so the payment can be refunded.`,
+    );
+  }
+  if (repair.filed > 0) {
+    notes.push(
+      `${repair.filed === 1 ? "1 payment was" : `${repair.filed} payments were`} taken against an invoice that was never issued. ${repair.filed === 1 ? "The invoice is" : "The invoices are"} now issued and kept, and ${repair.filed === 1 ? "the payment is" : "the payments are"} in Billing & tax > Reconciliation, so a person can check what was paid for.`,
+    );
+  }
+  const repairUnfinished = repair.unissued + repair.errors;
+  if (repairUnfinished > 0) {
+    notes.push(
+      `${repairUnfinished === 1 ? "1 captured payment" : `${repairUnfinished} captured payments`} could not be put right before the delete. The payment records are kept; check Billing & tax > Reconciliation and the billing.captured_draft logs.`,
     );
   }
   return notes.length
@@ -1267,8 +1635,10 @@ export interface MinkCreditPackInput {
  * half-applied edit. `sort_order` is the array index, so the rows ARE the order.
  *
  * ★ Deleting a pack is safe and does not touch history: ai_credit_purchases
- * snapshots `credits` and `amount_inr`, `pack_id` carries no foreign key, and
- * confirmCreditPurchase grants from that row rather than re-reading the pack.
+ * snapshots `credits`, `amount_inr` and `amount_paise` (the amount charged,
+ * GST included when the price excludes it), `pack_id` carries no foreign key,
+ * and confirmCreditPurchase grants and verifies from that row rather than
+ * re-reading the pack.
  * A merchant who had the old card on screen gets "Unknown credit pack" and
  * picks again — recoverable, unlike being charged a price nobody set.
  */
@@ -1571,34 +1941,308 @@ export async function savePlanPricing(
 // is issued) rather than a deploy one.
 // ---------------------------------------------------------------------------
 
-export async function getTaxSettings(): Promise<PlatformTaxSettings | null> {
+/**
+ * StoreMink's tax settings for the Billing & tax console.
+ *
+ * ★★ AN UNREADABLE ROW IS `read_failed`, NEVER THE DEFAULTS (review R3-05):
+ * drawn as "GST off, no GSTIN", a failed read invited an operator to save
+ * blanks over the stored identity. The console says the settings could not be
+ * read and disables every save until a read succeeds.
+ */
+export async function getTaxSettings(): Promise<
+  | { ok: true; settings: PlatformTaxSettings }
+  | { ok: false; reason: "not_allowed" | "read_failed" }
+> {
   const viewer = await getPlatformViewer();
-  if (!viewer) return null;
-  return getPlatformTaxSettings();
+  if (!viewer) return { ok: false, reason: "not_allowed" };
+  const settings = await getPlatformTaxSettings();
+  return settings
+    ? { ok: true, settings }
+    : { ok: false, reason: "read_failed" };
 }
 
-export async function saveTaxSettings(
-  input: TaxSettingsInput,
+/** Who may change StoreMink's GST settings, word for word on every write. */
+const TAX_WRITE_GATE = "Only a platform superadmin can change tax settings.";
+
+/** Who may download the monthly invoice list. */
+const INVOICE_LIST_GATE =
+  "Only a platform superadmin can download the invoice list.";
+
+const textField = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/**
+ * Save who StoreMink is on its invoices (GST design 5.8 item 1, Card 2):
+ * legal name, GSTIN, state, address, SAC code, LLPIN, registered office and
+ * the invoice prefix. Never what is charged.
+ *
+ * ★ SUPERADMIN, matching plan pricing: the GSTIN it names is the platform's
+ * own tax identity. Every field is read as text here, so the save below only
+ * ever sees strings, whatever the browser sent.
+ *
+ * Invoices read the tax live at build and at issue (loadTaxSnapshot,
+ * readTaxSnapshot), uncached. The public pricing pages read a cached copy
+ * (getPublicTaxSource, tag `platform-tax`). Each of the three saves behind
+ * these actions (saveTaxIdentity, scheduleTaxChange,
+ * cancelScheduledTaxChange) busts it after it commits (bustPlatformTax), so
+ * none of the actions needs a tag of its own.
+ * Revalidating the console page keeps the cards in step with what was stored
+ * (the GSTIN and LLPIN are upper-cased).
+ */
+export async function saveTaxIdentitySettings(
+  input: unknown,
 ): Promise<ActionResult> {
-  // ★ SUPERADMIN, matching plan pricing. Switching tax on changes what every
-  // merchant is charged from the next invoice onward, and the GSTIN it names is
-  // the platform's own tax identity.
   const viewer = await getPlatformViewer();
-  if (viewer?.role !== "superadmin") {
-    return { error: "Only a platform superadmin can change tax settings." };
-  }
+  if (viewer?.role !== "superadmin") return { error: TAX_WRITE_GATE };
   if (!input || typeof input !== "object") {
     return { error: "Nothing to save." };
   }
-
-  const saved = await savePlatformTaxSettings(input, viewer.email ?? null);
+  const i = input as Record<string, unknown>;
+  const saved = await saveTaxIdentity(
+    {
+      legalName: textField(i.legalName),
+      gstin: textField(i.gstin),
+      stateCode: textField(i.stateCode),
+      addressLine1: textField(i.addressLine1),
+      addressLine2: textField(i.addressLine2),
+      city: textField(i.city),
+      postalCode: textField(i.postalCode),
+      sacCode: textField(i.sacCode),
+      llpin: textField(i.llpin),
+      registeredOffice: textField(i.registeredOffice),
+      invoicePrefix: textField(i.invoicePrefix),
+    },
+    viewer.email ?? null,
+  );
   if (!saved.ok) return { error: saved.error };
-
-  // Invoices read this at build time through loadTaxContext, which is uncached —
-  // so there is no tag to bust. Revalidating the console page keeps the form in
-  // step with what was stored (the GSTIN is upper-cased, the rate rounded).
   revalidatePath("/dashboard/billing");
   return { success: true };
+}
+
+/**
+ * Change what is charged, now or from a start time (GST design 5.8 item 2,
+ * Card 3), under the notice rule the save enforces.
+ *
+ * ★ SUPERADMIN: switching GST on, or moving prices to exclude it, changes what
+ * every merchant pays. The fields are coerced to their types here (a boolean
+ * only when it IS true, a start or notice only when it is text), so the
+ * browser can never hand the save something it did not expect.
+ */
+export async function scheduleGstChange(
+  input: unknown,
+): Promise<TaxChangeResult> {
+  const viewer = await getPlatformViewer();
+  if (viewer?.role !== "superadmin") {
+    return { ok: false, error: TAX_WRITE_GATE };
+  }
+  if (!input || typeof input !== "object") {
+    return { ok: false, error: "Nothing to save." };
+  }
+  const i = input as Record<string, unknown>;
+  if (i.when !== "now" && i.when !== "scheduled") {
+    return { ok: false, error: TAX_SETTINGS_REFUSAL.whenMissing };
+  }
+  const result = await scheduleTaxChange(
+    {
+      enabled: i.enabled === true,
+      inclusive: i.inclusive === true,
+      ratePercent:
+        typeof i.ratePercent === "number" || typeof i.ratePercent === "string"
+          ? Number(i.ratePercent)
+          : Number.NaN,
+      when: i.when,
+      startsAt: typeof i.startsAt === "string" ? i.startsAt : undefined,
+      noticeId: typeof i.noticeId === "string" ? i.noticeId : null,
+      rateSetByLaw: i.rateSetByLaw === true,
+    },
+    viewer.email ?? null,
+  );
+  if (result.ok) revalidatePath("/dashboard/billing");
+  return result;
+}
+
+/**
+ * Withdraw the scheduled change (GST design 5.8 item 3, Card 1's "Cancel this
+ * change"). A change that has already started is refused by the save, with
+ * the sentence that says how to stop charging GST instead.
+ */
+export async function cancelGstChange(): Promise<ActionResult> {
+  const viewer = await getPlatformViewer();
+  if (viewer?.role !== "superadmin") return { error: TAX_WRITE_GATE };
+  const done = await cancelScheduledTaxChange(viewer.email ?? null);
+  // Refused or not, the page reloads: a change that started while it was open
+  // must show as started.
+  revalidatePath("/dashboard/billing");
+  if (!done.ok) return { error: done.error };
+  return { success: true };
+}
+
+/** How many impact previews one operator may ask for in a minute (R3-06). */
+const GST_PREVIEW_LIMIT = { max: 30, windowSeconds: 60 } as const;
+
+/**
+ * What a proposed GST setting changes for merchants with a plan (GST design
+ * 5.8, Card 3's impact panel): counts over every renewal and up to 200 rows.
+ * Read only, so any operator may ask; the proposal is checked here before the
+ * read runs.
+ *
+ * ★ THROTTLED PER OPERATOR (review R3-06): each call reads every live
+ * subscription, and this is a public endpoint any operator (members too) can
+ * call in a loop. The card asks once per change, 300 ms after the last
+ * keystroke, so 30 a minute is far above a person's use. The limiter fails
+ * open (lib/rate-limit.ts), which is acceptable for a throttle.
+ */
+export async function getGstChangePreview(
+  proposal: unknown,
+): Promise<
+  | GstImpactResult
+  | { ok: false; reason: "not_allowed" | "invalid" | "rate_limited" }
+> {
+  const viewer = await getPlatformViewer();
+  if (!viewer) return { ok: false, reason: "not_allowed" };
+  if (!proposal || typeof proposal !== "object") {
+    return { ok: false, reason: "invalid" };
+  }
+  const p = proposal as Record<string, unknown>;
+  const pct =
+    typeof p.ratePercent === "number" || typeof p.ratePercent === "string"
+      ? Number(p.ratePercent)
+      : Number.NaN;
+  if (
+    typeof p.enabled !== "boolean" ||
+    typeof p.inclusive !== "boolean" ||
+    !Number.isFinite(pct) ||
+    pct < 0 ||
+    pct > 100
+  ) {
+    return { ok: false, reason: "invalid" };
+  }
+  const { allowed } = await rateLimit(
+    `gst-preview:${viewer.email.toLowerCase()}`,
+    GST_PREVIEW_LIMIT,
+  );
+  if (!allowed) return { ok: false, reason: "rate_limited" };
+  return getGstChangeImpact({
+    enabled: p.enabled,
+    inclusive: p.inclusive,
+    rateBps: Math.round(pct * 100),
+  });
+}
+
+/** How many announcements Card 3's notice select lists, newest first. */
+const NOTICE_OPTIONS_MAX = 20;
+
+interface GstChangeNotice {
+  id: string;
+  title: string;
+  /** ISO, or null when it never finished sending. */
+  sentAt: string | null;
+  sent: number;
+  failed: number;
+  /** Whether it counts as the notice (`noticeQualifies`), and why not. */
+  check: NoticeCheck;
+  /** The earliest start it allows (1 calendar month on, IST); null when it
+   *  does not count. */
+  earliestStart: string | null;
+}
+
+/**
+ * The Operational announcements that finished sending (sent, partial or
+ * failed), newest first, for Card 3's "Notice email" select (GST design 6.4).
+ * Each says whether it counts as the notice and the earliest start it allows,
+ * from the same rule the save applies. Null when the read failed, so the card
+ * says so rather than offering nothing.
+ */
+export async function getGstChangeNotices(): Promise<GstChangeNotice[] | null> {
+  const viewer = await getPlatformViewer();
+  if (!viewer) return [];
+  try {
+    const rows = await withService((db) =>
+      db
+        .select({
+          id: platformAnnouncements.id,
+          title: platformAnnouncements.title,
+          category: platformAnnouncements.category,
+          status: platformAnnouncements.status,
+          sent: platformAnnouncements.sent,
+          failed: platformAnnouncements.failed,
+          sentAt: platformAnnouncements.sentAt,
+          channels: platformAnnouncements.channels,
+          audience: platformAnnouncements.audience,
+        })
+        .from(platformAnnouncements)
+        .where(
+          and(
+            eq(platformAnnouncements.category, "operational"),
+            inArray(platformAnnouncements.status, [
+              "sent",
+              "partial",
+              "failed",
+            ]),
+          ),
+        )
+        .orderBy(
+          sql`${platformAnnouncements.sentAt} desc nulls last`,
+          desc(platformAnnouncements.createdAt),
+        )
+        .limit(NOTICE_OPTIONS_MAX),
+    );
+    return rows.map((row) => {
+      const parsed = row.sentAt ? Date.parse(row.sentAt) : Number.NaN;
+      const sentAt = Number.isFinite(parsed)
+        ? new Date(parsed).toISOString()
+        : null;
+      const check = noticeQualifies({
+        category: row.category,
+        status: row.status,
+        sent: Number(row.sent),
+        sentAt,
+        channels: row.channels,
+        audience: row.audience,
+      });
+      return {
+        id: row.id,
+        title: row.title,
+        sentAt,
+        sent: Number(row.sent) || 0,
+        failed: Number(row.failed) || 0,
+        check,
+        earliestStart:
+          check.ok && sentAt ? earliestStartAfterNotice(sentAt) : null,
+      };
+    });
+  } catch (err) {
+    logError("billing.console.gst_notices", err);
+    return null;
+  }
+}
+
+/**
+ * The monthly invoice list for the GST returns (GST design 6.6, Card 4): the
+ * CSV for one Indian calendar month ("2026-12"), which the browser saves as a
+ * file. It already starts with a byte order mark.
+ *
+ * ★ SUPERADMIN ONLY: it names every merchant StoreMink invoiced, with their
+ * GSTINs and what they paid. Members do not see the card either.
+ */
+export async function exportInvoiceList(
+  month: unknown,
+): Promise<{ fileName: string; csv: string } | { error: string }> {
+  const viewer = await getPlatformViewer();
+  if (viewer?.role !== "superadmin") return { error: INVOICE_LIST_GATE };
+  const list = await buildInvoiceList({
+    month: typeof month === "string" ? month : "",
+  });
+  if (!list.ok) {
+    // ★ A month past the cap is refused in its own words (review R3-08):
+    // never a cut file, and "try again" would not help.
+    return {
+      error:
+        list.reason === "too_many"
+          ? INVOICE_LIST_CARD.tooMany
+          : INVOICE_LIST_CARD.failed,
+    };
+  }
+  return { fileName: list.fileName, csv: list.csv };
 }
 
 // ---------------------------------------------------------------------------

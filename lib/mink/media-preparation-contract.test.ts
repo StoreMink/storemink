@@ -24,8 +24,11 @@ vi.mock("@/lib/storage/gcs", () => ({
   },
   gcsPublicUrl: (path: string) => `https://storage.googleapis.com/bkt/${path}`,
   gcsDownloadObject: mocks.download,
-  gcsUploadObject: mocks.upload,
   gcsDeletePaths: mocks.deletePaths,
+}));
+// ★ The store's one writer (takedown design 5.7) is the upload seam.
+vi.mock("@/lib/storage/store-objects", () => ({
+  writeStoreObject: mocks.upload,
 }));
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -61,6 +64,8 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 import sharp from "sharp";
+import { BlockedUploadError } from "@/lib/moderation/upload-guard";
+import { MinkToolInputError } from "./errors";
 import {
   discardPreparedMinkImage,
   prepareMinkImageForDestination,
@@ -209,6 +214,72 @@ describe("prepared image contract", () => {
       createdPath: null,
     });
     expect(mocks.inserted).toHaveLength(0);
+  });
+
+  it("writes the copy through the store's one writer, for this store", async () => {
+    mocks.download.mockResolvedValueOnce(await portrait());
+    await prepareMinkImageForDestination(actor(), OWN, "blog_cover");
+    expect(mocks.upload).toHaveBeenCalledTimes(1);
+    expect(mocks.upload).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^stores\/store-1\/media\/mink-prepared\/blog_cover-/,
+      ),
+      expect.any(Uint8Array),
+      "image/webp",
+      {
+        storeId: "store-1",
+        via: "mink_media_preparation",
+        actor: "admin-1",
+      },
+    );
+  });
+
+  it("still falls back to the source when the upload itself fails", async () => {
+    mocks.download.mockResolvedValueOnce(await portrait());
+    mocks.upload.mockRejectedValueOnce(new Error("storage down"));
+    const result = await prepareMinkImageForDestination(
+      actor(),
+      OWN,
+      "blog_cover",
+    );
+    expect(result).toEqual({ url: OWN, prepared: false, createdPath: null });
+    expect(mocks.inserted).toHaveLength(0);
+  });
+
+  // ★★ A copy of a picture StoreMink has blocked is the same photograph: the
+  //    takedown sentence is the answer, never a quiet fall back to the source.
+  it("refuses a copy whose bytes StoreMink has blocked, in the design's words", async () => {
+    mocks.download.mockResolvedValueOnce(await portrait());
+    mocks.upload.mockRejectedValueOnce(
+      new BlockedUploadError({
+        told: true,
+        kindWord: "image",
+        blockId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    const refused = prepareMinkImageForDestination(actor(), OWN, "blog_cover");
+    await expect(refused).rejects.toBeInstanceOf(MinkToolInputError);
+    await expect(refused).rejects.toThrow(
+      "StoreMink has blocked this image, so it can't be uploaded again. See Settings, Notices from StoreMink.",
+    );
+    expect(mocks.inserted).toHaveLength(0);
+    expect(mocks.deletePaths).not.toHaveBeenCalled();
+  });
+
+  it("names nothing when the block is kept from the store", async () => {
+    mocks.download.mockResolvedValueOnce(await portrait());
+    mocks.upload.mockRejectedValueOnce(
+      new BlockedUploadError({
+        told: false,
+        kindWord: "image",
+        blockId: "33333333-3333-4333-8333-333333333333",
+      }),
+    );
+    await expect(
+      prepareMinkImageForDestination(actor(), OWN, "blog_cover"),
+    ).rejects.toThrow(
+      "This file can't be uploaded. If you need help, write to support@storemink.com.",
+    );
   });
 
   it("reuses a derivative an earlier run made, claiming nothing to undo", async () => {

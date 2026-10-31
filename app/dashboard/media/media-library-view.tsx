@@ -18,6 +18,7 @@ import {
   Package,
   Sparkles,
   AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 import {
   Dialog,
@@ -41,6 +42,8 @@ import {
 } from "@/lib/media/library-types";
 import { mediaSourceLabel } from "@/lib/media/sources";
 import { canOptimizeImage } from "@/lib/media/image-hosts";
+import { STORE_NOTICES_HREF } from "@/app/dashboard/components/unread-counts-context";
+import { ITEM } from "@/lib/moderation/copy";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -69,7 +72,20 @@ type Props = {
   loadError: boolean;
   page: number;
   pageSize: number;
+  /**
+   * Files StoreMink blocked and told the store about, the address a tile
+   * shows to block id (takedown design 7.3). A block kept from the store is
+   * not here (D21), so it shows nothing.
+   */
+  blockedByStoreMink?: Record<string, string>;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 };
+
+/** Where "See why" goes for a blocked file: its notice. */
+function noticeHref(blockId: string): string {
+  return `${STORE_NOTICES_HREF}/${blockId}`;
+}
 
 export function MediaLibraryView({
   tab,
@@ -81,8 +97,14 @@ export function MediaLibraryView({
   loadError,
   page,
   pageSize,
+  blockedByStoreMink,
+  canSeeNotices = false,
 }: Props) {
   const router = useRouter();
+  // The notice a blocked file's "See why" opens, or null when the file is
+  // not blocked (or the store was not told).
+  const blockIdOf = (url: string): string | null =>
+    (url && blockedByStoreMink?.[url]) || null;
   const pathname = usePathname();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -190,6 +212,7 @@ export function MediaLibraryView({
       : viewing?.kind === "product"
         ? viewing.image.url
         : "";
+  const viewingBlockId = blockIdOf(viewingUrl);
   const viewingProducts =
     viewing?.kind === "library"
       ? viewing.asset.products
@@ -396,49 +419,58 @@ export function MediaLibraryView({
               {tab === "library"
                 ? assets.map((asset) => {
                     const label = mediaSourceLabel(asset.source);
+                    const blockId = blockIdOf(asset.url);
                     return (
                       <div
                         key={asset.id}
-                        className="group relative overflow-hidden rounded-[var(--dash-radius-sm)] border border-[var(--dash-border)] bg-[var(--dash-surface-2)]"
+                        className="group overflow-hidden rounded-[var(--dash-radius-sm)] border border-[var(--dash-border)] bg-[var(--dash-surface-2)]"
                       >
-                        <button
-                          type="button"
-                          onClick={() => setViewing({ kind: "library", asset })}
-                          className="relative block aspect-square w-full"
-                          title={asset.filename || "View"}
-                        >
-                          <Image
-                            src={asset.url}
-                            unoptimized={!canOptimizeImage(asset.url)}
-                            alt={asset.filename || "Media"}
-                            fill
-                            sizes="(max-width:640px) 50vw,(max-width:1024px) 33vw,200px"
-                            className="object-cover"
-                          />
-                        </button>
-                        <TileBadges label={label} products={asset.products} />
-                        <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-end gap-1 p-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <div className="relative">
                           <button
                             type="button"
-                            onClick={() => copyUrl(asset.url)}
-                            className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur hover:bg-black/70"
-                            title="Copy URL"
+                            onClick={() =>
+                              setViewing({ kind: "library", asset })
+                            }
+                            className="relative block aspect-square w-full"
+                            title={asset.filename || "View"}
                           >
-                            {copiedUrl === asset.url ? (
-                              <Check className="h-3.5 w-3.5" />
-                            ) : (
-                              <Copy className="h-3.5 w-3.5" />
-                            )}
+                            <Image
+                              src={asset.url}
+                              unoptimized={!canOptimizeImage(asset.url)}
+                              alt={asset.filename || "Media"}
+                              fill
+                              sizes="(max-width:640px) 50vw,(max-width:1024px) 33vw,200px"
+                              className="object-cover"
+                            />
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteTarget(asset)}
-                            className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur hover:bg-[var(--dash-red)]"
-                            title="Delete"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <TileBadges label={label} products={asset.products} />
+                          <div className="pointer-events-none absolute inset-x-0 top-0 flex justify-end gap-1 p-1.5 opacity-0 transition-opacity group-hover:opacity-100">
+                            <button
+                              type="button"
+                              onClick={() => copyUrl(asset.url)}
+                              className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur hover:bg-black/70"
+                              title="Copy URL"
+                            >
+                              {copiedUrl === asset.url ? (
+                                <Check className="h-3.5 w-3.5" />
+                              ) : (
+                                <Copy className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteTarget(asset)}
+                              className="pointer-events-auto flex h-7 w-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur hover:bg-[var(--dash-red)]"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </div>
+                        <BlockedStrip
+                          blockId={blockId}
+                          canSeeNotices={canSeeNotices}
+                        />
                       </div>
                     );
                   })
@@ -465,6 +497,10 @@ export function MediaLibraryView({
                       <div className="truncate border-t border-[var(--dash-border)] bg-[var(--dash-surface)] px-2 py-1.5 text-[12px] text-[var(--dash-text-2)]">
                         {usedByLabel(image.products)}
                       </div>
+                      <BlockedStrip
+                        blockId={blockIdOf(image.url)}
+                        canSeeNotices={canSeeNotices}
+                      />
                     </div>
                   ))}
             </div>
@@ -507,6 +543,29 @@ export function MediaLibraryView({
           </DialogHeader>
           {viewing && (
             <>
+              {viewingBlockId && (
+                <div
+                  role="status"
+                  data-testid="media-blocked-status"
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--dash-radius-sm)] border border-[var(--dash-red)]/30 bg-[var(--dash-red-soft)] px-3 py-2"
+                >
+                  <ShieldAlert
+                    aria-hidden="true"
+                    className="h-4 w-4 shrink-0 text-[var(--dash-red)]"
+                  />
+                  <span className="dash-badge dash-badge-storemink">
+                    {ITEM.blocked}
+                  </span>
+                  {canSeeNotices && (
+                    <Link
+                      href={noticeHref(viewingBlockId)}
+                      className="dash-btn dash-btn-ghost dash-btn-sm ml-auto shrink-0 pointer-coarse:min-h-11"
+                    >
+                      {ITEM.seeWhyItIsBlocked}
+                    </Link>
+                  )}
+                </div>
+              )}
               <div className="relative flex max-h-[50vh] min-h-[220px] items-center justify-center overflow-hidden rounded-[var(--dash-radius-sm)] border border-[var(--dash-border)] bg-[var(--dash-surface-2)]">
                 <Image
                   src={viewingUrl}
@@ -641,6 +700,36 @@ export function MediaLibraryView({
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+/**
+ * The mark under a tile StoreMink blocked (takedown design 7.3): the label
+ * and, for an admin who can open Notices from StoreMink, a link to the notice.
+ */
+function BlockedStrip({
+  blockId,
+  canSeeNotices,
+}: {
+  blockId: string | null;
+  canSeeNotices: boolean;
+}) {
+  if (!blockId) return null;
+  return (
+    <div
+      data-testid="media-blocked-mark"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-[var(--dash-border)] bg-[var(--dash-surface)] px-2 py-1.5"
+    >
+      <span className="dash-badge dash-badge-storemink">{ITEM.blocked}</span>
+      {canSeeNotices && (
+        <Link
+          href={noticeHref(blockId)}
+          className="inline-flex items-center text-[12px] font-medium text-[var(--dash-accent)] hover:underline pointer-coarse:min-h-11"
+        >
+          {ITEM.seeWhy}
+        </Link>
+      )}
     </div>
   );
 }

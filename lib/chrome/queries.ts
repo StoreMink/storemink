@@ -4,6 +4,7 @@ import { cache } from "react";
 import { storeChrome, storeMenus } from "@/drizzle/schema";
 import { withAnon, withService } from "@/lib/db/client";
 import { getManagerUserId } from "@/app/dashboard/lib/access";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import { normalizeChrome, type StoreChrome } from "./types";
 
 /**
@@ -15,26 +16,38 @@ import { normalizeChrome, type StoreChrome } from "./types";
  *
  * A store with no row, or one that has never published, falls back to
  * DEFAULT_CHROME via normalizeChrome rather than rendering a bare page.
+ *
+ * ★ THE PAGE SWAP (takedown, design 5.6): whichever branch answers, the
+ * chrome goes through maskBlockedMedia after its scope has returned, so a
+ * blocked menu or feature image reaches no page (lib/storefront/queries.ts
+ * says why it is never inside the scope or an unstable_cache). The two draft
+ * readers below are not masked: the builder's own preview and editor show
+ * the merchant what they saved, and the editor writes it back.
  */
 export const getStoreChrome = cache(
   async (storeId: string): Promise<StoreChrome> => {
-    try {
-      const rows = await withAnon((db) =>
-        db
-          .select({ published: storeChrome.published })
-          .from(storeChrome)
-          .where(eq(storeChrome.storeId, storeId))
-          .limit(1),
-      );
-      if (rows[0]?.published) return normalizeChrome(rows[0].published);
-      // Row missing, or present but never published.
-      return await legacyMenusAsChrome(storeId);
-    } catch {
-      // The table itself may not exist yet — see legacyMenusAsChrome.
-      return await legacyMenusAsChrome(storeId);
-    }
+    return maskBlockedMedia(await readPublishedChrome(storeId));
   },
 );
+
+/** The published chrome, unmasked: getStoreChrome is its only caller. */
+async function readPublishedChrome(storeId: string): Promise<StoreChrome> {
+  try {
+    const rows = await withAnon((db) =>
+      db
+        .select({ published: storeChrome.published })
+        .from(storeChrome)
+        .where(eq(storeChrome.storeId, storeId))
+        .limit(1),
+    );
+    if (rows[0]?.published) return normalizeChrome(rows[0].published);
+    // Row missing, or present but never published.
+    return await legacyMenusAsChrome(storeId);
+  } catch {
+    // The table itself may not exist yet: see legacyMenusAsChrome.
+    return await legacyMenusAsChrome(storeId);
+  }
+}
 
 /**
  * Compatibility read: the old store_menus row, mapped into chrome.

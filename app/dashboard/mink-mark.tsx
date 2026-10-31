@@ -1,21 +1,28 @@
-import { Bot } from "lucide-react";
+import { MinkFace, type MinkFaceState } from "@/components/mink/mink-face";
 
-export function MinkMark({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const box =
-    size === "sm"
-      ? "h-7 w-7 rounded-lg"
-      : size === "lg"
-        ? "h-11 w-11 rounded-[14px]"
-        : "h-9 w-9 rounded-xl";
-  const icon =
-    size === "sm" ? "h-4 w-4" : size === "lg" ? "h-6 w-6" : "h-5 w-5";
+/** Pixel size of each mark: the old robot tile's sizes, kept so no layout moves. */
+export const MINK_MARK_PX = { sm: 28, md: 36, lg: 44 } as const;
 
+/**
+ * Mink AI's mark in the dashboard: the Mink face from the owner's expression
+ * sheet (the saffron tile), the same face the Help Centre uses. It replaced a
+ * purple robot icon on 31 Oct 2026. Decorative: every place it appears has a
+ * visible name or an aria-label beside it.
+ */
+export function MinkMark({
+  size = "md",
+  state = "default",
+  animated = false,
+}: {
+  size?: keyof typeof MINK_MARK_PX;
+  /** default, listening, thinking, talking or done. */
+  state?: MinkFaceState;
+  /** Blink, glance and talk; off under reduced motion whatever this says. */
+  animated?: boolean;
+}) {
   return (
-    <span
-      aria-hidden="true"
-      className={`${box} relative inline-flex shrink-0 items-center justify-center bg-[#6d4dff] text-white shadow-[0_7px_18px_rgba(109,77,255,0.24)]`}
-    >
-      <Bot className={icon} strokeWidth={2.25} />
+    <span aria-hidden="true" className="inline-flex shrink-0">
+      <MinkFace size={MINK_MARK_PX[size]} state={state} animated={animated} />
     </span>
   );
 }

@@ -1,11 +1,20 @@
 import { ChevronDown, CircleCheck } from "lucide-react";
-import { allowanceLabel, includedMinkCredits } from "@/lib/plans";
+import { includedMinkCredits } from "@/lib/plans";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
+import { getPublicTaxSource } from "@/lib/billing/public-tax";
+import { priceGstSuffix, pricingFootnote } from "@/lib/billing/tax-copy";
+import { termsAt } from "@/lib/billing/tax-terms";
+import { logError } from "@/lib/observability/logger";
 import { SUPPORT_EMAIL } from "@/lib/seo/brand-identity";
-import { PricingCards, type PricingCard } from "../../pricing-cards";
-import { FAQS, PLANS, PlanComparison } from "../../pricing-content";
+import { PricingCards } from "../../pricing-cards";
+import {
+  PLANS,
+  PlanComparison,
+  pricingCards,
+  pricingFaqs,
+} from "../../pricing-content";
 import { CtaBand, PageHero, marketingMetadata } from "../blocks";
 
 export const metadata = marketingMetadata({
@@ -21,11 +30,21 @@ const priceInr = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 // feature matrix and the FAQ. Prices and the included Mink allowance resolve
 // live from the canonical catalogue, exactly as the homepage's do, so the two
 // pages cannot quote different numbers.
+//
+// ★ GST (design 7.1, 8): the cached public source, beside the prices, worked
+// out for THIS render (`termsAt`); both reads revalidate at 300 s and the page
+// with them. A failed read gives null terms: the prices show with no GST words
+// at all, never as "GST is off".
 export default async function PricingPage() {
-  const [pricing, allowances] = await Promise.all([
+  const [pricing, allowances, taxSource] = await Promise.all([
     getPlanPricing(),
     getPlanAllowances(),
+    getPublicTaxSource().catch((error: unknown) => {
+      logError("billing.public_tax.read_failed", error, { page: "/pricing" });
+      return null;
+    }),
   ]);
+  const terms = taxSource ? termsAt(taxSource, new Date()) : null;
   const included = includedMinkCredits(
     allowances,
     getMinkConfig().chargeCredits,
@@ -35,18 +54,9 @@ export default async function PricingPage() {
       (price) => price > 0,
     ),
   );
-  const pricingCards: PricingCard[] = PLANS.map((plan) => ({
-    id: plan.meta.id,
-    name: plan.meta.name,
-    who: plan.who,
-    features: [
-      ...plan.features,
-      `${allowanceLabel(included[plan.meta.id])} Mink credits a month`,
-    ],
-    cta: plan.cta,
-    popular: plan.popular,
-    ...pricing[plan.meta.id],
-  }));
+  const cards = pricingCards(pricing, included, terms);
+  const pricingGst = terms ? priceGstSuffix(terms) : "";
+  const gstFootnote = terms ? pricingFootnote(terms) : null;
 
   return (
     <div className="smm-pricing">
@@ -57,7 +67,7 @@ export default async function PricingPage() {
             Start free. <em>Grow for less.</em>
           </>
         }
-        lead={`Every plan includes a real storefront and 0% StoreMink transaction fees. Paid plans start at ${priceInr(cheapestPaidInr)} per month, with two months free when billed yearly.`}
+        lead={`Every plan includes a real storefront and 0% StoreMink transaction fees. Paid plans start at ${priceInr(cheapestPaidInr)} per month${pricingGst}, with two months free when billed yearly.`}
         primary={null}
       />
 
@@ -65,7 +75,7 @@ export default async function PricingPage() {
         <div className="smh-container">
           <div className="smh-pricing-component">
             <PricingCards
-              plans={pricingCards}
+              plans={cards}
               aside={
                 <a href="#compare" className="smh-text-link">
                   Compare all features
@@ -77,6 +87,7 @@ export default async function PricingPage() {
             <CircleCheck size={16} /> Your store data is never deleted by a plan
             downgrade or failed payment.
           </p>
+          {gstFootnote && <p className="smh-pricing-foot">{gstFootnote}</p>}
           <div id="compare">
             <PlanComparison included={included} />
           </div>
@@ -96,7 +107,7 @@ export default async function PricingPage() {
             </p>
           </div>
           <div className="smh-faq-list">
-            {FAQS.map((faq) => (
+            {pricingFaqs(terms).map((faq) => (
               <details key={faq.q}>
                 <summary>
                   {faq.q}

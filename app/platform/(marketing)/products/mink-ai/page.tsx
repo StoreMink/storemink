@@ -28,7 +28,7 @@ export default function MinkAiPage() {
             Meet your secret weapon, <em>Mink.</em>
           </>
         }
-        lead="Your very own commerce AI, built into the StoreMink dashboard. Ask about your store and get answers from your own data. Have Mink prepare drafts you review before anything goes live."
+        lead="Your commerce AI, built into StoreMink. Get insights from your store data and review AI-generated drafts before publishing."
         secondary={{ href: "/pricing", text: "Credits on every plan" }}
       >
         <div className="smm-art is-navy">
@@ -41,17 +41,16 @@ export default function MinkAiPage() {
           label="Ask"
           title="Answers from your store, not the internet."
           points={[
-            "Sales, orders, low stock and customers by date, channel and location",
-            "Only what your role is allowed to see; direct customer details are masked",
-            "Help Centre answers for how-to questions",
-            "Weekly trading reports and investigations that run in the background",
+            "Track sales, orders, stock and customers.",
+            "Get accurate, role-based answers with masked customer details.",
+            "Get Help Centre guidance and how-to answers.",
+            "Automate weekly reports and background investigations.",
           ]}
           art={<CommerceCommandCentre />}
           tone="lilac"
         >
-          Mink reads the same figures your dashboard shows, scoped to the
-          locations you can see. Ask which products at a shop are below their
-          reorder level and the answer is the shelf count, not a guess.
+          Mink delivers real-time insights from your store data, based on your
+          role and accessible locations.
         </FeatureRow>
         <FeatureRow
           label="Draft"
@@ -65,10 +64,8 @@ export default function MinkAiPage() {
           art={<BuilderArt />}
           tone="cream"
         >
-          Attach a photo and say what to do with it: create the product, put it
-          on the homepage, write the launch email. Mink prepares the change and
-          hands you one button to apply it. Publishing stays a separate step you
-          take.
+          Upload a photo and tell Mink what you need. It prepares the changes
+          for your review, while publishing stays in your hands.
         </FeatureRow>
       </FeatureRows>
 
@@ -80,27 +77,27 @@ export default function MinkAiPage() {
         pillars={[
           {
             title: "Permission-aware",
-            body: "Mink holds exactly the permissions of the person asking. A cashier's Mink cannot read what a cashier cannot.",
+            body: "Mink only accesses what your role allows.",
           },
           {
             title: "Human approval",
-            body: "A change is applied only when you approve it, and only if the record has not moved since Mink looked at it.",
+            body: "You review and approve every change before it is applied.",
           },
           {
             title: "Private by default",
-            body: "Drafts belong to the person who asked. Nothing is sent, published or charged to a customer by Mink itself.",
+            body: "Your drafts stay private. Mink never publishes or sends anything on its own.",
           },
           {
             title: "Talk or type",
-            body: "Dictate a request, attach images or a PDF, or paste a product CSV. Mink reads it and asks when something is unclear.",
+            body: "Type, speak, upload images or PDFs, or share a product CSV. Mink understands and asks when needed.",
           },
           {
             title: "Images that match your shop",
-            body: "Generated campaign art is grounded in your own product photos, saved to your Media Library and never pretends to be a product photo.",
+            body: "Create campaign images using your product photos. All designs are saved to your Media Library.",
           },
           {
             title: "Clear on cost",
-            body: "Every plan includes Mink credits each month. A simple question costs one; a bigger piece of work costs more, and the balance is always visible.",
+            body: "Every plan includes monthly Mink credits. Costs depend on the task, and your balance is always visible.",
           },
         ]}
       />

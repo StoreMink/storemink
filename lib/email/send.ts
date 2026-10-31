@@ -27,7 +27,7 @@ import { Resend } from "resend";
 import { withService } from "@/lib/db/client";
 import { emailLogs } from "@/drizzle/schema";
 import { logError } from "@/lib/observability/logger";
-import { isSensitiveMailer, REDACTED, type MailerKey } from "./mailers";
+import { isSensitiveMailer, redactedLabelFor, type MailerKey } from "./mailers";
 import { findSuppressed, normalizeEmail } from "./suppression";
 
 /** Bodies above this are pointless to store and expensive to read back. */
@@ -195,7 +195,9 @@ async function writeLog(
   // Sensitive credentials must not outlive their expiry inside a log table
   // that store staff can read. The catalog owns the documented operator-only
   // OTP exceptions (see lib/email/mailers.ts). Everything a log is actually
-  // for — who, when, did it send — survives redaction untouched.
+  // for (who, when, did it send) survives redaction untouched. A mailer may
+  // name its own placeholder (a complaint is redacted for privacy, not for a
+  // sign-in code), else REDACTED.
   const sensitive = isSensitiveMailer(input.mailer);
   const body = sensitive ? null : input.html;
 
@@ -207,7 +209,9 @@ async function writeLog(
         fromEmail: input.from.slice(0, 320),
         cc: input.cc?.length ? input.cc.join(", ").slice(0, 1000) : null,
         bcc: input.bcc?.length ? input.bcc.join(", ").slice(0, 1000) : null,
-        subject: sensitive ? REDACTED : input.subject.slice(0, 500),
+        subject: sensitive
+          ? redactedLabelFor(input.mailer)
+          : input.subject.slice(0, 500),
         mailer: input.mailer,
         provider: "resend",
         status: outcome.status,

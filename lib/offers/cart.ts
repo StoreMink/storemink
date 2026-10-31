@@ -35,6 +35,7 @@ import {
   loadFirstOrderState,
   loadLiveOffers,
   loadOfferPolicy,
+  type LiveOfferOptions,
 } from "./resolve";
 import { getStoreSettings } from "@/lib/settings/resolve";
 import type {
@@ -79,6 +80,10 @@ export interface ResolveOffersInput {
  * Returns `null` when offers cannot be resolved at all — see the header. A
  * resolved result with `discount: 0` is a different thing entirely: it means
  * the engine ran and nothing qualified.
+ *
+ * ★ THE CHANNEL DECIDES A BLOCKED GIFT. `placeOrder` (website) withdraws a
+ * free gift StoreMink has blocked; `placePosSale` (`channel: "pos"`) keeps it,
+ * because an item block leaves the POS selling the product (decision D18).
  */
 export async function resolveOffersForCart(
   input: ResolveOffersInput,
@@ -92,6 +97,8 @@ export async function resolveOffersForCart(
           db,
           input.storeId,
           input.customerId ?? null,
+          // Website only: the POS keeps a blocked gift (see above).
+          { blockedGiftsUnavailable: input.channel !== "pos" },
         ),
         groupIds: await loadCustomerGroupIds(db, input.customerId ?? null),
         // ★ Resolved server-side from order history, never taken from the
@@ -408,6 +415,11 @@ export async function recordOfferRedemptions(
  * be resolved here. `resolvePosCustomerByPhone` returns the ids this customer
  * has used up, and the screen re-prices once they are identified;
  * `reserve_offer_use` is the atomic backstop either way.
+ *
+ * ★ A GIFT STOREMINK HAS BLOCKED STAYS AVAILABLE HERE BY DEFAULT: an item
+ * block leaves the POS selling the product (takedown decision D18), so the
+ * POS quotes the gift the sale itself will give. The storefront loader below
+ * shares this function and passes the website's answer, which withdraws it.
  */
 export async function loadOffersForRegister(
   storeId: string,
@@ -415,6 +427,8 @@ export async function loadOffersForRegister(
    *  below passes a real customer, which lets per-customer caps resolve up
    *  front rather than only at the atomic reservation. */
   customerId: string | null = null,
+  /** How `loadLiveOffers` answers: the POS's unless a caller says otherwise. */
+  live: LiveOfferOptions = { blockedGiftsUnavailable: false },
 ): Promise<{
   offers: Offer[];
   policy: Pick<
@@ -433,7 +447,7 @@ export async function loadOffersForRegister(
   try {
     const [policy, offers] = await Promise.all([
       loadOfferPolicy(),
-      withService((db) => loadLiveOffers(db, storeId, customerId)),
+      withService((db) => loadLiveOffers(db, storeId, customerId, live)),
     ]);
     return { offers, policy };
   } catch (err) {
@@ -524,7 +538,10 @@ export async function loadOffersForStorefront(
   // independent reads awaited in turn is ~140ms at Mumbai's ~46ms RTT, paid on
   // every cart hydration, for nothing.
   const [bundle, isFirstOrder, settings] = await Promise.all([
-    loadOffersForRegister(storeId, customerId),
+    // The website's answer: a gift StoreMink has blocked is not offered.
+    loadOffersForRegister(storeId, customerId, {
+      blockedGiftsUnavailable: true,
+    }),
     withService((db) => loadFirstOrderState(db, storeId, customerId)).catch(
       // Fails to "not first", the closed direction: a blip must not hand the
       // new-customer discount to every returning customer at once.

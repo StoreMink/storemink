@@ -120,6 +120,10 @@ const proposeStorefrontLayout: MinkTool = {
   permission: { section: "builder", action: "manage" },
   available,
   timeoutMs: 10_000,
+  // A picture inside a section's config may be an attachment; the registry
+  // hands this tool its Media Library copy, so the ownership check sees a
+  // Library image (registry.ts).
+  attachmentArgs: ["sections"],
   // A layout proposal is already the complete merchant-visible result. If the
   // model selects it on the last permitted reasoning turn, the orchestrator can
   // show its review card with this deterministic sentence instead of rejecting

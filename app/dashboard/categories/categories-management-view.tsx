@@ -12,6 +12,7 @@ import {
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Image from "next/image";
+import Link from "next/link";
 import {
   FolderTree,
   ImageIcon,
@@ -19,6 +20,7 @@ import {
   Pencil,
   Plus,
   Search,
+  ShieldAlert,
   Trash2,
 } from "lucide-react";
 import {
@@ -45,13 +47,28 @@ import {
   type MinkCategoryPrefill,
 } from "@/lib/mink/form-prefill";
 import { ImportExportMenu } from "@/app/dashboard/components/import-export-menu";
+import { STORE_NOTICES_HREF } from "@/app/dashboard/components/unread-counts-context";
+import { ITEM, itemBlockedBanner } from "@/lib/moderation/copy";
 import { CategoryEditorDialog } from "./category-editor-dialog";
 import type { Category } from "./page";
 
 type Props = {
   categories: Category[];
   canManage?: boolean;
+  /**
+   * Collections StoreMink blocked and told the store about, collection id to
+   * block id (takedown design 7.3). A block kept from the store is not here
+   * (D21), so it shows nothing.
+   */
+  blockedByStoreMink?: Record<string, string>;
+  /** Whether this admin may open Settings, Notices from StoreMink. */
+  canSeeNotices?: boolean;
 };
+
+/** Where "See why" goes for a blocked collection: its notice. */
+function noticeHref(blockId: string): string {
+  return `${STORE_NOTICES_HREF}/${blockId}`;
+}
 
 /**
  * Fields Mink filled in for a new category, read once and cleared.
@@ -71,8 +88,15 @@ const subscribeToNothing = () => () => {};
 export function CategoriesManagementView({
   categories,
   canManage = true,
+  blockedByStoreMink,
+  canSeeNotices = false,
 }: Props) {
   const router = useRouter();
+  // The notice a blocked collection's "See why" opens, or null when the
+  // collection is not blocked (or the store was not told).
+  const blockIdOf = (categoryId: string): string | null =>
+    blockedByStoreMink?.[categoryId] ?? null;
+  const blockedCategories = categories.filter((c) => blockIdOf(c.id) !== null);
   const [isPending, startTransition] = useTransition();
   const [search, setSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null);
@@ -156,6 +180,42 @@ export function CategoriesManagementView({
         </div>
       </header>
 
+      {blockedCategories.length > 0 && (
+        <div className="mb-4 flex flex-col gap-2">
+          {blockedCategories.map((c) => {
+            const blockId = blockIdOf(c.id);
+            return (
+              <div
+                key={c.id}
+                role="status"
+                data-testid="category-blocked-banner"
+                className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[var(--dash-radius)] border border-[var(--dash-red)]/30 bg-[var(--dash-red-soft)] px-4 py-3"
+              >
+                <ShieldAlert
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0 text-[var(--dash-red)]"
+                />
+                <div className="min-w-0 flex-1 basis-56 text-[13px] text-[var(--dash-text)]">
+                  <p className="font-semibold">{c.name}</p>
+                  <p>
+                    <span className="font-semibold">{ITEM.blocked}.</span>{" "}
+                    {itemBlockedBanner("collection")}
+                  </p>
+                </div>
+                {canSeeNotices && blockId && (
+                  <Link
+                    href={noticeHref(blockId)}
+                    className="dash-btn dash-btn-ghost dash-btn-sm shrink-0 pointer-coarse:min-h-11"
+                  >
+                    {ITEM.seeWhy}
+                  </Link>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div className="dash-card flex flex-col">
         <div className="dash-toolbar px-5 pt-4 pb-2 border-b border-[var(--dash-border)] mb-0 flex flex-col gap-4">
           <div className="dash-toolbar-actions w-full flex justify-between">
@@ -237,15 +297,23 @@ export function CategoriesManagementView({
                   </td>
                   <td className="text-dim font-mono-dash">{c.sort_order}</td>
                   <td>
-                    <span
-                      className={`dash-badge ${
-                        c.status === "active"
-                          ? "dash-badge-green"
-                          : "dash-badge-grey"
-                      }`}
-                    >
-                      {c.status === "active" ? "Active" : "Hidden"}
-                    </span>
+                    {blockIdOf(c.id) ? (
+                      // A collection StoreMink blocked is hidden whatever its
+                      // own status says (takedown design 7.3).
+                      <span className="dash-badge dash-badge-storemink">
+                        {ITEM.blocked}
+                      </span>
+                    ) : (
+                      <span
+                        className={`dash-badge ${
+                          c.status === "active"
+                            ? "dash-badge-green"
+                            : "dash-badge-grey"
+                        }`}
+                      >
+                        {c.status === "active" ? "Active" : "Hidden"}
+                      </span>
+                    )}
                   </td>
                   {canManage && (
                     <td className="dash-col-actions">
@@ -265,6 +333,19 @@ export function CategoriesManagementView({
                             <Pencil className="mr-2 h-4 w-4" />
                             Edit
                           </DropdownMenuItem>
+                          {(() => {
+                            const blockId = blockIdOf(c.id);
+                            if (!blockId || !canSeeNotices) return null;
+                            return (
+                              <DropdownMenuItem
+                                className="cursor-pointer"
+                                onClick={() => router.push(noticeHref(blockId))}
+                              >
+                                <ShieldAlert className="mr-2 h-4 w-4" />
+                                {ITEM.seeWhyItIsBlocked}
+                              </DropdownMenuItem>
+                            );
+                          })()}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             variant="destructive"
@@ -333,6 +414,8 @@ export function CategoriesManagementView({
         prefill={minkPrefill}
         onClose={closeEditor}
         onSaved={handleSaved}
+        blockedByStoreMink={editing ? blockIdOf(editing.id) : null}
+        canSeeNotices={canSeeNotices}
       />
     </div>
   );

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { BlockedMediaSet } from "@/lib/moderation/blocked-objects";
 import type { MinkActorContext } from "../types";
 
 const mocks = vi.hoisted(() => ({
@@ -17,7 +18,39 @@ const mocks = vi.hoisted(() => ({
   readStorefrontDesign: vi.fn(),
   proposeStorefrontCode: vi.fn(),
   readOffers: vi.fn(),
+  readLowStock: vi.fn(),
+  selectRows: [] as Record<string, unknown>[],
+  marks: new Map<string, string>(),
+  blockedSet: null as BlockedMediaSet | null,
 }));
+vi.mock("@/lib/db/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/db/client")>();
+  // A select chain that answers with this test's rows, whatever it asks.
+  const chain: Record<string, unknown> = {};
+  for (const step of ["from", "where", "orderBy"]) chain[step] = () => chain;
+  chain.limit = async () => mocks.selectRows;
+  return {
+    ...actual,
+    withUser: vi.fn(async (_identity: unknown, run: (db: unknown) => unknown) =>
+      run({ select: () => chain }),
+    ),
+  };
+});
+vi.mock("@/lib/moderation/merchant", () => ({
+  blockedItemIds: vi.fn(async () => mocks.marks),
+}));
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  const current = () => mocks.blockedSet ?? actual.emptyBlockedMediaSet(1, "b");
+  return {
+    ...actual,
+    blockedMedia: vi.fn(async () => current()),
+    maskBlockedMedia: vi.fn(async (value: unknown) =>
+      actual.maskBlockedMediaWith(value, current()),
+    ),
+  };
+});
 vi.mock("../catalog-health-read", () => ({
   readMinkCatalogHealth: mocks.readCatalog,
   readMinkCatalogHealthByLocation: mocks.readByLocation,
@@ -33,7 +66,11 @@ vi.mock("../workflows", () => ({
   enqueueSlowInventoryPromotion: mocks.enqueueSlowInventoryWorkflow,
   enqueueDelayedPickupReview: mocks.enqueueDelayedPickupWorkflow,
 }));
-vi.mock("../storefront-context-read", () => ({
+vi.mock("../storefront-context-read", async (importOriginal) => ({
+  // The takedown mark helper is the real one, over the mocks above.
+  withStoreMinkBlocks: (
+    await importOriginal<typeof import("../storefront-context-read")>()
+  ).withStoreMinkBlocks,
   readMinkStorefrontPages: mocks.readStorefrontPages,
   readMinkStorefrontPageContext: mocks.readStorefrontPage,
   readMinkStorefrontSectionContext: mocks.readStorefrontSection,
@@ -45,7 +82,14 @@ vi.mock("../storefront-code-proposals", () => ({
 vi.mock("../offers-read", () => ({
   readMinkCurrentOffers: mocks.readOffers,
 }));
+vi.mock("@/lib/inventory/low-stock-read", () => ({
+  readLowStockItems: mocks.readLowStock,
+}));
 
+import { withUser } from "@/lib/db/client";
+import { buildBlockedMediaSet } from "@/lib/moderation/blocked-objects";
+import { blockedItemIds } from "@/lib/moderation/merchant";
+import { PLACEHOLDER_URL_PATH } from "@/lib/moderation/placeholder";
 import { minkReadToolRegistry } from "./read-tools";
 
 const ACTOR: MinkActorContext = {
@@ -65,6 +109,9 @@ const ACTOR: MinkActorContext = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.selectRows = [];
+  mocks.marks = new Map();
+  mocks.blockedSet = null;
   mocks.resolveLocation.mockResolvedValue({
     locationIds: null,
     selectedId: null,
@@ -1210,5 +1257,346 @@ describe("Mink read-tool declarations", () => {
         response: { error: { code: "permission_denied" } },
       });
     }
+  });
+});
+
+describe("takedown: what Mink's item reads say about a StoreMink block", () => {
+  const TOLD = "11111111-1111-4111-8111-111111111111";
+  const UNTOLD = "22222222-2222-4222-8222-222222222222";
+  const PHOTO = "https://storage.googleapis.com/b/stores/store-1/media/p.webp";
+  const OTHER = "https://storage.googleapis.com/b/stores/store-1/media/q.webp";
+  const SENTENCE = (name: string) =>
+    `StoreMink has blocked ${name}. It stays hidden from your store until StoreMink lifts the block. You can read why in Settings, Notices from StoreMink.`;
+
+  beforeEach(() => {
+    // TOLD is blocked and the store was told; UNTOLD is blocked under an
+    // order that keeps it from the store, so blockedItemIds never returns it.
+    mocks.marks = new Map([[TOLD, "33333333-3333-4333-8333-333333333333"]]);
+    mocks.blockedSet = buildBlockedMediaSet(
+      [
+        {
+          id: "44444444-4444-4444-8444-444444444444",
+          objectPath: "stores/store-1/media/p.webp",
+          fileSource: "bucket",
+          storeId: "store-1",
+          objectMd5: null,
+          tellStore: false,
+        },
+      ],
+      { bucket: "b", loadedAt: 1 },
+    );
+  });
+
+  function product(id: string, name: string, imageUrl: string) {
+    return {
+      id,
+      name,
+      sku: "SKU1",
+      status: "published",
+      sellingPrice: 100,
+      stock: 3,
+      trackInventory: true,
+      imageUrl,
+      images: [imageUrl, OTHER],
+      description: `<p><img src="${imageUrl}"></p>`,
+      seoTitle: null,
+      seoDescription: null,
+    };
+  }
+
+  it("search_products marks a told block by name and leaves an untold one unmarked", async () => {
+    mocks.selectRows = [
+      product(TOLD, "Almond shake", OTHER),
+      product(UNTOLD, "Cold coffee", OTHER),
+    ];
+    const result = await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-search",
+      name: "search_products",
+      args: { query: "shake" },
+    });
+    const output = result.response.output as {
+      products: Record<string, unknown>[];
+    };
+    expect(output.products[0]).toMatchObject({
+      id: TOLD,
+      blockedByStoreMink: true,
+      storeMinkNotice: SENTENCE("Almond shake"),
+    });
+    // D21: nothing names or hints at a block kept from the store.
+    expect(output.products[1]).not.toHaveProperty("blockedByStoreMink");
+    expect(output.products[1]).not.toHaveProperty("storeMinkNotice");
+    expect(JSON.stringify(output.products[1])).not.toMatch(/block/i);
+    expect(vi.mocked(blockedItemIds)).toHaveBeenCalledWith(
+      "store-1",
+      "product",
+    );
+    // Read after the catalogue's scope: never inside its callback.
+    expect(
+      vi.mocked(blockedItemIds).mock.invocationCallOrder[0],
+    ).toBeGreaterThan(vi.mocked(withUser).mock.invocationCallOrder[0]);
+  });
+
+  it("search_products hands a blocked photo over only as the placeholder", async () => {
+    mocks.selectRows = [product(UNTOLD, "Cold coffee", PHOTO)];
+    const result = await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-search",
+      name: "search_products",
+      args: { query: "coffee" },
+    });
+    const output = result.response.output as {
+      products: { imageUrl: string; images: string[] }[];
+    };
+    expect(output.products[0].imageUrl).toBe(PLACEHOLDER_URL_PATH);
+    expect(output.products[0].images).toEqual([PLACEHOLDER_URL_PATH, OTHER]);
+    expect(JSON.stringify(result.response)).not.toContain(PHOTO);
+  });
+
+  it("asks nothing about blocks when the search finds nothing", async () => {
+    mocks.selectRows = [];
+    await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-search",
+      name: "search_products",
+      args: { query: "nothing" },
+    });
+    expect(vi.mocked(blockedItemIds)).not.toHaveBeenCalled();
+  });
+
+  it("get_current_product marks the open product and masks its pictures", async () => {
+    mocks.selectRows = [product(TOLD, "Almond shake", PHOTO)];
+    const actor = {
+      ...ACTOR,
+      draftingEnabled: true,
+      selectedResource: { type: "product", id: TOLD },
+    } as MinkActorContext;
+    const result = await minkReadToolRegistry.execute(actor, {
+      id: "call-current",
+      name: "get_current_product",
+      args: {},
+    });
+    const output = result.response.output as {
+      products: Record<string, unknown>[];
+    };
+    expect(output.products[0]).toMatchObject({
+      blockedByStoreMink: true,
+      storeMinkNotice: SENTENCE("Almond shake"),
+      imageUrl: PLACEHOLDER_URL_PATH,
+    });
+    expect(JSON.stringify(result.response)).not.toContain(PHOTO);
+  });
+
+  it("list_blogs marks a told post and masks a blocked cover", async () => {
+    mocks.selectRows = [
+      {
+        id: TOLD,
+        title: "Summer drinks",
+        slug: "summer-drinks",
+        excerpt: "",
+        status: "published",
+        featured: false,
+        categories: [],
+        tags: [],
+        coverImageUrl: PHOTO,
+        publishedAt: null,
+        createdAt: "2026-10-01T00:00:00Z",
+        updatedAt: "2026-10-01T00:00:00Z",
+      },
+    ];
+    const result = await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-blogs",
+      name: "list_blogs",
+      args: {},
+    });
+    const output = result.response.output as {
+      blogs: Record<string, unknown>[];
+    };
+    expect(output.blogs[0]).toMatchObject({
+      blockedByStoreMink: true,
+      storeMinkNotice: SENTENCE("Summer drinks"),
+      coverImageUrl: PLACEHOLDER_URL_PATH,
+    });
+    expect(vi.mocked(blockedItemIds)).toHaveBeenCalledWith(
+      "store-1",
+      "blog_post",
+    );
+  });
+
+  it("search_storefront_categories marks a told collection", async () => {
+    mocks.selectRows = [
+      {
+        id: TOLD,
+        name: "Shakes",
+        slug: "shakes",
+        description: null,
+        status: "active",
+        imageUrl: PHOTO,
+      },
+      {
+        id: UNTOLD,
+        name: "Coffee",
+        slug: "coffee",
+        description: null,
+        status: "active",
+        imageUrl: OTHER,
+      },
+    ];
+    const result = await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-categories",
+      name: "search_storefront_categories",
+      args: { query: "s" },
+    });
+    const output = result.response.output as {
+      categories: Record<string, unknown>[];
+    };
+    expect(output.categories[0]).toMatchObject({
+      blockedByStoreMink: true,
+      storeMinkNotice: SENTENCE("Shakes"),
+      imageUrl: PLACEHOLDER_URL_PATH,
+    });
+    expect(output.categories[1]).not.toHaveProperty("blockedByStoreMink");
+    expect(output.categories[1]).toMatchObject({ imageUrl: OTHER });
+    expect(vi.mocked(blockedItemIds)).toHaveBeenCalledWith(
+      "store-1",
+      "collection",
+    );
+  });
+
+  // ★ Fix pass (must-do 34): the catalogue summary and the low-stock list name
+  //   products too, so a told block is marked there as well; nothing new is
+  //   read, only the existing mark lookup after the read's scope has closed.
+  function healthItem(productId: string, productName: string, id = productId) {
+    return {
+      id,
+      productId,
+      variantId: id === productId ? null : id,
+      productName,
+      variantName: id === productId ? null : "Large",
+      sku: "SKU1",
+      publicationStatus: "published",
+      publicationTags: [],
+      stock: 1,
+      threshold: 5,
+      inventoryStatus: "low",
+      dashboardPath: `/dashboard/products/${productId}`,
+    };
+  }
+
+  it("get_catalog_summary marks a told-blocked product's rows and leaves an untold one unmarked", async () => {
+    mocks.resolveLocation.mockResolvedValue({
+      locationIds: ["shop-1"],
+      selectedId: "shop-1",
+      label: "Shop",
+      includeUnassigned: false,
+      availableLocations: [{ id: "shop-1", name: "Shop", type: "shop" }],
+    });
+    mocks.readCatalog.mockResolvedValue({
+      total: 2,
+      published: 2,
+      unpublished: 0,
+      draft: 0,
+      archived: 0,
+      inventoryItems: 3,
+      lowStock: 3,
+      outOfStock: 0,
+      items: [
+        healthItem(TOLD, "Almond shake"),
+        healthItem(
+          TOLD,
+          "Almond shake",
+          "55555555-5555-4555-8555-555555555555",
+        ),
+        healthItem(UNTOLD, "Cold coffee"),
+      ],
+      truncated: false,
+    });
+    const result = await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-summary",
+      name: "get_catalog_summary",
+      args: { inventory_scope: "combined" },
+    });
+    const output = result.response.output as {
+      items: Record<string, unknown>[];
+      total: number;
+    };
+    expect(output.total).toBe(2);
+    expect(output.items[0]).toMatchObject({
+      productId: TOLD,
+      blockedByStoreMink: true,
+      storeMinkNotice: SENTENCE("Almond shake"),
+    });
+    expect(output.items[1]).toMatchObject({ blockedByStoreMink: true });
+    // D21: nothing names or hints at a block kept from the store.
+    expect(output.items[2]).not.toHaveProperty("blockedByStoreMink");
+    expect(JSON.stringify(output.items[2])).not.toMatch(/block/i);
+    expect(vi.mocked(blockedItemIds)).toHaveBeenCalledWith(
+      "store-1",
+      "product",
+    );
+    expect(
+      vi.mocked(blockedItemIds).mock.invocationCallOrder[0],
+    ).toBeGreaterThan(mocks.readCatalog.mock.invocationCallOrder[0]);
+  });
+
+  it("get_catalog_summary asks nothing about blocks when it lists no product", async () => {
+    await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-summary",
+      name: "get_catalog_summary",
+      args: { inventory_scope: "publication_only" },
+    });
+    expect(vi.mocked(blockedItemIds)).not.toHaveBeenCalled();
+  });
+
+  it("list_low_stock marks a told-blocked product and leaves an untold one unmarked", async () => {
+    mocks.readLowStock.mockResolvedValue({
+      items: [
+        {
+          productId: TOLD,
+          variantId: null,
+          productName: "Almond shake",
+          variantName: null,
+          sku: "SKU1",
+          stock: 1,
+          threshold: 5,
+          status: "low",
+          productStatus: "published",
+        },
+        {
+          productId: UNTOLD,
+          variantId: null,
+          productName: "Cold coffee",
+          variantName: null,
+          sku: "SKU2",
+          stock: 0,
+          threshold: 5,
+          status: "out",
+          productStatus: "published",
+        },
+      ],
+      truncated: false,
+    });
+    const result = await minkReadToolRegistry.execute(ACTOR, {
+      id: "call-low",
+      name: "list_low_stock",
+      args: {},
+    });
+    const output = result.response.output as {
+      items: Record<string, unknown>[];
+      count: number;
+    };
+    expect(output.count).toBe(2);
+    expect(output.items[0]).toMatchObject({
+      productId: TOLD,
+      productDashboardPath: `/dashboard/products/${TOLD}`,
+      blockedByStoreMink: true,
+      storeMinkNotice: SENTENCE("Almond shake"),
+    });
+    expect(output.items[1]).not.toHaveProperty("blockedByStoreMink");
+    expect(JSON.stringify(output.items[1])).not.toMatch(/block/i);
+    expect(vi.mocked(blockedItemIds)).toHaveBeenCalledWith(
+      "store-1",
+      "product",
+    );
+    expect(
+      vi.mocked(blockedItemIds).mock.invocationCallOrder[0],
+    ).toBeGreaterThan(mocks.readLowStock.mock.invocationCallOrder[0]);
   });
 });

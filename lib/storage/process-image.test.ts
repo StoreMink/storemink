@@ -17,24 +17,36 @@ vi.mock("@/lib/observability/logger", () => ({
  */
 type SharpMode = "ok" | "missing" | "throws";
 
+/** What the mocked sharp was asked: the factory's options and the encoder. */
+const sharpCalls: { options: unknown; encoder: string | null }[] = [];
+
 async function load(mode: SharpMode = "ok") {
   vi.resetModules();
+  sharpCalls.length = 0;
   vi.doMock("sharp", () => {
     if (mode === "missing") {
       throw new Error(
         'Could not load the "sharp" module using the linux-x64 runtime',
       );
     }
-    const chain = {
-      rotate: () => chain,
-      resize: () => chain,
-      webp: () => chain,
-      toBuffer: async () => {
-        if (mode === "throws") throw new Error("unsupported image");
-        return Buffer.from("webp-bytes");
+    return {
+      default: (_input: Uint8Array, options?: unknown) => {
+        const call = { options, encoder: null as string | null };
+        sharpCalls.push(call);
+        const chain = {
+          rotate: () => chain,
+          resize: () => chain,
+          webp: () => ((call.encoder = "webp"), chain),
+          gif: () => ((call.encoder = "gif"), chain),
+          avif: () => ((call.encoder = "avif"), chain),
+          toBuffer: async () => {
+            if (mode === "throws") throw new Error("unsupported image");
+            return Buffer.from(`${call.encoder}-bytes`);
+          },
+        };
+        return chain;
       },
     };
-    return { default: () => chain };
   });
   return import("./process-image");
 }
@@ -46,6 +58,38 @@ const file = (type: string, name = "shot.png", size = 1000) =>
     size,
     arrayBuffer: async () => new ArrayBuffer(8),
   }) as unknown as File;
+
+/** A file whose bytes are given (the magic-byte check reads them). */
+const fileOf = (type: string, bytes: number[] | Uint8Array, name = "shot") =>
+  ({
+    type,
+    name,
+    size: bytes.length,
+    arrayBuffer: async () => new Uint8Array(bytes).buffer,
+  }) as unknown as File;
+
+const ascii = (text: string) => Array.from(text, (c) => c.charCodeAt(0));
+
+/** The first bytes of each type, as the magic-byte check expects them. */
+const MAGIC: Record<string, number[]> = {
+  "image/jpeg": [0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0],
+  "image/png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0],
+  "image/webp": [...ascii("RIFF"), 0, 0, 0, 0, ...ascii("WEBPVP8 ")],
+  "image/gif": [...ascii("GIF89a"), 0, 0],
+  "image/avif": [
+    0,
+    0,
+    0,
+    0x1c,
+    ...ascii("ftypavif"),
+    0,
+    0,
+    0,
+    0,
+    ...ascii("mif1miaf"),
+  ],
+  "image/svg+xml": ascii('<?xml version="1.0"?><svg xmlns="x"></svg>'),
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -145,5 +189,126 @@ describe("processImageUpload", () => {
     await processImageUpload(file("image/png"));
     // Two refusals, but the failed import is not retried per upload.
     expect(logError).toHaveBeenCalledTimes(2);
+  });
+
+  describe("★★ strict mode (review S3: Mink chat attachments)", () => {
+    it("is off unless asked for: a GIF still passes through, and an awkward image is still stored", async () => {
+      const { processImageUpload } = await load("throws");
+      const gif = await processImageUpload(
+        fileOf("image/gif", MAGIC["image/gif"]),
+      );
+      expect(gif.ok).toBe(true);
+      expect(sharpCalls).toHaveLength(0);
+      const png = await processImageUpload(fileOf("image/png", [1, 2, 3]));
+      expect(png.ok).toBe(true);
+    });
+
+    it("★ refuses bytes that do not start like the declared type, before sharp sees them", async () => {
+      const { processImageUpload, NOT_A_VALID_IMAGE } = await load();
+      for (const [type, bytes] of [
+        ["image/png", MAGIC["image/jpeg"]],
+        ["image/jpeg", ascii("<html><body>hi</body></html>")],
+        ["image/webp", ascii("RIFF0000AVI LIST")],
+        ["image/gif", ascii("GIF90a......")],
+        ["image/avif", [0, 0, 0, 0x1c, ...ascii("ftypheic")]],
+        ["image/svg+xml", ascii("<html><script>x</script></html>")],
+      ] as const) {
+        const r = await processImageUpload(fileOf(type, [...bytes]), {
+          strict: true,
+        });
+        expect(r, type).toEqual({
+          ok: false,
+          error: NOT_A_VALID_IMAGE,
+          status: 400,
+        });
+      }
+      expect(sharpCalls).toHaveLength(0);
+      expect(NOT_A_VALID_IMAGE).toBe(
+        "This file isn't a valid image. Please upload a PNG, JPG, WebP, GIF or AVIF image.",
+      );
+    });
+
+    it("accepts each type's real first bytes", async () => {
+      const { bytesMatchImageType } = await load();
+      for (const [type, bytes] of Object.entries(MAGIC)) {
+        expect(bytesMatchImageType(new Uint8Array(bytes), type), type).toBe(
+          true,
+        );
+      }
+      expect(bytesMatchImageType(new Uint8Array([1]), "image/tiff")).toBe(
+        false,
+      );
+    });
+
+    it("★ refuses an image sharp cannot decode instead of storing it as sent", async () => {
+      const { processImageUpload, NOT_A_VALID_IMAGE } = await load("throws");
+      const r = await processImageUpload(
+        fileOf("image/png", MAGIC["image/png"]),
+        {
+          strict: true,
+        },
+      );
+      expect(r).toEqual({ ok: false, error: NOT_A_VALID_IMAGE, status: 400 });
+      expect(logError).toHaveBeenCalledWith(
+        "image processing refused an undecodable upload",
+        expect.anything(),
+        { type: "image/png" },
+      );
+    });
+
+    it("★ re-encodes a GIF with its animation, and an AVIF, so neither keeps its metadata", async () => {
+      const { processImageUpload } = await load();
+      const gif = await processImageUpload(
+        fileOf("image/gif", MAGIC["image/gif"]),
+        {
+          strict: true,
+        },
+      );
+      expect(gif).toMatchObject({
+        ok: true,
+        data: { contentType: "image/gif", ext: "gif" },
+      });
+      expect(sharpCalls[0]).toEqual({
+        options: { animated: true },
+        encoder: "gif",
+      });
+      if (gif.ok)
+        expect(Buffer.from(gif.data.bytes).toString()).toBe("gif-bytes");
+
+      const avif = await processImageUpload(
+        fileOf("image/avif", MAGIC["image/avif"]),
+        {
+          strict: true,
+        },
+      );
+      expect(avif).toMatchObject({
+        ok: true,
+        data: { contentType: "image/avif", ext: "avif" },
+      });
+      expect(sharpCalls[1]).toMatchObject({ encoder: "avif" });
+    });
+
+    it("a PNG still becomes WebP, and a missing sharp refuses every type, GIF included", async () => {
+      let mod = await load();
+      const png = await mod.processImageUpload(
+        fileOf("image/png", MAGIC["image/png"]),
+        {
+          strict: true,
+        },
+      );
+      expect(png).toMatchObject({
+        ok: true,
+        data: { contentType: "image/webp" },
+      });
+
+      mod = await load("missing");
+      const gif = await mod.processImageUpload(
+        fileOf("image/gif", MAGIC["image/gif"]),
+        {
+          strict: true,
+        },
+      );
+      expect(gif).toMatchObject({ ok: false, status: 503 });
+    });
   });
 });

@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowUpRight, Sparkles } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
+import { MinkFace } from "@/components/mink/mink-face";
 import {
   minkHomeSuggestionLinkLabel,
   type MinkHomeSuggestion,
@@ -29,9 +30,7 @@ export function MinkSuggestions({
     <section className="dash-card" aria-labelledby="mink-suggests-title">
       <div className="dash-card-header">
         <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
-            <Sparkles className="h-4 w-4" aria-hidden />
-          </span>
+          <MinkFace size={32} />
           <div className="min-w-0">
             <h2 id="mink-suggests-title" className="dash-card-title">
               Mink suggests
@@ -82,10 +81,7 @@ export function MinkSuggestions({
                   aria-label={`Ask Mink: ${item.title}`}
                   onClick={() => startExpandedChat(item.askMink)}
                 >
-                  <Sparkles
-                    className="h-3.5 w-3.5 text-[var(--dash-accent)]"
-                    aria-hidden
-                  />
+                  <MinkFace size={18} />
                   Ask Mink
                 </button>
               ) : null}

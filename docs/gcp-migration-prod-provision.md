@@ -124,9 +124,17 @@ from the application login.
 gcloud storage buckets create gs://$MEDIA_BUCKET \
   --location=$REGION --uniform-bucket-level-access
 
-# public read (matches the media serving model)
+# Soft delete: read the bucket's policy and keep the default 7 days unless
+# decision D5 says otherwise (it is how a wrongly deleted object comes back).
+gcloud storage buckets describe gs://$MEDIA_BUCKET
+
+# Public read by link only: legacyObjectReader gives storage.objects.get and
+# not storage.objects.list, so anyone with an object's URL can read it but
+# nobody can list the bucket. Nothing in the code lists the bucket anonymously.
+# An unguessable path is not access control: private data (WhatsApp chat
+# media, Mink AI attachments, Refine stages) goes to the PRIVATE bucket.
 gcloud storage buckets add-iam-policy-binding gs://$MEDIA_BUCKET \
-  --member=allUsers --role=roles/storage.objectViewer
+  --member=allUsers --role=roles/storage.legacyObjectReader
 
 # CORS so the browser can PUT videos directly
 cat > /tmp/cors.json <<'JSON'

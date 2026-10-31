@@ -54,6 +54,26 @@ export interface CartStockUpdate {
   trackInventory: boolean;
   stock: number;
   allowBackorder: boolean;
+  // The line's picture as it stands now: the line's own photo while it is
+  // still one of the product's photos and not blocked, else the product's
+  // current one (the placeholder when StoreMink has blocked that photo).
+  // Absent means "not checked": the line keeps its own.
+  image?: string | null;
+}
+
+// What the checkout's stock check (getCartStock) is sent for each line. The
+// line's photo goes too, only so the server can keep it when it is still one
+// of the product's photos; the server compares it and never stores it.
+export function cartStockLines(items: readonly CartItem[]): Array<{
+  productId: string;
+  variantId: string | null;
+  image: string | null;
+}> {
+  return items.map((i) => ({
+    productId: i.productId,
+    variantId: i.variantId,
+    image: i.image,
+  }));
 }
 
 // What reconcileStock changed, so the caller can tell the shopper.
@@ -254,16 +274,22 @@ export default function CartProvider({ children }: { children: ReactNode }) {
         if (qty < line.quantity) {
           reduced.push({ name: line.name, from: line.quantity, to: qty });
         }
+        // The browser kept the address from when the item was added; the
+        // server's answer replaces it, so a photo replaced or blocked since
+        // stops showing.
+        const image = fresh.image === undefined ? line.image : fresh.image;
         const snapshotChanged =
           line.trackInventory !== fresh.trackInventory ||
           line.stock !== fresh.stock ||
-          line.allowBackorder !== fresh.allowBackorder;
+          line.allowBackorder !== fresh.allowBackorder ||
+          line.image !== image;
         if (qty !== line.quantity || snapshotChanged) changed = true;
         next.push({
           ...line,
           trackInventory: fresh.trackInventory,
           stock: fresh.stock,
           allowBackorder: fresh.allowBackorder,
+          image,
           quantity: qty,
         });
       }

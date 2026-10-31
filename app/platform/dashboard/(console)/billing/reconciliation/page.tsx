@@ -75,7 +75,11 @@ export default async function ReconciliationPage({
         ))}
       </div>
 
-      <ReconciliationQueue items={items} status={status} />
+      <ReconciliationQueue
+        items={items}
+        status={status}
+        canManage={viewer.role === "superadmin"}
+      />
     </div>
   );
 }

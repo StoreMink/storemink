@@ -1,21 +1,34 @@
 // scripts/prod-monitoring.py's alert definitions, read from its own dry run,
 // which prints every body it would send and makes no network call. The five
 // Theme Studio policies (Theme Studio plan P6) stay definitions until the
-// owner applies them after the release (step A1), so a wrong filter would sit
-// silent in production; this pins what each one watches. The script is never
-// run with --apply here.
+// owner applies them after the release (step A1), and so do the two refund
+// policies (the refunds release, decision D10), the two GST policies (the
+// GST release) and the four takedown policies (the content takedown release,
+// decision D12, production step P4), so a wrong filter would sit silent in
+// production; this pins what each one watches. The script is never run with
+// --apply here.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const ROOT = path.resolve(__dirname, "..");
 const SCRIPT = path.join(ROOT, "scripts", "prod-monitoring.py");
 
 interface Condition {
   displayName: string;
-  conditionMatchedLog?: { filter: string };
+  conditionMatchedLog?: {
+    filter: string;
+    labelExtractors?: Record<string, string>;
+  };
   conditionThreshold?: { filter: string };
+  conditionAbsent?: {
+    filter: string;
+    aggregations: Record<string, unknown>[];
+    duration: string;
+    trigger: Record<string, unknown>;
+  };
   conditionPrometheusQueryLanguage?: {
     query: string;
     duration: string;
@@ -67,6 +80,7 @@ function filterOf(policy: Policy): string {
   return (
     condition.conditionMatchedLog?.filter ??
     condition.conditionThreshold?.filter ??
+    condition.conditionAbsent?.filter ??
     condition.conditionPrometheusQueryLanguage?.query ??
     ""
   );
@@ -119,6 +133,33 @@ const CAPTURE = "Theme Studio: the capture job failed to start";
 const QA = "Theme Studio: design reviews are not draining";
 const PLATFORM = "Theme Studio: a problem in StoreMink's own storefront code";
 const SCHEDULE = "Theme Studio: a schedule attempt failed";
+const REFUND_FAILED = "Billing: a refund to a merchant failed";
+const REFUNDS_WAITING = "Billing: refunds waiting more than a day";
+const GST_RENEWAL = "Billing: renewals cannot read the GST settings";
+const GST_UNISSUED = "Billing: a captured payment's invoice is still a draft";
+const COMPLAINT = "Takedown: a complaint needs action";
+const FOLLOWUPS_FAILING = "Takedown: follow-ups failing";
+const FOLLOWUPS_STOPPED = "Takedown: follow-ups stopped";
+const SEND_EMAILS_SCHEDULE = "Cloud Scheduler attempt failed (send-emails)";
+const FOLLOWUPS_METRIC = "moderation_followups_ran";
+const WEB_PROD =
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="storemink-web-prod"';
+
+// Each refund alert, the line it watches in lib/billing/refunds.ts, and its
+// severity: a failed refund is money owed that did not go, a waiting one is a
+// reminder.
+const REFUND_LINES: Record<string, { line: string; severity: string }> = {
+  [REFUND_FAILED]: { line: "billing.refund_failed", severity: "ERROR" },
+  [REFUNDS_WAITING]: { line: "billing.refund_waiting", severity: "WARNING" },
+};
+
+// Each GST alert and the line it watches: lib/billing/renewal-worker.ts
+// (always logError) and lib/billing/reconcile.ts (a WARNING for its first six
+// hours, R1-14, so the alert matches the ERROR only).
+const GST_LINES: Record<string, { line: string; errorOnly: boolean }> = {
+  [GST_RENEWAL]: { line: "billing.renewal_tax_snapshot", errorOnly: false },
+  [GST_UNISSUED]: { line: "billing.captured_draft_unissued", errorOnly: true },
+};
 
 // Each app-line alert and the line it watches: lib/theme-studio/worker.ts,
 // capture-start.ts, the design-review queue's count (TS-3A) and
@@ -156,8 +197,54 @@ function orsAtTopLevel(filter: string): number {
   return found;
 }
 
+type Logger = typeof import("@/lib/observability/logger");
+type LoggedLine = Record<string, unknown> & {
+  severity: string;
+  message: string;
+};
+
+/**
+ * The JSON line lib/observability/logger.ts writes in production for one
+ * call: the module reads NODE_ENV when it loads, so it is loaded afresh with
+ * NODE_ENV=production and its console stream captured.
+ */
+async function productionLine(
+  stream: "error" | "warn" | "log",
+  write: (logger: Logger) => void,
+): Promise<LoggedLine> {
+  vi.stubEnv("NODE_ENV", "production");
+  vi.resetModules();
+  const captured = vi.spyOn(console, stream).mockImplementation(() => {});
+  try {
+    const logger = await import("@/lib/observability/logger");
+    write(logger);
+    expect(captured).toHaveBeenCalledTimes(1);
+    return JSON.parse(String(captured.mock.calls[0][0])) as LoggedLine;
+  } finally {
+    captured.mockRestore();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  }
+}
+
+/**
+ * Whether a filter's jsonPayload.message clause matches a message, by the
+ * three operators the script uses: "=" the whole value, ":" contains it,
+ * "=~" a regular expression that searches the value ("^" anchors it to the
+ * start; RE2 and JavaScript agree on the plain patterns used here).
+ */
+function messageMatches(filter: string, message: string): boolean {
+  const clause = /jsonPayload\.message(=~|:|=)"((?:[^"\\]|\\.)*)"/.exec(filter);
+  if (!clause) throw new Error(`no message clause in ${filter}`);
+  const [, operator, quoted] = clause;
+  const value = quoted.replace(/\\(.)/g, "$1");
+  if (operator === "=") return message === value;
+  if (operator === ":") return message.includes(value);
+  return new RegExp(value).test(message);
+}
+
 describe("prod-monitoring.py", () => {
-  it("keeps the 15 applied alerts in order and adds exactly the five Theme Studio ones (P6)", () => {
+  it("keeps the 15 applied alerts in order and adds exactly the five Theme Studio ones (P6), the two refund ones, the two GST ones and the four takedown ones (P4)", () => {
     const names = policies().map((policy) => policy.displayName);
     expect(names).toEqual([
       ...APPLIED_23_OCT,
@@ -166,6 +253,14 @@ describe("prod-monitoring.py", () => {
       QA,
       PLATFORM,
       SCHEDULE,
+      REFUND_FAILED,
+      REFUNDS_WAITING,
+      GST_RENEWAL,
+      GST_UNISSUED,
+      COMPLAINT,
+      FOLLOWUPS_FAILING,
+      FOLLOWUPS_STOPPED,
+      SEND_EMAILS_SCHEDULE,
     ]);
     // --apply is idempotent by display name, so every name is unique.
     expect(new Set(names).size).toBe(names.length);
@@ -200,6 +295,65 @@ describe("prod-monitoring.py", () => {
       expect(filter).not.toMatch(/-dev\b/);
       // The email quotes the line it fired on.
       expect(policy.documentation.content).toContain(line);
+    }
+  });
+
+  it("★ watches each refund line in the production web service, one email an hour, never on dev", () => {
+    // The billing run (app/api/cron/billing) and the console's refund
+    // actions both run in storemink-web-prod. The waiting line can be
+    // written twice in its hour (a Scheduler retry or a run by hand), so the
+    // hourly limit is what keeps it to one email.
+    const byName = new Map(policies().map((p) => [p.displayName, p]));
+    for (const [name, { line, severity }] of Object.entries(REFUND_LINES)) {
+      const policy = byName.get(name) as Policy;
+      expect(policy.severity).toBe(severity);
+      expect(policy.conditions).toHaveLength(1);
+      expect(policy.conditions[0].conditionMatchedLog).toBeDefined();
+      expect(policy.userLabels).toEqual({ "managed-by": "storemink-alerts" });
+      expect(policy.notificationChannels).toEqual(["<channel>"]);
+      expect(policy.alertStrategy).toEqual({
+        notificationRateLimit: { period: "3600s" },
+        autoClose: "1800s",
+      });
+      const filter = filterOf(policy);
+      expect(filter).toContain(
+        'resource.labels.service_name="storemink-web-prod"',
+      );
+      // ":" (has), not "=": logError puts the stack after the message.
+      expect(filter).toContain(`jsonPayload.message:"${line}"`);
+      expect(filter).not.toMatch(/-dev\b/);
+      expect(policy.documentation.content).toContain(line);
+      expect(policy.documentation.content).toContain("refunds release");
+      expect(policy.documentation.content).toContain("docs/monitoring.md");
+    }
+  });
+
+  it("★ watches each GST line in the production web service at ERROR, one email an hour, never on dev", () => {
+    const byName = new Map(policies().map((p) => [p.displayName, p]));
+    for (const [name, { line, errorOnly }] of Object.entries(GST_LINES)) {
+      const policy = byName.get(name) as Policy;
+      expect(policy.severity).toBe("ERROR");
+      expect(policy.conditions).toHaveLength(1);
+      expect(policy.conditions[0].conditionMatchedLog).toBeDefined();
+      expect(policy.userLabels).toEqual({ "managed-by": "storemink-alerts" });
+      expect(policy.notificationChannels).toEqual(["<channel>"]);
+      expect(policy.alertStrategy).toEqual({
+        notificationRateLimit: { period: "3600s" },
+        autoClose: "1800s",
+      });
+      const filter = filterOf(policy);
+      expect(filter).toContain(
+        'resource.labels.service_name="storemink-web-prod"',
+      );
+      expect(filter).toContain(`jsonPayload.message:"${line}"`);
+      expect(filter).not.toMatch(/-dev\b/);
+      // The captured-draft line is a WARNING for six hours (R1-14): only
+      // the ERROR may page.
+      if (errorOnly) expect(filter).toContain("severity>=ERROR");
+      else expect(filter).not.toContain("severity");
+      expect(policy.documentation.content).toContain(line);
+      expect(policy.documentation.content).toContain("GST release");
+      expect(policy.documentation.content).toContain("docs/monitoring.md");
     }
   });
 
@@ -270,6 +424,8 @@ describe("prod-monitoring.py", () => {
     for (const policy of policies()) {
       if (policy.displayName === GOOGLE_AI) continue;
       if (policy.conditions[0].conditionMatchedLog) continue;
+      // Pinned with its own condition below.
+      if (policy.conditions[0].conditionAbsent) continue;
       expect(policy.alertStrategy, policy.displayName).toEqual({
         autoClose: "1800s",
       });
@@ -302,6 +458,219 @@ describe("prod-monitoring.py", () => {
       ].join("\n"),
     ]);
     expect(out).toContain("# DRY RUN: nothing is sent.");
-    expect(out).toContain("# 20 alert policies");
+    expect(out).toContain(
+      "# 28 alert policies, 3 uptime checks, 2 log metrics, 1 channel",
+    );
+  });
+});
+
+describe("prod-monitoring.py: the takedown alerts (decision D12, production step P4)", () => {
+  const byName = (name: string) =>
+    policies().find((p) => p.displayName === name) as Policy;
+  const T15_LINE = "moderation: block action failed\nError: refused";
+
+  it("★ sends the four takedown alerts like the other log alerts: the owner's channel, the same label, production only", () => {
+    for (const name of [
+      COMPLAINT,
+      FOLLOWUPS_FAILING,
+      FOLLOWUPS_STOPPED,
+      SEND_EMAILS_SCHEDULE,
+    ]) {
+      const policy = byName(name);
+      expect(policy.conditions, name).toHaveLength(1);
+      expect(policy.combiner).toBe("OR");
+      expect(policy.userLabels).toEqual({ "managed-by": "storemink-alerts" });
+      expect(policy.notificationChannels).toEqual(["<channel>"]);
+      expect(policy.documentation.content).toContain("takedown release");
+      expect(policy.documentation.content).toContain("production step P4");
+      expect(policy.documentation.content).toContain("docs/monitoring.md");
+      expect(filterOf(policy)).not.toMatch(/-dev\b/);
+    }
+    for (const name of [COMPLAINT, FOLLOWUPS_FAILING, FOLLOWUPS_STOPPED]) {
+      expect(filterOf(byName(name))).toContain(
+        'resource.labels.service_name="storemink-web-prod"',
+      );
+    }
+  });
+
+  it("★★ alerts on a failed follow-up by PREFIX, because production logError puts the stack after the message (must-do T22a)", async () => {
+    const policy = byName(FOLLOWUPS_FAILING);
+    expect(policy.severity).toBe("ERROR");
+    expect(policy.conditions[0].conditionMatchedLog).toBeDefined();
+    expect(policy.alertStrategy).toEqual({
+      notificationRateLimit: { period: "3600s" },
+      autoClose: "1800s",
+    });
+    const filter = filterOf(policy);
+    expect(filter).toBe(
+      `${WEB_PROD} AND jsonPayload.message=~"^moderation: follow-up failed" AND severity>=ERROR`,
+    );
+    expect(filter).not.toContain('jsonPayload.message="');
+
+    // What lib/moderation/follow-ups.ts writes when a step throws.
+    const line = await productionLine("error", (logger) =>
+      logger.logError(
+        "moderation: follow-up failed",
+        new Error("connection terminated"),
+        { step: "alerts" },
+      ),
+    );
+    expect(line.severity).toBe("ERROR");
+    expect(line.step).toBe("alerts");
+    expect(
+      line.message.startsWith(
+        "moderation: follow-up failed\nError: connection terminated",
+      ),
+    ).toBe(true);
+    expect(messageMatches(filter, line.message)).toBe(true);
+    // An exact match on the message would never fire in production.
+    expect(
+      messageMatches(
+        'jsonPayload.message="moderation: follow-up failed"',
+        line.message,
+      ),
+    ).toBe(false);
+    // The heartbeat and the console's own failures are not the follow-up's.
+    expect(messageMatches(filter, "moderation: follow-ups ran")).toBe(false);
+    expect(messageMatches(filter, T15_LINE)).toBe(false);
+  });
+
+  it("★ pages on every complaint deadline line, one notification per complaint and stage at most every 5 minutes", async () => {
+    const policy = byName(COMPLAINT);
+    expect(policy.severity).toBe("ERROR");
+    expect(policy.alertStrategy).toEqual({
+      notificationRateLimit: { period: "300s" },
+      autoClose: "1800s",
+    });
+    const condition = policy.conditions[0].conditionMatchedLog;
+    const filter = condition?.filter ?? "";
+    expect(filter).toBe(
+      `${WEB_PROD} AND jsonPayload.message=~"^moderation: complaint " AND severity>=WARNING`,
+    );
+    expect(condition?.labelExtractors).toEqual({
+      ref: "EXTRACT(jsonPayload.ref)",
+      kind: "EXTRACT(jsonPayload.kind)",
+      stage: "EXTRACT(jsonPayload.stage)",
+      phase: "EXTRACT(jsonPayload.phase)",
+    });
+
+    // What the deadline step writes (lib/moderation/follow-ups.ts).
+    const line = await productionLine("warn", (logger) =>
+      logger.logWarn("moderation: complaint due", {
+        ref: "SM-000123",
+        kind: "intimate_or_impersonation",
+        stage: "act",
+        phase: "soon",
+        dueAt: "2026-11-02T04:30:00.000Z",
+      }),
+    );
+    expect(line.severity).toBe("WARNING");
+    expect(messageMatches(filter, line.message)).toBe(true);
+    // Every label the notification names is a field of the line.
+    for (const key of Object.keys(condition?.labelExtractors ?? {})) {
+      expect(line[key], key).toBeTruthy();
+    }
+
+    // What the console writes the moment an urgent complaint is logged
+    // (app/actions/takedown-actions.ts, logComplaintAction).
+    const urgent = await productionLine("warn", (logger) =>
+      logger.logWarn("moderation: complaint urgent", {
+        ref: "SM-000124",
+        kind: "court_order",
+        stage: "act",
+        phase: "logged",
+        dueAt: "2026-11-02T06:00:00.000Z",
+      }),
+    );
+    expect(urgent.severity).toBe("WARNING");
+    expect(messageMatches(filter, urgent.message)).toBe(true);
+    for (const key of Object.keys(condition?.labelExtractors ?? {})) {
+      expect(urgent[key], key).toBeTruthy();
+    }
+    // Errors about complaints are not a deadline: the person who pressed the
+    // button reads those on screen.
+    for (const other of [
+      "moderation.complaints: log failed\nError: refused",
+      "moderation: log complaint action failed\nError: refused",
+      "moderation: follow-up failed\nError: refused",
+      T15_LINE,
+    ]) {
+      expect(messageMatches(filter, other), other).toBe(false);
+    }
+  });
+
+  it("★ opens when 10 minutes pass without a follow-up heartbeat, summed across every revision, and stays open while it lasts", async () => {
+    const policy = byName(FOLLOWUPS_STOPPED);
+    expect(policy.severity).toBe("ERROR");
+    expect(policy.conditions[0].conditionAbsent).toEqual({
+      filter: `metric.type="logging.googleapis.com/user/${FOLLOWUPS_METRIC}" AND ${WEB_PROD}`,
+      // One series for the whole service: grouped by revision, every deploy
+      // would leave the old revision's series absent and open the alert.
+      aggregations: [
+        {
+          alignmentPeriod: "60s",
+          perSeriesAligner: "ALIGN_SUM",
+          crossSeriesReducer: "REDUCE_SUM",
+        },
+      ],
+      // Google's floor is 120 s in whole minutes.
+      duration: "600s",
+      trigger: { count: 1 },
+    });
+    expect(policy.alertStrategy).toEqual({ autoClose: "604800s" });
+
+    const metric = dryRun().find(
+      (block) =>
+        block.kind === "log-based metric" &&
+        block.body.name === FOLLOWUPS_METRIC,
+    )?.body as { filter: string; metricDescriptor: Record<string, string> };
+    expect(metric.filter).toBe(
+      `${WEB_PROD} AND jsonPayload.message:"moderation: follow-ups ran"`,
+    );
+    expect(metric.metricDescriptor).toEqual({
+      metricKind: "DELTA",
+      valueType: "INT64",
+      unit: "1",
+    });
+    // What every run writes in its finally (lib/moderation/follow-ups.ts).
+    const line = await productionLine("log", (logger) =>
+      logger.logInfo("moderation: follow-ups ran", { alertsSent: 0 }),
+    );
+    expect(line.severity).toBe("INFO");
+    expect(messageMatches(metric.filter, line.message)).toBe(true);
+  });
+
+  it("★ reads Cloud Scheduler's own failed attempts for storemink-send-emails, the route the follow-ups ride on", () => {
+    const policy = byName(SEND_EMAILS_SCHEDULE);
+    expect(policy.severity).toBe("WARNING");
+    expect(policy.conditions[0].conditionMatchedLog).toBeDefined();
+    expect(policy.alertStrategy).toEqual({
+      notificationRateLimit: { period: "3600s" },
+      autoClose: "1800s",
+    });
+    expect(filterOf(policy)).toBe(
+      'resource.type="cloud_scheduler_job" AND resource.labels.job_id="storemink-send-emails" AND log_id("cloudscheduler.googleapis.com/executions") AND severity>=ERROR',
+    );
+  });
+
+  it("★ watches lines the code still writes, from the route the schedule calls", () => {
+    const followUps = readFileSync(
+      path.join(ROOT, "lib", "moderation", "follow-ups.ts"),
+      "utf8",
+    );
+    expect(followUps).toContain('logError("moderation: follow-up failed"');
+    expect(followUps).toContain('logInfo("moderation: follow-ups ran"');
+    expect(followUps).toContain('logWarn("moderation: complaint due"');
+    expect(
+      readFileSync(
+        path.join(ROOT, "app", "actions", "takedown-actions.ts"),
+        "utf8",
+      ),
+    ).toContain('logWarn("moderation: complaint urgent"');
+    const route = readFileSync(
+      path.join(ROOT, "app", "api", "cron", "send-emails", "route.ts"),
+      "utf8",
+    );
+    expect(route).toContain("runModerationFollowUps(");
   });
 });

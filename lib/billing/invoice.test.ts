@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  INVOICE_BODY_KINDS,
   amountDuePaise,
+  buildAddonInvoice,
   buildAiCreditsInvoice,
   buildSubscriptionInvoice,
   prorationPaise,
+  rebuildForIssue,
   taxOnPaise,
   taxWithinPaise,
+  type InvoiceLine,
   type TaxContext,
 } from "./invoice";
 import { splitGstPaise } from "./gst";
@@ -563,5 +567,256 @@ describe("amountDuePaise", () => {
 
   it("ignores a negative credit rather than inflating the bill", () => {
     expect(amountDuePaise(1_500_00, -1_000_00)).toBe(1_500_00);
+  });
+});
+
+describe("BuiltInvoice.inclusive", () => {
+  const basic = (tax: TaxContext) =>
+    buildSubscriptionInvoice({
+      planLabel: "Basic",
+      period: "monthly",
+      planPaise: 1_500_00,
+      tax,
+    });
+
+  it("is true only when GST is on with prices including it", () => {
+    expect(basic(GST_INCL).inclusive).toBe(true);
+    expect(basic(GST_INTRA).inclusive).toBe(false);
+    expect(basic(NO_TAX).inclusive).toBe(false);
+    // An inclusive setting with GST off carves nothing, so nothing is included.
+    expect(basic({ ...NO_TAX, inclusive: true }).inclusive).toBe(false);
+  });
+
+  it("is set by every builder", () => {
+    expect(
+      buildAiCreditsInvoice({
+        packLabel: "Small",
+        credits: 25,
+        amountPaise: 59_00,
+        tax: GST_INCL,
+      }).inclusive,
+    ).toBe(true);
+    expect(
+      buildAddonInvoice({
+        description: "Extra location",
+        amountPaise: 1_000_00,
+        tax: GST_INTRA,
+      }).inclusive,
+    ).toBe(false);
+  });
+});
+
+describe("INVOICE_BODY_KINDS", () => {
+  it("is every line kind except the derived tax and discount lines", () => {
+    expect([...INVOICE_BODY_KINDS].sort()).toEqual(
+      [
+        "account_credit",
+        "addon",
+        "ai_credits",
+        "base_plan",
+        "location",
+        "proration",
+      ].sort(),
+    );
+    expect(INVOICE_BODY_KINDS).not.toContain("tax");
+    expect(INVOICE_BODY_KINDS).not.toContain("discount");
+  });
+});
+
+describe("rebuildForIssue", () => {
+  // StoreMink in Punjab (03), the merchant in Punjab: CGST + SGST.
+  const PUNJAB_EXCL: TaxContext = {
+    enabled: true,
+    rateBps: 1800,
+    inclusive: false,
+    supplierStateCode: "03",
+    placeOfSupply: "03",
+  };
+  const PUNJAB_INCL: TaxContext = { ...PUNJAB_EXCL, inclusive: true };
+  const OFF: TaxContext = { ...PUNJAB_EXCL, enabled: false, rateBps: 0 };
+
+  const draft = (tax: TaxContext, discountPaise = 0) =>
+    buildSubscriptionInvoice({
+      planLabel: "Basic",
+      period: "yearly",
+      planPaise: 1_500_00,
+      discountPaise,
+      tax,
+    });
+
+  const count = (lines: InvoiceLine[], kind: InvoiceLine["kind"]) =>
+    lines.filter((l) => l.kind === kind).length;
+
+  it("not frozen, exclusive: an untaxed 150000 draft is issued at 177000", () => {
+    const built = draft(OFF);
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: built.discountPaise,
+      tax: PUNJAB_EXCL,
+      frozenTotalPaise: null,
+    });
+    expect(out).not.toBeNull();
+    expect(out?.carved).toBe(false);
+    expect(out?.totalPaise).toBe(1_770_00);
+    expect(out?.taxPaise).toBe(270_00);
+    expect(out?.subtotalPaise).toBe(1_500_00);
+    expect(out?.inclusive).toBe(false);
+    expect(out?.taxRateBps).toBe(1800);
+  });
+
+  it("frozen 150000 under exclusive: the GST is carved out of what was paid", () => {
+    const built = draft(OFF);
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: built.discountPaise,
+      tax: PUNJAB_EXCL,
+      frozenTotalPaise: 1_500_00,
+    });
+    expect(out?.carved).toBe(true);
+    expect(out?.totalPaise).toBe(1_500_00);
+    expect(out?.taxPaise).toBe(228_81);
+    expect(out?.subtotalPaise).toBe(1_271_19);
+    expect(out?.inclusive).toBe(true);
+    expect(out?.gst).toMatchObject({
+      cgstPaise: 114_40,
+      sgstPaise: 114_41,
+      igstPaise: 0,
+    });
+    expect(out?.lines.find((l) => l.kind === "tax")?.description).toBe(
+      "GST @ 18% (included)",
+    );
+  });
+
+  it("frozen under inclusive: the same total, GST inside it", () => {
+    const built = draft(OFF);
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: built.discountPaise,
+      tax: PUNJAB_INCL,
+      frozenTotalPaise: 1_500_00,
+    });
+    expect(out?.carved).toBe(false);
+    expect(out?.totalPaise).toBe(1_500_00);
+    expect(out?.taxPaise).toBe(228_81);
+    expect(out?.inclusive).toBe(true);
+  });
+
+  it("frozen 177000 built at 18% cannot be reproduced at 28%: null", () => {
+    const built = draft(PUNJAB_EXCL);
+    expect(built.totalPaise).toBe(1_770_00);
+    expect(
+      rebuildForIssue({
+        lines: built.lines,
+        discountPaise: built.discountPaise,
+        tax: { ...PUNJAB_EXCL, rateBps: 2800 },
+        frozenTotalPaise: built.totalPaise,
+      }),
+    ).toBeNull();
+  });
+
+  it("frozen with GST switched off since: null, the draft is kept", () => {
+    const built = draft(PUNJAB_EXCL);
+    expect(
+      rebuildForIssue({
+        lines: built.lines,
+        discountPaise: built.discountPaise,
+        tax: OFF,
+        frozenTotalPaise: built.totalPaise,
+      }),
+    ).toBeNull();
+  });
+
+  it("only the place of supply changed: same amounts, the split moves", () => {
+    const built = draft(PUNJAB_EXCL);
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: built.discountPaise,
+      tax: { ...PUNJAB_EXCL, placeOfSupply: "07" },
+      frozenTotalPaise: built.totalPaise,
+    });
+    expect(out?.carved).toBe(false);
+    expect(out?.totalPaise).toBe(built.totalPaise);
+    expect(out?.taxPaise).toBe(built.taxPaise);
+    expect(out?.subtotalPaise).toBe(built.subtotalPaise);
+    expect(built.gst.intraState).toBe(true);
+    expect(out?.gst).toMatchObject({
+      intraState: false,
+      igstPaise: 270_00,
+      cgstPaise: 0,
+    });
+  });
+
+  it("keeps a discount, applying it once", () => {
+    const built = draft(OFF, 100_00);
+    expect(count(built.lines, "discount")).toBe(1);
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: built.discountPaise,
+      tax: PUNJAB_EXCL,
+      frozenTotalPaise: null,
+    });
+    expect(out?.discountPaise).toBe(100_00);
+    expect(out?.taxPaise).toBe(252_00); // 18% of 1,400, after the discount
+    expect(out?.totalPaise).toBe(1_652_00);
+    expect(count(out?.lines ?? [], "discount")).toBe(1);
+    expect(out?.lines.find((l) => l.kind === "discount")?.amountPaise).toBe(
+      -100_00,
+    );
+  });
+
+  it("never counts the stored tax and discount lines twice", () => {
+    const built = draft(PUNJAB_EXCL, 100_00);
+    expect(count(built.lines, "tax")).toBe(1);
+    expect(count(built.lines, "discount")).toBe(1);
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: built.discountPaise,
+      tax: PUNJAB_EXCL,
+      frozenTotalPaise: null,
+    });
+    expect(out).toEqual({ ...built, carved: false });
+    expect(count(out?.lines ?? [], "tax")).toBe(1);
+    expect(count(out?.lines ?? [], "discount")).toBe(1);
+  });
+
+  it("keeps locations and proration as they were", () => {
+    const built = buildSubscriptionInvoice({
+      planLabel: "Pro",
+      period: "monthly",
+      planPaise: 2_400_00,
+      locations: { count: 2, unitPaise: 1_000_00 },
+      proration: { amountPaise: 333_33, description: "Plan change" },
+      tax: OFF,
+    });
+    const out = rebuildForIssue({
+      lines: built.lines,
+      discountPaise: 0,
+      tax: PUNJAB_EXCL,
+      frozenTotalPaise: null,
+    });
+    expect(
+      out?.lines.filter((l) => INVOICE_BODY_KINDS.includes(l.kind)),
+    ).toEqual(built.lines);
+    expect(out?.subtotalPaise).toBe(2_400_00 + 2_000_00 + 333_33);
+  });
+
+  it("always satisfies the billing_invoices_total_adds_up CHECK", () => {
+    for (const discount of [0, 1, 777_77]) {
+      for (const frozen of [null, 1_500_00 - Math.min(discount, 1_500_00)]) {
+        const built = draft(OFF, discount);
+        const out = rebuildForIssue({
+          lines: built.lines,
+          discountPaise: built.discountPaise,
+          tax: PUNJAB_EXCL,
+          frozenTotalPaise: frozen,
+        });
+        expect(out).not.toBeNull();
+        if (!out) continue;
+        expect(out.totalPaise).toBe(
+          out.subtotalPaise - out.discountPaise + out.taxPaise,
+        );
+        if (frozen !== null) expect(out.totalPaise).toBe(frozen);
+      }
+    }
   });
 });

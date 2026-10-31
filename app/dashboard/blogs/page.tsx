@@ -12,6 +12,7 @@ import { RealtimeRefresher } from "../components/realtime-refresher";
 import { fetchBlogTaxonomy } from "@/lib/blog-taxonomy";
 import { gcsConfigured, gcsPublicUrl } from "@/lib/storage/gcs";
 import { storeStoragePrefix } from "@/lib/storage/paths";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 import { BlogsManagementView } from "./blogs-management-view";
 
 export interface Blog {
@@ -132,43 +133,56 @@ export default async function BlogsPage({
   let statusRows: { status: string; n: number }[];
   let featuredCount: number;
   let taxonomy: Awaited<ReturnType<typeof fetchBlogTaxonomy>>;
+  let blockedPosts: Map<string, string>;
   try {
-    [{ rows, total, statusRows, featuredCount }, taxonomy] = await Promise.all([
-      withService(async (db) => {
-        const rows = await db
-          .select(LIST_COLUMNS)
-          .from(blogsTable)
-          .where(whereExpr)
-          .orderBy(desc(blogsTable.createdAt))
-          .limit(pageSize)
-          .offset(offset);
-        const countRows = await db
-          .select({ n: count() })
-          .from(blogsTable)
-          .where(whereExpr);
-        // One grouped count for the status tabs instead of a head-count
-        // per tab; featured is a separate dimension.
-        const statusRows = await db
-          .select({ status: blogsTable.status, n: count() })
-          .from(blogsTable)
-          .where(eq(blogsTable.storeId, storeId))
-          .groupBy(blogsTable.status);
-        const featuredRows = await db
-          .select({ n: count() })
-          .from(blogsTable)
-          .where(
-            and(eq(blogsTable.storeId, storeId), eq(blogsTable.featured, true)),
-          );
-        return {
-          rows: rows as Omit<Blog, "content" | "submitter_name">[],
-          total: countRows[0]?.n ?? 0,
-          statusRows,
-          featuredCount: featuredRows[0]?.n ?? 0,
-        };
-      }),
-      // This store's category/tag options for the editor dialog.
-      fetchBlogTaxonomy(storeId),
-    ]);
+    [{ rows, total, statusRows, featuredCount }, taxonomy, blockedPosts] =
+      await Promise.all([
+        withService(async (db) => {
+          const rows = await db
+            .select(LIST_COLUMNS)
+            .from(blogsTable)
+            .where(whereExpr)
+            .orderBy(desc(blogsTable.createdAt))
+            .limit(pageSize)
+            .offset(offset);
+          const countRows = await db
+            .select({ n: count() })
+            .from(blogsTable)
+            .where(whereExpr);
+          // One grouped count for the status tabs instead of a head-count
+          // per tab; featured is a separate dimension.
+          const statusRows = await db
+            .select({ status: blogsTable.status, n: count() })
+            .from(blogsTable)
+            .where(eq(blogsTable.storeId, storeId))
+            .groupBy(blogsTable.status);
+          const featuredRows = await db
+            .select({ n: count() })
+            .from(blogsTable)
+            .where(
+              and(
+                eq(blogsTable.storeId, storeId),
+                eq(blogsTable.featured, true),
+              ),
+            );
+          return {
+            rows: rows as Omit<Blog, "content" | "submitter_name">[],
+            total: countRows[0]?.n ?? 0,
+            statusRows,
+            featuredCount: featuredRows[0]?.n ?? 0,
+          };
+        }),
+        // This store's category/tag options for the editor dialog.
+        fetchBlogTaxonomy(storeId),
+        // The posts StoreMink blocked and told the store about (takedown
+        // design 7.3), each with the notice "See why" opens. Read once, in its
+        // own scope (never inside another scope's callback); it never throws,
+        // and a failed read marks nothing. A block kept from the store is not
+        // in it (D21).
+        blockedItemIds(storeId, "blog_post").catch(
+          () => new Map<string, string>(),
+        ),
+      ]);
   } catch (err) {
     console.error("BlogsPage load error:", err);
     return (
@@ -258,6 +272,8 @@ export default async function BlogsPage({
         mediaUrlPrefix={
           gcsConfigured ? gcsPublicUrl(storeStoragePrefix(storeId)) : ""
         }
+        blockedByStoreMink={Object.fromEntries(blockedPosts)}
+        canSeeNotices={access.can("settings", "view")}
       />
     </>
   );

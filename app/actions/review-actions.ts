@@ -9,6 +9,11 @@ import { demoStoreRefusal } from "@/lib/store/demo-guard";
 import { storefrontClosedRefusal } from "@/lib/store/storefront-access";
 import { withUser } from "@/lib/db/client";
 import { productReviews, users } from "@/drizzle/schema";
+import {
+  authorBlockRefusal,
+  authorBlockSentence,
+  liveAuthorBlock,
+} from "@/lib/moderation/author-blocks";
 
 export interface ReviewFormData {
   product_id: string;
@@ -42,6 +47,18 @@ export async function submitReview(
     return { error: "Please choose a rating from 1 to 5 stars." };
   }
 
+  // A review StoreMink removed can't be changed or posted again on this
+  // product (takedown design 7.4). The database guard refuses the write too;
+  // this says so first, in the shopper's words.
+  const storeId = await getCurrentStoreId();
+  const block = await liveAuthorBlock({
+    kind: "review",
+    storeId,
+    authorUserId: user.id,
+    parentItemId: form.product_id,
+  });
+  if (block) return { error: authorBlockSentence("review") };
+
   // The reviewer's name is snapshotted onto the review (customers is own-row
   // only under RLS, so public readers can't join to it).
   const [customer] = await withUser({ uid: user.id, email: user.email }, (db) =>
@@ -67,7 +84,6 @@ export async function submitReview(
     updatedAt: new Date().toISOString(),
   };
 
-  const storeId = await getCurrentStoreId();
   try {
     // RLS (own-row insert/update policies) enforces ownership at the DB layer.
     await withUser({ uid: user.id, email: user.email }, (db) =>
@@ -85,6 +101,9 @@ export async function submitReview(
         }),
     );
   } catch (err) {
+    // A block that landed after the check above: the guard's refusal.
+    const refusal = authorBlockRefusal(err);
+    if (refusal) return { error: refusal };
     console.error("submitReview error:", err);
     return {
       error: err instanceof Error ? err.message : "Failed to save review.",

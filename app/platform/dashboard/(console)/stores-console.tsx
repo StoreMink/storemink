@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   setStoreStatus,
   setStorePlan,
@@ -25,6 +26,7 @@ import {
   Coins,
   History,
 } from "lucide-react";
+import { SuspendStoreDialog } from "./stores/[storeId]/suspend-store-dialog";
 
 // Badge styling per plan — free is neutral, paid tiers get colour.
 const PLAN_BADGE: Record<Plan, string> = {
@@ -78,6 +80,10 @@ export function StoresConsole({
   const [search, setSearch] = useState(q);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  // Suspend asks why first (takedown design 6.7): the shared dialog the store
+  // page uses, so the list and the page cannot ask differently.
+  const [toSuspend, setToSuspend] = useState<PlatformStoreRow | null>(null);
 
   // Permanent-delete confirmation: the operator must retype the store slug.
   const [toDelete, setToDelete] = useState<PlatformStoreRow | null>(null);
@@ -201,16 +207,23 @@ export function StoresConsole({
     router.push(`/dashboard/stores${params}`);
   }
 
-  async function toggleStatus(store: PlatformStoreRow) {
+  // Reactivating needs no reason; the server still refuses a store a block
+  // suspended, and says so in a toast (in-app, never a browser alert).
+  async function activate(store: PlatformStoreRow) {
     setPendingId(store.id);
-    const next = store.status === "active" ? "suspended" : "active";
-    const res = await setStoreStatus(store.id, next);
-    setPendingId(null);
-    if (res.error) {
-      alert(res.error);
-      return;
+    try {
+      const res = await setStoreStatus(store.id, "active");
+      if (res.error) {
+        toast.error(res.error);
+        return;
+      }
+      toast.success("Store reactivated.");
+      startTransition(() => router.refresh());
+    } catch {
+      toast.error("Could not update the store. Please try again.");
+    } finally {
+      setPendingId(null);
     }
-    startTransition(() => router.refresh());
   }
 
   function openDelete(store: PlatformStoreRow) {
@@ -223,14 +236,23 @@ export function StoresConsole({
     if (!toDelete) return;
     setDeleting(true);
     setDeleteError("");
-    const res = await deleteStore(toDelete.id);
+    let res: Awaited<ReturnType<typeof deleteStore>>;
+    try {
+      res = await deleteStore(toDelete.id);
+    } catch {
+      setDeleting(false);
+      setDeleteError("Could not delete the store. Please try again.");
+      return;
+    }
     setDeleting(false);
+    // A store on hold, or one whose blocked items StoreMink is still copying,
+    // is refused with its sentence here, in the dialog.
     if (res.error) {
       setDeleteError(res.error);
       return;
     }
     setToDelete(null);
-    if (res.warning) alert(res.warning);
+    if (res.warning) toast.warning(res.warning);
     startTransition(() => router.refresh());
   }
 
@@ -410,7 +432,11 @@ export function StoresConsole({
                                 : "text-gray-700 bg-gray-100 hover:bg-gray-200"
                             }`}
                             disabled={pendingId === s.id}
-                            onClick={() => toggleStatus(s)}
+                            onClick={() =>
+                              s.status === "active"
+                                ? setToSuspend(s)
+                                : activate(s)
+                            }
                           >
                             {pendingId === s.id
                               ? "…"
@@ -568,6 +594,18 @@ export function StoresConsole({
             </div>
           </div>
         </div>
+      )}
+
+      {toSuspend && (
+        <SuspendStoreDialog
+          storeId={toSuspend.id}
+          storeName={toSuspend.name}
+          onClose={() => setToSuspend(null)}
+          onSuspended={() => {
+            setToSuspend(null);
+            startTransition(() => router.refresh());
+          }}
+        />
       )}
 
       {toDelete && (

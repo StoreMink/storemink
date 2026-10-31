@@ -7,8 +7,17 @@ const holder = vi.hoisted(() => ({
   delete: vi.fn(),
   list: vi.fn(),
   allowed: true,
+  after: vi.fn(),
+  purge: vi.fn(),
 }));
 
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: holder.after,
+}));
+vi.mock("@/lib/mink/attachments", () => ({
+  purgeStoreMinkAttachments: holder.purge,
+}));
 vi.mock("@/lib/mink/config", () => ({
   getMinkConfig: vi.fn(() => ({ enabled: holder.enabled })),
 }));
@@ -149,6 +158,37 @@ describe("DELETE /api/mink/conversations/[conversationId]", () => {
     expect(response.status).toBe(403);
     expect(holder.actor).not.toHaveBeenCalled();
     expect(holder.delete).not.toHaveBeenCalled();
+    expect(holder.after).not.toHaveBeenCalled();
+  });
+
+  it("★ schedules the store's attachment purge after a successful delete, outside the response", async () => {
+    const response = await DELETE(request(), context(ID));
+    expect(response.status).toBe(200);
+    // Scheduled, not run: the response goes out first.
+    expect(holder.after).toHaveBeenCalledOnce();
+    expect(holder.purge).not.toHaveBeenCalled();
+    const scheduled = holder.after.mock.calls[0][0] as () => unknown;
+    await scheduled();
+    expect(holder.purge).toHaveBeenCalledOnce();
+    expect(holder.purge).toHaveBeenCalledWith("store-1");
+    // The purge was scheduled after the delete committed, never before it.
+    expect(holder.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      holder.after.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("★ schedules no purge when the delete is refused", async () => {
+    holder.delete.mockRejectedValueOnce(
+      new MinkRequestError(
+        "conversation_busy",
+        "Mink AI is still answering in this conversation. Wait for the reply to finish, then delete it.",
+        409,
+      ),
+    );
+    const response = await DELETE(request(), context(ID));
+    expect(response.status).toBe(409);
+    expect(holder.after).not.toHaveBeenCalled();
+    expect(holder.purge).not.toHaveBeenCalled();
   });
 });
 

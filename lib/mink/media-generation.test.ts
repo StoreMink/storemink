@@ -100,6 +100,15 @@ const PRODUCT_REFERENCE = {
   source: "product" as const,
 };
 
+/** A picture attached in this chat: private bytes, no public address. */
+const ATTACHMENT_PIXELS = Buffer.from("attached").toString("base64");
+const ATTACHMENT_REFERENCE = {
+  url: "/api/mink/attachments/0f3a9c42-7b1d-4e6a-9c2b-1d5e8f7a6b3c",
+  inlineData: { mimeType: "image/png" as const, data: ATTACHMENT_PIXELS },
+  mimeType: "image/png" as const,
+  source: "attachment" as const,
+};
+
 const PIXEL = Buffer.from("hello").toString("base64");
 
 beforeEach(() => {
@@ -177,6 +186,74 @@ describe("asking Gemini for one storefront image", () => {
         mimeType: PRODUCT_REFERENCE.mimeType,
       },
     });
+  });
+
+  it("★★ SENDS AN ATTACHED PICTURE AS PRIVATE BYTES INLINE, NEVER AS A URL", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    await generateMinkMediaImage(
+      config as never,
+      {
+        ...request,
+        referenceImageUrls: [PRODUCT_REFERENCE.url, ATTACHMENT_REFERENCE.url],
+      },
+      [PRODUCT_REFERENCE, ATTACHMENT_REFERENCE],
+      DRAW,
+    );
+
+    const parts = generateContent.mock.calls[0][0].contents[0].parts;
+    // The store image keeps its gs:// part; the attachment is the shape
+    // image-refine.ts sends: the bytes themselves.
+    expect(parts).toContainEqual({
+      fileData: {
+        fileUri: PRODUCT_REFERENCE.fileUri,
+        mimeType: PRODUCT_REFERENCE.mimeType,
+      },
+    });
+    expect(parts).toContainEqual({
+      inlineData: { mimeType: "image/png", data: ATTACHMENT_PIXELS },
+    });
+    // ★ Nothing about the attachment is a URL: no fileData for it, and its
+    //   address appears nowhere in the request.
+    const fileParts = parts.filter(
+      (part: Record<string, unknown>) => part.fileData !== undefined,
+    );
+    expect(fileParts).toHaveLength(1);
+    expect(JSON.stringify(parts)).not.toContain(ATTACHMENT_REFERENCE.url);
+    // Its guidance, in the order given.
+    const text = parts[0].text as string;
+    expect(text).toContain(
+      "Reference 1 is an authentic current-store product image",
+    );
+    expect(text).toContain(
+      "Reference 2 is a photo the merchant attached in this chat. Use it only in the way requested.",
+    );
+  });
+
+  it("★ a product photo from an attached picture takes the item from it, as the real photograph", async () => {
+    generateContent.mockResolvedValue(imageResponse());
+    await generateMinkMediaImage(
+      config as never,
+      {
+        ...request,
+        purpose: "product",
+        prompt: "The coat on a plain white studio background, front on.",
+        referenceImageUrls: [ATTACHMENT_REFERENCE.url],
+        productPhotoShape: "portrait",
+      },
+      [ATTACHMENT_REFERENCE],
+      DRAW,
+    );
+
+    const parts = generateContent.mock.calls[0][0].contents[0].parts;
+    const text = parts[0].text as string;
+    expect(text).toContain(
+      "Reference 1 is a real photograph of the product (a photo the merchant attached in this chat).",
+    );
+    expect(text).toContain("Do not restyle it");
+    expect(parts).toContainEqual({
+      inlineData: { mimeType: "image/png", data: ATTACHMENT_PIXELS },
+    });
+    expect(JSON.stringify(parts)).not.toContain("fileData");
   });
 
   it("gives a blog cover its editorial crop and no-text direction", async () => {

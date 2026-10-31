@@ -18,9 +18,19 @@ vi.mock("@/lib/db/client", () => ({
   withAnon: vi.fn((fn: any) => fn(dbHolder.current.db)),
 }));
 
+// The removed-review pre-check (takedown design 7.4): the real sentences and
+// error mapping, with the read itself mocked (no block unless a test says so).
+vi.mock("@/lib/moderation/author-blocks", async (importOriginal) => {
+  const real =
+    await importOriginal<typeof import("@/lib/moderation/author-blocks")>();
+  return { ...real, liveAuthorBlock: vi.fn(async () => null) };
+});
+
 import { submitReview, deleteReview } from "./review-actions";
 import { getServerUser } from "@/lib/auth/server-user";
 import { demoStoreRefusal } from "@/lib/store/demo-guard";
+import { liveAuthorBlock } from "@/lib/moderation/author-blocks";
+import { SHOPPER } from "@/lib/moderation/copy";
 
 const DEMO =
   "This is a theme preview, so orders, accounts and forms are turned off.";
@@ -124,6 +134,47 @@ describe("review-actions", () => {
     it("truncates fractional ratings to integers", async () => {
       await submitReview({ ...validReview, rating: 4.7 });
       expect(dbHolder.current.calls.values[0].rating).toBe(4);
+    });
+
+    // A review StoreMink removed can't be posted again or changed: the
+    // shopper reads StoreMink's sentence and nothing is read or written.
+    it("refuses with StoreMink's sentence when the shopper's review was removed", async () => {
+      vi.mocked(liveAuthorBlock).mockResolvedValueOnce({ blockId: "block-1" });
+      const result = await submitReview(validReview);
+      expect(result).toEqual({ error: SHOPPER.reviewRemoved });
+      expect(liveAuthorBlock).toHaveBeenCalledWith({
+        kind: "review",
+        storeId: "a0000000-0000-4000-8000-000000000001",
+        authorUserId: "user-1",
+        parentItemId: "p1",
+      });
+      expect(dbHolder.current.calls.select).toHaveLength(0);
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+    });
+
+    it("asks for the shopper's block before reading their profile", async () => {
+      const result = await submitReview(validReview);
+      expect(result.success).toBe(true);
+      expect(liveAuthorBlock).toHaveBeenCalledTimes(1);
+      expect(
+        vi.mocked(liveAuthorBlock).mock.invocationCallOrder[0],
+      ).toBeLessThan(dbHolder.current.db.select.mock.invocationCallOrder[0]);
+    });
+
+    // A block that lands between the check and the write: the database
+    // guard's P0001 refusal reads as the same sentence, not as an error.
+    it("maps the guard's refusal to StoreMink's sentence", async () => {
+      const cause = Object.assign(
+        new Error("moderation: review removed by StoreMink"),
+        { code: "P0001" },
+      );
+      dbHolder.current.db.insert = vi.fn(() => {
+        throw Object.assign(new Error("Failed query: insert into ..."), {
+          cause,
+        });
+      });
+      const result = await submitReview(validReview);
+      expect(result).toEqual({ error: SHOPPER.reviewRemoved });
     });
 
     // DB failure surfaces the message.

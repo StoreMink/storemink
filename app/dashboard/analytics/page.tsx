@@ -1373,7 +1373,7 @@ export default async function AnalyticsPage({
   const access = await requireSectionAccess("analytics", "view");
   const showBlogApprovals = access.can("blogs", "view");
   const showEnquiries = access.can("enquiries", "view");
-  // "Plan & billing" keeps the legacy `ai` key (app/dashboard/lib/permissions.ts).
+  // "Plans & Billing" keeps the legacy `ai` key (app/dashboard/lib/permissions.ts).
   const canUpgrade = access.can("ai", "view");
   const [storeId, locationScope, params, platformFeatures] = await Promise.all([
     getActingStoreId(),

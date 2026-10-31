@@ -8,6 +8,9 @@ import {
   productImageUsage,
 } from "@/lib/media/product-images";
 import type { ProductImageItem } from "@/lib/media/library-types";
+import { blockedItemIds } from "@/lib/moderation/merchant";
+import { isMediaKey, mediaKeyFromUrl } from "@/lib/moderation/media-key";
+import { GCS_BUCKET_NAME } from "@/lib/storage/gcs";
 
 // Two tabs: the Library (uploads and the pictures Mink AI made or refined; chat
 // attachments and resized copies are not listed, lib/media/sources.ts) and
@@ -64,6 +67,29 @@ export default async function MediaDashboardPage({
     );
   }
 
+  // The files StoreMink blocked and told the store about (takedown design
+  // 7.3), each with the notice "See why" opens, keyed by the address the tile
+  // shows. Read once, in its own scope after the list's reads have closed
+  // (never inside another scope's callback); it never throws, and a failed
+  // read marks nothing. A block kept from the store is not in it (D21).
+  const blockedByStoreMink: Record<string, string> = {};
+  if (assets.length > 0 || productImages.length > 0) {
+    const blocked = await blockedItemIds(storeId, "file").catch(
+      () => new Map<string, string>(),
+    );
+    if (blocked.size > 0) {
+      const mark = (url: string, objectPath?: string) => {
+        const key = mediaKeyFromUrl(url, { bucket: GCS_BUCKET_NAME });
+        const blockId =
+          (isMediaKey(key) ? blocked.get(key.key) : undefined) ??
+          (objectPath ? blocked.get(objectPath) : undefined);
+        if (blockId) blockedByStoreMink[url] = blockId;
+      };
+      for (const asset of assets) mark(asset.url, asset.path);
+      for (const image of productImages) mark(image.url);
+    }
+  }
+
   return (
     <MediaLibraryView
       tab={tab}
@@ -75,6 +101,8 @@ export default async function MediaDashboardPage({
       loadError={loadError}
       page={page}
       pageSize={pageSize}
+      blockedByStoreMink={blockedByStoreMink}
+      canSeeNotices={access.can("settings", "view")}
     />
   );
 }

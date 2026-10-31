@@ -206,6 +206,26 @@ describe("invoiceStatusForAttempts", () => {
     expect(invoiceStatusForAttempts([])).toBe("open");
   });
 
+  it("★★ is paid when the only attempt was refunded (defect D9)", () => {
+    // `resolvePaymentState` moves the one attempt captured -> refunded, so its
+    // list holds no `captured`. Reading that as `open` would offer a paid
+    // invoice for payment again; the money moved, so the invoice was paid.
+    expect(invoiceStatusForAttempts(["refunded"])).toBe("paid");
+  });
+
+  it("★ refunded counts as settled beside a failed or in-flight attempt", () => {
+    expect(invoiceStatusForAttempts(["failed", "refunded"])).toBe("paid");
+    expect(invoiceStatusForAttempts(["refunded", "processing"])).toBe("paid");
+    expect(invoiceStatusForAttempts(["unknown", "refunded"])).toBe("paid");
+  });
+
+  it("★ every settled state alone makes the invoice paid, and no other state does", () => {
+    // One rule, two readers: `isSettled` and this derivation must agree.
+    for (const s of ALL) {
+      expect(invoiceStatusForAttempts([s]) === "paid").toBe(isSettled(s));
+    }
+  });
+
   it("is paid on a refunded capture, which the refund status then supersedes", () => {
     // `refunded` is set on the invoice explicitly by the refund path; this
     // derivation only ever runs for collectable invoices.

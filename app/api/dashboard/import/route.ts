@@ -22,14 +22,16 @@ import {
 // Upload a CSV and queue it. The trust boundary for every import.
 //
 // ★ A ROUTE HANDLER, NOT A SERVER ACTION, AND THAT IS FORCED. A server action's
-// body cap is 4 MB (next.config.ts) while an import file may be 25 MB, so the
+// body cap is 6 MB (next.config.ts) while an import file may be 25 MB, so the
 // file cannot travel through one. It is also why the browser used to chunk the
-// rows itself — a design that made the import die with the tab. One authenticated
+// rows itself, a design that made the import die with the tab. One authenticated
 // POST is atomic instead: either the job is queued or nothing happened.
 //
-// The file is stored in Postgres (data_job_payloads), NOT the media bucket —
-// that bucket is `allUsers:objectViewer`, and the same code path carries orders
-// data with customer names, addresses and phone numbers. See the migration.
+// The file is stored in Postgres (data_job_payloads), NOT the media bucket:
+// anyone holding an object's URL can read that bucket (`allUsers` holds
+// `roles/storage.legacyObjectReader`, get without list), and the same code path
+// carries orders data with customer names, addresses and phone numbers. See the
+// migration.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;

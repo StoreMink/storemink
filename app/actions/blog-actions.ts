@@ -26,6 +26,8 @@ import { gcsPathFromUrl } from "@/lib/storage/gcs";
 import { isForeignStoreImageUrl } from "@/lib/storage/ownership";
 import { getStoreSettings } from "@/lib/settings/resolve";
 import { fetchBlogTaxonomy } from "@/lib/blog-taxonomy";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -341,6 +343,74 @@ async function notifyBlogPublished(
   }
 }
 
+/**
+ * The slugs a publish may announce: a post StoreMink blocked is left out
+ * (takedown fix pass, must-do 29). Publishing a blocked post still saves (the
+ * 0269 guard keeps the block and masking keeps it off the storefront), but
+ * asking Google and IndexNow to crawl a page shoppers cannot see only spends
+ * the store's crawl budget on it. Filtered here, at the call sites, so
+ * notifyStoreContentPublished stays as it is.
+ *
+ * ★ Read from the row's own moderation_blocked_at, which a block sets whether
+ * or not the store was told: a ping is invisible to the merchant, so leaving
+ * an untold block out shows them nothing (D21) and costs no extra query.
+ */
+function discoverableSlugs(
+  rows: { slug: string | null | undefined; blocked_at?: string | null }[],
+): (string | null | undefined)[] {
+  return rows.filter((row) => !row.blocked_at).map((row) => row.slug);
+}
+
+/**
+ * What a customer reads when they try to change their own post that StoreMink
+ * removed and told the store about (takedown fix pass, must-do 16; the 7.4
+ * shopper sentence for a post, with the reason it cannot be edited).
+ */
+const POST_REMOVED_EDIT_REFUSAL =
+  "StoreMink has removed this post from the store, so it can't be edited.";
+
+/**
+ * The refusal for a customer edit of their own post while a block the store
+ * was told about stands on it, or null to go ahead exactly as before.
+ *
+ * ★ A BLOCK KEPT FROM THE STORE (D21) GOES AHEAD: the post's flag stays set
+ * (the 0269 guard), masking keeps it off the storefront, and refusing would
+ * tell the author something the store itself was not told. Only a TOLD block
+ * refuses, read through the same filter the merchant's screens use
+ * (blockedItemIds). The evidence is not at stake either way: the snapshot
+ * was taken when the block was placed (lib/moderation/block.ts).
+ *
+ * Two short reads, each in its own scope and never nested: the author's own
+ * row (RLS lets them read their own submission, blocked or not), then, only
+ * when that row carries a block, the store's told blocks of posts. A failed
+ * read refuses nothing (blockedItemIds never throws), so a blip never stops
+ * an ordinary edit. Deleting stays allowed and never calls this.
+ */
+async function removedPostRefusal(
+  user: UserIdentity,
+  id: string,
+): Promise<string | null> {
+  let row: { store_id: string; blocked_at: string | null } | undefined;
+  try {
+    [row] = await withUser(user, (db) =>
+      db
+        .select({
+          store_id: blogs.storeId,
+          blocked_at: blogs.moderationBlockedAt,
+        })
+        .from(blogs)
+        .where(and(eq(blogs.id, id), eq(blogs.submittedBy, user.uid)))
+        .limit(1),
+    );
+  } catch (err) {
+    console.error("removedPostRefusal read failed:", (err as Error).message);
+    return null;
+  }
+  if (!row?.blocked_at) return null;
+  const told = await blockedItemIds(row.store_id, "blog_post");
+  return told.has(id.toLowerCase()) ? POST_REMOVED_EDIT_REFUSAL : null;
+}
+
 // ---------------------------------------------------------------------------
 // Create Blog
 // ---------------------------------------------------------------------------
@@ -451,6 +521,7 @@ export async function updateBlog(
         is_customer_submission: blogs.isCustomerSubmission,
         cover_image_url: blogs.coverImageUrl,
         content: blogs.content,
+        moderation_blocked_at: blogs.moderationBlockedAt,
       })
       .from(blogs)
       .where(eq(blogs.id, id))
@@ -508,10 +579,16 @@ export async function updateBlog(
     // tell the author, mirroring approveCustomerBlog. The notification system
     // owns the mail now (merchant-editable copy, one global design), so this
     // is an emit rather than a bespoke send.
+    //
+    // ★ Not for a post StoreMink blocked, told or untold (takedown fix pass,
+    //   as in approveCustomerBlog): the publish still goes through (design
+    //   3.1), but the post stays off the storefront, so "your blog is live"
+    //   would be untrue.
     const isApproval =
       currentBlog?.status === "pending_review" &&
       formData.status === "published" &&
-      currentBlog?.submitted_by;
+      currentBlog?.submitted_by &&
+      !currentBlog?.moderation_blocked_at;
     if (isApproval) {
       emitEvent({
         type: "blog.approved",
@@ -543,8 +620,14 @@ export async function updateBlog(
     revalidateBlogs();
     revalidatePath(`/blogs/${slug}`);
     // Also covers the rename case: the slug here is the CURRENT one, so a post
-    // republished under a new slug gets the new URL announced.
-    await notifyBlogPublished([slug], formData.status === "published");
+    // republished under a new slug gets the new URL announced. A post
+    // StoreMink blocked is not announced (discoverableSlugs).
+    await notifyBlogPublished(
+      discoverableSlugs([
+        { slug, blocked_at: currentBlog?.moderation_blocked_at },
+      ]),
+      formData.status === "published",
+    );
     return { success: true };
   }
 
@@ -621,7 +704,7 @@ export async function publishBlog(id: string): Promise<ActionResult> {
   }
   const userId = admin.uid;
 
-  let published: { slug: string } | undefined;
+  let published: { slug: string; blocked_at: string | null } | undefined;
   try {
     [published] = await withUser(admin, (db) =>
       db
@@ -632,7 +715,10 @@ export async function publishBlog(id: string): Promise<ActionResult> {
           updatedBy: userId,
         })
         .where(eq(blogs.id, id))
-        .returning({ slug: blogs.slug }),
+        .returning({
+          slug: blogs.slug,
+          blocked_at: blogs.moderationBlockedAt,
+        }),
     );
   } catch (err) {
     console.error("publishBlog error:", err);
@@ -641,7 +727,7 @@ export async function publishBlog(id: string): Promise<ActionResult> {
   if (!published) return { error: "Blog not found." };
 
   revalidateBlogs();
-  await notifyBlogPublished([published.slug], true);
+  await notifyBlogPublished(discoverableSlugs([published]), true);
   return { success: true };
 }
 
@@ -691,7 +777,7 @@ export async function bulkSetBlogStatus(
   const userId = admin.uid;
   if (ids.length === 0) return { error: "Nothing selected." };
 
-  let touched: { slug: string | null }[] = [];
+  let touched: { slug: string | null; blocked_at: string | null }[] = [];
   try {
     touched = await withUser(admin, (db) =>
       db
@@ -710,7 +796,10 @@ export async function bulkSetBlogStatus(
           updatedBy: userId,
         })
         .where(inArray(blogs.id, ids))
-        .returning({ slug: blogs.slug }),
+        .returning({
+          slug: blogs.slug,
+          blocked_at: blogs.moderationBlockedAt,
+        }),
     );
   } catch (err) {
     console.error("bulkSetBlogStatus error:", err);
@@ -718,10 +807,7 @@ export async function bulkSetBlogStatus(
   }
 
   revalidateBlogs();
-  await notifyBlogPublished(
-    touched.map((t) => t.slug),
-    status === "published",
-  );
+  await notifyBlogPublished(discoverableSlugs(touched), status === "published");
   return { success: true };
 }
 
@@ -1066,6 +1152,16 @@ export async function saveCustomerBlogDraft(
     return { error: "Blog submissions are currently disabled on this store." };
   }
 
+  // A post StoreMink removed, and told the store about, can't be changed
+  // (must-do 16). Only an existing draft can carry a block.
+  if (id) {
+    const removed = await removedPostRefusal(
+      { uid: user.id, email: user.email },
+      id,
+    );
+    if (removed) return { error: removed };
+  }
+
   const customer = await getCustomerProfile({
     uid: user.id,
     email: user.email,
@@ -1191,6 +1287,14 @@ export async function updateCustomerBlog(
   }
   const requireApproval = settings["blogs.requireApproval"];
 
+  // A post StoreMink removed, and told the store about, can't be changed
+  // (must-do 16): refused before anything is read, written or purged.
+  const removed = await removedPostRefusal(
+    { uid: user.id, email: user.email },
+    id,
+  );
+  if (removed) return { error: removed };
+
   if (!formData.title.trim()) {
     return { error: "Title is required." };
   }
@@ -1258,7 +1362,7 @@ export async function updateCustomerBlog(
   // Direct publish (store setting): same service-scope promotion as
   // submitCustomerBlog — RLS caps a customer's own writes at pending_review.
   if (!requireApproval) {
-    let promoted: { slug: string } | undefined;
+    let promoted: { slug: string; blocked_at: string | null } | undefined;
     try {
       [promoted] = await withService((db) =>
         db
@@ -1274,12 +1378,15 @@ export async function updateCustomerBlog(
               eq(blogs.status, "pending_review"),
             ),
           )
-          .returning({ slug: blogs.slug }),
+          .returning({
+            slug: blogs.slug,
+            blocked_at: blogs.moderationBlockedAt,
+          }),
       );
       revalidatePath("/blogs");
       revalidateTag(TAGS.blogs, "max");
       if (promoted?.slug) {
-        await notifyBlogPublished([promoted.slug], true);
+        await notifyBlogPublished(discoverableSlugs([promoted]), true);
       }
     } catch (promoteError) {
       console.error("updateCustomerBlog promote error:", promoteError);
@@ -1316,37 +1423,52 @@ export async function getMySubmissions(): Promise<ActionResult> {
     return { error: "Not authenticated." };
   }
 
+  // ★ The host store's posts only (must-do 17). A Firebase uid is global, so
+  // the author predicate alone listed their posts from every store on the
+  // platform on this store's "My submissions" page.
+  const storeId = await getCurrentStoreId();
+
   try {
-    const submissions = await withUser(
-      { uid: user.id, email: user.email },
-      (db) =>
-        db
-          .select({
-            id: blogs.id,
-            title: blogs.title,
-            slug: blogs.slug,
-            excerpt: blogs.excerpt,
-            content: blogs.content,
-            cover_image_url: blogs.coverImageUrl,
-            author: blogs.author,
-            status: blogs.status,
-            categories: blogs.categories,
-            tags: blogs.tags,
-            reading_time: blogs.readingTime,
-            created_at: blogs.createdAt,
-            updated_at: blogs.updatedAt,
-            submitted_by: blogs.submittedBy,
-            is_customer_submission: blogs.isCustomerSubmission,
-          })
-          .from(blogs)
-          .where(
-            and(
-              eq(blogs.submittedBy, user.id),
-              eq(blogs.isCustomerSubmission, true),
-            ),
-          )
-          .orderBy(desc(blogs.createdAt)),
+    const rows = await withUser({ uid: user.id, email: user.email }, (db) =>
+      db
+        .select({
+          id: blogs.id,
+          title: blogs.title,
+          slug: blogs.slug,
+          excerpt: blogs.excerpt,
+          content: blogs.content,
+          cover_image_url: blogs.coverImageUrl,
+          author: blogs.author,
+          status: blogs.status,
+          categories: blogs.categories,
+          tags: blogs.tags,
+          reading_time: blogs.readingTime,
+          created_at: blogs.createdAt,
+          updated_at: blogs.updatedAt,
+          submitted_by: blogs.submittedBy,
+          is_customer_submission: blogs.isCustomerSubmission,
+          moderation_blocked_at: blogs.moderationBlockedAt,
+        })
+        .from(blogs)
+        .where(
+          and(
+            eq(blogs.storeId, storeId),
+            eq(blogs.submittedBy, user.id),
+            eq(blogs.isCustomerSubmission, true),
+          ),
+        )
+        .orderBy(desc(blogs.createdAt)),
     );
+    // The author still sees a post StoreMink removed (RLS lets them read their
+    // own submissions), marked so the list can say "Removed by StoreMink". The
+    // timestamp itself stays on the server; the list needs only the flag.
+    const flagged = rows.map(({ moderation_blocked_at, ...row }) => ({
+      ...row,
+      blocked_by_storemink: Boolean(moderation_blocked_at),
+    }));
+    // The takedown page swap runs after the read scope has closed: a blocked
+    // cover or a blocked picture in the body becomes the placeholder.
+    const submissions = await maskBlockedMedia(flagged);
     return { success: true, data: { submissions } };
   } catch (err) {
     console.error("getMySubmissions error:", err);
@@ -1467,7 +1589,12 @@ export async function approveCustomerBlog(id: string): Promise<ActionResult> {
   const userId = admin.uid;
 
   let approved:
-    | { title: string; slug: string; submitted_by: string | null }
+    | {
+        title: string;
+        slug: string;
+        submitted_by: string | null;
+        blocked_at: string | null;
+      }
     | undefined;
   try {
     [approved] = await withUser(admin, (db) =>
@@ -1483,6 +1610,7 @@ export async function approveCustomerBlog(id: string): Promise<ActionResult> {
           title: blogs.title,
           slug: blogs.slug,
           submitted_by: blogs.submittedBy,
+          blocked_at: blogs.moderationBlockedAt,
         }),
     );
   } catch (err) {
@@ -1495,7 +1623,13 @@ export async function approveCustomerBlog(id: string): Promise<ActionResult> {
 
   // Tell the author their blog is live. Deferred and swallowed by emitEvent,
   // so a mail failure can never undo the approval.
-  if (approved.submitted_by) {
+  //
+  // ★ Not for a post StoreMink blocked (takedown fix pass): the approval still
+  //   goes through (design 3.1), but the post stays off the storefront, so
+  //   "your blog is live" would be untrue. Read from the row's own
+  //   moderation_blocked_at, returned by the approving UPDATE, so a block kept
+  //   from the store (D21) is covered too and the author is told nothing.
+  if (approved.submitted_by && !approved.blocked_at) {
     emitEvent({
       type: "blog.approved",
       storeId: await getActingStoreId(),
@@ -1507,7 +1641,7 @@ export async function approveCustomerBlog(id: string): Promise<ActionResult> {
   }
 
   revalidateBlogs();
-  await notifyBlogPublished([approved.slug], true);
+  await notifyBlogPublished(discoverableSlugs([approved]), true);
   return { success: true };
 }
 

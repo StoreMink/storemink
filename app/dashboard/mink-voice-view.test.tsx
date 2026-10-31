@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import {
   MinkVoiceBar,
   minkVoiceCaption,
+  minkVoiceFace,
   minkVoiceStatus,
 } from "./mink-voice-view";
 import type { MinkVoiceMode } from "./mink-voice-mode";
@@ -49,6 +50,39 @@ describe("minkVoiceStatus", () => {
       "Speaking…",
     );
     expect(minkVoiceStatus({ state: "idle", mic: "closed" })).toBe("");
+  });
+});
+
+describe("minkVoiceFace", () => {
+  it("gives the Mink face the expression for what voice chat is doing", () => {
+    expect(minkVoiceFace(voice({ state: "listening", mic: "open" }))).toBe(
+      "listening",
+    );
+    expect(minkVoiceFace(voice({ state: "listening", mic: "starting" }))).toBe(
+      "default",
+    );
+    expect(
+      minkVoiceFace(voice({ state: "listening", mic: "open", muted: true })),
+    ).toBe("default");
+    expect(
+      minkVoiceFace(voice({ state: "listening", mic: "transcribing" })),
+    ).toBe("thinking");
+    expect(minkVoiceFace(voice({ state: "sending" }))).toBe("thinking");
+    expect(minkVoiceFace(voice({ state: "waiting" }))).toBe("thinking");
+    expect(minkVoiceFace(voice({ state: "speaking" }))).toBe("talking");
+    expect(minkVoiceFace(voice({ state: "idle" }))).toBe("default");
+  });
+
+  it("draws the face in the bar, in that expression", () => {
+    const { container } = render(
+      <MinkVoiceBar
+        voice={voice({ state: "speaking", said: "Hello" })}
+        isReplying={false}
+        onStopReply={vi.fn()}
+      />,
+    );
+    const face = container.querySelector("[data-mink-face]");
+    expect(face?.getAttribute("data-state")).toBe("talking");
   });
 });
 

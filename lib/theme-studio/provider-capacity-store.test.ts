@@ -200,7 +200,7 @@ describe("postgresCapacityStore", () => {
     );
   });
 
-  it("★★ a success gives back one permit, and narrows a paced gap 10% down to 10 s, fenced on the epoch", async () => {
+  it("★★ a success gives back one permit, and narrows a paced gap 10% down to 31 s, fenced on the epoch", async () => {
     db.answer = (text) =>
       text.startsWith(
         "delete from public.theme_studio_provider_leases where scope_key=$1 and id=",
@@ -241,12 +241,12 @@ describe("postgresCapacityStore", () => {
       45_000,
       600_000,
       40_000,
-      10_000,
+      31_000,
       0.9,
       45_000,
       600_000,
       40_000,
-      10_000,
+      31_000,
       0.9,
       "k",
       LEASE.epoch,

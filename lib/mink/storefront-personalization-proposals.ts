@@ -6,17 +6,16 @@ import { can } from "@/app/dashboard/lib/permissions";
 import { mediaAssets, minkActionToolAccess } from "@/drizzle/schema";
 import { EMPTY_DESIGN_OVERRIDES } from "@/lib/chrome/design";
 import { withService } from "@/lib/db/client";
+import { uploadRefusal } from "@/lib/moderation/copy";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
 import { logError, logInfo } from "@/lib/observability/logger";
 import { sanitizeBlogContent } from "@/lib/sanitize";
 import {
   validateSections,
   type PageSectionItem,
 } from "@/lib/sections/registry";
-import {
-  gcsConfigured,
-  gcsDeletePaths,
-  gcsUploadObject,
-} from "@/lib/storage/gcs";
+import { gcsConfigured, gcsDeletePaths } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { getMinkConfig } from "./config";
 import { createMinkDraftProposal } from "./drafts";
 import { MinkRequestError, MinkToolInputError } from "./errors";
@@ -444,7 +443,13 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
         drew = true;
         const extension = image.mimeType === "image/png" ? "png" : "jpg";
         const path = `stores/${actor.storeId}/${MINK_GENERATED_MEDIA_FOLDER}/${crypto.randomUUID()}.${extension}`;
-        const url = await gcsUploadObject(path, image.bytes, image.mimeType);
+        // Through the store's one writer (takedown design 5.7): bytes
+        // StoreMink has blocked on this store are refused, nothing is written.
+        const url = await writeStoreObject(path, image.bytes, image.mimeType, {
+          storeId: actor.storeId,
+          via: "mink_personalization",
+          actor: actor.adminId,
+        });
         created.push({ path });
         await withService((db) =>
           db.insert(mediaAssets).values({
@@ -462,6 +467,18 @@ export async function createMinkStorefrontPersonalizationProposal(input: {
         photoWhere.set(photo.ref, photoLabel(photo, target));
       } catch (error) {
         if (!drew && isUnbilledImageFailure(error)) unbilledPhotos += 1;
+        // A picture StoreMink has blocked (takedown design 7.4) is said in
+        // the design's own words; the guard has already logged it.
+        if (isBlockedUploadError(error)) {
+          notes.push({
+            label: photo.label,
+            reason: uploadRefusal({
+              told: error.told,
+              kindWord: error.kindWord,
+            }),
+          });
+          return;
+        }
         if (
           !(
             error instanceof MinkRequestError ||

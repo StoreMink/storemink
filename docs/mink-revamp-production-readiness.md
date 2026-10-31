@@ -73,8 +73,10 @@ approval.
    and billed tier. A historical downgrade alone does not establish its cause.
 
 The shared Standard image pacer now holds a 40-second recovery minimum for
-ten minutes after the latest refusal cooldown, within its 10-to-45-second
-bounds. Existing database fields preserve the hold across worker restarts;
+ten minutes after the latest refusal cooldown, within its 31-to-45-second
+bounds (31 s is Google's non-adjustable system limit of two image
+generation requests a minute per project per base model, read in the Quotas
+console on 28 Oct 2026). Existing database fields preserve the hold across worker restarts;
 no capacity migration is needed. Older workers can still narrow the gap
 during deployment overlap, so complete their rollout before measurement.
 The corrected staging probe defaults to 54 calls using the real 2K MEDIUM

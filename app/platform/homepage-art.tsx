@@ -7,10 +7,10 @@ import {
   Globe2,
   Package,
   ShoppingBag,
-  Sparkles,
   Store,
   Users,
 } from "lucide-react";
+import { MinkFace } from "@/components/mink/mink-face";
 import { BrandMark } from "./brand-mark";
 
 // Drawn product artwork for the marketing pages (homepage + /products/*).
@@ -297,7 +297,7 @@ export function MinkArt() {
     <div className="smh-mink-art" aria-hidden="true">
       <div className="smh-mink-bar">
         <span className="smh-mink-badge">
-          <Sparkles size={12} /> Mink AI
+          <MinkFace size={22} /> Mink AI
         </span>
         <em>Beta</em>
       </div>

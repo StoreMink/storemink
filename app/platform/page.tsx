@@ -16,10 +16,18 @@ import {
   platformWebsiteSchema,
 } from "@/lib/seo/brand-identity";
 import { serializeJsonLd } from "@/lib/seo/json-ld";
-import { allowanceLabel, includedMinkCredits } from "@/lib/plans";
+import { includedMinkCredits } from "@/lib/plans";
 import { getPlanPricing } from "@/lib/plans/pricing";
 import { getPlanAllowances } from "@/lib/plans/allowances";
 import { getMinkConfig } from "@/lib/mink/config";
+import { getPublicTaxSource } from "@/lib/billing/public-tax";
+import {
+  priceGstSuffix,
+  pricingFootnote,
+  valueAddedTaxIncluded,
+} from "@/lib/billing/tax-copy";
+import { termsAt } from "@/lib/billing/tax-terms";
+import { logError } from "@/lib/observability/logger";
 import {
   canPreviewTheme,
   isThemeSelectable,
@@ -29,8 +37,8 @@ import {
 import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 import { SiteFooter } from "./site-footer";
 import { SiteHeader } from "./site-header";
-import { PricingCards, type PricingCard } from "./pricing-cards";
-import { FAQS, PLANS } from "./pricing-content";
+import { PricingCards } from "./pricing-cards";
+import { PLANS, pricingCards, pricingFaqs } from "./pricing-content";
 import { CommerceCommandCentre, MinkArt } from "./homepage-art";
 import {
   BuilderArt,
@@ -168,11 +176,21 @@ export default async function StoreminkLanding() {
   // The theme rail reads the live catalogue (bundled themes plus every
   // published Theme Studio release), newest first, so a theme published this
   // morning is on the homepage this morning with its own preview image.
-  const [pricing, allowances, themeCatalog] = await Promise.all([
+  // ★ GST (design 7.1, 8): the cached public source, beside the prices, worked
+  // out for THIS render (`termsAt`), so a scheduled start shows once the page
+  // regenerates; both reads revalidate at 300 s and the page with them. A
+  // failed read gives null terms: the prices show with no GST words at all,
+  // never as "GST is off".
+  const [pricing, allowances, themeCatalog, taxSource] = await Promise.all([
     getPlanPricing(),
     getPlanAllowances(),
     getThemeCatalog(),
+    getPublicTaxSource().catch((error: unknown) => {
+      logError("billing.public_tax.read_failed", error, { page: "/" });
+      return null;
+    }),
   ]);
+  const terms = taxSource ? termsAt(taxSource, new Date()) : null;
   const themes = newestThemesFirst(
     themeCatalog.filter(isThemeSelectable),
   ).slice(0, HOMEPAGE_THEME_COUNT);
@@ -186,18 +204,12 @@ export default async function StoreminkLanding() {
     ),
   );
 
-  const pricingCards: PricingCard[] = PLANS.map((plan) => ({
-    id: plan.meta.id,
-    name: plan.meta.name,
-    who: plan.who,
-    features: [
-      ...plan.features,
-      `${allowanceLabel(included[plan.meta.id])} Mink credits a month`,
-    ],
-    cta: plan.cta,
-    popular: plan.popular,
-    ...pricing[plan.meta.id],
-  }));
+  const cards = pricingCards(pricing, included, terms);
+  const pricingGst = terms ? priceGstSuffix(terms) : "";
+  const gstFootnote = terms ? pricingFootnote(terms) : null;
+  // Only while GST is charged: true when prices include it, false when it is
+  // added on top. Omitted with GST off and when the GST read failed.
+  const vatIncluded = terms ? valueAddedTaxIncluded(terms) : undefined;
 
   const planOffers = PLANS.map((plan) => ({
     "@type": "Offer",
@@ -219,6 +231,9 @@ export default async function StoreminkLanding() {
         value: 1,
         unitCode: "MON",
       },
+      ...(vatIncluded === undefined
+        ? {}
+        : { valueAddedTaxIncluded: vatIncluded }),
     },
   }));
 
@@ -553,9 +568,9 @@ export default async function StoreminkLanding() {
                     GST-ready from the first invoice.
                   </h2>
                   <p className="smh-lead">
-                    Rupee pricing, GST tax classes and printable invoices are
-                    built in. Connect your own payment gateway and keep every
-                    rupee: StoreMink takes 0% of your sales.
+                    Built for India with rupee pricing, GST and printable
+                    invoices. Connect your own payment gateway and keep 100% of
+                    your sales. StoreMink charges 0% commission.
                   </p>
                   <ul className="smh-check-list">
                     <li>
@@ -605,9 +620,8 @@ export default async function StoreminkLanding() {
                   </span>
                   <h3>Get started fast</h3>
                   <p>
-                    Pick a theme, add your products and take your first order
-                    the same day, from your kitchen table if that is where you
-                    are.
+                    Choose a theme, add your products and start taking orders
+                    the same day. No matter where you work.
                   </p>
                 </Link>
                 <Link href="/products/marketing" className="smh-story">
@@ -622,9 +636,9 @@ export default async function StoreminkLanding() {
                   </span>
                   <h3>Grow as big as you want</h3>
                   <p>
-                    Customer groups, offers and email campaigns turn a first
-                    order into a regular. Staff accounts with roles turn a
-                    founder into a team.
+                    Build customer loyalty with groups, offers and email
+                    campaigns. Grow your team with staff accounts and role-based
+                    access.
                   </p>
                 </Link>
                 <Link href="/pricing" className="smh-story">
@@ -639,9 +653,9 @@ export default async function StoreminkLanding() {
                   </span>
                   <h3>Raise the bar</h3>
                   <p>
-                    Your own domain, Point of Sale across every shop, and the
-                    colourways, filters and photos shoppers expect from a big
-                    brand.
+                    Use your own domain, manage every store with POS, and create
+                    a branded shopping experience with custom colours, filters
+                    and photos.
                   </p>
                 </Link>
               </div>
@@ -840,12 +854,12 @@ export default async function StoreminkLanding() {
                 <p className="smh-lead">
                   Every plan includes a real storefront and 0% StoreMink
                   transaction fees. Paid plans start at{" "}
-                  {priceInr(cheapestPaidInr)} per month.
+                  {priceInr(cheapestPaidInr)} per month{pricingGst}.
                 </p>
               </div>
               <div className="smh-pricing-component">
                 <PricingCards
-                  plans={pricingCards}
+                  plans={cards}
                   aside={
                     <Link href="/pricing" className="smh-text-link">
                       Compare all features <ArrowRight size={16} />
@@ -857,6 +871,7 @@ export default async function StoreminkLanding() {
                 <CircleCheck size={16} /> Your store data is never deleted by a
                 plan downgrade or failed payment.
               </p>
+              {gstFootnote && <p className="smh-pricing-foot">{gstFootnote}</p>}
             </div>
           </section>
 
@@ -942,7 +957,7 @@ export default async function StoreminkLanding() {
                 </p>
               </div>
               <div className="smh-faq-list">
-                {FAQS.map((faq) => (
+                {pricingFaqs(terms).map((faq) => (
                   <details key={faq.q}>
                     <summary>
                       {faq.q}

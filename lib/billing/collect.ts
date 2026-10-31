@@ -28,12 +28,32 @@ import "server-only";
  */
 
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  sql,
+} from "drizzle-orm";
 import { withService, type Db } from "@/lib/db/client";
-import { billingInvoices, billingPaymentAttempts } from "@/drizzle/schema";
-import { logError, logWarn } from "@/lib/observability/logger";
+import {
+  billingInvoices,
+  billingPaymentAttempts,
+  billingReconciliationItems,
+} from "@/drizzle/schema";
+import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { notifyInvoicePaid } from "./receipts";
-import type { RzpResult } from "@/lib/payments/razorpay";
+import {
+  capturedPayment,
+  rzpFetchOrder,
+  rzpFetchOrderPayments,
+  type RazorpayCreds,
+  type RzpResult,
+} from "@/lib/payments/razorpay";
 import { collectionRoute, type MandateStatus } from "./cycle";
 import {
   invoiceStatusForAttempts,
@@ -215,6 +235,15 @@ async function recordAttemptProviderOrder(
  * overwrite a newer one.
  *
  * Returns the state the attempt ended up in, which is NOT always `incoming`.
+ *
+ * ★ A `captured` attempt settled `captured` again writes nothing to the attempt
+ * but re-runs the invoice sync (finding F1, below).
+ *
+ * `notify: false` makes the invoice paid WITHOUT the paid receipt (R1-04).
+ * Only the reconcile repair pass passes it, for a purchase it issues by itself
+ * because the purchase's own completion declined or a person already holds
+ * the payment: the receipt says "your plan is active", which is untrue for
+ * something that was not applied, and a person is already checking it.
  */
 export async function settleAttempt(
   attemptId: string,
@@ -225,6 +254,9 @@ export async function settleAttempt(
     failureCode?: string | null;
     failureReason?: string | null;
     now?: Date;
+    /** Send the paid receipt when this settle makes the invoice paid
+     *  (default true). */
+    notify?: boolean;
   } = {},
 ): Promise<PaymentState | null> {
   const now = extra.now ?? new Date();
@@ -254,6 +286,26 @@ export async function settleAttempt(
             from,
             incoming,
           });
+        }
+        // ★★ A CAPTURE SEEN AGAIN STILL BRINGS ITS INVOICE IN LINE (finding
+        // F1). Reconciliation can capture an enrolment, plan-change or
+        // location attempt while its invoice is still a draft; the paid claim
+        // admits only open and processing, so it matches nothing. The confirm
+        // path then finalizes the draft to `open` and settles the same
+        // attempt again, which changes nothing, and before this the invoice
+        // stayed `open` behind captured money: a bill Plans & Billing offered
+        // to pay a second time. Re-running the sync here lets that finalized
+        // invoice become paid. The claim is the same one, so a draft never
+        // becomes paid, a `void` or `uncollectible` invoice is never revived
+        // (defect D9), and the receipt still goes out exactly once.
+        if (from === "captured" && incoming === "captured") {
+          const sync = await syncInvoiceStatus(db, current.invoiceId, now);
+          return {
+            state: decision.state,
+            becamePaid: sync.becamePaid,
+            storeId: sync.becamePaid ? current.storeId : null,
+            invoiceId: current.invoiceId,
+          };
         }
         return {
           state: decision.state,
@@ -305,7 +357,7 @@ export async function settleAttempt(
     // it inside would hold a pooled connection open for an HTTP request and
     // announce a payment a rollback then undid. Best-effort — the money is
     // recorded either way.
-    if (settled.becamePaid && settled.storeId) {
+    if (settled.becamePaid && settled.storeId && extra.notify !== false) {
       await notifyInvoicePaid(settled.storeId, settled.invoiceId);
     }
     return settled.state;
@@ -314,6 +366,15 @@ export async function settleAttempt(
     return null;
   }
 }
+
+/**
+ * The invoice statuses a capture can land on when a plan was closed under it:
+ * an issued invoice in one of these is money the refund pass returns.
+ */
+const CLOSED_INVOICE_STATUSES: ReadonlySet<string> = new Set([
+  "void",
+  "uncollectible",
+]);
 
 /**
  * Derive the invoice's status from its attempts.
@@ -334,6 +395,9 @@ export async function settleAttempt(
  * ⚠ That claim also fixes a quieter bug: `paidAt` used to be rewritten on every
  * subsequent sync, so a second attempt settling later moved the timestamp on an
  * invoice that had been paid for days.
+ *
+ * ★★ A PAID INVOICE IS NEVER MOVED BACK by its attempts (defect D9): the WHERE
+ * admits only `open` and `processing`, whichever status the attempts derive.
  */
 async function syncInvoiceStatus(
   db: Db,
@@ -359,14 +423,13 @@ async function syncInvoiceStatus(
     .where(
       and(
         eq(billingInvoices.id, invoiceId),
-        // Never revive a closed invoice — and when moving TO paid, never
-        // re-claim one that already is.
-        inArray(
-          billingInvoices.status,
-          next === "paid"
-            ? ["open", "processing"]
-            : ["open", "processing", "paid"],
-        ),
+        // Only an open or processing invoice moves. A closed one (`void`,
+        // `uncollectible`) is never revived; moving TO paid never re-claims
+        // one that already is; and ★★ a paid invoice is never moved back to
+        // open or processing by its attempts (defect D9: once `paid` was in
+        // this list, an attempt set that derived `open` reopened a paid
+        // invoice and offered it for payment again).
+        inArray(billingInvoices.status, ["open", "processing"]),
       ),
     )
     .returning({ id: billingInvoices.id });
@@ -385,20 +448,39 @@ async function syncInvoiceStatus(
   // So distinguish the two by re-reading the row. Already `paid` is the benign
   // race; anything else means money has been taken against an invoice that does
   // not know it, which is an operator-visible fault, not a warning.
+  //
+  // ★ ONE EXCEPTION IS EXPECTED, AND IT IS INFO: a capture on an ISSUED invoice
+  // that was then closed (`void` when a plan ended before reaching its cycle,
+  // `uncollectible` after a downgrade). The refund pass returns that money, so
+  // nobody has to act. The row is left exactly as it is. ★★ An UNISSUED one (a
+  // draft, or a draft closed by hand, `finalized_at` null) stays an error: the
+  // refund guard refuses an unissued invoice, so only a person can return that
+  // money.
   if (next === "paid" && claimed.length === 0) {
     const [row] = await db
-      .select({ status: billingInvoices.status })
+      .select({
+        status: billingInvoices.status,
+        finalizedAt: billingInvoices.finalizedAt,
+      })
       .from(billingInvoices)
       .where(eq(billingInvoices.id, invoiceId))
       .limit(1);
     if (row && row.status !== "paid") {
-      logError(
-        "billing.invoice_paid_claim_missed",
-        new Error(
-          `captured payment could not mark invoice paid (status ${row.status})`,
-        ),
-        { invoiceId, invoiceStatus: row.status },
-      );
+      const issued = row.finalizedAt !== null;
+      if (issued && CLOSED_INVOICE_STATUSES.has(row.status)) {
+        logInfo("billing.payment_on_closed_invoice", {
+          invoiceId,
+          invoiceStatus: row.status,
+        });
+      } else {
+        logError(
+          "billing.invoice_paid_claim_missed",
+          new Error(
+            `captured payment could not mark invoice paid (status ${row.status})`,
+          ),
+          { invoiceId, invoiceStatus: row.status, issued },
+        );
+      }
     }
   }
 
@@ -544,3 +626,363 @@ export async function latestAttempt(invoiceId: string) {
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Recovered purchases: a captured payment on an invoice still a draft (RC-F1b)
+//
+// A merchant pays in Razorpay Checkout and closes the tab before the confirm
+// call. The hourly reconcile records the capture, but the invoice is still a
+// draft (an enrolment, a plan change or a location purchase finalizes only on
+// confirm), so nothing issued it, granted the plan or told the merchant. These
+// helpers are what the three purchase kinds share to finish such a purchase:
+// finding one, checking the money with the gateway again, telling which kind
+// of add-on an order bought, and filing what only a person can decide.
+// ---------------------------------------------------------------------------
+
+/** A captured attempt standing on a draft invoice: a purchase never finished. */
+export interface CapturedDraftPurchase {
+  attemptId: string;
+  invoiceId: string;
+  storeId: string;
+  kind: "subscription" | "addon";
+  providerOrderId: string;
+  providerPaymentId: string | null;
+  amountPaise: number;
+  currency: string;
+  createdAt: string;
+}
+
+/**
+ * Captured attempts on draft subscription or add-on invoices.
+ *
+ * ★ ONE STORE OR EVERY STORE. The purchase start paths ask about one store
+ * before they open a new order; the hourly reconcile asks about every store,
+ * only for attempts older than `createdBefore`, and skips an attempt a person
+ * already holds (an open or in-review reconciliation item about it, or one of
+ * the two items this release files once per attempt), so the queue it fills
+ * is never filled twice.
+ *
+ * ★ Returns NULL on a read failure, never an empty list: the start paths fail
+ * closed, because "we could not check" is not "nothing was paid".
+ */
+export async function capturedDraftPurchases(input: {
+  storeId?: string;
+  kind?: "subscription" | "addon";
+  createdBefore?: string;
+  excludeHeld?: boolean;
+  limit?: number;
+}): Promise<CapturedDraftPurchase[] | null> {
+  try {
+    return await withService(async (db) => {
+      const conditions = [
+        eq(billingPaymentAttempts.state, "captured"),
+        eq(billingInvoices.status, "draft"),
+        inArray(
+          billingInvoices.kind,
+          input.kind ? [input.kind] : ["subscription", "addon"],
+        ),
+        isNotNull(billingPaymentAttempts.storeId),
+        isNotNull(billingPaymentAttempts.providerOrderId),
+        // The attempt and the invoice name the same store, or it is not a
+        // purchase this code may finish.
+        eq(billingInvoices.storeId, billingPaymentAttempts.storeId),
+      ];
+      if (input.storeId) {
+        conditions.push(eq(billingPaymentAttempts.storeId, input.storeId));
+      }
+      if (input.createdBefore) {
+        conditions.push(
+          lt(billingPaymentAttempts.createdAt, input.createdBefore),
+        );
+      }
+      if (input.excludeHeld) {
+        conditions.push(
+          sql`not exists (
+            select 1 from public.billing_reconciliation_items r
+             where r.attempt_id = billing_payment_attempts.id
+               and (r.status in ('open', 'manual_review')
+                    or r.detail->>'repair_key' in (
+                      'purchase_refused:' || billing_payment_attempts.id::text,
+                      'purchase_unapplied:' || billing_payment_attempts.id::text)))`,
+        );
+      }
+      const rows = await db
+        .select({
+          attemptId: billingPaymentAttempts.id,
+          invoiceId: billingPaymentAttempts.invoiceId,
+          storeId: billingPaymentAttempts.storeId,
+          kind: billingInvoices.kind,
+          providerOrderId: billingPaymentAttempts.providerOrderId,
+          providerPaymentId: billingPaymentAttempts.providerPaymentId,
+          amountPaise: billingPaymentAttempts.amountPaise,
+          currency: billingPaymentAttempts.currency,
+          createdAt: billingPaymentAttempts.createdAt,
+        })
+        .from(billingPaymentAttempts)
+        .innerJoin(
+          billingInvoices,
+          eq(billingInvoices.id, billingPaymentAttempts.invoiceId),
+        )
+        .where(and(...conditions))
+        .orderBy(asc(billingPaymentAttempts.createdAt))
+        .limit(input.limit ?? 50);
+      return rows.map((row) => ({
+        attemptId: row.attemptId,
+        invoiceId: row.invoiceId,
+        storeId: row.storeId as string,
+        kind:
+          row.kind === "addon" ? ("addon" as const) : ("subscription" as const),
+        providerOrderId: row.providerOrderId as string,
+        providerPaymentId: row.providerPaymentId,
+        amountPaise: row.amountPaise,
+        currency: row.currency,
+        createdAt: row.createdAt,
+      }));
+    });
+  } catch (err) {
+    logError("billing.recovery.scan", err, { storeId: input.storeId ?? null });
+    return null;
+  }
+}
+
+/**
+ * The captured attempt on one invoice, if there is one.
+ *
+ * `undefined` on a read failure, `null` when there is none: manual payment
+ * fails closed on the first and opens a payment only on the second.
+ */
+export async function capturedAttemptForInvoice(
+  invoiceId: string,
+  storeId: string,
+): Promise<
+  { id: string; providerPaymentId: string | null } | null | undefined
+> {
+  try {
+    return await withService(async (db) => {
+      const [row] = await db
+        .select({
+          id: billingPaymentAttempts.id,
+          providerPaymentId: billingPaymentAttempts.providerPaymentId,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, invoiceId),
+            eq(billingPaymentAttempts.storeId, storeId),
+            eq(billingPaymentAttempts.state, "captured"),
+          ),
+        )
+        .orderBy(desc(billingPaymentAttempts.createdAt))
+        .limit(1);
+      return row ?? null;
+    });
+  } catch (err) {
+    logError("billing.recovery.invoice_attempt", err, { invoiceId });
+    return undefined;
+  }
+}
+
+export type RecoveredCaptureCheck =
+  | { status: "ok"; paymentId: string }
+  | { status: "unreadable" }
+  | {
+      status: "mismatch";
+      reason: string;
+      paymentId: string | null;
+      observedPaise: number | null;
+    };
+
+/**
+ * Ask the gateway again what was captured on this order, before a recovered
+ * purchase is finished.
+ *
+ * ★★ THE AMOUNT AND THE CURRENCY MUST EQUAL THE ATTEMPT'S. A recovered
+ * capture was recorded by the hourly reconcile, which records money even when
+ * it differs from what we asked for (it flags that for a person). Finishing a
+ * purchase on such a payment would grant a plan for an amount nobody priced,
+ * so a mismatch is never applied: it goes to a person.
+ *
+ * ★ An unreadable gateway is not a verdict: the caller leaves the purchase as
+ * it is and tries again on the next pass.
+ */
+export async function verifyRecoveredCapture(input: {
+  creds: RazorpayCreds;
+  providerOrderId: string;
+  providerPaymentId: string | null;
+  amountPaise: number;
+  currency: string;
+  fetchOrderPayments?: typeof rzpFetchOrderPayments;
+}): Promise<RecoveredCaptureCheck> {
+  const fetchPayments = input.fetchOrderPayments ?? rzpFetchOrderPayments;
+  let res: Awaited<ReturnType<typeof rzpFetchOrderPayments>>;
+  try {
+    res = await fetchPayments(input.creds, input.providerOrderId);
+  } catch (err) {
+    logError("billing.recovery.gateway_read", err, {
+      providerOrderId: input.providerOrderId,
+    });
+    return { status: "unreadable" };
+  }
+  if (!res.ok) return { status: "unreadable" };
+  const paid = capturedPayment(res.data);
+  if (!paid) {
+    return {
+      status: "mismatch",
+      reason: "the gateway shows no captured payment on this order",
+      paymentId: null,
+      observedPaise: null,
+    };
+  }
+  if (input.providerPaymentId && paid.id !== input.providerPaymentId) {
+    return {
+      status: "mismatch",
+      reason: "the gateway's captured payment is not the one recorded",
+      paymentId: paid.id,
+      observedPaise: typeof paid.amount === "number" ? paid.amount : null,
+    };
+  }
+  if (paid.amount !== input.amountPaise || paid.currency !== input.currency) {
+    return {
+      status: "mismatch",
+      reason: "the captured amount or currency differs from the attempt",
+      paymentId: paid.id,
+      observedPaise: typeof paid.amount === "number" ? paid.amount : null,
+    };
+  }
+  return { status: "ok", paymentId: paid.id };
+}
+
+/** What an add-on order was created to buy, read from the notes WE wrote. */
+export type AddonOrderTarget =
+  | { kind: "plan_change"; plan: string; period: string }
+  | { kind: "locations"; count: number }
+  | { kind: "unknown" };
+
+/**
+ * Which add-on purchase an order is, from the notes the server planted when
+ * it created the order (a plan change writes `plan` and `period`, a location
+ * purchase writes `locations`).
+ *
+ * ★ The order is the record the SERVER wrote, which is why a plan change takes
+ * its plan and period from here and never from the browser.
+ *
+ * Null when the order cannot be read: the caller changes nothing and retries.
+ */
+export async function readAddonOrderTarget(
+  creds: RazorpayCreds,
+  providerOrderId: string,
+): Promise<AddonOrderTarget | null> {
+  let res: Awaited<ReturnType<typeof rzpFetchOrder>>;
+  try {
+    res = await rzpFetchOrder(creds, providerOrderId);
+  } catch (err) {
+    logError("billing.recovery.order_read", err, { providerOrderId });
+    return null;
+  }
+  if (!res.ok) return null;
+  // `notes` is not on RzpOrder's type, but Razorpay returns it on every order.
+  const notes = (res.data as { notes?: unknown }).notes;
+  if (!notes || typeof notes !== "object" || Array.isArray(notes)) {
+    return { kind: "unknown" };
+  }
+  const n = notes as Record<string, unknown>;
+  if (typeof n.plan === "string" && typeof n.period === "string") {
+    return { kind: "plan_change", plan: n.plan, period: n.period };
+  }
+  const count =
+    typeof n.locations === "string" || typeof n.locations === "number"
+      ? Number(n.locations)
+      : Number.NaN;
+  if (Number.isInteger(count) && count >= 0) {
+    return { kind: "locations", count };
+  }
+  return { kind: "unknown" };
+}
+
+/**
+ * File something about a recovered purchase that only a person can decide.
+ *
+ * ★ FILED ONCE PER ATTEMPT AND REASON: `detail.repair_key` is unique in any
+ * status (`billing_reconciliation_repair_once`, 0264), and the open key
+ * (kind, payment) dedupes too, so an hourly pass that meets the same purchase
+ * again files nothing new. ★ Never refunds or applies anything: the note says
+ * what the person has to decide. Best-effort, like reconcile's own flag.
+ */
+export async function fileRecoveredPurchase(input: {
+  storeId: string | null;
+  kind: "state_conflict" | "amount_mismatch";
+  repairKey: string;
+  note: string;
+  invoiceId: string;
+  attemptId: string;
+  providerPaymentId?: string | null;
+  providerOrderId?: string | null;
+  expectedPaise?: number | null;
+  observedPaise?: number | null;
+  purchase: "enrolment" | "plan_change" | "locations" | "unknown";
+  now: Date;
+}): Promise<boolean> {
+  try {
+    const rows = await withService(async (db) =>
+      db
+        .insert(billingReconciliationItems)
+        .values({
+          storeId: input.storeId,
+          kind: input.kind,
+          status: "open",
+          invoiceId: input.invoiceId,
+          attemptId: input.attemptId,
+          providerPaymentId: input.providerPaymentId ?? null,
+          providerOrderId: input.providerOrderId ?? null,
+          expectedPaise: input.expectedPaise ?? null,
+          observedPaise: input.observedPaise ?? null,
+          detail: {
+            repair_key: input.repairKey,
+            note: input.note,
+            purchase: input.purchase,
+          },
+          createdAt: input.now.toISOString(),
+          updatedAt: input.now.toISOString(),
+        })
+        .onConflictDoNothing()
+        .returning({ id: billingReconciliationItems.id }),
+    );
+    const filed = rows.length > 0;
+    if (filed) {
+      logWarn("billing.recovery.filed", {
+        storeId: input.storeId,
+        invoiceId: input.invoiceId,
+        attemptId: input.attemptId,
+        repairKey: input.repairKey,
+        purchase: input.purchase,
+      });
+    }
+    return filed;
+  } catch (err) {
+    logError("billing.recovery.file", err, {
+      attemptId: input.attemptId,
+      repairKey: input.repairKey,
+    });
+    return false;
+  }
+}
+
+/**
+ * How finishing one purchase ended. Shared by the three purchase kinds so the
+ * browser confirm, the hourly reconcile and a repeated start read it alike.
+ *
+ * - `completed`: THIS call applied the purchase and sent its notices.
+ * - `already_complete`: it was applied before; this call changed nothing and
+ *   sent nothing.
+ * - `not_ready`: nothing was changed (a read failed, the gateway could not be
+ *   asked); the next pass tries again.
+ * - `refused`: a guard failed, or the money is recorded but the purchase could
+ *   not be applied; it was filed for a person and nothing was applied.
+ * - `not_captured`: the payment did not complete.
+ */
+export type PurchaseCompletion<T> =
+  | { status: "completed"; data: T }
+  | { status: "already_complete"; data: T }
+  | { status: "not_ready"; reason: string }
+  | { status: "refused"; reason: string }
+  | { status: "not_captured" };

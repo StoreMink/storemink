@@ -15,12 +15,25 @@
 import { and, desc, eq, lte, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { emitEvent } from "@/lib/notifications/record";
+import { loggableError } from "@/lib/db/errors";
+import { logError } from "@/lib/observability/logger";
 import {
   draftCreditInvoice,
   issueCreditInvoice,
 } from "@/lib/billing/credit-invoice";
+import { buildAiCreditsInvoice } from "@/lib/billing/invoice";
+import {
+  gatewayCreatedAt,
+  paymentCapturedAt,
+  readTaxForPayment,
+} from "@/lib/billing/payment-tax";
+import { PAYMENT_REFUSAL } from "@/lib/billing/tax-copy";
 import { aiCreditLedger, aiCreditPurchases, stores } from "@/drizzle/schema";
-import { getManagerUserId, getActingStoreId } from "@/app/dashboard/lib/access";
+import {
+  getManagerUserId,
+  getActingStoreId,
+  getViewerAccess,
+} from "@/app/dashboard/lib/access";
 import { effectivePlan, NO_COMP } from "@/lib/plans";
 import {
   getMinkCreditPackLive,
@@ -81,9 +94,16 @@ export interface AiUsagePageData {
 
 // Mark a paid purchase + grant its credits, idempotently. Shared by the
 // client confirm path and the reconcile pass.
+//
+// `paidAt` is when Razorpay captured the payment, when the caller knows it:
+// the reconcile pass and the confirm path both pass the payment's own
+// `created_at`, so a pack paid before a scheduled GST change but confirmed or
+// noticed after it is issued with the terms of its payment time (GST design
+// 5.4 step 4, R1-07). Absent, the invoice reads its terms at issue.
 async function settlePurchase(
   purchase: { id: string; store_id: string; credits: number; pack_id: string },
   rzpPaymentId: string,
+  paidAt?: Date,
 ): Promise<void> {
   try {
     const claimed = await withService((db) =>
@@ -107,7 +127,7 @@ async function settlePurchase(
     // best-effort invoice write may have failed. Retrying the paid-finalization
     // is idempotent and repairs that document without granting credits twice.
     if (claimed.length === 0) {
-      await issueCreditInvoice(purchase.id);
+      await issueCreditInvoice(purchase.id, undefined, paidAt);
       return;
     }
   } catch (err) {
@@ -139,8 +159,9 @@ async function settlePurchase(
   // merchant is already unsure what happened.
   //
   // ★ AFTER the credits, and best-effort: a merchant who paid gets what they
-  // bought even if the document fails to issue.
-  await issueCreditInvoice(purchase.id);
+  // bought even if the document fails to issue. One that did not issue is
+  // picked up by the hourly repair pass (`issueCapturedDrafts`).
+  await issueCreditInvoice(purchase.id, undefined, paidAt);
 }
 
 // Reconcile-on-read: any stale pending purchase for this store is checked
@@ -188,53 +209,72 @@ async function reconcilePendingPurchases(storeId: string): Promise<void> {
     if (!res.ok) continue;
     const captured = capturedPayment(res.data);
     if (captured) {
-      await settlePurchase(p, captured.id);
+      // When Razorpay captured it (`created_at`, `gatewayCreatedAt`); with
+      // none, the invoice is issued at the time it is noticed, as before.
+      await settlePurchase(
+        p,
+        captured.id,
+        gatewayCreatedAt(captured) ?? undefined,
+      );
     }
   }
 }
 
 /** Everything the /dashboard/plans (Plans & Billing) page renders. Also runs
  *  the pending-purchase reconcile pass so a dropped payment callback self-heals
- *  on next visit. */
+ *  on next visit.
+ *
+ *  ★★ GATED HERE, NOT ONLY ON THE PAGE (R3-02). An export of a "use server"
+ *  file is a public endpoint, and this one returns the plan, the comp and the
+ *  credit ledger, and asks Razorpay about pending purchases. VIEW of the `ai`
+ *  section, the page's own gate (`requireSectionAccess("ai", "view")`), so a
+ *  view-only role keeps the page; `getViewerContext` is request-cached, so
+ *  this costs nothing after the page's check. */
 export async function getAiUsagePageData(): Promise<AiUsagePageData> {
+  const access = await getViewerAccess();
+  if (!access?.can("ai", "view")) throw new Error("Not allowed");
+
   const storeId = await getActingStoreId();
 
   await reconcilePendingPurchases(storeId);
 
   const [dbResult, usage] = await Promise.all([
+    // ★ The two reads run ONE AFTER THE OTHER (R3-01): a `withService` scope
+    // holds one pooled client in one transaction, so starting both together
+    // only queued the second inside pg (a deprecation warning today, a throw
+    // on pg 9) and let one failed read abort the other.
     withService(async (db) => {
-      const [storeRows, ledgerRows] = await Promise.all([
-        db
-          .select({
-            plan: stores.plan,
-            plan_expires_at: stores.planExpiresAt,
-            comp_plan: stores.compPlan,
-            comp_expires_at: stores.compExpiresAt,
-            comp_duration_days: stores.compDurationDays,
-            comp_starts_at: stores.compStartsAt,
-            plan_source: stores.planSource,
-          })
-          .from(stores)
-          .where(eq(stores.id, storeId))
-          .limit(1),
-        db
-          .select({
-            id: aiCreditLedger.id,
-            delta: aiCreditLedger.delta,
-            kind: aiCreditLedger.kind,
-            note: aiCreditLedger.note,
-            created_at: aiCreditLedger.createdAt,
-          })
-          .from(aiCreditLedger)
-          .where(eq(aiCreditLedger.storeId, storeId))
-          .orderBy(desc(aiCreditLedger.createdAt))
-          .limit(20),
-      ]);
+      const storeRows = await db
+        .select({
+          plan: stores.plan,
+          plan_expires_at: stores.planExpiresAt,
+          comp_plan: stores.compPlan,
+          comp_expires_at: stores.compExpiresAt,
+          comp_duration_days: stores.compDurationDays,
+          comp_starts_at: stores.compStartsAt,
+          plan_source: stores.planSource,
+        })
+        .from(stores)
+        .where(eq(stores.id, storeId))
+        .limit(1);
+      const ledgerRows = await db
+        .select({
+          id: aiCreditLedger.id,
+          delta: aiCreditLedger.delta,
+          kind: aiCreditLedger.kind,
+          note: aiCreditLedger.note,
+          created_at: aiCreditLedger.createdAt,
+        })
+        .from(aiCreditLedger)
+        .where(eq(aiCreditLedger.storeId, storeId))
+        .orderBy(desc(aiCreditLedger.createdAt))
+        .limit(20);
       return { storeRows, ledgerRows };
     }).catch((err) => {
-      console.error("getAiUsagePageData:", err);
+      logError("billing.ai_usage_page", loggableError(err), { storeId });
       return { storeRows: [], ledgerRows: [] };
     }),
+    // Its own scope, so a separate client: these two do run together.
     getAiUsage(storeId),
   ]);
   const store = dbResult.storeRows[0];
@@ -295,6 +335,25 @@ export async function startCreditPurchase(
     return { error: "Credit purchases aren't available right now." };
   }
 
+  // ★★ ONE TAX READING PRICES THE ORDER AND WRITES THE INVOICE (GST design
+  // 5.5). Read before anything is written, so a refusal leaves no purchase
+  // row and no Razorpay order behind.
+  const reading = await readTaxForPayment(
+    storeId,
+    new Date(),
+    "billing.credit_pack",
+  );
+  if (!reading.ok) return { error: reading.error };
+  const built = buildAiCreditsInvoice({
+    packLabel: pack.name,
+    credits: pack.credits,
+    amountPaise: pack.priceInr * 100,
+    tax: reading.snap.tax,
+  });
+  // What the merchant is charged: the list price, plus GST when the price
+  // excludes it (a Rs 59 pack is charged Rs 69.62 at 18% exclusive).
+  const amountPaise = built.totalPaise;
+
   let purchaseId: string;
   try {
     const [inserted] = await withService((db) =>
@@ -304,7 +363,9 @@ export async function startCreditPurchase(
           storeId,
           packId: pack.id,
           credits: pack.credits,
+          // The list price, unchanged in meaning; `amountPaise` is the charge.
           amountInr: pack.priceInr,
+          amountPaise,
           status: "pending",
         })
         .returning({ id: aiCreditPurchases.id }),
@@ -318,7 +379,6 @@ export async function startCreditPurchase(
     return { error: "Couldn't start the purchase. Please try again." };
   }
 
-  const amountPaise = pack.priceInr * 100;
   const rzpRes = await rzpCreateOrder(creds, {
     amountPaise,
     receipt: `aicr_${purchaseId.slice(0, 30)}`,
@@ -353,20 +413,29 @@ export async function startCreditPurchase(
     return { error: "Couldn't start the payment. Please try again." };
   }
 
-  // ★ A DRAFT invoice, raised only once the order exists — so a purchase that
+  // ★ A DRAFT invoice, raised only once the order exists, so a purchase that
   // died at the gateway leaves no document behind at all. It carries no number
   // yet; `settlePurchase` finalizes it when the money lands, which is what keeps
   // an abandoned checkout from burning one in the gapless GST series.
   //
-  // Best-effort and AFTER everything the sale depends on: a merchant must be able
-  // to buy credits even if the document cannot be prepared.
-  await draftCreditInvoice({
+  // ★★ FAIL CLOSED (GST design 5.5): once the document can be a tax invoice, a
+  // payment without one is not acceptable. The order stays unused at Razorpay;
+  // nobody opens it, because the payment window is never returned.
+  const invoiceId = await draftCreditInvoice({
     storeId,
     purchaseId,
-    packLabel: pack.name,
-    credits: pack.credits,
-    amountPaise,
+    built,
+    stamp: reading.snap.stamp,
   });
+  if (!invoiceId) {
+    await withService((db) =>
+      db
+        .update(aiCreditPurchases)
+        .set({ status: "failed", updatedAt: new Date().toISOString() })
+        .where(eq(aiCreditPurchases.id, purchaseId)),
+    ).catch(() => {});
+    return { error: PAYMENT_REFUSAL.invoiceFailed };
+  }
 
   return {
     success: true,
@@ -412,6 +481,7 @@ export async function confirmCreditPurchase(
         credits: aiCreditPurchases.credits,
         pack_id: aiCreditPurchases.packId,
         amount_inr: aiCreditPurchases.amountInr,
+        amount_paise: aiCreditPurchases.amountPaise,
         status: aiCreditPurchases.status,
         rzp_order_id: aiCreditPurchases.rzpOrderId,
       })
@@ -451,10 +521,13 @@ export async function confirmCreditPurchase(
     return { error: "Payment verification failed." };
   }
 
+  // ★ What the order was created for: `amount_paise` (GST included when the
+  // price excludes it). A purchase started before the column existed has
+  // none, and its order was for the list price.
   const observedPayment = await verifyCapturedCheckoutPayment(creds, {
     paymentId: rzpPaymentId,
     orderId: purchase.rzp_order_id,
-    amountPaise: purchase.amount_inr * 100,
+    amountPaise: purchase.amount_paise ?? purchase.amount_inr * 100,
   });
   if (!observedPayment.ok) {
     console.error(
@@ -465,6 +538,12 @@ export async function confirmCreditPurchase(
     return { error: observedPayment.error };
   }
 
+  // ★ The receipt's time of supply is the payment's, not the confirm's
+  // (R1-07). Best-effort: a time that cannot be read leaves it at issue.
+  const paidAt = observedPayment.gatewayRead
+    ? await paymentCapturedAt(creds, rzpPaymentId, "billing.credit_pack")
+    : undefined;
+
   await settlePurchase(
     {
       id: purchase.id,
@@ -473,6 +552,7 @@ export async function confirmCreditPurchase(
       pack_id: purchase.pack_id,
     },
     rzpPaymentId,
+    paidAt,
   );
   emitEvent({
     type: "ai.credits_purchased",

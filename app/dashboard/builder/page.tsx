@@ -3,7 +3,8 @@ import { withService } from "@/lib/db/client";
 import { blogs, categories, products, stores } from "@/drizzle/schema";
 import { requireSectionAccess, getActingStoreId } from "../lib/access";
 import { listPages, ensureHomepage } from "@/app/actions/page-actions";
-import { getStoreBrand } from "@/lib/store/brand";
+import { getStoreBrandForEditing } from "@/lib/store/brand";
+import { blockedItemIds } from "@/lib/moderation/merchant";
 import { getDraftChromeForEditor } from "@/lib/chrome/queries";
 import { DEFAULT_CHROME } from "@/lib/chrome/types";
 import { themeDesignDefaults } from "@/lib/chrome/design";
@@ -49,7 +50,7 @@ export default async function BuilderPage() {
     return <ChooseThemeFirst canChoose={access.can("themes", "view")} />;
   }
 
-  const [homepage, pages, storeData, brand] = await Promise.all([
+  const [homepage, pages, storeData, brand, blockedPages] = await Promise.all([
     ensureHomepage(),
     listPages(),
     withService(async (db) => {
@@ -85,7 +86,16 @@ export default async function BuilderPage() {
       categoryRows: [] as CategoryOption[],
       blogRows: [] as { id: string; title: string; slug: string }[],
     })),
-    getStoreBrand(),
+    // ★ THE BRAND AS SAVED, NOT MASKED (takedown): the Brand panel saves
+    // `logoUrl` back with every brand change, so the masked brand (a blocked
+    // logo is null there) would erase a blocked logo from the store's
+    // settings for good, and lifting the block could not bring it back.
+    getStoreBrandForEditing(),
+    // The pages StoreMink blocked and told the store about (D21: a block kept
+    // from the store is not in it), each with the notice its "See why" opens.
+    // Its own scope, read once, never inside another scope's callback; it
+    // never throws, and a failed read marks nothing.
+    blockedItemIds(storeId, "page").catch(() => new Map<string, string>()),
   ]);
 
   // The header + footer the merchant edits. Loaded here rather than fetched by
@@ -133,6 +143,8 @@ export default async function BuilderPage() {
         primaryColor: brand.primaryColor,
         logoUrl: brand.logoUrl,
       }}
+      blockedByStoreMink={Object.fromEntries(blockedPages)}
+      canSeeNotices={access.can("settings", "view")}
     />
   );
 }

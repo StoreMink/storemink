@@ -50,15 +50,17 @@ import {
   graceEndsAt,
   type MandateStatus,
 } from "./cycle";
+import { closeUnreachedInvoices } from "./close-cycle";
 import { collectInvoice, type ChargeFn, type CollectResult } from "./collect";
 import {
   amountDueForInvoice,
   ensureRenewalInvoice,
   finalizeInvoiceClaimed,
   getCycleInvoice,
-  loadInvoiceParties,
-  loadTaxContext,
+  loadTaxSnapshot,
+  type InvoiceRow,
 } from "./invoice-store";
+import type { TaxSnapshot } from "./tax-snapshot";
 import {
   notifyDowngraded,
   notifyGraceStarted,
@@ -262,7 +264,33 @@ async function collectOne(
   const next = cycleFrom(periodStart, period, row.currentCycleSeq + 1);
 
   const price = await input.priceFor(plan, period);
-  const tax = await loadTaxContext(row.storeId);
+
+  // ★★ ONE TAX READING FOR THE WHOLE INVOICE (GST design 5.2): the terms in
+  // force when this cycle's invoice is built, the builder's tax context and
+  // the particulars stamped on it, read together. There is no tax-off
+  // fallback any more: a reading that fails, or settings that charge GST
+  // without StoreMink's GSTIN, state or SAC code, leave the renewal for the
+  // next hourly run rather than issuing an invoice on a guess. Nothing is
+  // written, so nothing is lost; the merchant keeps their plan meanwhile,
+  // because the cycle has not turned yet (T-4d).
+  let snapshot: TaxSnapshot;
+  try {
+    snapshot = await loadTaxSnapshot(row.storeId, now);
+  } catch (err) {
+    logError("billing.renewal_tax_snapshot", err, {
+      storeId: row.storeId,
+      reason: "read_failed",
+    });
+    return "pending";
+  }
+  if (!snapshot.ok) {
+    logError(
+      "billing.renewal_tax_snapshot",
+      new Error("the GST settings are incomplete"),
+      { storeId: row.storeId, reason: snapshot.reason },
+    );
+    return "pending";
+  }
 
   // Locations are billed only if the plan can have them — `resolveNextCycle`
   // already zeroed the count for a plan without POS, so this is the shape, not
@@ -277,18 +305,17 @@ async function collectOne(
     period,
     planPaise: price.planPaise,
     locations,
-    tax,
+    tax: snapshot.tax,
   });
 
-  const parties = await loadInvoiceParties(row.storeId);
   const invoice = await ensureRenewalInvoice({
-    ...parties,
     storeId: row.storeId,
     cycleSeq: next.seq,
     periodStart: next.start,
     periodEnd: next.end,
     dueAt: next.start,
     built,
+    stamp: snapshot.stamp,
   });
   if (!invoice) return "pending";
 
@@ -297,11 +324,35 @@ async function collectOne(
 
   // ★ Finalize BEFORE charging. The document number is what the merchant is
   // being asked to pay against, and the pre-debit notification quotes it.
-  let justIssued: { claimed: boolean; ref: string | null } | null = null;
+  // ★ Issuing goes through `issueInvoice`, which reads the tax again at issue
+  // and may rebuild a draft built earlier under other terms; an existing
+  // draft it cannot rebuild (`kept_draft`) is still issued with its own
+  // figures. Whatever it issued is what the merchant is told and charged:
+  // the notice below quotes the ISSUED row, never `built`.
+  let justIssued: { claimed: boolean; invoice: InvoiceRow } | null = null;
   if (!invoice.finalizedAt) {
     const issued = await finalizeInvoiceClaimed(invoice.id, now);
     if (!issued.invoice) return "pending";
-    justIssued = { claimed: issued.claimed, ref: issued.invoice.invoiceRef };
+    // ★★ NEVER COLLECT AN INVOICE WITH NO ISSUE DATE. Finalize claims only a
+    // draft, so an invoice that is not a draft yet carries no `finalized_at`
+    // comes back unissued: a draft someone closed by hand, or a state no code
+    // writes. Charging against it would take money with no document behind it,
+    // and quoting it in the notice would name no number. It is left exactly as
+    // it is and counted with the other skips (`pendingReconcile`), the bucket
+    // that already means "nothing was attempted this run".
+    if (!issued.invoice.finalizedAt) {
+      logError(
+        "billing.renewal_unissued_invoice",
+        new Error("invoice has no finalized_at after the finalize step"),
+        {
+          storeId: row.storeId,
+          invoiceId: invoice.id,
+          status: issued.invoice.status,
+        },
+      );
+      return "pending";
+    }
+    justIssued = { claimed: issued.claimed, invoice: issued.invoice };
   }
 
   const amountDue = await amountDueForInvoice(invoice.id);
@@ -341,6 +392,9 @@ async function collectOne(
   }
 
   if (justIssued?.claimed) {
+    const issued = justIssued.invoice;
+    logPlaceOfSupplyFallback(row.storeId, issued);
+
     // ★ What the LAST cycle cost, so a reprice is named rather than left for
     // the merchant to spot. Absent for cycle 1, which has no predecessor.
     const previous =
@@ -349,15 +403,23 @@ async function collectOne(
     await notifyInvoiceIssued({
       storeId: row.storeId,
       plan,
-      amountPaise: amountDue,
+      // ★★ THE ISSUED INVOICE'S OWN FIGURES, so the email's Price, GST and
+      // Amount rows add up to the document it names. Equal to `amountDue`
+      // today: nothing writes `billing_credits`, so nothing is ever applied
+      // against an invoice.
+      amountPaise: issued.totalPaise,
+      tax: taxColumnsOf(issued),
       dueAt: next.start,
-      invoiceRef: justIssued.ref,
+      invoiceRef: issued.invoiceRef,
       // ★ Autopay means the charge will ACTUALLY be taken — a gateway, a live
       // mandate, and an amount inside both its ceiling and the AFA limit. It
       // used to mean "a mandate row exists", which for every yearly subscriber
       // promised an automatic debit that could never happen.
       autopay: willAutoCollect,
       previousAmountPaise: previous?.totalPaise ?? null,
+      // The previous cycle's GST, so the email can tell "GST started" from
+      // "the plan price changed".
+      previousTax: previous ? taxColumnsOf(previous) : null,
     });
   }
 
@@ -379,6 +441,53 @@ async function collectOne(
   });
 
   return classify(outcome);
+}
+
+/** An invoice's three tax columns, as the billing emails read them. */
+function taxColumnsOf(invoice: InvoiceRow): {
+  taxPaise: number;
+  taxRateBps: number;
+  taxInclusive: boolean;
+} {
+  return {
+    taxPaise: invoice.taxPaise,
+    taxRateBps: invoice.taxRateBps,
+    taxInclusive: invoice.taxInclusive,
+  };
+}
+
+/**
+ * ★ A RENEWAL IS NEVER REFUSED FOR ITS PLACE OF SUPPLY, but two fallbacks are
+ * worth knowing about, so they are logged once per invoice (on the run that
+ * issued it; the hourly re-runs over the next four days log nothing):
+ *
+ * - `supplier`: no record names the merchant's state, so GST was charged as
+ *   if they were in StoreMink's own state (CGST and SGST). An operator should
+ *   ask the merchant to add their state under Billing details.
+ * - `outside_india` while GST is charged: the merchant's billing account is
+ *   outside India, so the invoice names place of supply 96 and charges IGST.
+ *   New on-session payments from such a business are refused; a renewal
+ *   already running is billed, never refused.
+ *
+ * Read from the ISSUED row: its stamp is the reading taken at issue.
+ */
+function logPlaceOfSupplyFallback(storeId: string, issued: InvoiceRow): void {
+  if (issued.placeOfSupplyBasis === "supplier") {
+    logWarn("billing.renewal_place_of_supply_fallback", {
+      storeId,
+      invoiceId: issued.id,
+      placeOfSupply: issued.placeOfSupply,
+    });
+  } else if (
+    issued.placeOfSupplyBasis === "outside_india" &&
+    issued.taxRateBps > 0
+  ) {
+    logWarn("billing.renewal_outside_india", {
+      storeId,
+      invoiceId: issued.id,
+      placeOfSupply: issued.placeOfSupply,
+    });
+  }
 }
 
 /**
@@ -899,8 +1008,24 @@ async function dropPaidEntitlement(
  * ★ THE PLAN IS DROPPED TO FREE IN THE SAME STATEMENT-PAIR as the state change.
  * `stores.plan` is what every gate reads, so leaving it while marking the
  * subscription `cancelled` would give away a paid plan indefinitely.
+ *
+ * ★★ EVERY INVOICE FOR A CYCLE THE PLAN DOES NOT REACH IS CLOSED, IN THE SAME
+ * TRANSACTION (renewal-cancel, design 6.1 and 6.2, rule R3): draft, open,
+ * processing or paid, each becomes `void`. An open one is then never chased, a
+ * payment still in flight lands on a closed invoice, and a paid one is refunded
+ * by the refund pass, which finds a captured payment on a `void` invoice.
+ * Without it the merchant who cancelled could be charged, or kept, for a cycle
+ * they never get.
+ *
+ * ★ NO STATE CONDITION in the claim, deliberately: the downgrade pass calls this
+ * for a cancelling subscription in `past_due` or `grace` (design 6.2), and the
+ * cancellation, not the payment, decides how it ends. `cancel_requested_at` and
+ * `cancel_requested_by` are kept: they record who asked for the plan to end.
+ *
+ * Exported for the operator's "End the plan now" (design 6.8): same shape, same
+ * claim, the caller's transaction.
  */
-async function endSubscription(
+export async function endSubscription(
   db: Db,
   input: {
     storeId: string;
@@ -935,6 +1060,25 @@ async function endSubscription(
     )
     .returning({ storeId: billingSubscriptions.storeId });
   if (claimed.length === 0) return false;
+
+  // ★ After the claim (so a lost claim closes nothing) and before the plan
+  // moves: subscription row first, invoice rows second, the lock order every
+  // writer here keeps.
+  const closed = await closeUnreachedInvoices(db, {
+    storeId: input.storeId,
+    lastReachedSeq: input.fromCycleSeq,
+    now: input.now,
+  });
+  if (closed.length > 0) {
+    logInfo("billing.renewal.closed_unreached", {
+      storeId: input.storeId,
+      lastReachedSeq: input.fromCycleSeq,
+      invoices: closed.map((c) => ({
+        id: c.id,
+        previousStatus: c.previousStatus,
+      })),
+    });
+  }
 
   const write = await dropPaidEntitlement(
     db,
@@ -997,6 +1141,14 @@ export async function advanceAfterPayment(
       if (new Date(sub.currentPeriodEnd).getTime() > now.getTime())
         return false;
       if (!["active", "past_due", "grace"].includes(sub.state)) return false;
+      // ★★ A CANCELLING SUBSCRIPTION NEVER ENTERS ANOTHER CYCLE (rule R2). A
+      // renewal payment that lands while the cancellation stands (an autopay
+      // debit already under way, a checkout opened before cancelling) does not
+      // restore or extend the plan: `advanceCycle` would renew a plan the
+      // merchant cancelled, because it ignores `resolveNextCycle(...).ending`.
+      // The plan ends as asked and the payment is refunded. Only Keep my plan
+      // clears the flag, and then this advances them.
+      if (sub.cancelAtPeriodEnd) return false;
 
       const nextSeq = sub.currentCycleSeq + 1;
       const [invoice] = await db
@@ -1036,6 +1188,12 @@ export async function advanceAfterPayment(
 export interface DowngradeSummary {
   downgraded: number;
   shiftsClosed: number;
+  /** Cancelling subscriptions whose grace ran out: ended as `cancelled` by
+   *  `endSubscription`, never downgraded for non-payment. */
+  ended: number;
+  /** Refused downgrades whose renewal turned out to be paid: advanced by the
+   *  safety net instead of being left in grace. */
+  advancedAfterGrace: number;
   errors: number;
 }
 
@@ -1046,6 +1204,22 @@ export interface DowngradeSummary {
  * state, deadline, comp exemption AND whether the invoice was paid, so a
  * payment racing the worker, a payment at the exact boundary, and the job
  * running twice all resolve with no lock and no read-then-write window.
+ *
+ * ★★ A CANCELLING SUBSCRIPTION IS NOT DOWNGRADED, IT IS ENDED (renewal-cancel,
+ * design 6.2, rules R2 and R3). It goes through `endSubscription`, never the
+ * downgrade claim: the claim refuses a next invoice that is paid or processing,
+ * which would leave a merchant who cancelled stuck in grace on a plan they
+ * stopped, and it would mark an open invoice `uncollectible` where a plan end
+ * closes it `void`. The cancellation decides; a payment that landed meanwhile
+ * is refunded.
+ *
+ * ★★ THE SAFETY NET. When the claim refuses a subscription that is not
+ * cancelling, `advanceAfterPayment` is tried after that transaction: it
+ * advances only when the next invoice is already paid (a processing one keeps
+ * waiting, an open one is left to the claim). Without it a renewal paid during
+ * grace whose advance failed, or a resume that raced, would leave the store on
+ * its paid plan in `past_due` for ever, since evaluate reads only `active` rows
+ * and nothing else would ever move it.
  */
 export async function downgradeExpired(
   input: {
@@ -1057,20 +1231,30 @@ export async function downgradeExpired(
   const summary: DowngradeSummary = {
     downgraded: 0,
     shiftsClosed: 0,
+    ended: 0,
+    advancedAfterGrace: 0,
     errors: 0,
   };
 
   // ★ The PLAN is read here, before the claim — `billing_claim_downgrade()`
   // sets it to free, so afterwards there is no way to tell the merchant what
   // they lost. "Your Pro plan has ended" and "your plan has ended" are not the
-  // same message.
-  let candidates: { storeId: string; plan: string }[] = [];
+  // same message. The cancel flag and the cycle come along: they decide which
+  // way the subscription ends, and `endSubscription` claims on the cycle.
+  let candidates: {
+    storeId: string;
+    plan: string;
+    cancelAtPeriodEnd: boolean;
+    currentCycleSeq: number;
+  }[] = [];
   try {
     candidates = await withService(async (db) => {
       const rows = await db
         .select({
           storeId: billingSubscriptions.storeId,
           plan: billingSubscriptions.plan,
+          cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
+          currentCycleSeq: billingSubscriptions.currentCycleSeq,
         })
         .from(billingSubscriptions)
         .where(
@@ -1089,7 +1273,43 @@ export async function downgradeExpired(
     return summary;
   }
 
-  for (const { storeId, plan } of candidates) {
+  for (const {
+    storeId,
+    plan,
+    cancelAtPeriodEnd,
+    currentCycleSeq,
+  } of candidates) {
+    if (cancelAtPeriodEnd) {
+      // ★★ ENDED, NOT DOWNGRADED: state `cancelled`, the flag and the grace
+      // fields cleared, the plan dropped, an open POS shift closed when POS
+      // stops, and every invoice above the cycle closed `void` (whether open,
+      // processing or paid), all in this one per-store transaction.
+      try {
+        const audit: PlanChange[] = [];
+        const ended = await withService((db) =>
+          endSubscription(db, {
+            storeId,
+            fromCycleSeq: currentCycleSeq,
+            now,
+            audit,
+          }),
+        );
+        if (ended) {
+          summary.ended += 1;
+          logInfo("billing.renewal.cancelled_at_grace_end", { storeId });
+          await auditPlanChanges(audit);
+          // ★ As for any plan end by cancellation (the cycle-turn path): the
+          // merchant is told the plan stopped and how to come back. AFTER the
+          // transaction commits, so a rollback never announces an end.
+          await notifyDowngraded({ storeId, fromPlan: plan });
+        }
+      } catch (err) {
+        logError("billing.renewal.end_cancelled", err, { storeId });
+        summary.errors += 1;
+      }
+      continue;
+    }
+
     try {
       const claimed = await withService(async (db) => {
         const res = await db.execute(
@@ -1135,10 +1355,22 @@ export async function downgradeExpired(
         if (claimed.write.after === "free") {
           await notifyDowngraded({ storeId, fromPlan: plan });
         }
+        continue;
       }
     } catch (err) {
       logError("billing.renewal.downgrade", err, { storeId });
       summary.errors += 1;
+      continue;
+    }
+
+    // ★★ THE CLAIM REFUSED: the renewal may have been paid. AFTER the claim's
+    // transaction, never inside it: `advanceAfterPayment` opens its own, re-reads
+    // everything and advances only a paid next invoice, so a refusal for any
+    // other reason (a processing payment, a claim another run already won)
+    // changes nothing here. It never throws.
+    if (await advanceAfterPayment(storeId, now)) {
+      summary.advancedAfterGrace += 1;
+      logInfo("billing.renewal.advanced_after_grace", { storeId });
     }
   }
   return summary;

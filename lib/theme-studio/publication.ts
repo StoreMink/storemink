@@ -15,12 +15,9 @@ import {
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
 import { logError } from "@/lib/observability/logger";
-import {
-  gcsConfigured,
-  gcsPathFromUrl,
-  gcsPublicUrl,
-  gcsUploadObject,
-} from "@/lib/storage/gcs";
+import { isBlockedUploadError } from "@/lib/moderation/upload-guard";
+import { gcsConfigured, gcsPathFromUrl, gcsPublicUrl } from "@/lib/storage/gcs";
+import { writeStoreObject } from "@/lib/storage/store-objects";
 import { STORE_TAG } from "@/lib/store/resolve";
 import { subdomainOrigin } from "@/lib/store/host";
 import { TAGS } from "@/lib/storefront/tags";
@@ -81,7 +78,9 @@ export type { PublishEvidenceGap } from "./acceptance";
 //      the same rule;
 //   3. allocate a release version without overwriting (or resume the one a
 //      failed attempt of the same version stored) and write the attempt row;
-//   4. copy every slot image to the immutable public release prefix;
+//   4. copy every slot image to the public release prefix, through
+//      `writeStoreObject` (a release object belongs to no store), so bytes
+//      StoreMink has blocked are refused here as everywhere else;
 //   5. write the immutable theme_releases row;
 //   6. seed demo-{theme} and render its surfaces, with zero errors;
 //   7. only then point the catalog at the release, public, and mark the
@@ -99,11 +98,13 @@ export type { PublishEvidenceGap } from "./acceptance";
 // ---------------------------------------------------------------------------
 
 export interface PublicationDeps {
-  /** Copy one image to public storage. Must be idempotent for a path. */
+  /** Copy one image to public storage. Must be idempotent for a path. The
+   * context names the operator publishing, for the record of a refusal. */
   storeObject(
     objectPath: string,
     bytes: Uint8Array,
     contentType: string,
+    context?: { actor?: string | null },
   ): Promise<void>;
   publicUrl(objectPath: string): string;
   /** Render the demo's surfaces; returns what was wrong, empty when clean. */
@@ -136,16 +137,25 @@ async function defaultCheckDemo(input: {
   return problems;
 }
 
+/**
+ * The Cache-Control of a published release image (takedown decision D4).
+ * The path names the release and the image's digest, so the bytes never
+ * change while the image is allowed; but a block replaces the image at its
+ * address, and a year in Google's storage cache would keep serving the
+ * original to anyone who asks for that address. A minute bounds it.
+ */
+export const RELEASE_IMAGE_CACHE_CONTROL = "public, max-age=60";
+
 const defaultDeps: PublicationDeps = {
-  async storeObject(objectPath, bytes, contentType) {
-    // The path names the release and the image's digest, so its bytes can
-    // never change: the cache may keep it for a year.
-    await gcsUploadObject(
-      objectPath,
-      bytes,
-      contentType,
-      "public, max-age=31536000, immutable",
-    );
+  async storeObject(objectPath, bytes, contentType, context) {
+    // A theme release belongs to no store: `storeId` is null, and the
+    // re-upload guard refuses bytes StoreMink has blocked.
+    await writeStoreObject(objectPath, bytes, contentType, {
+      storeId: null,
+      cacheControl: RELEASE_IMAGE_CACHE_CONTROL,
+      via: "theme_studio_publication",
+      actor: context?.actor ?? null,
+    });
   },
   publicUrl: gcsPublicUrl,
   checkDemo: defaultCheckDemo,
@@ -457,6 +467,7 @@ async function promoteImages(
   deps: PublicationDeps,
   projectId: string,
   pkg: ThemePackageV2,
+  actor: ThemeStudioActor,
 ): Promise<void> {
   const wanted = pkg.assets.map((asset) => ({
     asset,
@@ -503,8 +514,20 @@ async function promoteImages(
       continue;
     }
     try {
-      await deps.storeObject(objectPath, row.bytes, row.mediaType);
+      await deps.storeObject(objectPath, row.bytes, row.mediaType, {
+        actor: actor.email,
+      });
     } catch (error) {
+      if (isBlockedUploadError(error)) {
+        // The guard recorded the refusal. A theme release is never told
+        // apart from any other refusal (told is false), and the merchant's
+        // sentence sends them to support, which is us: the operator gets
+        // the block itself to look up instead.
+        problems.push(
+          `Image ${asset.id} is a file StoreMink has blocked (block ${error.blockId}), so it can't be published. Replace the image, then publish again.`,
+        );
+        continue;
+      }
       logError("theme studio: publishing an image failed", error, {
         assetId: asset.id,
       });
@@ -536,7 +559,7 @@ async function storeRelease(
         "The release an earlier attempt stored no longer validates.",
       ]);
     }
-    await promoteImages(deps, projectId, release.package);
+    await promoteImages(deps, projectId, release.package, actor);
     return release;
   }
   const built = buildPublishedPackage(attempt.draft, {
@@ -546,7 +569,7 @@ async function storeRelease(
     publicUrl: deps.publicUrl,
   });
   if (!built.ok) throw new PublicationFailure([built.error]);
-  await promoteImages(deps, projectId, built.value.pkg);
+  await promoteImages(deps, projectId, built.value.pkg, actor);
   return withService(async (db) => {
     const { release } = await insertThemeReleaseWithDb(db, {
       package: built.value.pkg,

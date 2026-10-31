@@ -29,9 +29,50 @@ vi.mock("@/lib/store/canonical", () => ({
   canonicalHostForSlug: vi.fn(),
 }));
 
-import { proxy } from "./proxy";
+// Blocked media (takedown T7). The proxy reads the blocked set for
+// `/_next/image` and `/themes/...`; the set is driven per test through
+// `currentSet`, so no test reaches a database. The bucket is fixed, the
+// database and the network refuse, and the placeholder is the real file.
+vi.mock("@/lib/storage/gcs", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return {
+    ...actual,
+    GCS_BUCKET_NAME: "sm-media",
+    GCS_PUBLIC_HOST: "storage.googleapis.com",
+  };
+});
+vi.mock("@/lib/db/client", () => {
+  const refuse = vi.fn(async () => {
+    throw new Error("no database in proxy tests");
+  });
+  return { withService: refuse, withAnon: refuse, withUser: refuse };
+});
+vi.mock("@/lib/observability/logger", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return { ...actual, logError: vi.fn(), logWarn: vi.fn() };
+});
+let currentSet: any = null;
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return { ...actual, blockedMedia: vi.fn(async () => currentSet) };
+});
+vi.mock("@/lib/moderation/placeholder", async (importOriginal) => {
+  const actual = (await importOriginal()) as any;
+  return { ...actual, placeholderWebp: vi.fn(actual.placeholderWebp) };
+});
+
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { unstable_doesMiddlewareMatch } from "next/experimental/testing/server";
+import { config, proxy } from "./proxy";
 import { verifySessionCookie } from "@/lib/auth/session-cookie";
 import { canonicalHostForSlug } from "@/lib/store/canonical";
+import {
+  blockedMedia,
+  buildBlockedMediaSet,
+  type BlockedObjectRow,
+} from "@/lib/moderation/blocked-objects";
+import { placeholderWebp } from "@/lib/moderation/placeholder";
 
 function req(url: string, host = "shop.storemink.com") {
   return new NextRequest(new URL(url), { headers: { host } });
@@ -259,5 +300,260 @@ describe("proxy — one address per store", () => {
   it("stays on the subdomain when the store has no custom domain", async () => {
     const res = await proxy(req(shop));
     expect(loc(res)).toBeNull();
+  });
+});
+
+// ── Blocked media (takedown design 3.3 steps 3 and 4) ────────────────────
+
+const STORE = "a0000000-0000-4000-8000-000000000001";
+const BUCKET = "https://storage.googleapis.com/sm-media";
+const BLOCKED_OBJECT = `stores/${STORE}/media/a.webp`;
+const BLOCKED_URL = `${BUCKET}/${BLOCKED_OBJECT}`;
+const OK_URL = `${BUCKET}/stores/${STORE}/media/ok.webp`;
+const BLOCKED_THEME = "/themes/vitrine/hero.webp";
+const BLOCKED_OUTSIDE = "https://cdn.example.com/x/bag.jpg";
+
+function blockRow(objectPath: string, fileSource: string): BlockedObjectRow {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    objectPath,
+    fileSource,
+    storeId: STORE,
+    objectMd5: null,
+    tellStore: true,
+  };
+}
+
+const EMPTY_SET = buildBlockedMediaSet([], { bucket: "sm-media", loadedAt: 1 });
+const BLOCKING_SET = buildBlockedMediaSet(
+  [
+    blockRow(BLOCKED_OBJECT, "bucket"),
+    blockRow(BLOCKED_OUTSIDE, "external"),
+    blockRow(BLOCKED_THEME, "bundled"),
+  ],
+  { bucket: "sm-media", loadedAt: 1 },
+);
+
+const PLACEHOLDER_FILE = readFileSync(
+  path.join(process.cwd(), "public", "moderation", "image-unavailable.webp"),
+);
+
+function optimizer(url: string, host = "shop.storemink.com") {
+  return req(
+    `https://${host}/_next/image?url=${encodeURIComponent(url)}&w=640&q=75`,
+    host,
+  );
+}
+
+async function expectPlaceholder(res: any) {
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toBe("image/webp");
+  expect(res.headers.get("cache-control")).toBe("no-store");
+  expect(res.headers.get("x-middleware-next")).toBeNull();
+  expect(res.headers.get("x-middleware-rewrite")).toBeNull();
+  const body = Buffer.from(await res.arrayBuffer());
+  expect(body.equals(PLACEHOLDER_FILE)).toBe(true);
+}
+
+function expectPassedOn(res: any) {
+  expect(res.headers.get("x-middleware-next")).toBe("1");
+  expect(res.headers.get("x-middleware-rewrite")).toBeNull();
+  expect(loc(res)).toBeNull();
+}
+
+beforeEach(() => {
+  currentSet = EMPTY_SET;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("no network in proxy tests");
+    }),
+  );
+});
+
+describe("proxy: blocked media at the image optimiser", () => {
+  it("answers a blocked url with the placeholder's bytes, never cached", async () => {
+    currentSet = BLOCKING_SET;
+    await expectPlaceholder(await proxy(optimizer(BLOCKED_URL)));
+  });
+
+  it.each([
+    ["an escaped dot", `${BUCKET}/stores/${STORE}/media/a%2Ewebp`],
+    ["escaped slashes", `${BUCKET}/stores%2F${STORE}%2Fmedia%2Fa.webp`],
+    [
+      "a virtual-hosted bucket",
+      `https://sm-media.storage.googleapis.com/${BLOCKED_OBJECT}`,
+    ],
+    ["plain http", `http://storage.googleapis.com/sm-media/${BLOCKED_OBJECT}`],
+    [
+      "an upper-case host",
+      `https://STORAGE.googleapis.com/sm-media/${BLOCKED_OBJECT}`,
+    ],
+    ["a blocked outside address", BLOCKED_OUTSIDE],
+    ["a blocked theme file", BLOCKED_THEME],
+    [
+      "a theme file reached through dot segments",
+      "/x/%2e%2e/themes/vitrine/hero.webp",
+    ],
+    ["a theme file spelled with an escape", "/%74hemes/vitrine/hero.webp"],
+    [
+      "a theme file on the store's own host",
+      `https://shop.storemink.com${BLOCKED_THEME}`,
+    ],
+    [
+      "a wrapped optimiser address",
+      `/_next/image?url=${encodeURIComponent(BLOCKED_URL)}`,
+    ],
+  ])("catches %s", async (_label, url) => {
+    currentSet = BLOCKING_SET;
+    await expectPlaceholder(await proxy(optimizer(url)));
+  });
+
+  it("judges every url, not only the first", async () => {
+    currentSet = BLOCKING_SET;
+    const res = await proxy(
+      req(
+        `https://shop.storemink.com/_next/image?url=${encodeURIComponent(OK_URL)}&url=${encodeURIComponent(BLOCKED_URL)}&w=640&q=75`,
+      ),
+    );
+    await expectPlaceholder(res);
+  });
+
+  it.each([
+    ["a malformed escape", `${BUCKET}/stores/${STORE}/media/%E0%A4%A.webp`],
+    ["a dot segment", "/themes/vitrine/../hero.webp"],
+    ["a backslash", "/themes\\vitrine/hero.webp"],
+    [
+      "user information",
+      "https://someone@storage.googleapis.com/sm-media/x.webp",
+    ],
+  ])("refuses %s with 400, before the set is read", async (_label, url) => {
+    currentSet = BLOCKING_SET;
+    const res = await proxy(optimizer(url));
+    expect(res.status).toBe(400);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-middleware-next")).toBeNull();
+    expect(blockedMedia).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unreadable url even while nothing is blocked", async () => {
+    const res = await proxy(optimizer("/themes/a/../b.webp"));
+    expect(res.status).toBe(400);
+  });
+
+  it.each([
+    ["an unblocked object of ours", OK_URL],
+    ["a relative app file", "/brand/20260908/storemink-mark.webp"],
+    [
+      "another bucket's object",
+      `https://storage.googleapis.com/other-bucket/${BLOCKED_OBJECT}`,
+    ],
+    ["an unblocked theme file", "/themes/vitrine/other.webp"],
+  ])("passes %s on to the optimiser", async (_label, url) => {
+    currentSet = BLOCKING_SET;
+    expectPassedOn(await proxy(optimizer(url)));
+  });
+
+  it("passes everything on without judging while nothing is blocked", async () => {
+    expectPassedOn(await proxy(optimizer(BLOCKED_URL)));
+    expect(blockedMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes a request with no url on (the optimiser answers it)", async () => {
+    const res = await proxy(
+      req("https://shop.storemink.com/_next/image?w=640&q=75"),
+    );
+    expectPassedOn(res);
+    expect(blockedMedia).not.toHaveBeenCalled();
+  });
+
+  it("runs no host or session logic on the optimiser path", async () => {
+    // www in production 308s every other path; the optimiser is answered
+    // before the host is read, so nothing redirects and no session is read.
+    const www = await proxy(optimizer(OK_URL, "www.storemink.com"));
+    expectPassedOn(www);
+    const store = await proxy(optimizer(OK_URL));
+    expectPassedOn(store);
+    expect(verifySessionCookie).not.toHaveBeenCalled();
+    expect(canonicalHostForSlug).not.toHaveBeenCalled();
+  });
+
+  it("answers 503, never the file, when the placeholder cannot be read", async () => {
+    currentSet = BLOCKING_SET;
+    vi.mocked(placeholderWebp).mockRejectedValueOnce(new Error("disk"));
+    const res = await proxy(optimizer(BLOCKED_URL));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(res.headers.get("x-middleware-next")).toBeNull();
+  });
+});
+
+describe("proxy: blocked files under /themes/", () => {
+  it("answers a blocked theme file with the placeholder", async () => {
+    currentSet = BLOCKING_SET;
+    await expectPlaceholder(
+      await proxy(req(`https://shop.storemink.com${BLOCKED_THEME}`)),
+    );
+  });
+
+  it("catches the spelling the static file server decodes once", async () => {
+    currentSet = BLOCKING_SET;
+    await expectPlaceholder(
+      await proxy(req("https://shop.storemink.com/%74hemes/vitrine/hero.webp")),
+    );
+  });
+
+  it("answers before the host logic, on every host", async () => {
+    currentSet = BLOCKING_SET;
+    await expectPlaceholder(
+      await proxy(
+        req(`https://www.storemink.com${BLOCKED_THEME}`, "www.storemink.com"),
+      ),
+    );
+    await expectPlaceholder(
+      await proxy(
+        req(
+          `https://themes.storemink.com${BLOCKED_THEME}`,
+          "themes.storemink.com",
+        ),
+      ),
+    );
+  });
+
+  it("still passes an unblocked theme file through untouched", async () => {
+    currentSet = BLOCKING_SET;
+    const res = await proxy(
+      req("https://shop.storemink.com/themes/vitrine/other.webp"),
+    );
+    expectPassedOn(res);
+  });
+});
+
+describe("proxy: pages never read the blocked set", () => {
+  it.each(["/shop", "/dashboard", "/shop/almond-shake", "/"])(
+    "%s",
+    async (pathname) => {
+      currentSet = BLOCKING_SET;
+      await proxy(req(`https://shop.storemink.com${pathname}`));
+      expect(blockedMedia).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("proxy: matcher", () => {
+  it.each([
+    ["/_next/image?url=%2Fthemes%2Fx.webp&w=64&q=75", true],
+    ["/shop", true],
+    ["/themes/vitrine/hero.webp", true],
+    ["/_next/static/chunks/main.js", false],
+    ["/api/og-image?url=x", false],
+    ["/favicon.ico", false],
+  ])("%s runs the proxy: %s", (url, expected) => {
+    expect(
+      unstable_doesMiddlewareMatch({
+        config,
+        url: `https://shop.storemink.com${url}`,
+      }),
+    ).toBe(expected);
   });
 });

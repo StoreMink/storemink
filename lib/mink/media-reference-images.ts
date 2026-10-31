@@ -4,21 +4,42 @@ import { sql } from "drizzle-orm";
 import { can } from "@/app/dashboard/lib/permissions";
 import { withService } from "@/lib/db/client";
 import { GCS_BUCKET_NAME, gcsPathFromUrl } from "@/lib/storage/gcs";
+import { minkAttachmentIdOf } from "./attachment-ref";
+import {
+  readMinkAttachmentReferences,
+  type MinkAttachmentReference,
+} from "./attachments";
 import { MinkToolInputError } from "./errors";
+import { selectBlockedImageUrls } from "./storefront-media-read";
 import type { MinkActorContext } from "./types";
 
-export type MinkMediaReferenceSource = "product" | "category" | "media";
+export type MinkMediaReferenceSource =
+  | "product"
+  | "category"
+  | "media"
+  | "attachment";
 
 export interface MinkMediaReferenceImage {
   url: string;
-  fileUri: string;
+  /**
+   * The object in StoreMink's media bucket as Vertex reads it (`gs://`): a
+   * product, category or Media Library image. Absent for an attachment.
+   */
+  fileUri?: string;
+  /**
+   * The private bytes of a picture attached in this chat, base64, for
+   * Vertex's inline part (lib/mink/attachments.ts). ★ Never a public URL:
+   * an attachment is kept privately, so it reaches the image model only as
+   * bytes read through the server. Absent for a store image.
+   */
+  inlineData?: MinkAttachmentReference["inlineData"];
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   source: MinkMediaReferenceSource;
 }
 
 type ReferenceRow = {
   url: string;
-  source: MinkMediaReferenceSource;
+  source: Exclude<MinkMediaReferenceSource, "attachment">;
   content_type: string | null;
 };
 
@@ -26,16 +47,75 @@ type ReferenceRow = {
  * Resolve model-selected reference URLs back to current-store records.
  *
  * The model may repeat only exact URLs returned by a permission-filtered read
- * tool. This lookup is the real authority boundary: it rechecks the tenant and
- * the actor's permission for the source collection, then converts only objects
+ * tool, or the address of a picture the merchant attached in this chat. This
+ * lookup is the real authority boundary: it rechecks the tenant and the
+ * actor's permission for the source collection, then converts only objects
  * in StoreMink's configured GCS bucket to Vertex-readable `gs://` references.
- * No arbitrary URL is fetched by StoreMink or handed to the image model.
+ * An attachment address is taken out of the list first and read through the
+ * server as the attacher's own private bytes (`readMinkAttachmentReferences`,
+ * which refuses anything that is not this admin's); the answers are merged
+ * back in the caller's order, so the product photo stays first. No arbitrary
+ * URL is fetched by StoreMink or handed to the image model.
+ *
+ * ★ A file StoreMink blocked (told or not) is never sent as a reference, in
+ *   the same words as one no collection returned, so nothing hints at a
+ *   block kept from the store (D21). Read on the lookup's own connection,
+ *   the way `selectOwnedStorefrontImageUrls` skips one.
  */
 export async function resolveMinkMediaReferenceImages(
   actor: MinkActorContext,
   urls: readonly string[],
 ): Promise<MinkMediaReferenceImage[]> {
   if (urls.length === 0) return [];
+
+  const attachmentUrls: string[] = [];
+  const storeUrls: string[] = [];
+  for (const url of urls) {
+    (minkAttachmentIdOf(url) ? attachmentUrls : storeUrls).push(url);
+  }
+
+  // The store lookup first: one cheap query, and a URL no collection
+  // returned is refused before any attachment bytes are downloaded.
+  const stored = await resolveStoreReferences(actor, storeUrls);
+
+  // Its own scope, after the query's has closed (never nested inside it:
+  // lib/db/nested-scope-coverage.test.ts). The read binds the attacher, so
+  // it needs no permission check of its own.
+  const attached = new Map<string, MinkMediaReferenceImage>();
+  if (attachmentUrls.length > 0) {
+    const references = await readMinkAttachmentReferences(actor, [
+      ...new Set(attachmentUrls),
+    ]);
+    for (const reference of references) {
+      attached.set(reference.url, {
+        url: reference.url,
+        inlineData: reference.inlineData,
+        mimeType: reference.mimeType,
+        source: "attachment",
+      });
+    }
+  }
+
+  return urls.map((url) => {
+    const reference = attached.get(url) ?? stored.get(url);
+    if (!reference) {
+      // Cannot happen: every store URL is checked above and every attachment
+      // address is answered or refused by the reader. Kept as a refusal rather
+      // than a hole in the list the model asked for.
+      throw new MinkToolInputError(
+        "Every reference image must be an exact, accessible URL returned by the current store's product, category, or Media Library tools.",
+      );
+    }
+    return reference;
+  });
+}
+
+async function resolveStoreReferences(
+  actor: MinkActorContext,
+  urls: readonly string[],
+): Promise<Map<string, MinkMediaReferenceImage>> {
+  const resolved = new Map<string, MinkMediaReferenceImage>();
+  if (urls.length === 0) return resolved;
 
   const mediaAllowed = can(
     actor.permissions,
@@ -56,8 +136,8 @@ export async function resolveMinkMediaReferenceImages(
     actor.isSuperadmin,
   );
 
-  const result = await withService((db) =>
-    db.execute(sql`
+  const { rows, blocked } = await withService(async (db) => {
+    const result = await db.execute(sql`
       select distinct on (reference.url)
         reference.url,
         reference.source,
@@ -111,13 +191,20 @@ export async function resolveMinkMediaReferenceImages(
           and category.image_url = any(${sql.param(urls)}::text[])
       ) reference
       order by reference.url, reference.source_rank
-    `),
-  );
+    `);
+    // Same connection, no scope of its own (never nested: the
+    // nested-scope rule); costs no statement when no address is a media one.
+    return {
+      rows: result.rows as ReferenceRow[],
+      blocked: await selectBlockedImageUrls(db, urls),
+    };
+  });
   const byUrl = new Map(
-    (result.rows as ReferenceRow[]).map((row) => [row.url, row]),
+    rows.filter((row) => !blocked.has(row.url)).map((row) => [row.url, row]),
   );
 
-  return urls.map((url) => {
+  for (const url of urls) {
+    if (resolved.has(url)) continue;
     const row = byUrl.get(url);
     if (!row) {
       throw new MinkToolInputError(
@@ -131,13 +218,14 @@ export async function resolveMinkMediaReferenceImages(
         "A selected reference image is not a supported StoreMink PNG, JPEG, or WebP object. Choose another current-store image.",
       );
     }
-    return {
+    resolved.set(url, {
       url,
       fileUri: `gs://${GCS_BUCKET_NAME}/${path}`,
       mimeType,
       source: row.source,
-    };
-  });
+    });
+  }
+  return resolved;
 }
 
 function referenceMimeType(

@@ -1,12 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import {
-  ArrowDownRight,
-  ArrowUpRight,
-  Lightbulb,
-  Sparkles,
-} from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Lightbulb } from "lucide-react";
+import { MinkFace } from "@/components/mink/mink-face";
 import type { Insight } from "@/lib/analytics/insights";
 import { useChat } from "../chat-context";
 import { Sparkline } from "./analytics-trend";
@@ -80,7 +76,7 @@ export function InsightsPanel({
               className="dash-an-btn dash-insights-ask"
               onClick={() => startExpandedChat(insight.askMink)}
             >
-              <Sparkles aria-hidden /> Ask Mink why
+              <MinkFace size={18} /> Ask Mink why
             </button>
           ) : null}
         </div>

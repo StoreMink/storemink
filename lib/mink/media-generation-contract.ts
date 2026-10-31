@@ -43,6 +43,8 @@
 // `storefront-design-contract.ts` already makes for the same reason).
 // ---------------------------------------------------------------------------
 
+import { minkAttachmentIdOf, minkAttachmentUrl } from "./attachment-ref";
+
 export const MINK_MEDIA_GENERATION_SCHEMA_VERSION = 3 as const;
 
 /**
@@ -272,6 +274,14 @@ function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.normalize("NFKC").trim() : "";
 }
 
+/**
+ * The one refusal for a reference that is neither an https URL nor the
+ * address of a picture attached in this chat (the two forms accepted below).
+ * The model reads it back, so it names both. Exported for its test.
+ */
+export const REFERENCE_FORM_ISSUE =
+  "References need HTTPS or an attachment address.";
+
 function normalizeReferenceImageUrls(
   value: unknown,
   issues: string[],
@@ -289,15 +299,22 @@ function normalizeReferenceImageUrls(
   }
   const urls: string[] = [];
   for (const entry of value.slice(0, MINK_MEDIA_REFERENCE_MAX)) {
-    if (
-      typeof entry !== "string" ||
-      entry.length > 2_048 ||
-      !entry.startsWith("https://")
-    ) {
-      issues.push("Every reference image URL must be an HTTPS URL.");
+    if (typeof entry !== "string" || entry.length > 2_048) {
+      issues.push(REFERENCE_FORM_ISSUE);
       continue;
     }
-    if (!urls.includes(entry)) urls.push(entry);
+    // ★ The address of a picture attached in this chat is accepted, bare or
+    //   with whatever host the model put in front of it, and kept as the bare
+    //   path: what the draft stores and what the reference reader looks up
+    //   (lib/mink/attachments.ts). Every other reference must be an https URL
+    //   a store read returned; `http://` and any other path are refused.
+    const attachmentId = minkAttachmentIdOf(entry);
+    if (!attachmentId && !entry.startsWith("https://")) {
+      issues.push(REFERENCE_FORM_ISSUE);
+      continue;
+    }
+    const url = attachmentId ? minkAttachmentUrl(attachmentId) : entry;
+    if (!urls.includes(url)) urls.push(url);
   }
   return urls;
 }

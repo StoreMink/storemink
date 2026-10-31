@@ -21,8 +21,14 @@ A recoverable job that cannot finish within six hours of its first claim is
 ended as `run_ceiling` so the store can start another.
 
 These are implemented recovery rules, not measured provider performance.
-Priority is not enabled. The shared pacer keeps its 10-to-45-second bounds,
+Priority is not enabled. The shared pacer runs between 31 and 45 seconds,
 with a 40-second recovery floor for ten minutes after a refusal cooldown.
+The 31-second floor is Google's own limit, read in the Quotas console on
+28 Oct 2026: image generation requests are a non-adjustable system limit of
+2 per minute per project per base model (global endpoint, and per region).
+The earlier 10-second floor probed to six starts a minute against it, which
+is where the 27 to 29% refusals came from. At the floor a redesign's eleven
+image calls take about six minutes of drawing.
 That hold survives worker restarts using existing database fields. Compatible
 workers must finish rolling out before measurement; older success handlers can
 still narrow the gap during overlap.
@@ -281,7 +287,7 @@ the existing 3 permits. Text model keys never read the new columns.
 | Constant                             | Value                                                         |
 | ------------------------------------ | ------------------------------------------------------------- |
 | `IMAGE_START_PACING.initialGapMs`    | 40,000 (equals the `gap_ms` default)                          |
-| `IMAGE_START_PACING.minGapMs`        | 10,000 (was 25,000; owner, 23 Oct)                            |
+| `IMAGE_START_PACING.minGapMs`        | 31,000 (the 2/min system limit; was 10,000, owner 23 Oct)     |
 | `IMAGE_START_PACING.maxGapMs`        | 45,000 (was 90,000; owner, 23 Oct)                            |
 | `IMAGE_START_PACING.successFactor`   | 0.9 per current-epoch success                                 |
 | `IMAGE_START_PACING.rateLimitFactor` | 1.5 per 429                                                   |

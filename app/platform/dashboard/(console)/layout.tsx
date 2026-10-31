@@ -71,6 +71,16 @@ export default async function PlatformDashboardLayout({
           icon: "users" as const,
         },
         {
+          // Every complaint, order and data request StoreMink receives, the
+          // blocks made on them, the files still to finish and the store
+          // holds (takedown design 6.1). Every operator sees it: a member can
+          // log, act on and block (D1), because the 2-hour rule runs at night.
+          href: "/dashboard/complaints",
+          label: "Complaints",
+          icon: "complaints" as const,
+          searchAliases: ["Takedowns", "Blocks", "Grievance", "Legal orders"],
+        },
+        {
           href: "/dashboard/announcements",
           label: "Announcements",
           icon: "marketing" as const,

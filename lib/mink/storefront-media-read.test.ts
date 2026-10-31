@@ -1,8 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
+import type { BlockedMediaSet } from "@/lib/moderation/blocked-objects";
 import type { MinkActorContext } from "./types";
 
-const mocks = vi.hoisted(() => ({ execute: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  execute: vi.fn(),
+  blockedSet: null as BlockedMediaSet | null,
+}));
 
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((run: (db: unknown) => unknown) =>
@@ -10,9 +14,27 @@ vi.mock("@/lib/db/client", () => ({
   ),
 }));
 
+vi.mock("@/lib/moderation/blocked-objects", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/moderation/blocked-objects")>();
+  return {
+    ...actual,
+    blockedMedia: vi.fn(
+      async () => mocks.blockedSet ?? actual.emptyBlockedMediaSet(1, "b"),
+    ),
+  };
+});
+
+import { withService } from "@/lib/db/client";
+import {
+  blockedMedia,
+  buildBlockedMediaSet,
+} from "@/lib/moderation/blocked-objects";
 import {
   readMinkStorefrontMedia,
   readOwnedStorefrontImageUrls,
+  selectBlockedImageUrls,
+  selectOwnedStorefrontImageUrls,
 } from "./storefront-media-read";
 
 const ACTOR: MinkActorContext = {
@@ -45,8 +67,37 @@ function row(n: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.stubEnv("GCS_BUCKET", "b");
+  mocks.blockedSet = null;
   mocks.execute.mockResolvedValue({ rows: [row(1), row(2)] });
 });
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+/** A live file block on each of these stored keys. */
+function blockedSet(...paths: string[]): BlockedMediaSet {
+  return buildBlockedMediaSet(
+    paths.map((path, i) => ({
+      id: `00000000-0000-4000-8000-00000000000${i}`,
+      objectPath: path,
+      fileSource: path.startsWith("/themes/")
+        ? "bundled"
+        : path.startsWith("https://")
+          ? "external"
+          : "bucket",
+      storeId: "store-1",
+      objectMd5: null,
+      tellStore: i % 2 === 0,
+    })),
+    { bucket: "b", loadedAt: 1 },
+  );
+}
+
+function compiled(call = 0) {
+  return new PgDialect().sqlToQuery(mocks.execute.mock.calls[call][0]);
+}
 
 describe("Phase 9D media library read", () => {
   it("returns the exact URLs a proposal must echo, scoped to the trusted store", async () => {
@@ -142,6 +193,96 @@ describe("Phase 9D ownership membership", () => {
     );
     expect([
       ...(await readOwnedStorefrontImageUrls("store-1", ["   "])),
+    ]).toEqual([]);
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("takedown: a blocked file is neither listed nor owned", () => {
+  it("leaves a blocked file out of the library list, told or not", async () => {
+    mocks.blockedSet = blockedSet(
+      "stores/store-1/media/1.webp",
+      "stores/store-1/media/3.webp",
+    );
+    mocks.execute.mockResolvedValue({ rows: [row(1), row(2), row(3)] });
+    const result = await readMinkStorefrontMedia(ACTOR);
+    expect(result.media.map((m) => m.mediaId)).toEqual(["id-2"]);
+    expect(JSON.stringify(result)).not.toContain("1.webp");
+    expect(JSON.stringify(result)).not.toMatch(/block/i);
+  });
+
+  it("reads the blocked set only after its own scope has closed", async () => {
+    await readMinkStorefrontMedia(ACTOR);
+    const scope = vi.mocked(withService).mock.invocationCallOrder[0];
+    const set = vi.mocked(blockedMedia).mock.invocationCallOrder[0];
+    expect(set).toBeGreaterThan(scope);
+    // The set read does not run inside the scope's callback.
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the same statement to leave out any address with a live file block", async () => {
+    const db = { execute: mocks.execute };
+    mocks.execute.mockResolvedValue({ rows: [{ url: row(2).url }] });
+    const owned = await selectOwnedStorefrontImageUrls(db as never, "store-1", [
+      row(1).url,
+      row(2).url,
+    ]);
+    expect([...owned]).toEqual([row(2).url]);
+    expect(mocks.execute).toHaveBeenCalledTimes(1);
+    const query = compiled();
+    expect(query.sql).toContain("not exists");
+    expect(query.sql).toContain("public.content_blocks");
+    expect(query.sql).toContain("lifted_at is null");
+    // Address and key arrays bound as parameters, never interpolated.
+    expect(query.params).toContainEqual([row(1).url, row(2).url]);
+    expect(query.params).toContainEqual([
+      "stores/store-1/media/1.webp",
+      "stores/store-1/media/2.webp",
+    ]);
+    expect(query.sql).not.toContain("stores/store-1/media/1.webp");
+  });
+
+  it("looks a store-domain theme address up by its bundled key as well", async () => {
+    const db = { execute: mocks.execute };
+    mocks.execute.mockResolvedValue({ rows: [] });
+    const address = "https://shop.example.com/themes/basket/hero.webp";
+    await selectOwnedStorefrontImageUrls(db as never, "store-1", [address]);
+    const query = compiled();
+    expect(query.params).toContainEqual([address, address]);
+    expect(query.params).toContainEqual([
+      "https://shop.example.com/themes/basket/hero.webp",
+      "/themes/basket/hero.webp",
+    ]);
+  });
+
+  it("adds no block lookup when no candidate is a media address", async () => {
+    const db = { execute: mocks.execute };
+    mocks.execute.mockResolvedValue({ rows: [] });
+    await selectOwnedStorefrontImageUrls(db as never, "store-1", ["not a url"]);
+    expect(compiled().sql).not.toContain("content_blocks");
+  });
+
+  it("names the blocked addresses on the caller's connection", async () => {
+    const db = { execute: mocks.execute };
+    mocks.execute.mockResolvedValue({ rows: [{ url: row(1).url }] });
+    const blocked = await selectBlockedImageUrls(db as never, [
+      ` ${row(1).url} `,
+      row(1).url,
+      "",
+    ]);
+    expect([...blocked]).toEqual([row(1).url]);
+    expect(vi.mocked(withService)).not.toHaveBeenCalled();
+    const query = compiled();
+    expect(query.sql).toContain("public.content_blocks");
+    expect(query.params).toContainEqual([row(1).url]);
+    expect(query.params).toContainEqual(["stores/store-1/media/1.webp"]);
+  });
+
+  it("makes no query when there is nothing to look up", async () => {
+    const db = { execute: mocks.execute };
+    expect([...(await selectBlockedImageUrls(db as never, []))]).toEqual([]);
+    expect([
+      ...(await selectBlockedImageUrls(db as never, ["", "not a url"])),
     ]).toEqual([]);
     expect(mocks.execute).not.toHaveBeenCalled();
   });

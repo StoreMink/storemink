@@ -1,11 +1,10 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PLAN_LIMITS } from "@/lib/plans";
-import {
-  nextPlan,
-  planHighlights,
-  planPriceLine,
-  upgradeUnlocks,
-} from "./upgrade-summary";
+import { PLAN_IDS, PLAN_LIMITS } from "@/lib/plans";
+import { PlanTag } from "@/app/dashboard/plan-tag";
+import * as summary from "./upgrade-summary";
+import { nextPlan, planHighlights, upgradeUnlocks } from "./upgrade-summary";
 
 describe("upgrade summary", () => {
   it("walks the plan ladder", () => {
@@ -34,7 +33,40 @@ describe("upgrade summary", () => {
     expect(planHighlights("free")).toContain("5 products");
     expect(planHighlights("free")).toContain("Cash on Delivery checkout");
     expect(planHighlights("pro")).toContain("Unlimited products");
-    expect(planPriceLine("free")).toBe("₹0/month");
-    expect(planPriceLine("basic")).toBe("₹1,500/month");
+  });
+
+  // ★ GST: the compiled PLAN_META price knows neither the operator's price nor
+  // GST, so nothing here quotes one any more.
+  it("quotes no price", () => {
+    expect(Object.keys(summary)).not.toContain("planPriceLine");
+    const lines = PLAN_IDS.flatMap((plan) => [
+      ...planHighlights(plan),
+      ...PLAN_IDS.flatMap((to) => upgradeUnlocks(plan, to)),
+    ]);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const line of lines) expect(line).not.toMatch(/₹|\/month/);
+  });
+});
+
+describe("the dashboard plan tag", () => {
+  const titleOf = (html: string) => /title="([^"]*)"/.exec(html)?.[1] ?? null;
+
+  it("names the next plan and what it unlocks, with no price", () => {
+    const html = renderToStaticMarkup(
+      createElement(PlanTag, { plan: "basic" }),
+    );
+    expect(html).toContain("You&#x27;re on the Basic plan");
+    const title = titleOf(html);
+    expect(title).toBe(
+      `Pro: ${upgradeUnlocks("basic", "pro").slice(0, 4).join(", ")}`,
+    );
+    expect(title).not.toMatch(/₹|\/month|·/);
+  });
+
+  it("has no way up on the top plan", () => {
+    const html = renderToStaticMarkup(createElement(PlanTag, { plan: "pro" }));
+    expect(html).toContain("You&#x27;re on the Pro plan");
+    expect(html).not.toContain("Upgrade");
+    expect(titleOf(html)).toBeNull();
   });
 });

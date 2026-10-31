@@ -29,13 +29,18 @@ import "server-only";
  * and only the merchant can give it again.
  */
 
-import { and, eq } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
-import { billingMandates, billingSubscriptions } from "@/drizzle/schema";
-import { logError } from "@/lib/observability/logger";
-import type { SubscriptionView } from "./invoice-types";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { withService, type Db } from "@/lib/db/client";
+import {
+  billingInvoices,
+  billingMandates,
+  billingSubscriptions,
+} from "@/drizzle/schema";
+import { logError, logInfo } from "@/lib/observability/logger";
+import type { NextInvoiceView, SubscriptionView } from "./invoice-types";
 import { AFA_EXEMPT_PAISE } from "./mandate-types";
 import { notifySubscriptionCancelled } from "./receipts";
+import { advanceAfterPayment } from "./renewal-worker";
 
 export type CancelResult<T> =
   | { ok: true; data: T }
@@ -49,6 +54,96 @@ export interface Cancelled {
   accessUntil: string | null;
   /** True when autopay permission was withdrawn as part of this. */
   mandateRevoked: boolean;
+  /** The subscription's state when it was cancelled: `active`, or `past_due`
+   *  or `grace`, in which case the plan ends when grace ends. */
+  state: string;
+  /** When grace ends, for a subscription cancelled in grace; else null. */
+  graceEndsAt: string | null;
+  /** The next cycle's invoice at that moment, if one exists: whether it is
+   *  open, paid or has a payment in flight decides what the merchant is told. */
+  nextInvoice: NextInvoiceView | null;
+}
+
+/** What Keep my plan did, so the action can say something true (Table B). */
+export interface Resumed {
+  /** False until the merchant authorises a new mandate (it was revoked). */
+  autopay: boolean;
+  /** True when the cycle advanced at once: the renewal was already paid while
+   *  the cancellation stood, and the cycle had ended. */
+  advanced: boolean;
+  /** The state the subscription was resumed in, before any advance. */
+  state: string;
+  /** When grace ends, for a subscription resumed in grace; else null. */
+  graceEndsAt: string | null;
+  /** The end of the current cycle, as it stood when resumed. */
+  currentEnd: string | null;
+  /** The next cycle's invoice, as it stood when resumed. */
+  nextInvoice: NextInvoiceView | null;
+}
+
+/**
+ * `cancel_requested_by` as stored: "merchant:<user id>" or "operator:<email>".
+ * A blank value is stored as null (the column's CHECK refuses a blank one).
+ */
+function storedRequester(
+  requestedBy: string | null | undefined,
+): string | null {
+  const value = typeof requestedBy === "string" ? requestedBy.trim() : "";
+  return value.length > 0 ? value : null;
+}
+
+/** Who asked, by kind only, for screens and logs (never the id or email). */
+function requesterKind(
+  requestedBy: string | null | undefined,
+): "merchant" | "operator" | null {
+  const value = storedRequester(requestedBy);
+  if (!value) return null;
+  return value.startsWith("operator") ? "operator" : "merchant";
+}
+
+/**
+ * The next cycle's subscription invoice (`cycle_seq = current + 1`), with
+ * whether a payment on it is still in flight: an attempt that is `created`,
+ * `processing`, `authorized` or `unknown`, in which money may still land.
+ *
+ * ⚠ The correlated subquery names the outer table BY HAND
+ * (`"billing_invoices"."id"`): Drizzle writes a select list's columns without
+ * their table, so `${billingInvoices.id}` would render as a bare `"id"` and
+ * resolve to the ATTEMPT's id inside the subquery, matching nothing.
+ */
+async function readNextInvoice(
+  db: Db,
+  storeId: string,
+  currentCycleSeq: number,
+): Promise<NextInvoiceView | null> {
+  const [row] = await db
+    .select({
+      id: billingInvoices.id,
+      status: billingInvoices.status,
+      totalPaise: billingInvoices.totalPaise,
+      invoiceRef: billingInvoices.invoiceRef,
+      inFlight: sql<boolean>`exists (
+        select 1 from public.billing_payment_attempts a
+         where a.invoice_id = "billing_invoices"."id"
+           and a.state in ('created', 'processing', 'authorized', 'unknown'))`,
+    })
+    .from(billingInvoices)
+    .where(
+      and(
+        eq(billingInvoices.storeId, storeId),
+        eq(billingInvoices.kind, "subscription"),
+        eq(billingInvoices.cycleSeq, currentCycleSeq + 1),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    totalPaise: Number(row.totalPaise),
+    invoiceRef: row.invoiceRef ?? null,
+    inFlight: row.inFlight === true,
+  };
 }
 
 /**
@@ -56,12 +151,30 @@ export interface Cancelled {
  *
  * ★ A CONDITIONAL CLAIM, so a double-click cancels once and a subscription that
  * moved on in between is not silently re-cancelled.
+ *
+ * ★★ NEVER REFUSED FOR TIMING (renewal-cancel, rule R1). Cancelling a day
+ * before the renewal, with its invoice already issued or even paid, is allowed:
+ * the plan ends when the cycle ends (or when grace ends, for a merchant who
+ * cancels in grace), the unpaid invoice is closed then, and a renewal payment
+ * already taken is refunded. Nothing here checks a window.
+ *
+ * ★ WHO ASKED, AND WHEN, is recorded with the claim (`cancel_requested_by`,
+ * `cancel_requested_at`): "merchant:<user id>" from the dashboard,
+ * "operator:<email>" from the console. It stays on the row after the plan ends;
+ * only Keep my plan clears it.
+ *
+ * ★ The facts the merchant is told come from the SAME transaction as the
+ * claim: the state and grace end the claim returned, and the next cycle's
+ * invoice read right after it.
  */
 export async function cancelAtPeriodEnd(input: {
   storeId: string;
   now?: Date;
+  /** "merchant:<user id>" or "operator:<email>". Blank is stored as null. */
+  requestedBy?: string | null;
 }): Promise<CancelResult<Cancelled>> {
   const now = input.now ?? new Date();
+  const requestedBy = storedRequester(input.requestedBy);
 
   let sub:
     | {
@@ -101,7 +214,12 @@ export async function cancelAtPeriodEnd(input: {
     return { ok: false, error: "Your subscription is already cancelling." };
   }
 
-  let claimed = false;
+  let claimed: {
+    state: string;
+    graceEndsAt: string | null;
+    currentPeriodEnd: string | null;
+    nextInvoice: NextInvoiceView | null;
+  } | null = null;
   try {
     claimed = await withService(async (db) => {
       const rows = await db
@@ -113,16 +231,37 @@ export async function cancelAtPeriodEnd(input: {
           scheduledPlan: null,
           scheduledPeriod: null,
           scheduledLocations: null,
+          cancelRequestedAt: now.toISOString(),
+          cancelRequestedBy: requestedBy,
           updatedAt: now.toISOString(),
         })
         .where(
           and(
             eq(billingSubscriptions.storeId, input.storeId),
             eq(billingSubscriptions.cancelAtPeriodEnd, false),
+            // ★ Live at the moment of the claim, not only at the read above: a
+            // plan that ended in between has nothing left to cancel.
+            inArray(billingSubscriptions.state, LIVE_STATES),
           ),
         )
-        .returning({ storeId: billingSubscriptions.storeId });
-      return rows.length > 0;
+        .returning({
+          state: billingSubscriptions.state,
+          graceEndsAt: billingSubscriptions.graceEndsAt,
+          currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+          currentCycleSeq: billingSubscriptions.currentCycleSeq,
+        });
+      const row = rows[0];
+      if (!row) return null;
+      return {
+        state: row.state,
+        graceEndsAt: row.graceEndsAt ?? null,
+        currentPeriodEnd: row.currentPeriodEnd ?? null,
+        nextInvoice: await readNextInvoice(
+          db,
+          input.storeId,
+          row.currentCycleSeq,
+        ),
+      };
     });
   } catch (err) {
     logError("billing.cancel.claim", err, { storeId: input.storeId });
@@ -143,18 +282,37 @@ export async function cancelAtPeriodEnd(input: {
     ? await revokeMandate(sub.mandateId, now)
     : false;
 
+  logInfo("billing.cancelled", {
+    storeId: input.storeId,
+    state: claimed.state,
+    requestedBy: requesterKind(requestedBy),
+  });
+
   // ★ Confirm it. A cancellation with no acknowledgement leaves the merchant
   // unsure whether it took — and the one thing they want to know is what they
   // keep, and until when. Best-effort: the cancellation is already committed.
+  // ★ With the facts of the claim: in grace the plan ends when grace ends, and
+  // a renewal invoice that is open, paid or has a payment under way each get
+  // their own sentence; who asked decides how the email opens.
   await notifySubscriptionCancelled({
     storeId: input.storeId,
     plan: sub.plan,
-    accessUntil: sub.currentPeriodEnd,
+    accessUntil: claimed.currentPeriodEnd,
+    state: claimed.state,
+    graceEndsAt: claimed.graceEndsAt,
+    nextInvoice: claimed.nextInvoice,
+    requestedBy,
   });
 
   return {
     ok: true,
-    data: { accessUntil: sub.currentPeriodEnd, mandateRevoked },
+    data: {
+      accessUntil: claimed.currentPeriodEnd,
+      mandateRevoked,
+      state: claimed.state,
+      graceEndsAt: claimed.graceEndsAt,
+      nextInvoice: claimed.nextInvoice,
+    },
   };
 }
 
@@ -165,48 +323,81 @@ export async function cancelAtPeriodEnd(input: {
  * authorise a new one — so a resumed subscription renews by manual payment until
  * they do. Saying otherwise would have them expect a charge that never comes and
  * be downgraded for it.
+ *
+ * ★★ ALLOWED IN GRACE TOO (renewal-cancel, rule R2 and decision D4): a
+ * merchant who cancelled while `past_due` or `grace` may keep their plan before
+ * grace ends, on the same terms as before (pay, or be downgraded). The request
+ * columns are cleared with the flag: no cancellation stands any more.
+ *
+ * ★★ THEN THE CYCLE MAY ADVANCE AT ONCE. A renewal paid while the cancellation
+ * stood (an autopay debit already under way, a checkout opened before
+ * cancelling) could not advance the plan: `advanceAfterPayment` refuses a
+ * cancelling subscription. Once the flag is clear it can, so it is called
+ * AFTER the claim commits: it advances only when the cycle has ended and the
+ * next invoice is paid, and returns false otherwise (before the cycle end the
+ * turn happens at T0 as usual). If that advance ever fails, the store keeps
+ * its plan through grace and the downgrade pass's safety net advances it.
  */
 export async function resumeSubscription(input: {
   storeId: string;
   now?: Date;
-}): Promise<CancelResult<{ autopay: boolean }>> {
+  /** "merchant:<user id>" or "operator:<email>": logged by kind only. */
+  requestedBy?: string | null;
+}): Promise<CancelResult<Resumed>> {
   const now = input.now ?? new Date();
+  let claimed: {
+    mandateId: string | null;
+    state: string;
+    graceEndsAt: string | null;
+    currentPeriodEnd: string | null;
+    nextInvoice: NextInvoiceView | null;
+  } | null = null;
   try {
-    const rows = await withService(async (db) =>
-      db
+    claimed = await withService(async (db) => {
+      const rows = await db
         .update(billingSubscriptions)
-        .set({ cancelAtPeriodEnd: false, updatedAt: now.toISOString() })
+        .set({
+          cancelAtPeriodEnd: false,
+          cancelRequestedAt: null,
+          cancelRequestedBy: null,
+          updatedAt: now.toISOString(),
+        })
         .where(
           and(
             eq(billingSubscriptions.storeId, input.storeId),
             eq(billingSubscriptions.cancelAtPeriodEnd, true),
-            // ★ Only a subscription that has not yet ENDED can resume. Once
-            // `endSubscription` has run the state is `cancelled` and the cycle is
-            // gone; flipping the flag back would leave a paid state with no
-            // period, which the cycle_present CHECK forbids — and would claim to
-            // restore a plan that was already taken away.
-            //
-            // ⚠ TEST GAP: the db mock does not evaluate WHERE clauses, so
-            // removing this predicate does not fail a test. The DATABASE still
-            // catches the worst outcome (billing_subscriptions_cycle_present
-            // rejects a paid state with no cycle), which is why the constraint is
-            // the guarantee and this is the courtesy.
-            eq(billingSubscriptions.state, "active"),
+            // ★ Only a subscription that has not yet ENDED can resume: active,
+            // or past_due/grace before grace ends. Once `endSubscription` has
+            // run the state is `cancelled` and the cycle is gone; flipping the
+            // flag back would leave a paid state with no period, which the
+            // cycle_present CHECK forbids, and would claim to restore a plan
+            // that was already taken away. Pinned by rendering this WHERE with
+            // the real dialect (cancel.test.ts), since the db mock does not
+            // evaluate it.
+            inArray(billingSubscriptions.state, LIVE_STATES),
           ),
         )
-        .returning({ mandateId: billingSubscriptions.mandateId }),
-    );
-    if (rows.length === 0) {
+        .returning({
+          mandateId: billingSubscriptions.mandateId,
+          state: billingSubscriptions.state,
+          graceEndsAt: billingSubscriptions.graceEndsAt,
+          currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+          currentCycleSeq: billingSubscriptions.currentCycleSeq,
+        });
+      const row = rows[0];
+      if (!row) return null;
       return {
-        ok: false,
-        error:
-          "That subscription can't be resumed. Subscribe again to start a new cycle.",
+        mandateId: row.mandateId ?? null,
+        state: row.state,
+        graceEndsAt: row.graceEndsAt ?? null,
+        currentPeriodEnd: row.currentPeriodEnd ?? null,
+        nextInvoice: await readNextInvoice(
+          db,
+          input.storeId,
+          row.currentCycleSeq,
+        ),
       };
-    }
-    // The mandate was revoked on cancel, so autopay is off until they
-    // re-authorise. Reported rather than assumed.
-    const autopay = await mandateIsActive(rows[0].mandateId);
-    return { ok: true, data: { autopay } };
+    });
   } catch (err) {
     logError("billing.resume", err, { storeId: input.storeId });
     return {
@@ -214,6 +405,39 @@ export async function resumeSubscription(input: {
       error: "Couldn't resume your subscription. Try again.",
     };
   }
+  if (!claimed) {
+    return {
+      ok: false,
+      error:
+        "That subscription can't be resumed. Subscribe again to start a new cycle.",
+    };
+  }
+
+  // ★ AFTER the claim's transaction: `advanceAfterPayment` opens its own,
+  // re-reads everything and never throws. While the flag was set it refused;
+  // now it advances a renewal that was paid during grace.
+  const advanced = await advanceAfterPayment(input.storeId, now);
+  logInfo("billing.resumed", {
+    storeId: input.storeId,
+    state: claimed.state,
+    advanced,
+    requestedBy: requesterKind(input.requestedBy),
+  });
+
+  // The mandate was revoked on cancel, so autopay is off until they
+  // re-authorise. Reported rather than assumed.
+  const autopay = await mandateIsActive(claimed.mandateId);
+  return {
+    ok: true,
+    data: {
+      autopay,
+      advanced,
+      state: claimed.state,
+      graceEndsAt: claimed.graceEndsAt,
+      currentEnd: claimed.currentPeriodEnd,
+      nextInvoice: claimed.nextInvoice,
+    },
+  };
 }
 
 async function revokeMandate(mandateId: string, now: Date): Promise<boolean> {
@@ -284,6 +508,10 @@ export async function getSubscriptionView(
     scheduledLocations: null,
     autopay: false,
     active: false,
+    nextInvoice: null,
+    graceEndsAt: null,
+    cancelRequestedBy: null,
+    cancelRequestedAt: null,
   };
   try {
     return await withService(async (db) => {
@@ -293,7 +521,11 @@ export async function getSubscriptionView(
           period: billingSubscriptions.period,
           state: billingSubscriptions.state,
           currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+          currentCycleSeq: billingSubscriptions.currentCycleSeq,
+          graceEndsAt: billingSubscriptions.graceEndsAt,
           cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
+          cancelRequestedAt: billingSubscriptions.cancelRequestedAt,
+          cancelRequestedBy: billingSubscriptions.cancelRequestedBy,
           scheduledPlan: billingSubscriptions.scheduledPlan,
           scheduledPeriod: billingSubscriptions.scheduledPeriod,
           scheduledLocations: billingSubscriptions.scheduledLocations,
@@ -309,6 +541,13 @@ export async function getSubscriptionView(
         .where(eq(billingSubscriptions.storeId, storeId))
         .limit(1);
       if (!row) return empty;
+      const live = LIVE_STATES.includes(row.state);
+      // ★ Only a LIVE subscription has a next cycle to speak of: an ended one
+      // will never enter it, and its leftover invoice is not the merchant's to
+      // pay or to be told about here.
+      const nextInvoice = live
+        ? await readNextInvoice(db, storeId, row.currentCycleSeq)
+        : null;
       return {
         plan: row.plan,
         period: row.period === "yearly" ? "yearly" : "monthly",
@@ -335,7 +574,17 @@ export async function getSubscriptionView(
           row.mandateStatus === "active" &&
           (row.mandateMaxPaise ?? 0) > 0 &&
           (row.mandateMaxPaise ?? 0) <= AFA_EXEMPT_PAISE,
-        active: LIVE_STATES.includes(row.state),
+        active: live,
+        nextInvoice,
+        // Grace has an end only while the subscription is in it.
+        graceEndsAt:
+          row.state === "past_due" || row.state === "grace"
+            ? (row.graceEndsAt ?? null)
+            : null,
+        // ★ By kind only: the id or email of who asked never reaches the page.
+        // Kept after the plan ends (it records who asked for it to end).
+        cancelRequestedBy: requesterKind(row.cancelRequestedBy),
+        cancelRequestedAt: row.cancelRequestedAt ?? null,
       } satisfies SubscriptionView;
     });
   } catch (err) {

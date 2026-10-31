@@ -4,8 +4,9 @@
 // Two rules carry it, both inherited from enrolment:
 //   • a DRAFT at purchase time, FINALIZED when the money lands — so an abandoned
 //     checkout never burns a number in the gapless GST series;
-//   • everything is best-effort, because credits are granted by add_ai_credits
-//     and must not fail over a document.
+//   • nothing here throws, because credits are granted by add_ai_credits and
+//     must not fail over a document. The caller refuses a purchase whose draft
+//     could not be written (GST, design 5.5).
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { makeDbMock } from "@/app/actions/_test-helpers";
@@ -22,41 +23,51 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 const store = vi.hoisted(() => ({
-  loadTaxContext: vi.fn(),
-  loadInvoiceParties: vi.fn(),
   createAiCreditsInvoice: vi.fn(),
   finalizePaidAiCreditsInvoice: vi.fn(),
 }));
 vi.mock("./invoice-store", () => store);
 
 import { draftCreditInvoice, issueCreditInvoice } from "./credit-invoice";
+import { buildAiCreditsInvoice } from "./invoice";
+import type { InvoiceTaxStamp } from "./tax-snapshot";
 
 const STORE = "store-1";
 const NOW = new Date("2026-09-01T00:00:00.000Z");
+const PAID_AT = new Date("2026-08-31T17:30:00.000Z");
+
+/** GST on, exclusive: a Rs 59 pack is charged Rs 69.62. */
+const BUILT = buildAiCreditsInvoice({
+  packLabel: "Starter",
+  credits: 25,
+  amountPaise: 5_900,
+  tax: {
+    enabled: true,
+    rateBps: 1800,
+    inclusive: false,
+    supplierStateCode: "03",
+    placeOfSupply: "29",
+  },
+});
+
+const STAMP: InvoiceTaxStamp = {
+  supplierGstin: "03ABCDE1234F1Z5",
+  customerGstin: null,
+  placeOfSupply: "29",
+  placeOfSupplyBasis: "recipient",
+  sacCode: "998314",
+};
 
 const args = {
   storeId: STORE,
   purchaseId: "pur-1",
-  packLabel: "Starter",
-  credits: 25,
-  amountPaise: 5_900,
+  built: BUILT,
+  stamp: STAMP,
 };
 
 beforeEach(() => {
   vi.clearAllMocks();
   dbHolder.current = makeDbMock({ selectQueue: [] });
-  store.loadTaxContext.mockResolvedValue({
-    enabled: false,
-    rateBps: 0,
-    inclusive: false,
-    supplierStateCode: null,
-    placeOfSupply: null,
-  });
-  store.loadInvoiceParties.mockResolvedValue({
-    supplierGstin: null,
-    customerGstin: null,
-    placeOfSupply: null,
-  });
   store.createAiCreditsInvoice.mockResolvedValue({
     id: "inv-1",
     status: "draft",
@@ -74,8 +85,19 @@ describe("draftCreditInvoice", () => {
     const id = await draftCreditInvoice(args);
     expect(id).toBe("inv-1");
     const built = store.createAiCreditsInvoice.mock.calls[0][0].built;
-    expect(built.totalPaise).toBe(5_900);
+    expect(built.totalPaise).toBe(6_962);
     expect(built.lines[0].kind).toBe("ai_credits");
+  });
+
+  it("★★ writes the caller's built invoice and stamp, read once, unchanged", async () => {
+    // The Razorpay order was priced from this very `built`, so the invoice
+    // cannot carry another figure, and the stamp is the same reading's.
+    await draftCreditInvoice(args);
+    expect(store.createAiCreditsInvoice).toHaveBeenCalledWith({
+      storeId: STORE,
+      built: BUILT,
+      stamp: STAMP,
+    });
   });
 
   it("★★ does NOT finalize — an unpaid purchase must not burn a GST number", async () => {
@@ -90,26 +112,22 @@ describe("draftCreditInvoice", () => {
     });
   });
 
-  it("★ stamps the tax identifiers, like every other invoice", async () => {
-    store.loadInvoiceParties.mockResolvedValue({
-      supplierGstin: "07AABCS1429B1ZX",
-      customerGstin: null,
-      placeOfSupply: "29",
-    });
-    await draftCreditInvoice(args);
-    expect(store.createAiCreditsInvoice.mock.calls[0][0]).toMatchObject({
-      supplierGstin: "07AABCS1429B1ZX",
-      placeOfSupply: "29",
-    });
-  });
-
-  it("★★ NEVER THROWS — a merchant must be able to buy credits regardless", async () => {
+  it("★★ NEVER THROWS: the caller decides what a missing draft means", async () => {
     store.createAiCreditsInvoice.mockRejectedValue(new Error("db down"));
     await expect(draftCreditInvoice(args)).resolves.toBeNull();
   });
 
   it("★ returns null when the invoice could not be created", async () => {
     store.createAiCreditsInvoice.mockResolvedValue(null);
+    expect(await draftCreditInvoice(args)).toBeNull();
+  });
+
+  it("★ returns null when the purchase could not be linked", async () => {
+    // A draft nobody can find at settle time is a payment with no invoice,
+    // so a failed link is a failed draft.
+    dbHolder.current.db.update = () => {
+      throw new Error("db down");
+    };
     expect(await draftCreditInvoice(args)).toBeNull();
   });
 });
@@ -121,6 +139,17 @@ describe("issueCreditInvoice", () => {
     expect(store.finalizePaidAiCreditsInvoice).toHaveBeenCalledWith(
       "inv-1",
       NOW,
+      undefined,
+    );
+  });
+
+  it("★ passes the payment's own time through, for the terms in force then", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [[{ invoiceId: "inv-1" }]] });
+    await issueCreditInvoice("pur-1", NOW, PAID_AT);
+    expect(store.finalizePaidAiCreditsInvoice).toHaveBeenCalledWith(
+      "inv-1",
+      NOW,
+      PAID_AT,
     );
   });
 

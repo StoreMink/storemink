@@ -1,7 +1,7 @@
 import { requireSectionAccess } from "../lib/access";
 import { pickPage, pickParam } from "../lib/list-params";
 import { getActivityFeed } from "@/app/actions/notification-actions";
-import { EVENT_GROUPS } from "@/lib/notifications/events";
+import { EVENT_GROUPS, canonicalEventGroup } from "@/lib/notifications/events";
 import { RealtimeRefresher } from "../components/realtime-refresher";
 import { ActivityFeedView } from "./activity-feed-view";
 
@@ -19,7 +19,9 @@ export default async function ActivityPage({
 
   const sp = await searchParams;
   const page = pickPage(sp.page);
-  const groupParam = pickParam(sp.group);
+  // A link saved before a group was renamed carries the old name; read it as
+  // today's so it still filters (an unknown group is ignored, never an error).
+  const groupParam = canonicalEventGroup(pickParam(sp.group));
   const group = (EVENT_GROUPS as readonly string[]).includes(groupParam)
     ? groupParam
     : "";

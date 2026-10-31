@@ -14,7 +14,11 @@
 //     as a bare failure.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { makeDbMock } from "@/app/actions/_test-helpers";
+import { logError, logWarn } from "@/lib/observability/logger";
+import { resolveTaxSnapshot, type SnapshotRow } from "./tax-snapshot";
+import { PAYMENT_REFUSAL } from "./tax-copy";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -76,19 +80,28 @@ const mail = vi.hoisted(() => ({
 vi.mock("@/lib/email/billing-emails", () => mail);
 
 const store = vi.hoisted(() => ({
-  loadTaxContext: vi.fn(),
-  loadInvoiceParties: vi.fn(),
+  loadTaxSnapshot: vi.fn(),
   ensureRenewalInvoice: vi.fn(),
   getCycleInvoice: vi.fn(),
   reshapeDraftSubscriptionInvoice: vi.fn(),
   finalizeInvoice: vi.fn(),
   amountDueForInvoice: vi.fn(),
+  // Read after the settle: the completion moves the plan only once the
+  // invoice is paid.
+  getInvoice: vi.fn(async () => ({ id: "inv-1", status: "paid" })),
 }));
 vi.mock("./invoice-store", () => store);
 
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // RC-F1b: no earlier captured purchase unless a test says so.
+  capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
+  capturedAttemptForInvoice: vi.fn(async (): Promise<unknown> => null),
+  fileRecoveredPurchase: vi.fn(async () => true),
+  verifyRecoveredCapture: vi.fn(
+    async (): Promise<unknown> => ({ status: "ok", paymentId: "pay_old" }),
+  ),
 }));
 vi.mock("./collect", () => collect);
 
@@ -98,7 +111,15 @@ vi.mock("./gateway", () => gateway);
 const receipts = vi.hoisted(() => ({ notifyPlanActivated: vi.fn() }));
 vi.mock("./receipts", () => receipts);
 
-import { confirmEnrolment, startEnrolment } from "./enrol";
+import {
+  completeEnrolmentPurchase,
+  confirmEnrolment,
+  ensureBillingAccount,
+  enrolmentDraftChange,
+  ENROLMENT_RECOVERED_MESSAGE,
+  ENROLMENT_RECOVERY_WAITING_MESSAGE,
+  startEnrolment,
+} from "./enrol";
 
 const STORE = "store-1";
 const INVOICE = "inv-1";
@@ -114,8 +135,47 @@ const priceFor = vi.fn(async () => ({
   locationPaise: 1_000_00,
 }));
 
-function seed(selects: any[][] = []) {
+function seed(selects: (any[] | Error)[] = []) {
   dbHolder.current = makeDbMock({ selectQueue: selects });
+}
+
+/** GST off, StoreMink's identity complete, a merchant with no records. The
+ *  enrolment reads it through the REAL `resolveTaxSnapshot`, so what is built
+ *  and stamped is what production would build. */
+const SNAPSHOT_ROW: SnapshotRow = {
+  taxEnabled: false,
+  taxInclusive: false,
+  taxRateBps: 1800,
+  nextTaxEnabled: null,
+  nextTaxInclusive: null,
+  nextTaxRateBps: null,
+  nextTaxStartsAt: null,
+  supplierGstin: "03ABCDE1234F1Z5",
+  supplierStateCode: "03",
+  sacCode: "998314",
+  accountGstin: null,
+  accountStateCode: null,
+  accountCountry: null,
+  taxIdGstin: null,
+  storeTaxStateCode: null,
+  locationGstin: null,
+  locationStateCode: null,
+  taxAddress: null,
+  signupStateName: null,
+  signupCountry: null,
+};
+
+/** GST charged now, exclusive 18%, for a merchant in Karnataka (29). */
+const GST_ON_KARNATAKA: SnapshotRow = {
+  ...SNAPSHOT_ROW,
+  taxEnabled: true,
+  accountStateCode: "29",
+};
+
+function readingFor(row: SnapshotRow) {
+  store.loadTaxSnapshot.mockImplementation(async (_store: string, at: Date) =>
+    resolveTaxSnapshot(row, at),
+  );
 }
 
 beforeEach(() => {
@@ -156,18 +216,7 @@ beforeEach(() => {
   });
   rzp.rzpCreateOrder.mockResolvedValue({ ok: true, data: { id: "order_1" } });
   rzp.verifyCheckoutSignature.mockReturnValue(true);
-  store.loadTaxContext.mockResolvedValue({
-    enabled: false,
-    rateBps: 0,
-    inclusive: false,
-    supplierStateCode: null,
-    placeOfSupply: null,
-  });
-  store.loadInvoiceParties.mockResolvedValue({
-    supplierGstin: null,
-    customerGstin: null,
-    placeOfSupply: null,
-  });
+  readingFor(SNAPSHOT_ROW);
   // ★ Matches what `args` would build — monthly at ₹5,000, ending one 30-day
   // cycle after NOW — so the ordinary path does NOT look like a merchant who
   // changed their plan. A mismatch here would send every test through the
@@ -188,7 +237,11 @@ beforeEach(() => {
   // Same trap again: the reshape tests below override the price, and
   // clearAllMocks clears CALLS, not IMPLEMENTATIONS.
   priceFor.mockResolvedValue({ planPaise: 5_000_00, locationPaise: 1_000_00 });
-  store.finalizeInvoice.mockResolvedValue({ id: INVOICE, status: "open" });
+  store.finalizeInvoice.mockResolvedValue({
+    id: INVOICE,
+    status: "open",
+    finalizedAt: NOW.toISOString(),
+  });
   store.amountDueForInvoice.mockResolvedValue(5_000_00);
   collect.beginAttempt.mockResolvedValue({
     attemptId: "att-1",
@@ -488,18 +541,28 @@ describe("startEnrolment", () => {
   it("★★ STAMPS the tax identifiers onto the invoice", async () => {
     // These columns existed from billing_03 and NOBODY passed them, so every
     // invoice stored NULL — leaving the document to name a GSTIN from LIVE
-    // settings, which is exactly what an immutable invoice must not do.
-    store.loadInvoiceParties.mockResolvedValue({
+    // settings, which is exactly what an immutable invoice must not do. The
+    // stamp is the tax reading's, the same reading the amount was built from.
+    readingFor({
+      ...SNAPSHOT_ROW,
+      taxEnabled: true,
       supplierGstin: "07AABCS1429B1ZX",
-      customerGstin: "29AAACM1234C1ZP",
-      placeOfSupply: "29",
+      supplierStateCode: "07",
+      accountGstin: "29AAACM1234C1ZP",
     });
     await startEnrolment(args);
-    expect(store.ensureRenewalInvoice.mock.calls[0][0]).toMatchObject({
+    const arg = store.ensureRenewalInvoice.mock.calls[0][0];
+    expect(arg.stamp).toEqual({
       supplierGstin: "07AABCS1429B1ZX",
       customerGstin: "29AAACM1234C1ZP",
       placeOfSupply: "29",
+      placeOfSupplyBasis: "recipient",
+      sacCode: "998314",
     });
+    // Built under the same reading: ₹5,000 + 18% exclusive.
+    expect(arg.built).toMatchObject({ taxPaise: 900_00, totalPaise: 5_900_00 });
+    // The loose parties of the old loaders are gone.
+    expect(arg).not.toHaveProperty("supplierGstin");
   });
 
   it("★★ does NOT finalize — an enrolment is an OFFER, not an obligation", async () => {
@@ -545,6 +608,8 @@ describe("startEnrolment", () => {
       finalizedAt: null,
       invoiceRef: null,
       totalPaise: 5_000_00,
+      // The same plan's body: the same ₹5,000 before GST.
+      bodyTotalPaise: 5_000_00,
       // Raised a minute before this click: same 30-day cycle, later endpoints.
       periodStart: new Date(NOW.getTime() - 60_000).toISOString(),
       periodEnd: new Date(
@@ -571,6 +636,8 @@ describe("startEnrolment", () => {
       finalizedAt: null,
       invoiceRef: null,
       totalPaise: 5_000_00,
+      // The body matches, so the missing period is what makes it stale.
+      bodyTotalPaise: 5_000_00,
       periodStart: null,
       periodEnd: null,
     });
@@ -1025,6 +1092,108 @@ describe("startEnrolment", () => {
   });
 });
 
+/** A Drizzle condition, as Postgres would receive it. */
+function render(query: unknown) {
+  const q = new PgDialect().sqlToQuery(query as any);
+  return { sql: q.sql.replace(/\s+/g, " ").trim(), params: q.params };
+}
+
+/**
+ * The rows a confirm and its completion read, by table (RC-F1b): the
+ * confirm's own attempt read, then the completion's facts (invoice, attempt,
+ * store, subscription), then the activation claim's store read.
+ */
+function seedComplete(
+  opts: {
+    storePlan?: string;
+    storeSource?: string;
+    /** The subscription's cycle before the one enrolled. */
+    cycleSeq?: number;
+    subState?: string;
+    subPeriod?: string;
+    invoiceStatus?: string;
+    invoiceCycle?: number;
+    attemptState?: string;
+    attemptStore?: string;
+    /** What the activation claim returns: the plan, or [] when it lost. */
+    claimed?: { plan: string } | null;
+    /** The subscription a caller that lost the claim reads back. */
+    after?: Record<string, unknown>;
+    storeExists?: boolean;
+    noSub?: boolean;
+    /** No confirm in front: the completion's own reads come first. */
+    recovery?: boolean;
+  } = {},
+) {
+  const cycleSeq = opts.cycleSeq ?? 0;
+  const confirmRead = [
+    {
+      id: "att-1",
+      state: opts.attemptState ?? "processing",
+      providerOrderId: "order_1",
+      amountPaise: 5_000_00,
+      mandateMaxPaise: 9_000_00,
+    },
+  ];
+  dbHolder.current = makeDbMock({
+    selectByTable: {
+      billing_payment_attempts: [
+        ...(opts.recovery ? [] : [confirmRead]),
+        [
+          {
+            id: "att-1",
+            invoiceId: INVOICE,
+            storeId: opts.attemptStore ?? STORE,
+            state: opts.attemptState ?? "processing",
+            amountPaise: 5_000_00,
+            currency: "INR",
+            providerOrderId: "order_1",
+            providerPaymentId: null,
+            mandateMaxPaise: 9_000_00,
+          },
+        ],
+      ],
+      billing_invoices: [
+        [
+          {
+            storeId: STORE,
+            kind: "subscription",
+            status: opts.invoiceStatus ?? "draft",
+            cycleSeq: opts.invoiceCycle ?? cycleSeq + 1,
+            periodStart: NOW.toISOString(),
+            periodEnd: MONTHLY_CYCLE_END,
+          },
+        ],
+      ],
+      stores: [
+        opts.storeExists === false ? [] : [{ id: STORE }],
+        [
+          {
+            plan: opts.storePlan ?? "free",
+            planSource: opts.storeSource ?? "paid",
+          },
+        ],
+      ],
+      billing_subscriptions: [
+        opts.noSub
+          ? []
+          : [
+              {
+                state: opts.subState ?? "free",
+                period: opts.subPeriod ?? "monthly",
+                currentCycleSeq: cycleSeq,
+              },
+            ],
+        opts.after ? [opts.after] : [],
+      ],
+    },
+    returningQueue: [
+      opts.claimed === null ? [] : [opts.claimed ?? { plan: "pro" }],
+    ],
+    returning: [{ id: "mandate-1", storeId: STORE }],
+  });
+}
+
 describe("confirmEnrolment", () => {
   const args = {
     storeId: STORE,
@@ -1034,39 +1203,8 @@ describe("confirmEnrolment", () => {
     now: NOW,
   };
 
-  /** attempt row, then subscription row, then stores row. */
-  function seedConfirm(
-    opts: { storePlan?: string; storeSource?: string; cycleSeq?: number } = {},
-  ) {
-    seed([
-      [
-        {
-          id: "att-1",
-          state: "processing",
-          providerOrderId: "order_1",
-          mandateMaxPaise: 9_000_00,
-        },
-      ],
-      [
-        {
-          plan: "pro",
-          period: "monthly",
-          state: "free",
-          currentPeriodEnd: null,
-          currentCycleSeq: opts.cycleSeq ?? 0,
-        },
-      ],
-      [
-        {
-          plan: opts.storePlan ?? "free",
-          planSource: opts.storeSource ?? "paid",
-        },
-      ],
-    ]);
-  }
-
   it("activates the plan on a verified payment", async () => {
-    seedConfirm();
+    seedComplete();
     const res = await confirmEnrolment(args);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -1078,11 +1216,11 @@ describe("confirmEnrolment", () => {
     [0, 1],
     [2, 3],
   ])(
-    "★ activates the cycle after the seeded one (seeded %i, activates %i)",
+    "★ activates the cycle the invoice was raised for (seeded %i, activates %i)",
     async (seeded, expected) => {
       // A first subscription activates cycle 1; a re-enrolment activates the
       // cycle its invoice was raised for, not cycle 1 again.
-      seedConfirm({ cycleSeq: seeded });
+      seedComplete({ cycleSeq: seeded });
       await confirmEnrolment(args);
       const activation = dbHolder.current.calls.set.find(
         (v: any) => v.state === "active",
@@ -1094,9 +1232,59 @@ describe("confirmEnrolment", () => {
   it("★★ ISSUES the invoice now — the number is spent on a payment that HAPPENED", async () => {
     // The gapless GST series must not be spent on an abandoned checkout, and the
     // document should be dated to the payment, not to the Subscribe click.
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
-    expect(store.finalizeInvoice).toHaveBeenCalledWith(INVOICE, NOW);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(INVOICE, NOW, undefined);
+  });
+
+  it("★★ R1-07: ISSUES at the payment's own time, from the gateway's record", async () => {
+    // Captured just before a scheduled GST change and confirmed just after:
+    // the invoice is issued under the terms it was paid under.
+    const CAPTURED_SECONDS = Math.floor(NOW.getTime() / 1000) - 600;
+    rzp.rzpFetchPayment.mockResolvedValue({
+      ok: true,
+      data: { id: "pay_1", created_at: CAPTURED_SECONDS },
+    });
+    seedComplete();
+    const res = await confirmEnrolment(args);
+    expect(res.ok).toBe(true);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(
+      INVOICE,
+      NOW,
+      new Date(CAPTURED_SECONDS * 1000),
+    );
+  });
+
+  it("★ R1-07: a payment time that cannot be read issues at the confirm, and the plan still switches on", async () => {
+    rzp.rzpFetchPayment.mockResolvedValue({
+      ok: false,
+      error: "timeout",
+      outcome: "unknown",
+    });
+    seedComplete();
+    const res = await confirmEnrolment(args);
+    expect(res.ok).toBe(true);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(INVOICE, NOW, undefined);
+    expect(logWarn).toHaveBeenCalledWith("billing.enrol.payment_time", {
+      paymentId: "pay_1",
+      reason: "timeout",
+    });
+  });
+
+  it("★ R1-07: a payment the gateway could not be asked about takes no time from it", async () => {
+    // Verified by signature alone (gateway unreadable): no second read is
+    // trusted for the time either.
+    rzp.verifyCapturedCheckoutPayment.mockResolvedValue({
+      ok: true,
+      gatewayRead: false,
+    });
+    rzp.rzpFetchPayment.mockResolvedValue({
+      ok: true,
+      data: { id: "pay_1", created_at: 1_700_000_000 },
+    });
+    seedComplete();
+    await confirmEnrolment(args);
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(INVOICE, NOW, undefined);
   });
 
   it("★★ FINALIZES BEFORE SETTLING — settling a DRAFT leaves a paid invoice unpaid", async () => {
@@ -1113,7 +1301,7 @@ describe("confirmEnrolment", () => {
     //
     // Order is the whole fix, so order is what this asserts. Both calls are
     // mocked, so nothing else in this file can catch a swap.
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     expect(store.finalizeInvoice).toHaveBeenCalled();
     expect(collect.settleAttempt).toHaveBeenCalled();
@@ -1124,13 +1312,13 @@ describe("confirmEnrolment", () => {
 
   it("★ finalizes only AFTER the signature verifies", async () => {
     rzp.verifyCheckoutSignature.mockReturnValue(false);
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     expect(store.finalizeInvoice).not.toHaveBeenCalled();
   });
 
   it("★★ WELCOMES the merchant — the old path did, and deleting it took that with it", async () => {
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     expect(receipts.notifyPlanActivated).toHaveBeenCalledWith(
       expect.objectContaining({ storeId: STORE, invoiceId: INVOICE }),
@@ -1139,7 +1327,7 @@ describe("confirmEnrolment", () => {
 
   it("★ says nothing when the signature failed", async () => {
     rzp.verifyCheckoutSignature.mockReturnValue(false);
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     expect(receipts.notifyPlanActivated).not.toHaveBeenCalled();
   });
@@ -1147,7 +1335,7 @@ describe("confirmEnrolment", () => {
   it("★★ reports autopay HONESTLY — a mandate, or none", async () => {
     // The template says autopay is set up; promising a renewal date to someone
     // with no mandate is how they wait for a charge that never comes.
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     expect(receipts.notifyPlanActivated.mock.calls[0][0].autopay).toBe(false);
   });
@@ -1156,14 +1344,14 @@ describe("confirmEnrolment", () => {
     // A payment id from the client proves nothing. Without the HMAC anyone
     // could post an arbitrary id and be granted a plan.
     rzp.verifyCheckoutSignature.mockReturnValue(false);
-    seedConfirm();
+    seedComplete();
     const res = await confirmEnrolment(args);
     expect(res.ok).toBe(false);
     expect(collect.settleAttempt).not.toHaveBeenCalled();
   });
 
   it("★ verifies against the order WE created, not one the client names", async () => {
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     expect(rzp.verifyCheckoutSignature).toHaveBeenCalledWith(
       "secret",
@@ -1180,7 +1368,7 @@ describe("confirmEnrolment", () => {
   });
 
   it("★ writes BOTH the subscription and stores.plan", async () => {
-    seedConfirm();
+    seedComplete();
     await confirmEnrolment(args);
     const sets = dbHolder.current.calls.set;
     const sub = sets.find((s: any) => s.currentCycleSeq === 1);
@@ -1194,21 +1382,36 @@ describe("confirmEnrolment", () => {
     expect(ent.planExpiresAt).toBeNull();
   });
 
+  it("★★ the activation is a CLAIM: not live, exactly one cycle before the invoice", async () => {
+    // RC-F1b: a browser confirm and the hourly reconcile can arrive together.
+    // The WHERE is what makes the second one match nothing, so the plan moves
+    // once and the welcome goes out once.
+    seedComplete({ cycleSeq: 2 });
+    await confirmEnrolment(args);
+    const where = dbHolder.current.calls.where
+      .map((w: unknown) => render(w))
+      .find((w: { sql: string }) =>
+        w.sql.includes('"billing_subscriptions"."state" not in'),
+      );
+    expect(where).toBeDefined();
+    if (!where) return;
+    expect(where.sql).toContain('"billing_subscriptions"."state" not in');
+    expect(where.sql).toContain(
+      '"billing_subscriptions"."current_cycle_seq" =',
+    );
+    expect(where.params).toEqual(
+      expect.arrayContaining([STORE, "active", "past_due", "grace", 2]),
+    );
+  });
+
   it("★★ a COMP is a FLOOR — subscribing to a cheaper tier does not lower it", async () => {
     // The old confirmSubscription wrote stores.plan unconditionally, so a store
     // comped Pro that subscribed to Basic was dropped to Basic.
-    seed([
-      [{ id: "att-1", state: "processing", providerOrderId: "order_1" }],
-      [
-        {
-          plan: "basic",
-          period: "monthly",
-          state: "free",
-          currentPeriodEnd: null,
-        },
-      ],
-      [{ plan: "pro", planSource: "comp" }],
-    ]);
+    seedComplete({
+      claimed: { plan: "basic" },
+      storePlan: "pro",
+      storeSource: "comp",
+    });
     const res = await confirmEnrolment(args);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
@@ -1221,57 +1424,62 @@ describe("confirmEnrolment", () => {
   });
 
   it("★ the subscription still activates under a comp — they ARE paying", async () => {
-    seed([
-      [{ id: "att-1", state: "processing", providerOrderId: "order_1" }],
-      [
-        {
-          plan: "basic",
-          period: "monthly",
-          state: "free",
-          currentPeriodEnd: null,
-        },
-      ],
-      [{ plan: "pro", planSource: "comp" }],
-    ]);
+    seedComplete({
+      claimed: { plan: "basic" },
+      storePlan: "pro",
+      storeSource: "comp",
+    });
     await confirmEnrolment(args);
     expect(
       dbHolder.current.calls.set.some((s: any) => s.state === "active"),
     ).toBe(true);
   });
 
-  it("★ is idempotent — re-confirming an active subscription reports success", async () => {
-    seed([
-      [{ id: "att-1", state: "captured", providerOrderId: "order_1" }],
-      [
-        {
-          plan: "pro",
-          period: "monthly",
-          state: "active",
-          currentPeriodEnd: CYCLE_END,
-        },
-      ],
-    ]);
+  it("★★ a confirm that arrives after the purchase was finished changes nothing and sends nothing", async () => {
+    // The hourly reconcile finished it (the merchant had closed the tab); the
+    // browser's late confirm loses the activation claim and reports success.
+    seedComplete({
+      invoiceStatus: "paid",
+      subState: "active",
+      cycleSeq: 1,
+      invoiceCycle: 1,
+      attemptState: "captured",
+      claimed: null,
+      storePlan: "pro",
+      after: {
+        state: "active",
+        plan: "pro",
+        currentCycleSeq: 1,
+        currentPeriodEnd: CYCLE_END,
+        mandateId: null,
+      },
+    });
     collect.settleAttempt.mockResolvedValue(null); // already terminal
     const res = await confirmEnrolment(args);
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    expect(res.data.periodEnd).toBe(CYCLE_END);
+    expect(res).toEqual({
+      ok: true,
+      data: { plan: "pro", periodEnd: CYCLE_END, mandateActivated: false },
+    });
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(receipts.notifyPlanActivated).not.toHaveBeenCalled();
+    // No audit row either: only the caller that moved the plan writes one.
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
   });
 
   it("★ reports a NON-captured settle as an incomplete payment", async () => {
     collect.settleAttempt.mockResolvedValue("failed");
-    seedConfirm();
-    expect((await confirmEnrolment(args)).ok).toBe(false);
+    seedComplete();
+    expect(await confirmEnrolment(args)).toEqual({
+      ok: false,
+      error: "That payment didn't complete.",
+    });
   });
 
   it("★★ money in but plan not moved is NEVER a bare failure", async () => {
     // The merchant has paid. The message must say so and tell them not to pay
     // again, or support cannot tell this from a declined card.
     collect.settleAttempt.mockResolvedValue("captured");
-    seed([
-      [{ id: "att-1", state: "processing", providerOrderId: "order_1" }],
-      [], // subscription row missing — activation cannot proceed
-    ]);
+    seedComplete({ noSub: true });
     const res = await confirmEnrolment(args);
     expect(res.ok).toBe(false);
     if (res.ok) return;
@@ -1279,8 +1487,52 @@ describe("confirmEnrolment", () => {
     expect(res.error).toMatch(/don't pay again/i);
   });
 
+  it("★★ a failed guard is filed for a person and nothing is applied", async () => {
+    // The subscription went live on a later cycle meanwhile: applying this
+    // payment would rewind its renewals.
+    seedComplete({ subState: "active", cycleSeq: 3, invoiceCycle: 1 });
+    const res = await confirmEnrolment(args);
+    expect(res.ok).toBe(false);
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storeId: STORE,
+        kind: "state_conflict",
+        repairKey: "purchase_refused:att-1",
+        purchase: "enrolment",
+      }),
+    );
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(
+      dbHolder.current.calls.set.some((s: any) => s.state === "active"),
+    ).toBe(false);
+  });
+
+  it("★ the plan period on file must match the invoice", async () => {
+    seedComplete({ subPeriod: "yearly" });
+    const res = await confirmEnrolment(args);
+    expect(res.ok).toBe(false);
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ repairKey: "purchase_refused:att-1" }),
+    );
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+  });
+
+  it("★ a read failure changes nothing and promises the switch soon", async () => {
+    seed([
+      [{ id: "att-1", state: "processing", providerOrderId: "order_1" }],
+      new Error("db down") as any,
+    ]);
+    const res = await confirmEnrolment(args);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toMatch(/don't pay again/i);
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+  });
+
   it("records a mandate when the checkout registered one", async () => {
-    seedConfirm();
+    seedComplete();
     const res = await confirmEnrolment({
       ...args,
       mandate: {
@@ -1299,12 +1551,27 @@ describe("confirmEnrolment", () => {
   });
 
   it("★ enrols fine with NO mandate — that only costs automatic renewal", async () => {
-    seedConfirm();
+    seedComplete();
     const res = await confirmEnrolment(args);
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.data.mandateActivated).toBe(false);
     expect(res.data.plan).toBe("pro");
+  });
+
+  it("★ writes the audit row itself, naming the plan it moved FROM", async () => {
+    seedComplete({ storePlan: "free" });
+    await confirmEnrolment(args);
+    const audit = dbHolder.current.calls.values.find(
+      (v: any) => v.actor === "billing-enrolment",
+    );
+    expect(audit).toMatchObject({
+      storeId: STORE,
+      fromPlan: "free",
+      toPlan: "pro",
+      source: "billing",
+      note: "subscribed (manual renewal)",
+    });
   });
 
   it("refuses with no platform credentials", async () => {
@@ -1317,7 +1584,7 @@ describe("confirmEnrolment", () => {
     // signature — not a token. A caller-supplied token would be a value the
     // BROWSER chose, and attaching a mandate is standing permission to debit
     // this merchant every cycle.
-    seedConfirm();
+    seedComplete();
     rzp.rzpFetchPayment.mockResolvedValue({
       ok: true,
       data: {
@@ -1340,7 +1607,7 @@ describe("confirmEnrolment", () => {
   });
 
   it("★ a payment with no token still grants access after money moved", async () => {
-    seedConfirm();
+    seedComplete();
     const res = await confirmEnrolment({
       storeId: STORE,
       invoiceId: "inv-1",
@@ -1355,7 +1622,7 @@ describe("confirmEnrolment", () => {
   it("★★ a FAILED lookup still activates the plan — the money is already in", async () => {
     // Losing autopay is the acceptable half of this trade; refusing a plan the
     // merchant has paid for is not.
-    seedConfirm();
+    seedComplete();
     rzp.rzpFetchPayment.mockResolvedValue({
       ok: false,
       error: "gateway down",
@@ -1371,7 +1638,7 @@ describe("confirmEnrolment", () => {
   });
 
   it("★ an unrecognised method is recorded as unknown, not dropped", async () => {
-    seedConfirm();
+    seedComplete();
     rzp.rzpFetchPayment.mockResolvedValue({
       ok: true,
       data: { id: "pay_1", token_id: "t", method: "wallet" },
@@ -1383,5 +1650,719 @@ describe("confirmEnrolment", () => {
       signature: "sig",
     });
     expect(res.ok).toBe(true);
+  });
+});
+
+describe("★★ R3-03: ensureBillingAccount never logs the merchant's details", () => {
+  it("logs the database's reason, code and constraint, never Drizzle's params", async () => {
+    const failed = Object.assign(
+      new Error(
+        'Failed query: insert into billing_accounts ... params: store-1,Acme Traders Pvt Ltd,29ABCDE1234F1Z5,{"line1":"12 MG Road"}',
+      ),
+      {
+        cause: Object.assign(
+          new Error(
+            'new row violates check constraint "billing_accounts_gstin_check"',
+          ),
+          { code: "23514", constraint: "billing_accounts_gstin_check" },
+        ),
+      },
+    );
+    dbHolder.current.db.insert = () => {
+      throw failed;
+    };
+    const ok = await ensureBillingAccount(STORE, {
+      legalName: "Acme Traders Pvt Ltd",
+      gstin: "29ABCDE1234F1Z5",
+      address: { line1: "12 MG Road" },
+    });
+    expect(ok).toBe(false);
+    expect(logError).toHaveBeenCalledTimes(1);
+    const [event, logged, ctx] = vi.mocked(logError).mock.calls[0];
+    expect(event).toBe("billing.ensure_account");
+    expect(logged).toBe(
+      'new row violates check constraint "billing_accounts_gstin_check"',
+    );
+    expect(ctx).toEqual({
+      storeId: STORE,
+      code: "23514",
+      constraint: "billing_accounts_gstin_check",
+    });
+    const everything = JSON.stringify(vi.mocked(logError).mock.calls);
+    expect(everything).not.toMatch(/Acme Traders|29ABCDE1234F1Z5|MG Road/);
+  });
+});
+
+describe("completeEnrolmentPurchase (recovery, RC-F1b)", () => {
+  const recovery = {
+    storeId: STORE,
+    invoiceId: INVOICE,
+    attemptId: "att-1",
+    providerPaymentId: null,
+    source: "recovery" as const,
+    verifyCapture: true,
+    now: NOW,
+  };
+
+  it("★★ finishes a closed-tab enrolment: issues, settles, activates, welcomes", async () => {
+    seedComplete({ attemptState: "captured", recovery: true });
+    const res = await completeEnrolmentPurchase(recovery);
+    expect(res.status).toBe("completed");
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(INVOICE, NOW, undefined);
+    expect(collect.settleAttempt).toHaveBeenCalledWith(
+      "att-1",
+      "captured",
+      expect.objectContaining({ providerPaymentId: "pay_old" }),
+    );
+    expect(receipts.notifyPlanActivated).toHaveBeenCalledTimes(1);
+    const audit = dbHolder.current.calls.values.find(
+      (v: any) => v.actor === "billing-enrolment",
+    );
+    expect(audit.note).toMatch(/hourly check/);
+  });
+
+  it("★ issues the draft at the capture time it is given (GST paidAt)", async () => {
+    seedComplete({ attemptState: "captured", recovery: true });
+    const paidAt = new Date(NOW.getTime() - 2 * 3_600_000);
+    const res = await completeEnrolmentPurchase({ ...recovery, paidAt });
+    expect(res.status).toBe("completed");
+    expect(store.finalizeInvoice).toHaveBeenCalledWith(INVOICE, NOW, paidAt);
+  });
+
+  it("★★ a captured amount that differs from the attempt is filed, never applied", async () => {
+    seedComplete({ attemptState: "captured", recovery: true });
+    collect.verifyRecoveredCapture.mockResolvedValue({
+      status: "mismatch",
+      reason: "the captured amount or currency differs from the attempt",
+      paymentId: "pay_old",
+      observedPaise: 4_000_00,
+    });
+    const res = await completeEnrolmentPurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "amount_mismatch",
+        repairKey: "purchase_refused:att-1",
+        observedPaise: 4_000_00,
+      }),
+    );
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(receipts.notifyPlanActivated).not.toHaveBeenCalled();
+  });
+
+  it("★ an unreadable gateway changes nothing and files nothing", async () => {
+    seedComplete({ attemptState: "captured", recovery: true });
+    collect.verifyRecoveredCapture.mockResolvedValue({ status: "unreadable" });
+    const res = await completeEnrolmentPurchase(recovery);
+    expect(res.status).toBe("not_ready");
+    expect(collect.fileRecoveredPurchase).not.toHaveBeenCalled();
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+  });
+
+  it("★ a store that no longer exists is filed for a person", async () => {
+    seedComplete({
+      attemptState: "captured",
+      storeExists: false,
+      recovery: true,
+    });
+    const res = await completeEnrolmentPurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(collect.fileRecoveredPurchase).toHaveBeenCalledWith(
+      expect.objectContaining({ repairKey: "purchase_refused:att-1" }),
+    );
+  });
+
+  it("★ an attempt that is not this store's is refused without touching anything", async () => {
+    seedComplete({
+      attemptState: "captured",
+      attemptStore: "store-2",
+      recovery: true,
+    });
+    const res = await completeEnrolmentPurchase(recovery);
+    expect(res.status).toBe("refused");
+    expect(store.finalizeInvoice).not.toHaveBeenCalled();
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+  });
+});
+
+describe("startEnrolment finishes an earlier paid purchase (RC-F1b)", () => {
+  const args = {
+    storeId: STORE,
+    plan: "pro" as const,
+    period: "yearly" as const,
+    priceFor,
+    now: NOW,
+  };
+  const earlier = {
+    attemptId: "att-1",
+    invoiceId: INVOICE,
+    storeId: STORE,
+    kind: "subscription",
+    providerOrderId: "order_1",
+    providerPaymentId: "pay_old",
+    amountPaise: 5_000_00,
+    currency: "INR",
+    createdAt: NOW.toISOString(),
+  };
+
+  it("★★ completes it instead of opening a second order, and never reshapes it", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    seedComplete({ attemptState: "captured", recovery: true });
+    const res = await startEnrolment(args);
+    expect(res).toEqual({
+      ok: false,
+      error: ENROLMENT_RECOVERED_MESSAGE,
+      recovered: "completed",
+    });
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateAuthorizationOrder).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+    expect(receipts.notifyPlanActivated).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ when it cannot be finished, says the payment went through and opens nothing", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue([earlier]);
+    seedComplete({ attemptState: "captured", recovery: true });
+    collect.verifyRecoveredCapture.mockResolvedValue({ status: "unreadable" });
+    const res = await startEnrolment(args);
+    expect(res).toEqual({
+      ok: false,
+      error: ENROLMENT_RECOVERY_WAITING_MESSAGE,
+      recovered: "waiting",
+    });
+    expect(rzp.rzpCreateAuthorizationOrder).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+
+  it("★ fails CLOSED when the check can't be read", async () => {
+    collect.capturedDraftPurchases.mockResolvedValue(null);
+    const res = await startEnrolment(args);
+    expect(res).toEqual({
+      ok: false,
+      error: "Couldn't check your subscription. Try again.",
+    });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+
+  it("★★ never reshapes a stale draft that holds a captured payment", async () => {
+    // The top check found nothing, but a capture landed since.
+    store.getCycleInvoice.mockResolvedValue({
+      id: INVOICE,
+      status: "draft",
+      totalPaise: 2_400_00,
+      periodStart: NOW.toISOString(),
+      periodEnd: MONTHLY_CYCLE_END,
+    });
+    seed([[{ state: "", cycleSeq: 0 }]]);
+    collect.capturedAttemptForInvoice.mockResolvedValue({
+      id: "att-1",
+      providerPaymentId: "pay_old",
+    });
+    const res = await startEnrolment(args);
+    expect(res).toMatchObject({ ok: false, recovered: "waiting" });
+    expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+});
+
+describe("enrolmentDraftChange (GST design 5.3)", () => {
+  const LENGTH = 30 * 86_400_000;
+  const DRAFT = {
+    status: "draft",
+    totalPaise: 5_000_00,
+    bodyTotalPaise: 5_000_00,
+    periodStart: NOW.toISOString(),
+    periodEnd: MONTHLY_CYCLE_END,
+  };
+  const built = (body: number, total: number) => ({
+    lines: [
+      {
+        kind: "base_plan" as const,
+        description: "Pro plan",
+        quantity: 1,
+        unitAmountPaise: body,
+        amountPaise: body,
+      },
+      ...(total !== body
+        ? [
+            {
+              kind: "tax" as const,
+              description: "GST",
+              quantity: 1,
+              unitAmountPaise: total - body,
+              amountPaise: total - body,
+            },
+          ]
+        : []),
+    ],
+    totalPaise: total,
+  });
+
+  it("nothing changed: null", () => {
+    expect(enrolmentDraftChange(DRAFT, built(5_000_00, 5_000_00), LENGTH)).toBe(
+      null,
+    );
+  });
+
+  it("★★ only GST changed (an exclusive start): 'tax', never 'shape'", () => {
+    // The same plan for the same period: the "earlier plan choice" refusal is
+    // for a changed CHOICE and must never be shown for a GST change.
+    expect(enrolmentDraftChange(DRAFT, built(5_000_00, 5_900_00), LENGTH)).toBe(
+      "tax",
+    );
+  });
+
+  it("★ a stamp-only difference (an inclusive start) is not stale", () => {
+    // The body and the total match; `issueInvoice` restamps at issue.
+    expect(enrolmentDraftChange(DRAFT, built(5_000_00, 5_000_00), LENGTH)).toBe(
+      null,
+    );
+  });
+
+  it("a different plan is a 'shape', whatever the GST did", () => {
+    expect(enrolmentDraftChange(DRAFT, built(2_400_00, 2_832_00), LENGTH)).toBe(
+      "shape",
+    );
+  });
+
+  it("a different period is a 'shape' even at the same price", () => {
+    expect(
+      enrolmentDraftChange(DRAFT, built(5_000_00, 5_000_00), 365 * 86_400_000),
+    ).toBe("shape");
+  });
+
+  it("a draft with no period recorded is a 'shape'", () => {
+    expect(
+      enrolmentDraftChange(
+        { ...DRAFT, periodStart: null, periodEnd: null },
+        built(5_000_00, 5_000_00),
+        LENGTH,
+      ),
+    ).toBe("shape");
+  });
+
+  it("only a draft can be stale", () => {
+    expect(
+      enrolmentDraftChange(
+        { ...DRAFT, status: "open" },
+        built(2_400_00, 2_400_00),
+        LENGTH,
+      ),
+    ).toBe(null);
+  });
+});
+
+describe("startEnrolment reads the tax once (GST Stage 7)", () => {
+  const args = {
+    storeId: STORE,
+    plan: "pro" as const,
+    period: "monthly" as const,
+    priceFor,
+    now: NOW,
+  };
+
+  function expectNothingWritten() {
+    expect(store.ensureRenewalInvoice).not.toHaveBeenCalled();
+    expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.insert.length).toBe(0);
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateAuthorizationOrder).not.toHaveBeenCalled();
+  }
+
+  describe("the refusals, before anything is written", () => {
+    it("a reading that fails", async () => {
+      store.loadTaxSnapshot.mockRejectedValue(new Error("connection reset"));
+      const res = await startEnrolment(args);
+      expect(res).toEqual({ ok: false, error: PAYMENT_REFUSAL.invoiceFailed });
+      expectNothingWritten();
+      expect(logError).toHaveBeenCalledWith(
+        "billing.enrol.tax_snapshot",
+        expect.any(Error),
+        { storeId: STORE },
+      );
+    });
+
+    it("GST on without StoreMink's full tax identity", async () => {
+      readingFor({ ...GST_ON_KARNATAKA, supplierGstin: null });
+      const res = await startEnrolment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: PAYMENT_REFUSAL.settingsIncomplete,
+      });
+      expectNothingWritten();
+    });
+
+    it("★ GST on and no state of the merchant anywhere", async () => {
+      readingFor({ ...SNAPSHOT_ROW, taxEnabled: true });
+      const res = await startEnrolment(args);
+      expect(res).toEqual({ ok: false, error: PAYMENT_REFUSAL.needsState });
+      expectNothingWritten();
+    });
+
+    it("★ GST on and a business outside India", async () => {
+      readingFor({ ...GST_ON_KARNATAKA, accountCountry: "US" });
+      const res = await startEnrolment(args);
+      expect(res).toEqual({ ok: false, error: PAYMENT_REFUSAL.outsideIndia });
+      expectNothingWritten();
+    });
+
+    it("★ a start only SCHEDULED does not ask for a state yet", async () => {
+      // No GST is charged on this payment, so its invoice needs no state.
+      readingFor({
+        ...SNAPSHOT_ROW,
+        nextTaxEnabled: true,
+        nextTaxInclusive: false,
+        nextTaxRateBps: 1800,
+        nextTaxStartsAt: "2026-12-01T00:00:00.000Z",
+      });
+      const res = await startEnrolment(args);
+      expect(res.ok).toBe(true);
+      expect(store.ensureRenewalInvoice).toHaveBeenCalled();
+    });
+  });
+
+  describe("★★ the rail is decided by the FIRST RENEWAL's terms", () => {
+    // Basic yearly at ₹15,000 sits exactly on the AFA limit. An exclusive GST
+    // start before its first renewal makes that renewal ₹17,700, which no
+    // mandate can ever take without the merchant authenticating it, so no
+    // mandate may be registered for it now.
+    const basicYearly = {
+      ...args,
+      plan: "basic" as const,
+      period: "yearly" as const,
+    };
+    const scheduledFrom = (startsAt: string): SnapshotRow => ({
+      ...SNAPSHOT_ROW,
+      accountStateCode: "29",
+      nextTaxEnabled: true,
+      nextTaxInclusive: false,
+      nextTaxRateBps: 1800,
+      nextTaxStartsAt: startsAt,
+    });
+
+    beforeEach(() => {
+      priceFor.mockResolvedValue({
+        planPaise: 15_000_00,
+        locationPaise: 10_000_00,
+      });
+      store.amountDueForInvoice.mockResolvedValue(15_000_00);
+    });
+
+    it("★★ a start before the first renewal: no mandate, renewals invoiced", async () => {
+      // The renewal is collected from 2027-08-28 (four days before the cycle
+      // ends on 2027-09-01); the start on 2027-01-01 is before it.
+      readingFor(scheduledFrom("2027-01-01T00:00:00.000Z"));
+      const res = await startEnrolment(basicYearly);
+
+      expect(rzp.rzpCreateAuthorizationOrder).not.toHaveBeenCalled();
+      expect(rzp.rzpCreateOrder).toHaveBeenCalled();
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.data.autopay).toBe(false);
+      // Cycle 1 itself carries no GST: the start has not happened yet.
+      expect(store.ensureRenewalInvoice.mock.calls[0][0].built.totalPaise).toBe(
+        15_000_00,
+      );
+    });
+
+    it("control: a start after the first renewal is collected leaves autopay on", async () => {
+      readingFor(scheduledFrom("2027-08-30T00:00:00.000Z"));
+      const res = await startEnrolment(basicYearly);
+
+      expect(rzp.rzpCreateAuthorizationOrder).toHaveBeenCalled();
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.data.autopay).toBe(true);
+    });
+
+    it("★ an INCLUSIVE start changes nothing about the rail", async () => {
+      // The listed price includes GST, so the renewal still costs ₹15,000.
+      readingFor({
+        ...scheduledFrom("2027-01-01T00:00:00.000Z"),
+        nextTaxInclusive: true,
+      });
+      const res = await startEnrolment(basicYearly);
+      expect(rzp.rzpCreateAuthorizationOrder).toHaveBeenCalled();
+      expect(res.ok && res.data.autopay).toBe(true);
+    });
+  });
+
+  describe("★★ a draft whose only change is GST", () => {
+    // GST started (exclusive, 18%) after the merchant first opened Checkout:
+    // the cycle-1 draft says ₹5,000, this reading builds ₹5,900.
+    const UNTAXED_DRAFT = {
+      id: INVOICE,
+      status: "draft",
+      finalizedAt: null,
+      invoiceRef: null,
+      totalPaise: 5_000_00,
+      bodyTotalPaise: 5_000_00,
+      periodStart: NOW.toISOString(),
+      periodEnd: MONTHLY_CYCLE_END,
+    };
+
+    beforeEach(() => {
+      readingFor(GST_ON_KARNATAKA);
+      store.getCycleInvoice.mockResolvedValue(UNTAXED_DRAFT);
+    });
+
+    it("★ with no order on it, the draft is rebuilt at the taxed total", async () => {
+      seed([[], []]); // currentSubscription, then: no live attempt
+      const res = await startEnrolment(args);
+
+      expect(res.ok).toBe(true);
+      const call = store.reshapeDraftSubscriptionInvoice.mock.calls[0][0];
+      expect(call).toMatchObject({ invoiceId: INVOICE, storeId: STORE });
+      expect(call.built).toMatchObject({
+        taxPaise: 900_00,
+        totalPaise: 5_900_00,
+      });
+      expect(call.stamp).toMatchObject({
+        placeOfSupply: "29",
+        placeOfSupplyBasis: "recipient",
+      });
+      // Not a changed choice: no order is fetched or abandoned for it.
+      expect(rzp.rzpFetchOrder).not.toHaveBeenCalled();
+      expect(collect.settleAttempt).not.toHaveBeenCalledWith(
+        expect.anything(),
+        "failed",
+        expect.objectContaining({ failureCode: "shape_changed" }),
+      );
+    });
+
+    it("★★ R1-03: an order the gateway says nobody touched is ABANDONED and the draft rebuilt at the GST in force", async () => {
+      // The old ₹5,000 order is still payable, but nobody has presented a
+      // payment against it: abandoning it costs nobody money, and resuming it
+      // would charge a price the GST in force no longer gives.
+      rzp.rzpFetchOrder.mockResolvedValue({
+        ok: true,
+        data: {
+          id: "order_old",
+          method: "upi",
+          status: "created",
+          attempts: 0,
+          amount_paid: 0,
+        },
+      });
+      collect.settleAttempt.mockResolvedValue("failed");
+      seed([
+        [], // currentSubscription
+        [{ id: "att-old" }], // liveAttemptOn: an attempt in flight
+        [
+          {
+            id: "att-old",
+            providerOrderId: "order_old",
+            amountPaise: 5_000_00,
+          },
+        ], // resumableAttempt (inspectResumable)
+      ]);
+      const res = await startEnrolment(args);
+
+      expect(collect.settleAttempt).toHaveBeenCalledWith(
+        "att-old",
+        "failed",
+        expect.objectContaining({
+          providerOrderId: "order_old",
+          failureCode: "tax_changed",
+        }),
+      );
+      // The capture re-check runs again after the order is freed.
+      expect(collect.capturedAttemptForInvoice).toHaveBeenCalledTimes(2);
+      const call = store.reshapeDraftSubscriptionInvoice.mock.calls[0][0];
+      expect(call.built).toMatchObject({
+        taxPaise: 900_00,
+        totalPaise: 5_900_00,
+      });
+      expect(collect.settleAttempt.mock.invocationCallOrder[0]).toBeLessThan(
+        store.reshapeDraftSubscriptionInvoice.mock.invocationCallOrder[0],
+      );
+      // A new order for the rebuilt draft, never the old one.
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.data.attemptId).toBe("att-1");
+    });
+
+    it("★ an abandon that lost its claim (the order settled meanwhile) rebuilds nothing", async () => {
+      rzp.rzpFetchOrder.mockResolvedValue({
+        ok: true,
+        data: {
+          id: "order_old",
+          method: "upi",
+          status: "created",
+          attempts: 0,
+          amount_paid: 0,
+        },
+      });
+      collect.settleAttempt.mockResolvedValue("captured");
+      collect.beginAttempt.mockResolvedValue(null);
+      seed([
+        [],
+        [{ id: "att-old" }],
+        [
+          {
+            id: "att-old",
+            providerOrderId: "order_old",
+            amountPaise: 5_000_00,
+          },
+        ],
+        [
+          {
+            id: "att-old",
+            providerOrderId: "order_old",
+            amountPaise: 5_000_00,
+          },
+        ],
+      ]);
+      await startEnrolment(args);
+      expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        "touched (a payment still in its app)",
+        {
+          ok: true,
+          data: {
+            id: "order_old",
+            method: "upi",
+            status: "attempted",
+            attempts: 1,
+            amount_paid: 0,
+          },
+        },
+        { ok: true, data: [{ id: "pay_1", status: "created" }] },
+      ],
+      [
+        "unreadable (never untouched)",
+        { ok: false, error: "timeout", outcome: "unknown" },
+        undefined,
+      ],
+    ])(
+      "★★ an order %s is RESUMED at the draft's total, never abandoned or refused",
+      async (_label, order, payments) => {
+        // The order stays payable for the draft's ₹5,000, so the draft must
+        // keep saying ₹5,000: `issueInvoice` carves the GST out of it at issue.
+        rzp.rzpFetchOrder.mockResolvedValue(order);
+        if (payments) rzp.rzpFetchOrderPayments.mockResolvedValue(payments);
+        collect.beginAttempt.mockResolvedValue(null); // the order is in flight
+        const RESUMABLE = {
+          id: "att-old",
+          providerOrderId: "order_old",
+          amountPaise: 5_000_00,
+        };
+        seed([
+          [], // currentSubscription
+          [{ id: "att-old" }], // liveAttemptOn: an attempt in flight
+          [RESUMABLE], // resumableAttempt (the tax branch's inspection)
+          [RESUMABLE], // resumableAttempt (the resume itself)
+        ]);
+        const res = await startEnrolment(args);
+
+        expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+        expect(collect.settleAttempt).not.toHaveBeenCalledWith(
+          expect.anything(),
+          "failed",
+          expect.anything(),
+        );
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        expect(res.data).toMatchObject({
+          attemptId: "att-old",
+          providerOrderId: "order_old",
+          amountPaise: 5_000_00,
+        });
+        expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+        expect(rzp.rzpCreateAuthorizationOrder).not.toHaveBeenCalled();
+      },
+    );
+
+    it("★★ RC-F1b's captured-payment check comes FIRST", async () => {
+      // A captured payment on the draft is the earlier purchase: it is
+      // finished by the hourly check, never rebuilt here.
+      collect.capturedAttemptForInvoice.mockResolvedValue({
+        id: "att-old",
+        providerPaymentId: "pay_old",
+      });
+      seed([[]]);
+      const res = await startEnrolment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: ENROLMENT_RECOVERY_WAITING_MESSAGE,
+        recovered: "waiting",
+      });
+      expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
+
+    it("a captured-payment read that fails refuses", async () => {
+      collect.capturedAttemptForInvoice.mockResolvedValue(undefined);
+      seed([[]]);
+      const res = await startEnrolment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: "Couldn't check your subscription. Try again.",
+      });
+      expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+    });
+
+    it("★ an attempt read that fails refuses rather than guess", async () => {
+      seed([[], new Error("connection reset")]);
+      const res = await startEnrolment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: "Couldn't check your subscription. Try again.",
+      });
+      expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.insert.length).toBe(0);
+    });
+  });
+
+  it("★ a stamp-only difference (an inclusive start) rewrites nothing", async () => {
+    // GST on, prices include it: the draft's ₹5,000 is still ₹5,000. Only the
+    // stamp differs, and `issueInvoice` restamps at issue.
+    readingFor({ ...GST_ON_KARNATAKA, taxInclusive: true });
+    store.getCycleInvoice.mockResolvedValue({
+      id: INVOICE,
+      status: "draft",
+      finalizedAt: null,
+      invoiceRef: null,
+      totalPaise: 5_000_00,
+      bodyTotalPaise: 5_000_00,
+      periodStart: NOW.toISOString(),
+      periodEnd: MONTHLY_CYCLE_END,
+    });
+    const res = await startEnrolment(args);
+    expect(res.ok).toBe(true);
+    expect(store.reshapeDraftSubscriptionInvoice).not.toHaveBeenCalled();
+    expect(collect.capturedAttemptForInvoice).not.toHaveBeenCalled();
+  });
+});
+
+describe("completeEnrolmentPurchase: a failed issue (GST Stage 7)", () => {
+  it("★ is logged, and nothing is settled or applied", async () => {
+    seedComplete({ attemptState: "captured", recovery: true });
+    store.finalizeInvoice.mockResolvedValue(null);
+    const res = await completeEnrolmentPurchase({
+      storeId: STORE,
+      invoiceId: INVOICE,
+      attemptId: "att-1",
+      providerPaymentId: null,
+      source: "recovery",
+      verifyCapture: true,
+      now: NOW,
+    });
+    expect(res.status).toBe("not_ready");
+    expect(logWarn).toHaveBeenCalledWith("billing.confirm_issue_failed", {
+      purchase: "enrolment",
+      source: "recovery",
+      storeId: STORE,
+      invoiceId: INVOICE,
+      attemptId: "att-1",
+    });
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(receipts.notifyPlanActivated).not.toHaveBeenCalled();
   });
 });
