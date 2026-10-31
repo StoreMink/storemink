@@ -5,7 +5,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowUpRight, Check, Loader2, Paintbrush } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  Loader2,
+  Paintbrush,
+  Palette,
+} from "lucide-react";
 import { switchStoreTheme } from "@/app/actions/theme-actions";
 import {
   Dialog,
@@ -22,6 +28,7 @@ import {
   planThemeSwitch,
   type ThemeSwitchFacts,
 } from "@/lib/themes/switch-rules";
+import { CustomiseStorefrontButton } from "./customise-storefront-dialog";
 
 export interface ThemeCard {
   id: string;
@@ -62,11 +69,13 @@ const PRIMARY_BTN =
 const OUTLINE_BTN =
   "inline-flex items-center justify-center gap-1.5 rounded-lg border border-[rgba(17,24,39,0.14)] bg-white px-3.5 py-2 text-sm font-medium text-[#111827] transition-colors hover:border-[#111827] disabled:cursor-not-allowed disabled:opacity-50";
 
-// Dashboard → Storefront. The store's theme (or, for a new store, the empty
-// state that says there is none yet and what shoppers see meanwhile), then the
-// theme library. Choosing the FIRST theme installs it; choosing another later
-// switches to it. Both go through the same confirm dialog, written from the
-// same rules the server runs (lib/themes/switch-rules.ts).
+// Dashboard → Storefront. ★★ A THEME IS CHOSEN ONCE (owner, 31 Oct 2026).
+// While the store has none (settings.themePending), the page is the empty
+// state and the theme library, and choosing a theme goes through a confirm
+// dialog written from the rules the server runs (lib/themes/switch-rules.ts).
+// Once it has one, the library is gone: the page shows the theme with
+// Customise storefront (a Mink AI redesign), the Website Builder and the
+// store, and a Branding card, since Branding sits under Storefront.
 export function StorefrontClient({
   current,
   currentId,
@@ -74,15 +83,22 @@ export function StorefrontClient({
   categories,
   facts,
   canManage,
+  canCustomise,
+  canEditBranding,
   managedByOperators,
   unavailable,
 }: {
   current: ThemeCard | null;
   currentId: string | null;
+  /** The themes to choose from; empty once the store has its theme. */
   library: ThemeCard[];
   categories: ThemeCategory[];
   facts: ThemeSwitchFacts | null;
   canManage: boolean;
+  /** May start a Mink AI redesign (Website Builder manage). */
+  canCustomise: boolean;
+  /** May open the Branding page. */
+  canEditBranding: boolean;
   managedByOperators: boolean;
   unavailable: boolean;
 }) {
@@ -125,11 +141,11 @@ export function StorefrontClient({
     setBusy(true);
     let result: Awaited<ReturnType<typeof switchStoreTheme>>;
     try {
+      // The server refuses if the store has had a theme chosen since this
+      // page loaded (another tab), so the dialog cannot promise a first
+      // install that would not happen.
       result = await switchStoreTheme(target.id, {
         replaceEditedHomepage: replaceEdited,
-        // What the dialog just described. The server refuses if the store
-        // has changed since this page loaded (another tab chose a theme).
-        ...(facts ? { expectFirstTheme: facts.firstTheme } : {}),
       });
     } catch {
       result = {
@@ -160,8 +176,9 @@ export function StorefrontClient({
       <header className="dash-page-header">
         <h1>Storefront</h1>
         <p>
-          Choose how your store looks to customers. Your products, pages and
-          settings stay yours when you change themes.
+          {pending
+            ? "Choose how your store looks to customers. You choose your theme once; your products, pages and settings stay yours."
+            : "How your store looks to customers. Customise it with Mink AI, or edit any page in the Website Builder."}
         </p>
       </header>
 
@@ -205,7 +222,7 @@ export function StorefrontClient({
                   Until you do, your storefront shows a &ldquo;store in
                   progress&rdquo; page instead of your shop.{" "}
                   {canManage
-                    ? "Choose a theme from the library below. You can switch to another any time."
+                    ? "Choose a theme from the library below. You choose it once: after that you change how your store looks with Customise storefront and the Website Builder."
                     : "Someone who manages your storefront can choose one from the library below."}
                 </p>
               </div>
@@ -242,18 +259,21 @@ export function StorefrontClient({
                   <p className="mt-1.5 text-sm leading-6 text-[#5b6472]">
                     {current?.description ??
                       (currentId
-                        ? "Your store uses a theme that is no longer in the library. It keeps working; choose one below to change it."
-                        : "Your store doesn't use a theme from the library. Choose one below to change how it looks.")}
+                        ? "Your store uses a theme that is no longer in the library. It keeps working."
+                        : "Your store doesn't use a theme from the library.")}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {canCustomise && (
+                    <CustomiseStorefrontButton className={PRIMARY_BTN} />
+                  )}
                   <Link
                     href="/dashboard/builder"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className={PRIMARY_BTN}
+                    className={canCustomise ? OUTLINE_BTN : PRIMARY_BTN}
                   >
-                    Customize
+                    Edit in Website Builder
                   </Link>
                   <a
                     href="/"
@@ -272,122 +292,155 @@ export function StorefrontClient({
       )}
 
       {/* ── Library ─────────────────────────────────────────────── */}
-      <section className="mt-8 max-w-5xl" aria-labelledby="theme-library">
-        <h2 id="theme-library" className="text-sm font-semibold text-[#111827]">
-          Theme library
-        </h2>
-        <p className="mt-1 text-sm text-[#5b6472]">
-          Preview any theme on its demo store before you{" "}
-          {pending ? "choose" : "switch"}.
-        </p>
-
-        {categories.length > 2 && (
-          <div
-            className="mt-3 flex flex-wrap gap-2"
-            role="group"
-            aria-label="Filter themes by industry"
+      {/* Only while the store has no theme: a theme is chosen once. */}
+      {pending && (
+        <section className="mt-8 max-w-5xl" aria-labelledby="theme-library">
+          <h2
+            id="theme-library"
+            className="text-sm font-semibold text-[#111827]"
           >
-            {categories.map((category) => (
-              <button
-                key={category.id}
-                type="button"
-                aria-pressed={filter === category.id}
-                onClick={() => setFilter(category.id)}
-                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                  filter === category.id
-                    ? "border-[#111827] bg-[#111827] text-white"
-                    : "border-[rgba(17,24,39,0.14)] bg-white text-[#374151] hover:border-[#111827]"
-                }`}
-              >
-                {category.label}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {visible.length === 0 ? (
-          <p className="mt-4 text-sm text-[#5b6472]">
-            No other themes match this filter.
+            Theme library
+          </h2>
+          <p className="mt-1 text-sm text-[#5b6472]">
+            Preview any theme on its demo store before you choose.
           </p>
-        ) : (
-          <ul className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {visible.map((theme) => (
-              <li
-                key={theme.id}
-                className="flex flex-col overflow-hidden rounded-xl border border-[#e5e5e5] bg-white"
-              >
-                <div className="relative aspect-[4/3] bg-[#f4f4f6]">
-                  <Image
-                    src={theme.previewImage}
-                    alt=""
-                    fill
-                    sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 340px"
-                    className="object-cover"
-                  />
-                  {theme.minPlanName && (
-                    <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#111827]">
-                      {theme.minPlanName} plan
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-1 flex-col gap-3 p-4">
-                  <div>
-                    <h3 className="font-semibold text-[#111827]">
-                      {theme.name}
-                    </h3>
-                    <p className="mt-1 line-clamp-2 text-sm leading-5 text-[#5b6472]">
-                      {theme.description}
-                    </p>
-                  </div>
-                  <div className="mt-auto flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={!theme.previewSlug}
-                      title={
-                        theme.previewSlug
-                          ? `Preview ${theme.name}`
-                          : (theme.previewUnavailableReason ?? undefined)
-                      }
-                      onClick={() => {
-                        if (!theme.previewSlug) return;
-                        window.open(
-                          demoUrl(theme.previewSlug),
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-                      }}
-                      className={OUTLINE_BTN}
-                    >
-                      {theme.previewSlug ? "Preview" : "No preview"}
-                      {theme.previewSlug && (
-                        <ArrowUpRight
-                          className="h-3.5 w-3.5"
-                          aria-hidden="true"
-                        />
-                      )}
-                    </button>
-                    {theme.locked ? (
-                      <Link href="/dashboard/plans" className={PRIMARY_BTN}>
-                        Upgrade to {theme.minPlanName}
-                      </Link>
-                    ) : (
-                      canManage && (
-                        <button
-                          type="button"
-                          onClick={() => openConfirm(theme)}
-                          className={PRIMARY_BTN}
-                        >
-                          Use this theme
-                        </button>
-                      )
+
+          {categories.length > 2 && (
+            <div
+              className="mt-3 flex flex-wrap gap-2"
+              role="group"
+              aria-label="Filter themes by industry"
+            >
+              {categories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  aria-pressed={filter === category.id}
+                  onClick={() => setFilter(category.id)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    filter === category.id
+                      ? "border-[#111827] bg-[#111827] text-white"
+                      : "border-[rgba(17,24,39,0.14)] bg-white text-[#374151] hover:border-[#111827]"
+                  }`}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {visible.length === 0 ? (
+            <p className="mt-4 text-sm text-[#5b6472]">
+              No themes match this filter.
+            </p>
+          ) : (
+            <ul className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {visible.map((theme) => (
+                <li
+                  key={theme.id}
+                  className="flex flex-col overflow-hidden rounded-xl border border-[#e5e5e5] bg-white"
+                >
+                  <div className="relative aspect-[4/3] bg-[#f4f4f6]">
+                    <Image
+                      src={theme.previewImage}
+                      alt=""
+                      fill
+                      sizes="(max-width: 640px) 100vw, (max-width: 1280px) 50vw, 340px"
+                      className="object-cover"
+                    />
+                    {theme.minPlanName && (
+                      <span className="absolute left-3 top-3 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold text-[#111827]">
+                        {theme.minPlanName} plan
+                      </span>
                     )}
                   </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+                  <div className="flex flex-1 flex-col gap-3 p-4">
+                    <div>
+                      <h3 className="font-semibold text-[#111827]">
+                        {theme.name}
+                      </h3>
+                      <p className="mt-1 line-clamp-2 text-sm leading-5 text-[#5b6472]">
+                        {theme.description}
+                      </p>
+                    </div>
+                    <div className="mt-auto flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={!theme.previewSlug}
+                        title={
+                          theme.previewSlug
+                            ? `Preview ${theme.name}`
+                            : (theme.previewUnavailableReason ?? undefined)
+                        }
+                        onClick={() => {
+                          if (!theme.previewSlug) return;
+                          window.open(
+                            demoUrl(theme.previewSlug),
+                            "_blank",
+                            "noopener,noreferrer",
+                          );
+                        }}
+                        className={OUTLINE_BTN}
+                      >
+                        {theme.previewSlug ? "Preview" : "No preview"}
+                        {theme.previewSlug && (
+                          <ArrowUpRight
+                            className="h-3.5 w-3.5"
+                            aria-hidden="true"
+                          />
+                        )}
+                      </button>
+                      {theme.locked ? (
+                        <Link href="/dashboard/plans" className={PRIMARY_BTN}>
+                          Upgrade to {theme.minPlanName}
+                        </Link>
+                      ) : (
+                        canManage && (
+                          <button
+                            type="button"
+                            onClick={() => openConfirm(theme)}
+                            className={PRIMARY_BTN}
+                          >
+                            Use this theme
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {/* ── Branding ────────────────────────────────────────────── */}
+      {/* Branding is part of Storefront (it sits under it in the sidebar). */}
+      {canEditBranding && (
+        <section className="mt-8 max-w-5xl" aria-labelledby="branding-card">
+          <h2
+            id="branding-card"
+            className="mb-3 text-sm font-semibold text-[#111827]"
+          >
+            Branding
+          </h2>
+          <div className="flex flex-col gap-4 rounded-xl border border-[#e5e5e5] bg-white p-5 sm:flex-row sm:items-center">
+            <div
+              className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#f4f4f6] text-[#5b6472]"
+              aria-hidden="true"
+            >
+              <Palette className="h-5 w-5" />
+            </div>
+            <p className="min-w-0 flex-1 text-sm leading-6 text-[#5b6472]">
+              Your logo, store name, colours, contact details, social links and
+              brand voice.
+            </p>
+            <Link href="/dashboard/branding" className={OUTLINE_BTN}>
+              Edit branding
+            </Link>
+          </div>
+        </section>
+      )}
 
       <Dialog
         open={!!target}
@@ -397,12 +450,8 @@ export function StorefrontClient({
       >
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>
-              {pending ? "Use" : "Switch to"} {target?.name}?
-            </DialogTitle>
-            <DialogDescription>
-              {pending ? "Here is what happens." : "Here is what changes."}
-            </DialogDescription>
+            <DialogTitle>Use {target?.name}?</DialogTitle>
+            <DialogDescription>Here is what happens.</DialogDescription>
           </DialogHeader>
           <ul className="space-y-2 text-sm leading-6 text-[#374151]">
             {lines.map((line) => (
@@ -445,12 +494,10 @@ export function StorefrontClient({
                     className="h-4 w-4 animate-spin"
                     aria-hidden="true"
                   />
-                  {pending ? "Setting up…" : "Switching…"}
+                  Setting up…
                 </>
-              ) : pending ? (
-                `Use ${target?.name ?? "theme"}`
               ) : (
-                "Switch theme"
+                `Use ${target?.name ?? "theme"}`
               )}
             </Button>
           </DialogFooter>

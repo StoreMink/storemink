@@ -1,220 +1,654 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { ExternalLink, Lock } from "lucide-react";
+import { toast } from "sonner";
 import { saveStoreBranding } from "@/app/actions/store-branding";
+import {
+  saveBrandVoice,
+  type BrandVoiceEditorData,
+} from "@/app/actions/brand-voice-actions";
 import type { StoreBrand } from "@/lib/store/brand";
-import { isDefaultCreditWords } from "@/lib/store/footer-credit";
 import { ImageUpload } from "@/components/ui/image-upload";
+import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import { BrandPreview } from "./brand-preview";
+import { BrandVoiceSection } from "./brand-voice-form";
+import { InstagramMark, WhatsappMark, YoutubeMark } from "./brand-icons";
+import {
+  brandDraftForSave,
+  brandDraftFrom,
+  brandingFormData,
+  creditLineCopy,
+  normalizeHex,
+  sameBrandDraft,
+  sameVoiceDraft,
+  validateBrandDraft,
+  voiceDraftForSave,
+  voiceDraftFrom,
+  type BrandDraft,
+  type BrandFieldErrors,
+  type VoiceDraft,
+} from "./branding-state";
 import "./branding.css";
 
-/** The Basic and Pro placeholder: a line of the store's own, never the badge's. */
-const OWN_LINE_PLACEHOLDER = "e.g. Made with care by Acme Foods";
+const SAVE_FAILED = "Could not save branding. Please try again.";
+const VOICE_SAVE_FAILED = "Could not save your brand voice. Please try again.";
 
 /**
- * What the Credit line field says, by whether the store's plan removes
- * StoreMink's "Powered by" badge (PLAN_LIMITS.removeBadge for its effective
- * plan, read by the page) and by what the field holds. The storefront follows
- * the same rule (lib/store/footer-credit.ts): Free always shows the badge,
- * Basic and Pro show the store's own line or nothing. ★ On Basic and Pro the
- * placeholder is an example of a line of the store's own: the badge's words
- * there would suggest the badge still shows when the field is empty. ★ And a
- * line that is only the badge's words shows NOTHING there (isDefaultCreditWords,
- * the storefront's own test), so the hint says so rather than promising it
- * shows: the Free placeholder suggests exactly those words, so a store that
- * typed them on Free carries them into Basic or Pro. `null` is a plan that
- * could not be read, so the hint states both rules.
+ * The Branding page: logo and colour, store details, contact details, social
+ * links, the footer lines and the brand voice, beside a live preview of where
+ * each lands on the storefront.
+ *
+ * ★ ONE SAVE FOR THE WHOLE PAGE. Every field is controlled and compared with
+ * what was last saved; the moment anything differs, the dashboard's contextual
+ * save bar appears with Discard and Save. Save sends only the parts that
+ * changed (branding through saveStoreBranding, the guide through
+ * saveBrandVoice), and a part that fails keeps its changes and says why while
+ * the part that saved is kept as saved.
  */
-function creditLineCopy(
-  removeBadge: boolean | null,
-  creditLine: string,
-): {
-  hint: string;
-  placeholder?: string;
-} {
-  if (removeBadge === false) {
-    return {
-      hint: "Your store shows Powered by StoreMink here on the Free plan. On Basic or Pro you can show your own line, or nothing.",
-      placeholder: "Powered by StoreMink",
-    };
-  }
-  if (removeBadge === true) {
-    if (isDefaultCreditWords(creditLine)) {
-      return {
-        hint: "These are the words of StoreMink's badge, so nothing shows at the very bottom of your store. Type a line of your own, or leave it empty.",
-        placeholder: OWN_LINE_PLACEHOLDER,
-      };
-    }
-    return {
-      hint: "Shown at the very bottom of your store. Leave it empty to show nothing.",
-      placeholder: OWN_LINE_PLACEHOLDER,
-    };
-  }
-  return {
-    hint: "Shown at the very bottom of your store on Basic and Pro. On the Free plan, Powered by StoreMink shows here instead.",
-  };
-}
-
 export function BrandingForm({
   initial,
+  voice: initialVoice,
   canManage,
   removeBadge,
 }: {
   initial: StoreBrand;
+  voice: Pick<BrandVoiceEditorData, "content" | "structured">;
   canManage: boolean;
   /** Whether the store's plan removes the "Powered by StoreMink" badge;
    *  null when the plan could not be read. */
   removeBadge: boolean | null;
 }) {
-  const [saving, setSaving] = useState(false);
-  const [logoUrl, setLogoUrl] = useState(initial.logoUrl || "");
-  // What the Credit line field holds right now, for its hint only (the field
-  // itself stays uncontrolled and is read from the form on save).
-  const [creditLine, setCreditLine] = useState(initial.creditLine ?? "");
-  const [status, setStatus] = useState<{ ok: boolean; msg: string } | null>(
-    null,
+  const router = useRouter();
+  const [savedBrand, setSavedBrand] = useState<BrandDraft>(() =>
+    brandDraftFrom(initial),
   );
+  const [draft, setDraft] = useState<BrandDraft>(savedBrand);
+  const [savedVoice, setSavedVoice] = useState<VoiceDraft>(() =>
+    voiceDraftFrom(initialVoice),
+  );
+  const [voice, setVoice] = useState<VoiceDraft>(savedVoice);
+  // What the hex box shows. It may hold a half-typed colour; the draft only
+  // takes it once it reads as a whole hex.
+  const [colorText, setColorText] = useState(savedBrand.primaryColor);
+  const [errors, setErrors] = useState<BrandFieldErrors>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (!canManage) return;
-    setSaving(true);
-    setStatus(null);
-    const res = await saveStoreBranding(new FormData(e.currentTarget));
-    setSaving(false);
-    setStatus(
-      res.error
-        ? { ok: false, msg: res.error }
-        : { ok: true, msg: "Branding saved." },
-    );
+  const brandChanged = !sameBrandDraft(draft, savedBrand);
+  const voiceChanged = !sameVoiceDraft(voice, savedVoice);
+  const dirty = canManage && (brandChanged || voiceChanged);
+
+  // Nothing here autosaves, so a reload or tab close asks first.
+  useUnsavedChangesWarning(dirty);
+
+  function set<K extends keyof BrandDraft>(key: K, value: BrandDraft[K]) {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+    if (key === "name" || key === "email") {
+      clearError(key as keyof BrandFieldErrors);
+    }
   }
 
-  const field = (
-    name: string,
-    label: string,
-    value: string | null,
-    opts: {
-      type?: string;
-      placeholder?: string;
-      full?: boolean;
-      hint?: string;
-      onChange?: (value: string) => void;
-    } = {},
-  ) => (
-    <div className={`brandingField${opts.full ? " full" : ""}`}>
-      <label htmlFor={name}>{label}</label>
-      <input
-        id={name}
-        name={name}
-        type={opts.type ?? "text"}
-        defaultValue={value ?? ""}
-        placeholder={opts.placeholder}
-        disabled={!canManage}
-        aria-describedby={opts.hint ? `${name}-hint` : undefined}
-        onChange={
-          opts.onChange ? (e) => opts.onChange?.(e.target.value) : undefined
+  function clearError(field: keyof BrandFieldErrors) {
+    setErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }
+
+  function setColor(value: string) {
+    setColorText(value);
+    const hex = normalizeHex(value);
+    if (hex) set("primaryColor", hex);
+  }
+
+  function discard() {
+    setDraft(savedBrand);
+    setVoice(savedVoice);
+    setColorText(savedBrand.primaryColor);
+    setErrors({});
+    setSaveError(null);
+  }
+
+  async function save() {
+    if (!canManage || saving || generating) return;
+    if (!brandChanged && !voiceChanged) {
+      setSaveError(null);
+      return;
+    }
+    if (brandChanged) {
+      const found = validateBrandDraft(draft);
+      if (found.name || found.email) {
+        setErrors(found);
+        setSaveError("Fix the highlighted fields, then save.");
+        (found.name ? nameRef : emailRef).current?.focus();
+        return;
+      }
+    }
+
+    setSaving(true);
+    setSaveError(null);
+    const failures: string[] = [];
+    const saved: string[] = [];
+
+    if (brandChanged) {
+      const sentFrom = draft;
+      const sent = brandDraftForSave(draft);
+      try {
+        const res = await saveStoreBranding(brandingFormData(sent));
+        if (res.error) {
+          failures.push(res.error);
+        } else {
+          saved.push("branding");
+          setSavedBrand(sent);
+          // Show the values as they were stored (trimmed, links given a
+          // scheme), unless something was typed while the save ran.
+          setDraft((cur) => (sameBrandDraft(cur, sentFrom) ? sent : cur));
+          setColorText(sent.primaryColor);
         }
-      />
-      {opts.hint && (
-        <p className="brandingHint" id={`${name}-hint`}>
-          {opts.hint}
+      } catch {
+        failures.push(SAVE_FAILED);
+      }
+    }
+
+    if (voiceChanged) {
+      const sentFrom = voice;
+      const sent = voiceDraftForSave(voice);
+      try {
+        const res = await saveBrandVoice({
+          content: sent.content,
+          structured: sent.answers,
+        });
+        if (res.error) {
+          failures.push(res.error);
+        } else {
+          saved.push("voice");
+          setSavedVoice(sent);
+          setVoice((cur) => (sameVoiceDraft(cur, sentFrom) ? sent : cur));
+        }
+      } catch {
+        failures.push(VOICE_SAVE_FAILED);
+      }
+    }
+
+    setSaving(false);
+    if (failures.length > 0) setSaveError(failures.join(" "));
+    if (saved.length > 0) {
+      toast.success(
+        saved.length === 2
+          ? "Branding and brand voice saved."
+          : saved[0] === "voice"
+            ? "Brand voice saved. Mink AI now writes in it."
+            : "Branding saved.",
+      );
+    }
+    // The sidebar shows the store's name; let the server parts catch up.
+    if (saved.includes("branding")) router.refresh();
+  }
+
+  const creditCopy = creditLineCopy(removeBadge, draft.creditLine);
+  const disabled = !canManage;
+
+  return (
+    <form
+      className="brandingForm"
+      data-dirty={dirty ? "true" : undefined}
+      noValidate
+      onSubmit={(e) => {
+        e.preventDefault();
+        void save();
+      }}
+    >
+      {dirty && (
+        <div className="dash-savebar">
+          <div className="dash-savebar-msg">
+            <span className="dash-savebar-dot" aria-hidden />
+            <span>
+              Unsaved changes
+              {saveError && (
+                <span className="dash-savebar-error" role="alert">
+                  {saveError}
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="dash-savebar-actions">
+            <button
+              type="button"
+              className="dash-sb-btn"
+              onClick={discard}
+              disabled={saving}
+            >
+              Discard
+            </button>
+            <button
+              type="submit"
+              className="dash-sb-btn is-primary"
+              disabled={saving || generating}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="dash-page-enter brandingPage">
+        <header className="dash-page-header row brandingHeader">
+          <div>
+            <h1>Branding</h1>
+            <p>
+              Your logo, colour, store details and the voice Mink AI writes in.
+              They show across your storefront.
+            </p>
+          </div>
+          <a
+            href="/"
+            target="_blank"
+            rel="noreferrer"
+            className="dash-btn dash-btn-ghost"
+          >
+            <ExternalLink size={14} />
+            View your store
+          </a>
+        </header>
+
+        {disabled && (
+          <p className="brandingNotice">
+            <Lock size={14} aria-hidden />
+            You can see these details, but changing them needs permission to
+            manage branding. Ask your store owner.
+          </p>
+        )}
+
+        <div className="brandingLayout">
+          <div className="brandingMain">
+            <Card
+              id="logo"
+              title="Logo and colour"
+              sub="How customers recognise your store."
+            >
+              <div className="brandingLogoRow">
+                <div className="brandingField">
+                  <span className="brandingLabel" id="logo-label">
+                    Logo
+                  </span>
+                  {canManage ? (
+                    <div
+                      className="brandingLogoBox"
+                      role="group"
+                      aria-labelledby="logo-label"
+                    >
+                      <ImageUpload
+                        defaultImage={draft.logoUrl}
+                        onUploadSuccess={(url) => set("logoUrl", url)}
+                        folder="dashboard-uploads"
+                        spec="logo"
+                      />
+                    </div>
+                  ) : draft.logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={draft.logoUrl}
+                      alt="Store logo"
+                      className="brandingLogoStatic"
+                    />
+                  ) : (
+                    <p className="brandingHint">No logo yet.</p>
+                  )}
+                  <p className="brandingHint">
+                    Shown in your store&apos;s header, footer and browser tab.
+                    Without one, your store name is shown instead.
+                  </p>
+                </div>
+              </div>
+
+              <div className="brandingField">
+                <label htmlFor="primaryColor">Primary colour</label>
+                <div className="brandingColor">
+                  <label
+                    className="brandingSwatch"
+                    style={{ background: draft.primaryColor }}
+                  >
+                    <span className="sr-only">Pick a colour</span>
+                    <input
+                      type="color"
+                      value={draft.primaryColor}
+                      onChange={(e) => setColor(e.target.value)}
+                      disabled={disabled}
+                    />
+                  </label>
+                  <input
+                    id="primaryColor"
+                    className="dash-input brandingHex"
+                    value={colorText}
+                    onChange={(e) => setColor(e.target.value)}
+                    onBlur={() => setColorText(draft.primaryColor)}
+                    disabled={disabled}
+                    maxLength={7}
+                    spellCheck={false}
+                    autoComplete="off"
+                    aria-describedby="primaryColor-hint"
+                  />
+                </div>
+                <p className="brandingHint" id="primaryColor-hint">
+                  Used for buttons, links and highlights on your storefront.
+                  Type a hex code like #1a73e8 or pick one.
+                </p>
+              </div>
+            </Card>
+
+            <Card
+              id="details"
+              title="Store details"
+              sub="Your name and the words that introduce your store."
+            >
+              <Field
+                id="name"
+                label="Store name"
+                error={errors.name}
+                hint="Shown in your store's header, browser tab and emails."
+              >
+                <input
+                  id="name"
+                  ref={nameRef}
+                  className="dash-input"
+                  value={draft.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  disabled={disabled}
+                  required
+                  aria-invalid={errors.name ? true : undefined}
+                  aria-describedby={
+                    errors.name ? "name-error name-hint" : "name-hint"
+                  }
+                />
+              </Field>
+              <Field
+                id="tagline"
+                label="Tagline"
+                hint="A short line about your store. It shows on your shop page and under your store's name in search results."
+              >
+                <input
+                  id="tagline"
+                  className="dash-input"
+                  value={draft.tagline}
+                  onChange={(e) => set("tagline", e.target.value)}
+                  placeholder="e.g. Fresh groceries, delivered the same day"
+                  disabled={disabled}
+                  aria-describedby="tagline-hint"
+                />
+              </Field>
+              <Field
+                id="blurb"
+                label="About your store"
+                hint="A sentence or two shown in your store's footer, under your logo."
+              >
+                <textarea
+                  id="blurb"
+                  className="dash-input brandingTextarea"
+                  value={draft.blurb}
+                  onChange={(e) => set("blurb", e.target.value)}
+                  placeholder="e.g. We source from farms within 50 km of Pune and deliver within hours."
+                  disabled={disabled}
+                  rows={3}
+                  aria-describedby="blurb-hint"
+                />
+              </Field>
+            </Card>
+
+            <Card
+              id="contact"
+              title="Contact details"
+              sub="Shown in your store's footer so customers can reach you."
+            >
+              <div className="brandingGrid two">
+                <Field id="email" label="Email" error={errors.email}>
+                  <input
+                    id="email"
+                    ref={emailRef}
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    className="dash-input"
+                    value={draft.email}
+                    onChange={(e) => set("email", e.target.value)}
+                    placeholder="hello@yourstore.com"
+                    disabled={disabled}
+                    aria-invalid={errors.email ? true : undefined}
+                    aria-describedby={errors.email ? "email-error" : undefined}
+                  />
+                </Field>
+                <Field id="phone" label="Phone">
+                  <input
+                    id="phone"
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    className="dash-input"
+                    value={draft.phone}
+                    onChange={(e) => set("phone", e.target.value)}
+                    placeholder="+91 98765 43210"
+                    disabled={disabled}
+                  />
+                </Field>
+                <Field id="hours" label="Opening hours" className="wide">
+                  <input
+                    id="hours"
+                    className="dash-input"
+                    value={draft.hours}
+                    onChange={(e) => set("hours", e.target.value)}
+                    placeholder="Mon to Sat, 10am to 6pm"
+                    disabled={disabled}
+                  />
+                </Field>
+              </div>
+            </Card>
+
+            <Card
+              id="social"
+              title="Social links"
+              sub="Icons in your store's footer link to these. Leave any empty to hide its icon."
+            >
+              <SocialField
+                id="instagram"
+                label="Instagram"
+                icon={<InstagramMark />}
+                value={draft.instagram}
+                placeholder="instagram.com/yourstore"
+                disabled={disabled}
+                onChange={(v) => set("instagram", v)}
+              />
+              <SocialField
+                id="youtube"
+                label="YouTube"
+                icon={<YoutubeMark />}
+                value={draft.youtube}
+                placeholder="youtube.com/@yourstore"
+                disabled={disabled}
+                onChange={(v) => set("youtube", v)}
+              />
+              <SocialField
+                id="whatsapp"
+                label="WhatsApp"
+                icon={<WhatsappMark />}
+                value={draft.whatsapp}
+                placeholder="wa.me/919876543210"
+                disabled={disabled}
+                onChange={(v) => set("whatsapp", v)}
+              />
+            </Card>
+
+            <Card
+              id="footer"
+              title="Footer"
+              sub="The two small lines at the very bottom of every page."
+            >
+              <Field
+                id="legalName"
+                label="Legal name"
+                hint={`Shown in the copyright line: © ${new Date().getFullYear()} ${
+                  draft.legalName.trim() || draft.name.trim() || "Your store"
+                }. Leave it empty to use your store name.`}
+              >
+                <input
+                  id="legalName"
+                  className="dash-input"
+                  value={draft.legalName}
+                  onChange={(e) => set("legalName", e.target.value)}
+                  placeholder="e.g. Acme Foods Pvt. Ltd."
+                  disabled={disabled}
+                  aria-describedby="legalName-hint"
+                />
+              </Field>
+              <Field id="creditLine" label="Credit line" hint={creditCopy.hint}>
+                <input
+                  id="creditLine"
+                  className="dash-input"
+                  value={draft.creditLine}
+                  onChange={(e) => set("creditLine", e.target.value)}
+                  placeholder={creditCopy.placeholder}
+                  disabled={disabled}
+                  aria-describedby="creditLine-hint"
+                />
+              </Field>
+            </Card>
+
+            <BrandVoiceSection
+              voice={voice}
+              onChange={setVoice}
+              canManage={canManage}
+              onGeneratingChange={setGenerating}
+            />
+          </div>
+
+          <aside className="brandingAside" aria-labelledby="preview-title">
+            <div className="dash-card brandingCard">
+              <header className="dash-card-header">
+                <div>
+                  <h2 className="dash-card-title" id="preview-title">
+                    Preview
+                  </h2>
+                  <p className="dash-card-sub">
+                    Where these details show on your store.
+                  </p>
+                </div>
+              </header>
+              <div className="brandingPreviewBody">
+                <BrandPreview draft={draft} removeBadge={removeBadge} />
+              </div>
+            </div>
+            <p className="brandingAsideNote">
+              Your theme decides the exact fonts and layout. Open your store to
+              see the real thing once you save.
+            </p>
+          </aside>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+function Card({
+  id,
+  title,
+  sub,
+  children,
+}: {
+  id: string;
+  title: string;
+  sub: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="dash-card brandingCard" aria-labelledby={`${id}-title`}>
+      <header className="dash-card-header">
+        <div>
+          <h2 className="dash-card-title" id={`${id}-title`}>
+            {title}
+          </h2>
+          <p className="dash-card-sub">{sub}</p>
+        </div>
+      </header>
+      <div className="dash-card-body brandingCardBody">{children}</div>
+    </section>
+  );
+}
+
+function Field({
+  id,
+  label,
+  hint,
+  error,
+  className,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: string;
+  error?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`brandingField${className ? ` ${className}` : ""}`}
+      data-invalid={error ? "true" : undefined}
+    >
+      <label htmlFor={id}>{label}</label>
+      {children}
+      {error && (
+        <p className="brandingError" id={`${id}-error`}>
+          {error}
+        </p>
+      )}
+      {hint && (
+        <p className="brandingHint" id={`${id}-hint`}>
+          {hint}
         </p>
       )}
     </div>
   );
-  const creditCopy = creditLineCopy(removeBadge, creditLine);
+}
 
+function SocialField({
+  id,
+  label,
+  icon,
+  value,
+  placeholder,
+  disabled,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
   return (
-    <form className="brandingPage" onSubmit={onSubmit}>
-      <h1>Branding</h1>
-      <p className="lead">
-        How your store looks to customers - logo, name, colours, contact details
-        and social links.
-      </p>
-
-      <div className="brandingSection">
-        <h2>Identity</h2>
-        <div className="brandingGrid">
-          {field("name", "Store name", initial.name)}
-          {field("tagline", "Tagline", initial.tagline, {
-            placeholder: "Short line shown in the browser tab",
-          })}
-          <div className="brandingField full">
-            <label>Logo</label>
-            <input type="hidden" name="logoUrl" value={logoUrl} />
-            <ImageUpload
-              defaultImage={logoUrl}
-              onUploadSuccess={setLogoUrl}
-              folder="dashboard-uploads"
-              spec="logo"
-            />
-          </div>
-          <div className="brandingField">
-            <label htmlFor="primaryColor">Primary colour</label>
-            <input
-              id="primaryColor"
-              name="primaryColor"
-              type="color"
-              defaultValue={initial.primaryColor}
-              disabled={!canManage}
-            />
-          </div>
-        </div>
+    <div className="brandingField">
+      <label htmlFor={id}>{label}</label>
+      <div className="brandingIconInput">
+        <span className="brandingInputIcon">{icon}</span>
+        <input
+          id={id}
+          className="dash-input"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          inputMode="url"
+          autoComplete="url"
+          spellCheck={false}
+        />
       </div>
-
-      <div className="brandingSection">
-        <h2>Footer</h2>
-        <div className="brandingGrid">
-          {field("blurb", "About blurb", initial.blurb, {
-            placeholder: "A sentence about your brand",
-            full: true,
-          })}
-          {field("legalName", "Legal name (copyright)", initial.legalName, {
-            placeholder: "Acme Foods Pvt. Ltd.",
-          })}
-          {field("creditLine", "Credit line", initial.creditLine, {
-            placeholder: creditCopy.placeholder,
-            hint: creditCopy.hint,
-            onChange: setCreditLine,
-          })}
-        </div>
-      </div>
-
-      <div className="brandingSection">
-        <h2>Contact</h2>
-        <div className="brandingGrid">
-          {field("email", "Email", initial.email, { type: "email" })}
-          {field("phone", "Phone", initial.phone, {
-            placeholder: "+91 98765 43210",
-          })}
-          {field("hours", "Hours", initial.hours, {
-            placeholder: "Mon to Sat, 10am to 6pm IST",
-          })}
-        </div>
-      </div>
-
-      <div className="brandingSection">
-        <h2>Social links</h2>
-        <div className="brandingGrid">
-          {field("instagram", "Instagram URL", initial.social.instagram)}
-          {field("youtube", "YouTube URL", initial.social.youtube)}
-          {field("whatsapp", "WhatsApp link", initial.social.whatsapp, {
-            placeholder: "https://wa.me/91…",
-          })}
-        </div>
-      </div>
-
-      {canManage && (
-        <div className="brandingBar">
-          <button className="brandingSave" type="submit" disabled={saving}>
-            {saving ? "Saving…" : "Save branding"}
-          </button>
-          {status && (
-            <span className={`brandingStatus ${status.ok ? "ok" : "bad"}`}>
-              {status.msg}
-            </span>
-          )}
-        </div>
-      )}
-    </form>
+    </div>
   );
 }

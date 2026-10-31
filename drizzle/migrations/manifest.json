@@ -10618,6 +10618,128 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261031_0276_theme_chosen_once_help",
+      "description": "Help Centre: a store's theme is chosen once. The theme guide (change-your-storefront-theme, now titled Choose your storefront theme) loses its switching steps and switch section and explains Customise storefront and the Website Builder; the setup, signup, dashboard, branding, brand voice and Mink AI website guides are corrected in place (Branding sits under Storefront; Customise storefront sends the merchant's answers to Mink AI). Content only.",
+      "file": "sql/20261031_0276_theme_chosen_once_help.sql",
+      "transaction": true,
+      "requires": ["20261031_0275_no_theme_samples_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the theme guide is titled Choose your storefront theme",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and title = 'Choose your storefront theme'",
+            "equals": "1"
+          },
+          {
+            "name": "the theme guide's excerpt says a theme is chosen once",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and excerpt like '%the one that fits your store. You choose it once.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the theme guide's search title says choose",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and seo_title like '%Choose your StoreMink storefront theme%'",
+            "equals": "1"
+          },
+          {
+            "name": "the theme guide's search description says a theme is chosen once",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and seo_description like '%choose your store''s theme once%'",
+            "equals": "1"
+          },
+          {
+            "name": "the intro says a theme is chosen once",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%you change how your store looks with <strong>Customise storefront</strong> and the Website Builder, not by switching themes.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the intro no longer mentions switching",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%stay yours when you switch.%'",
+            "equals": "0"
+          },
+          {
+            "name": "the library is shown only until a theme is chosen",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%once you have chosen one, the library is no longer shown.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the choose section is headed Choose your theme",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%<h2>Choose your theme</h2>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Switch theme button is gone from the steps",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%Select <strong>Switch theme</strong>%'",
+            "equals": "0"
+          },
+          {
+            "name": "the guide says a theme cannot be switched afterwards",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%You can''t switch to another theme afterwards.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the adds section is headed What your theme adds",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%<h2>What your theme adds</h2>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the switch section is removed",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%What changes when you switch%'",
+            "equals": "0"
+          },
+          {
+            "name": "the guide explains Customise storefront and the Website Builder",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%<h2>Change how your store looks</h2>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the old Customize button is gone",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-theme' and status = 'published' and body like '%<strong>Customize</strong>%'",
+            "equals": "0"
+          },
+          {
+            "name": "the setup guide opens Branding from Storefront",
+            "sql": "select count(*)::text from public.help_articles where slug = 'complete-your-store-setup' and status = 'published' and body like '%<li>Open <strong>Storefront</strong>, then <strong>Branding</strong>.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the setup guide no longer says the theme changes any time",
+            "sql": "select count(*)::text from public.help_articles where slug = 'complete-your-store-setup' and status = 'published' and body like '%You can change the theme any time.%'",
+            "equals": "0"
+          },
+          {
+            "name": "the brand voice guide opens Branding from Storefront",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-or-edit-your-brand-voice' and status = 'published' and body like '%<li>Open <strong>Storefront</strong>, then <strong>Branding</strong>.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the branding guide opens Branding from Storefront",
+            "sql": "select count(*)::text from public.help_articles where slug = 'change-your-storefront-branding-and-layout' and status = 'published' and body like '%open <strong>Storefront</strong>, then <strong>Branding</strong>.</li>%'",
+            "equals": "1"
+          },
+          {
+            "name": "the signup guide links Choose your storefront theme",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-your-storemink-store' and status = 'published' and body like '%Choose your storefront theme</a>.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the signup guide no longer says change it whenever you like",
+            "sql": "select count(*)::text from public.help_articles where slug = 'create-your-storemink-store' and status = 'published' and body like '%change it whenever you like%'",
+            "equals": "0"
+          },
+          {
+            "name": "the dashboard guide puts branding under Storefront",
+            "sql": "select count(*)::text from public.help_articles where slug = 'understand-your-storemink-dashboard' and status = 'published' and body like '%customise how your store looks and edit your branding%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Mink AI website guide names Customise storefront",
+            "sql": "select count(*)::text from public.help_articles where slug = 'manage-your-website-with-mink-ai' and status = 'published' and body like '%select <strong>Customise storefront</strong> on the <strong>Storefront</strong> page%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

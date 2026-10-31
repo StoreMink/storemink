@@ -5,12 +5,17 @@ const h = vi.hoisted(() => ({
   context: null as any,
   contextError: null as Error | null,
   canManage: true,
+  canBuild: true,
+  canBrand: true,
 }));
 
 vi.mock("../lib/access", () => ({
   requireSectionAccess: vi.fn(async () => ({
-    can: (_key: string, action: string) =>
-      action === "view" ? true : h.canManage,
+    can: (key: string, action: string) => {
+      if (key === "builder") return action === "view" || h.canBuild;
+      if (key === "branding") return h.canBrand;
+      return action === "view" ? true : h.canManage;
+    },
   })),
   getActingStoreId: vi.fn(async () => "store-1"),
 }));
@@ -36,10 +41,9 @@ import StorefrontPage, { metadata } from "./page";
 const FACTS = {
   firstTheme: false,
   launched: false,
-  homepage: "seeded",
-  catalogueIsSampleOnly: true,
+  homepage: "missing",
   hasBuilderChrome: false,
-  brandColorIsTheme: true,
+  brandColorUnset: false,
   hasDesignOverrides: false,
 };
 
@@ -62,6 +66,8 @@ describe("Storefront page (server)", () => {
     h.context = null;
     h.contextError = null;
     h.canManage = true;
+    h.canBuild = true;
+    h.canBrand = true;
   });
 
   it("is titled Storefront and still gated on the `themes` permission key", async () => {
@@ -72,14 +78,37 @@ describe("Storefront page (server)", () => {
     expect(requireSectionAccess).toHaveBeenCalledWith("themes", "view");
   });
 
-  it("a store on a theme gets its card, and that theme leaves the library", async () => {
-    // Vitrine, not Basket: Basket is a legacy theme and never in the library.
+  it("★★ a store on a theme gets its card and NO library: a theme is chosen once", async () => {
     h.context = contextFor({ theme: { presetId: "vitrine" } }, false);
     const props = await renderedProps();
     expect(props.currentId).toBe("vitrine");
     expect(props.current?.name).toBe("Vitrine");
-    expect(props.library.map((t) => t.id)).not.toContain("vitrine");
-    expect(props.canManage).toBe(true);
+    expect(props.library).toEqual([]);
+    expect(props.canCustomise).toBe(true);
+    expect(props.canEditBranding).toBe(true);
+  });
+
+  it("Customise storefront needs Website Builder manage", async () => {
+    h.canBuild = false;
+    h.context = contextFor({ theme: { presetId: "vitrine" } }, false);
+    expect((await renderedProps()).canCustomise).toBe(false);
+  });
+
+  it("the Branding card needs Branding view", async () => {
+    h.canBrand = false;
+    h.context = contextFor({ theme: { presetId: "vitrine" } }, false);
+    expect((await renderedProps()).canEditBranding).toBe(false);
+  });
+
+  it("a demo or preview store offers neither the library nor a redesign", async () => {
+    h.context = {
+      ...contextFor({ theme: { presetId: "vitrine" }, demo: true }, false),
+      managedByOperators: true,
+    };
+    const props = await renderedProps();
+    expect(props.canCustomise).toBe(false);
+    expect(props.canManage).toBe(false);
+    expect(props.managedByOperators).toBe(true);
   });
 
   it("★ a pending store has no current theme, even with a stray settings.theme", async () => {
@@ -94,6 +123,9 @@ describe("Storefront page (server)", () => {
     expect(props.library.map((t) => t.id)).toContain("vitrine");
     // The facts reach the dialog unchanged, so it describes a first install.
     expect(props.facts?.firstTheme).toBe(true);
+    expect(props.library.length).toBeGreaterThan(0);
+    // Nothing to redesign yet.
+    expect(props.canCustomise).toBe(false);
   });
 
   it("an unreadable store is reported, not presented as theme-less", async () => {
@@ -103,6 +135,8 @@ describe("Storefront page (server)", () => {
     expect(props.facts).toBeNull();
     expect(props.currentId).toBeNull();
     expect(props.canManage).toBe(false);
+    expect(props.canCustomise).toBe(false);
+    expect(props.library).toEqual([]);
   });
 
   it("view-only staff cannot choose a theme", async () => {
