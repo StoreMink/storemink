@@ -353,6 +353,11 @@ export const SECTIONS: DashboardSection[] = [
     icon: "colors",
     group: "Online store",
     actions: ["view", "manage"],
+    // ★ Part of Storefront (owner, 31 Oct 2026): how the store looks to
+    // customers lives in one place. Its own key stays, so saved roles keep
+    // their grant and a role that can see Branding but not Storefront still
+    // finds it at the top level.
+    parent: "themes",
   },
   {
     // Same reasoning: the media library feeds the storefront.

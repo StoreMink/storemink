@@ -2,11 +2,12 @@
 
 /**
  * The dashboard's Storefront page (/dashboard/storefront): installing a
- * store's first theme, or switching it to another.
+ * store's first theme. A store that already has a theme keeps it (owner,
+ * 31 Oct 2026); lib/themes/switch.ts refuses another.
  *
  * ⚠ EVERY EXPORT OF THIS FILE IS A PUBLICLY REACHABLE ENDPOINT, so the gate is
- * the boundary: a theme switch re-skins the whole storefront and may replace
- * its homepage. What the switch is allowed to change lives in
+ * the boundary: a theme skins the whole storefront and may replace its
+ * homepage. What the install is allowed to change lives in
  * lib/themes/switch-rules.ts; this file only decides WHO may ask and WHICH
  * themes may be asked for.
  */
@@ -45,7 +46,7 @@ export async function switchStoreTheme(
   if (!identity) {
     return {
       ok: false,
-      error: "You don't have permission to change the theme.",
+      error: "You don't have permission to choose the theme.",
     };
   }
   if (!isThemeId(themeId)) return { ok: false, error: "Choose a theme." };
@@ -79,12 +80,6 @@ export async function switchStoreTheme(
       ? (options as Record<string, unknown>)
       : {};
   const replaceEditedHomepage = opts.replaceEditedHomepage === true;
-  // Whether the confirm dialog described a FIRST install. Only a real boolean
-  // counts; anything else means "the caller didn't say", as before.
-  const expectFirstTheme =
-    typeof opts.expectFirstTheme === "boolean"
-      ? opts.expectFirstTheme
-      : undefined;
 
   const storeId = await getActingStoreId();
   const result = await switchStoreThemeTo({
@@ -92,17 +87,14 @@ export async function switchStoreTheme(
     theme,
     minPlan: meta.catalog.minPlan,
     replaceEditedHomepage,
-    expectFirstTheme,
     actorUserId: identity.uid,
   });
   if (!result.ok) return result;
 
-  if (result.plan.firstTheme) {
-    // ★ Read-your-own-writes, the launchStore rule: the resolver caches
-    // `settings`, and with stale-while-revalidate alone the owner's next look
-    // at the storefront would still be the "store in progress" page.
-    updateTag(STORE_TAG);
-  }
+  // ★ Read-your-own-writes, the launchStore rule: the resolver caches
+  // `settings`, and with stale-while-revalidate alone the owner's next look at
+  // the storefront would still be the "store in progress" page.
+  updateTag(STORE_TAG);
   revalidatePath("/dashboard/storefront");
   // The Website Builder asks for a theme first while none is chosen.
   revalidatePath("/dashboard/builder");

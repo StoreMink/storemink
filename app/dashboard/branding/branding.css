@@ -1,103 +1,535 @@
-.brandingPage {
-  max-width: 760px;
+/* The Branding page. Built on the dashboard's own tokens and components
+   (dash-card, dash-input, dash-btn, dash-savebar), so it reads like every
+   other settings page; only the layout, the colour picker, the brand voice
+   steps and the storefront preview are styled here. Scoped to
+   .dashboard-shell like the rest of the dashboard. */
+
+.dashboard-shell .brandingForm {
+  display: block;
+}
+
+.dashboard-shell .brandingPage {
   width: 100%;
+  max-width: 1120px;
   margin: 0 auto;
+  padding-bottom: 48px;
+  container-type: inline-size;
+  container-name: branding;
 }
-.brandingPage h1 {
-  font-size: 22px;
-  font-weight: 700;
-  margin: 0 0 4px;
+
+.dashboard-shell .brandingHeader {
+  align-items: center;
+  margin-bottom: 20px;
 }
-.brandingPage .lead {
-  color: #5b6675;
-  font-size: 14px;
-  margin: 0 0 24px;
+
+.dashboard-shell .brandingNotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface-2);
+  color: var(--dash-text-2);
+  font-size: 13px;
 }
-.brandingSection {
-  border: 1px solid #e7e9ee;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 18px;
-}
-.brandingSection h2 {
-  font-size: 15px;
-  font-weight: 700;
-  margin: 0 0 14px;
-}
-.brandingGrid {
+
+/* ---------- Layout: cards on the left, a sticky preview on the right ---------- */
+.dashboard-shell .brandingLayout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
 }
-.brandingField {
+
+.dashboard-shell .brandingMain {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* Two columns once the PAGE (not the window) is wide enough: the sidebar and
+   the Mink panel both narrow it, so a viewport breakpoint would be wrong as
+   soon as either moves. */
+@container branding (min-width: 880px) {
+  .dashboard-shell .brandingLayout {
+    grid-template-columns: minmax(0, 1fr) 320px;
+    align-items: start;
+  }
+
+  .dashboard-shell .brandingAside {
+    position: sticky;
+    top: 16px;
+  }
+
+  /* Clear of the contextual save bar while it shows. */
+  .dashboard-shell .brandingForm[data-dirty="true"] .brandingAside {
+    top: 72px;
+  }
+}
+
+/* ---------- Cards and fields ---------- */
+.dashboard-shell .brandingCard {
+  container-type: inline-size;
+  container-name: brandcard;
+}
+
+.dashboard-shell .brandingCardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.dashboard-shell .brandingGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@container brandcard (min-width: 520px) {
+  .dashboard-shell .brandingGrid.two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-shell .brandingGrid.two > .wide {
+    grid-column: 1 / -1;
+  }
+}
+
+.dashboard-shell .brandingField {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
-.brandingField.full {
-  grid-column: 1 / -1;
-}
-.brandingField label {
+
+.dashboard-shell .brandingField > label,
+.dashboard-shell .brandingLabel {
   font-size: 13px;
-  font-weight: 600;
-  color: #344;
+  font-weight: 550;
+  color: var(--dash-text);
 }
-.brandingField input,
-.brandingField textarea {
-  border: 1px solid #d8dbe2;
-  border-radius: 8px;
-  padding: 9px 11px;
-  font-size: 14px;
-  font-family: inherit;
+
+.dashboard-shell .brandingField .dash-input {
   width: 100%;
-  background: #fff;
 }
-.brandingField input:focus,
-.brandingField textarea:focus {
-  outline: none;
-  border-color: #4f39f6;
-  box-shadow: 0 0 0 3px #eceaff;
-}
-.brandingField input[type="color"] {
-  padding: 4px;
-  height: 40px;
-}
-.brandingHint {
+
+.dashboard-shell .brandingHint {
   margin: 0;
-  color: #5b6675;
+  color: var(--dash-text-2);
   font-size: 12.5px;
   line-height: 1.45;
 }
-.brandingBar {
+
+.dashboard-shell .brandingError {
+  margin: 0;
+  color: var(--dash-red);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.dashboard-shell .brandingField[data-invalid="true"] .dash-input {
+  border-color: var(--dash-red);
+}
+
+.dashboard-shell .brandingField[data-invalid="true"] .dash-input:focus {
+  box-shadow: 0 0 0 3px var(--dash-red-soft);
+}
+
+.dashboard-shell .brandingTextarea {
+  resize: vertical;
+  min-height: 76px;
+}
+
+/* ---------- Logo ---------- */
+.dashboard-shell .brandingLogoBox {
+  max-width: 360px;
+}
+
+.dashboard-shell .brandingLogoStatic {
+  max-width: 200px;
+  max-height: 64px;
+  object-fit: contain;
+  padding: 8px;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface);
+}
+
+/* ---------- Colour ---------- */
+.dashboard-shell .brandingColor {
   display: flex;
   align-items: center;
-  gap: 14px;
-  position: sticky;
-  bottom: 0;
-  background: #fff;
-  padding: 14px 0;
+  gap: 10px;
 }
-.brandingSave {
-  background: #4f39f6;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 22px;
-  font-weight: 600;
-  font-size: 14px;
+
+.dashboard-shell .brandingSwatch {
+  position: relative;
+  flex-shrink: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--dash-radius-sm);
+  border: 1px solid var(--dash-border-strong);
+  box-shadow: inset 0 0 0 2px var(--dash-surface);
   cursor: pointer;
 }
-.brandingSave:disabled {
-  opacity: 0.5;
+
+.dashboard-shell .brandingSwatch:focus-within {
+  box-shadow:
+    inset 0 0 0 2px var(--dash-surface),
+    0 0 0 3px var(--dash-accent-ring);
+}
+
+/* The native picker covers the swatch, invisible, so a tap anywhere on the
+   colour opens it and the colour itself is what shows. */
+.dashboard-shell .brandingSwatch input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+}
+
+.dashboard-shell .brandingSwatch input[type="color"]:disabled {
   cursor: not-allowed;
 }
-.brandingStatus.ok {
-  color: #0c8a51;
-  font-size: 14px;
+
+.dashboard-shell .brandingField .dash-input.brandingHex {
+  width: 132px;
+  font-family: var(--font-dash-mono, ui-monospace, monospace);
+}
+
+/* ---------- Social links: the platform's mark inside the field ---------- */
+.dashboard-shell .brandingIconInput {
+  position: relative;
+}
+
+.dashboard-shell .brandingInputIcon {
+  position: absolute;
+  top: 50%;
+  left: 11px;
+  display: flex;
+  color: var(--dash-text-3);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.dashboard-shell .brandingIconInput .dash-input {
+  padding-left: 34px;
+}
+
+/* ---------- Brand voice ---------- */
+.dashboard-shell .bvStep {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.dashboard-shell .bvStep + .bvStep {
+  padding-top: 18px;
+  border-top: 1px solid var(--dash-border);
+}
+
+.dashboard-shell .bvStepNo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--dash-accent-soft);
+  color: var(--dash-accent);
+  font-size: 12px;
   font-weight: 600;
 }
-.brandingStatus.bad {
-  color: #d33a45;
+
+.dashboard-shell .bvStepBody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dashboard-shell .bvStepTitle {
+  margin: 2px 0 0;
   font-size: 14px;
   font-weight: 600;
+  color: var(--dash-text);
+}
+
+.dashboard-shell .bvGuideHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-shell .bvGuideHead .brandingHint {
+  margin-top: 4px;
+}
+
+.dashboard-shell .brandingGuide {
+  resize: vertical;
+  min-height: 220px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* A tone in the tint, the words in ink: the dashboard's green and red fail the
+   contrast line as text. */
+.dashboard-shell .brandingNote {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--dash-radius-sm);
+  color: var(--dash-text);
+  font-size: 13px;
+}
+
+.dashboard-shell .brandingNote.is-ok {
+  background: var(--dash-green-soft);
+}
+
+.dashboard-shell .brandingNote.is-bad {
+  background: var(--dash-red-soft);
+}
+
+/* ---------- Preview ---------- */
+.dashboard-shell .brandingPreviewBody {
+  padding: 16px;
+  background: var(--dash-surface-2);
+}
+
+.dashboard-shell .brandingAsideNote {
+  margin: 10px 4px 0;
+  color: var(--dash-text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* The preview draws a generic storefront in fixed neutrals (it is a picture of
+   a shop, not dashboard chrome); only the store's own colour is variable,
+   through --bp-accent and the text colour that reads on it. */
+.dashboard-shell .bpFrame {
+  overflow: hidden;
+  border: 1px solid var(--dash-border-strong);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: var(--dash-shadow-xs);
+  color: #111827;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.dashboard-shell .bpTab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #eef0f3;
+}
+
+.dashboard-shell .bpFavicon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bp-accent);
+  color: var(--bp-on-accent);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.dashboard-shell .bpFavicon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #ffffff;
+}
+
+.dashboard-shell .bpTabTitle {
+  min-width: 0;
+  overflow: hidden;
+  color: #4b5563;
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-shell .bpHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.dashboard-shell .bpBrand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dashboard-shell .bpLogo {
+  width: auto;
+  height: 18px;
+  max-width: 72px;
+  object-fit: contain;
+}
+
+.dashboard-shell .bpName {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-shell .bpNav {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  color: #5b6472;
+  font-size: 10.5px;
+}
+
+.dashboard-shell .bpHero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 16px 12px 18px;
+  background: color-mix(in srgb, var(--bp-accent) 7%, #ffffff);
+}
+
+.dashboard-shell .bpEyebrow {
+  color: #6b7280;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dashboard-shell .bpTitle {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-shell .bpSubtitle {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #4b5563;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.dashboard-shell .bpActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.dashboard-shell .bpButton {
+  padding: 5px 10px;
+  border-radius: 6px;
+  background: var(--bp-accent);
+  color: var(--bp-on-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.dashboard-shell .bpLink {
+  color: var(--bp-accent);
+  font-size: 10.5px;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+.dashboard-shell .bpFooter {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 12px 12px;
+  border-top: 1px solid #eef0f3;
+  background: #f8f9fb;
+}
+
+.dashboard-shell .bpBlurb {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #4b5563;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.dashboard-shell .bpBlurb.is-empty {
+  color: #9ca3af;
+  font-style: italic;
+}
+
+.dashboard-shell .bpContacts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-shell .bpContact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #4b5563;
+}
+
+.dashboard-shell .bpContact > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-shell .bpContact > svg {
+  flex-shrink: 0;
+}
+
+.dashboard-shell .bpSocials {
+  display: flex;
+  gap: 6px;
+}
+
+.dashboard-shell .bpSocial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #374151;
+}
+
+.dashboard-shell .bpBottom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e5e7eb;
+  color: #6b7280;
+  font-size: 9.5px;
 }

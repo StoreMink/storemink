@@ -392,7 +392,7 @@ const BESPOKE: Record<string, { subject: string; body: string[] }> = {
       "<h2>Your setup checklist</h2>",
       '<ul class="email-checklist">',
       '  <li><a href="{{store_url}}/dashboard/settings/account?focus=phone">Verify your mobile number</a><br />We text you a six-digit code. It takes a few seconds and confirms a real person runs your store.</li>',
-      '  <li><a href="{{store_url}}/dashboard/storefront">Choose your storefront theme</a><br />Until you pick one, your storefront shows a store-in-progress page. You can change it any time.</li>',
+      '  <li><a href="{{store_url}}/dashboard/storefront">Choose your storefront theme</a><br />Until you pick one, your storefront shows a store-in-progress page. You choose it once, so preview a few first.</li>',
       '  <li><a href="{{store_url}}/dashboard/products">Add your first product</a><br />Publish at least one product of your own. Any sample products your theme adds are drafts your customers never see.</li>',
       '  <li><a href="{{store_url}}/dashboard/billing">Add your business and delivery details</a><br />Your trading name, address, email and mobile number appear on every invoice. Then <a href="{{store_url}}/dashboard/settings/shipping">set your delivery charges</a> so checkout shows prices you chose.</li>',
       '  <li><a href="{{store_url}}/dashboard/settings/policies">Publish your store policies</a><br />Terms, refunds, shipping and privacy. Shoppers can read all four before they pay.</li>',

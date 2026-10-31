@@ -1380,6 +1380,55 @@ export function revampLinkTargets(input: {
 }
 
 /**
+ * ★★ True when a page of the store speaks for the store, so a menu may send
+ * shoppers to it: a policy page (the merchant's own terms), a page that
+ * could not be read (in doubt, the merchant's), or one with at least one
+ * section that is not the theme's starting content (written by the merchant
+ * or by Mink). A page that is still entirely the theme's own words describes
+ * the theme's demo shop, not this one.
+ */
+export function revampPageSpeaksForStore(page: RevampSnapshotPage): boolean {
+  if (page.skipped !== null || REVAMP_SKIPPED_SLUGS.has(page.slug)) {
+    return true;
+  }
+  return page.sections.some(
+    (section) => (page.owners[section.id] ?? "merchant") !== "theme",
+  );
+}
+
+/**
+ * What a menu link (header, footer, announcement bar) may point at: the link
+ * targets, with pages narrowed to the pages this redesign writes and the
+ * store's pages that speak for it (`revampPageSpeaksForStore`).
+ * ★★ THE MENUS ARE ON EVERY PAGE (owner, 31 Oct 2026: Mink takes care of the
+ *    navbar too). A theme page the redesign leaves out keeps the theme's own
+ *    words, so a menu link to it sends every shopper to the theme's demo
+ *    copy. A section on a page may still link to such a page; only the
+ *    menus and the bar are kept off it.
+ */
+export function revampMenuLinkTargets(input: {
+  request: RevampRequest;
+  snapshot: RevampSnapshot;
+  plan: Pick<RevampSitePlan, "pages">;
+}): { pages: Set<string>; categories: Set<string>; products: Set<string> } {
+  const targets = revampLinkTargets(input);
+  const written = new Set(input.plan.pages.map((page) => page.slug));
+  const speaks = new Set(
+    input.snapshot.pages
+      .filter(revampPageSpeaksForStore)
+      .map((page) => page.slug),
+  );
+  return {
+    ...targets,
+    pages: new Set(
+      [...targets.pages].filter(
+        (slug) => written.has(slug) || speaks.has(slug),
+      ),
+    ),
+  };
+}
+
+/**
  * The storefront's own pages a link may name like a store page: the blog
  * and the enquiry form, which every store serves (app/(storefront)/(pages)
  * /blogs and /enquiries) whatever a redesign changes. Their slugs are
@@ -2286,6 +2335,16 @@ interface Ctx {
     categories: Set<string>;
     products: Set<string>;
   };
+  /**
+   * What the menus and the announcement bar may link to
+   * (`revampMenuLinkTargets`): `targets` without the theme pages this
+   * redesign leaves in the theme's own words.
+   */
+  menuTargets: {
+    pages: Set<string>;
+    categories: Set<string>;
+    products: Set<string>;
+  };
   hasProducts: boolean;
   /** The redesign creates at least one product (Apply features each one). */
   createsProducts: boolean;
@@ -2782,6 +2841,16 @@ function isLinkKey(key: string): boolean {
 
 const LINK_HELP =
   'Link only to "/", "/shop", "/collections/<category>", "/shop/<product>" or "/<page>" from <link_targets>, the blog or the enquiry form ("/blogs", "/enquiries"), or leave it "".';
+
+const MENU_LINK_HELP =
+  'A menu or the announcement bar links only to "/", "/shop", "/collections/<category>", "/shop/<product>", the blog or the enquiry form ("/blogs", "/enquiries"), a page you write in this answer or a page <link_targets> lists under "Pages a menu may link to", or leave it "".';
+
+/** Why a menu or bar link cannot stay, from the word "which". */
+function menuLinkProblem(ctx: Ctx, rawHref: string): string {
+  return checkRevampLink(rawHref, ctx.targets) !== null
+    ? `is a page still in the theme's own words that this redesign does not write. ${MENU_LINK_HELP}`
+    : `will not exist after Apply. ${MENU_LINK_HELP}`;
+}
 
 // ---------------------------------------------------------------------------
 // One new section.
@@ -3802,7 +3871,9 @@ export function isHomeLabel(label: string): boolean {
 
 /** Where a menu link labelled `label` and written as `rawHref` goes. */
 function menuLinkHref(ctx: Ctx, label: string, rawHref: string): string | null {
-  const checked = checkRevampLink(rawHref, ctx.targets);
+  // ★★ Menus link only where every shopper should be sent: never to a theme
+  //    page left in the theme's own words (`revampMenuLinkTargets`).
+  const checked = checkRevampLink(rawHref, ctx.menuTargets);
   if (!isHomeLabel(label)) return checked;
   return checked && ctx.homeNamed.has(checked) ? checked : "/";
 }
@@ -3884,7 +3955,7 @@ function buildHeader(ctx: Ctx, raw: unknown, copied: boolean): NavLink[] {
         if (!quiet) {
           issue(
             ctx,
-            `${at} "${label}" links to "${clipText(rawHref, 80)}", which will not exist after Apply. ${LINK_HELP}`,
+            `${at} "${label}" links to "${clipText(rawHref, 80)}", which ${menuLinkProblem(ctx, rawHref)}`,
             "link",
           );
         }
@@ -3954,7 +4025,7 @@ function buildFooter(ctx: Ctx, raw: unknown, copied: boolean): FooterGroup[] {
         if (href === null && !copied) {
           issue(
             ctx,
-            `${at} "${label}" links to "${clipText(rawHref, 80)}", which will not exist after Apply. ${LINK_HELP}`,
+            `${at} "${label}" links to "${clipText(rawHref, 80)}", which ${menuLinkProblem(ctx, rawHref)}`,
             "link",
           );
         }
@@ -5276,6 +5347,11 @@ function buildPlan(
     owned: revampOwnedPhotoUrls(input),
     replaceable: replaceableSet(snapshot),
     targets: { pages: new Set(), categories: new Set(), products: new Set() },
+    menuTargets: {
+      pages: new Set(),
+      categories: new Set(),
+      products: new Set(),
+    },
     hasProducts: revampHasRealProducts(input),
     createsProducts: revampNewProductSlugs(input).size > 0,
     categoryBand: revampCategoryBandAllowed(input),
@@ -5371,14 +5447,16 @@ function buildPlan(
     newSlugs.push(slug);
   }
 
-  ctx.targets = revampLinkTargets({
+  const linkPlan = {
+    pages: [...plannedSlugs, ...newSlugs].map((slug) => ({
+      slug,
+    })) as RevampPlannedPage[],
+  };
+  ctx.targets = revampLinkTargets({ request, snapshot, plan: linkPlan });
+  ctx.menuTargets = revampMenuLinkTargets({
     request,
     snapshot,
-    plan: {
-      pages: [...plannedSlugs, ...newSlugs].map((slug) => ({
-        slug,
-      })) as RevampPlannedPage[],
-    },
+    plan: linkPlan,
   });
 
   // ── Build each page ──────────────────────────────────────────────────────
@@ -5555,7 +5633,8 @@ function buildPlan(
   let brand: RevampSitePlan["brand"];
   let newsletter: RevampSitePlan["newsletter"];
   if (copyFromPrevious && previous) {
-    const href = checkRevampLink(previous.announcement.href, ctx.targets) ?? "";
+    const href =
+      checkRevampLink(previous.announcement.href, ctx.menuTargets) ?? "";
     announcement = {
       text: previous.announcement.text,
       href: previous.announcement.text ? href : "",
@@ -5567,14 +5646,15 @@ function buildPlan(
       checkCopy(ctx, text(rawAnnouncement.text), "announcement.text"),
       REVAMP_TEXT_LIMITS.announcement,
     );
+    // ★★ The bar is on every page, so it follows the menus' rule.
     let announcementHref = checkRevampLink(
       text(rawAnnouncement.href),
-      ctx.targets,
+      ctx.menuTargets,
     );
     if (announcementHref === null) {
       issue(
         ctx,
-        `announcement.href "${clipText(text(rawAnnouncement.href), 80)}" will not exist after Apply. ${LINK_HELP}`,
+        `announcement.href "${clipText(text(rawAnnouncement.href), 80)}" ${menuLinkProblem(ctx, text(rawAnnouncement.href))}`,
         "link",
       );
       announcementHref = "";

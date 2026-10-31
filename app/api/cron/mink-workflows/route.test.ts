@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 const runWorker = vi.fn();
 const schedule = vi.fn();
@@ -35,9 +43,26 @@ const sweepStages = vi.fn();
 vi.mock("@/lib/mink/refine-stages", () => ({
   sweepRefineStages: sweepStages,
 }));
+// Mocked so no test reaches a database: both run inside the route's own
+// try/catch, so an unmocked call failed (or queried a local database) quietly
+// in every test and cost about 0.75 s each.
+vi.mock("@/lib/mink/run-credit-reconcile", () => ({
+  reconcileMinkRunCredits: vi.fn(async () => ({ settled: 0, failed: 0 })),
+}));
+vi.mock("@/lib/theme-studio/preview", () => ({
+  sweepThemeStudioPreviews: vi.fn(async () => ({ removed: 0 })),
+}));
 
 describe("Mink workflow cron", () => {
   const original = process.env.CRON_SECRET;
+
+  // ★ Load the route once, with room to spare. Its imports are heavy, and the
+  // first `await import("./route")` used to be paid inside the first test,
+  // which timed out at 5 s when the suite ran split across runners on a busy
+  // machine (2026-10-31). Later imports are served from the module cache.
+  beforeAll(async () => {
+    await import("./route");
+  }, 30_000);
 
   beforeEach(() => {
     process.env.CRON_SECRET = "cron-secret";

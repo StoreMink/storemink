@@ -52,10 +52,7 @@ vi.mock("@/lib/themes/switch", () => ({
   switchStoreThemeTo: vi.fn(async () => ({
     ok: true,
     plan: {
-      firstTheme: false,
       homepage: "replace",
-      addMissingPages: true,
-      catalogue: "swap-samples",
       menus: "replace",
       brandColor: "theme",
     },
@@ -83,7 +80,7 @@ describe("switchStoreTheme", () => {
     const result = await switchStoreTheme("vitrine");
     expect(result).toEqual({
       ok: false,
-      error: "You don't have permission to change the theme.",
+      error: "You don't have permission to choose the theme.",
     });
     expect(getManagerIdentity).toHaveBeenCalledWith("themes");
     expect(switchStoreThemeTo).not.toHaveBeenCalled();
@@ -121,18 +118,7 @@ describe("switchStoreTheme", () => {
     expect(switchStoreThemeTo).not.toHaveBeenCalled();
   });
 
-  it("passes what the dialog described only when it is a real boolean", async () => {
-    await switchStoreTheme("luxe", { expectFirstTheme: true });
-    expect(switchStoreThemeTo).toHaveBeenLastCalledWith(
-      expect.objectContaining({ expectFirstTheme: true }),
-    );
-    await switchStoreTheme("luxe", { expectFirstTheme: "yes" });
-    expect(
-      vi.mocked(switchStoreThemeTo).mock.calls.at(-1)?.[0].expectFirstTheme,
-    ).toBeUndefined();
-  });
-
-  it("switches the acting store, passing the theme's plan gate and the actor", async () => {
+  it("installs on the acting store, passing the theme's plan gate and the actor", async () => {
     const result = await switchStoreTheme("luxe");
     expect(switchStoreThemeTo).toHaveBeenCalledWith({
       storeId: "store-1",
@@ -144,9 +130,6 @@ describe("switchStoreTheme", () => {
     expect(result).toMatchObject({ ok: true, themeName: "Luxe", warnings: [] });
     expect(revalidatePath).toHaveBeenCalledWith("/dashboard/storefront");
     expect(revalidatePath).toHaveBeenCalledWith("/dashboard/builder");
-    // A switch on a store that already has a theme keeps the existing
-    // stale-while-revalidate refresh (revalidateThemeSeed).
-    expect(updateTag).not.toHaveBeenCalled();
     expect(emitEvent).toHaveBeenCalledWith({
       type: "settings.changed",
       storeId: "store-1",
@@ -156,23 +139,11 @@ describe("switchStoreTheme", () => {
   });
 
   it("★ a first install expires the store cache at once, so the storefront stops showing the in-progress page", async () => {
-    vi.mocked(switchStoreThemeTo).mockImplementation(async () => ({
-      ok: true,
-      plan: {
-        firstTheme: true,
-        homepage: "replace",
-        addMissingPages: true,
-        catalogue: "seed-samples",
-        menus: "replace",
-        brandColor: "theme",
-      },
-      warnings: [],
-    }));
     const result = await switchStoreTheme("vitrine");
     expect(result).toMatchObject({
       ok: true,
       themeName: "Vitrine",
-      plan: { firstTheme: true },
+      plan: { homepage: "replace" },
     });
     expect(updateTag).toHaveBeenCalledWith("stores");
   });
@@ -188,15 +159,14 @@ describe("switchStoreTheme", () => {
     });
   });
 
-  it("passes a refusal through without revalidating or recording", async () => {
+  it("★ passes the store-already-has-a-theme refusal through without revalidating or recording", async () => {
+    const error =
+      "Your store already has its theme. You can change how it looks with Customise storefront or the Website Builder.";
     vi.mocked(switchStoreThemeTo).mockImplementation(async () => ({
       ok: false,
-      error: "Vitrine is already your theme.",
+      error,
     }));
-    expect(await switchStoreTheme("vitrine")).toEqual({
-      ok: false,
-      error: "Vitrine is already your theme.",
-    });
+    expect(await switchStoreTheme("vitrine")).toEqual({ ok: false, error });
     expect(revalidatePath).not.toHaveBeenCalled();
     expect(updateTag).not.toHaveBeenCalled();
     expect(emitEvent).not.toHaveBeenCalled();

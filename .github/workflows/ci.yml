@@ -81,9 +81,28 @@ jobs:
       - name: Format Check
         run: npm run prettier --check
 
+  # ★★ SPLIT ACROSS FOUR RUNNERS, AND NO COVERAGE (2026-10-31). As one job with
+  # coverage this took 23.5 to 24.1 minutes (runs 41177687393, 41179325482,
+  # 41203315104) and was the slowest check on every pull request by ten
+  # minutes. Coverage was about half of it: the same suite without it (the
+  # shuffle job) took 12 to 20 minutes. CI only printed the coverage number; it
+  # set no threshold and kept no report, so it bought nothing a pull request
+  # waited for. `npm run test` still measures it locally.
+  #
+  # ★ `--shard` splits the test FILES, so every test still runs exactly once
+  # across the four jobs, each reported as its own check ("Tests (1/4)").
+  # `fail-fast: false` keeps the other shards running when one fails, so a
+  # push reports every failing file, not only the first shard's.
+  #
+  # ⚠ The shard count is in two places in each job (the matrix and `--shard`).
+  # Change both together, or some files run twice and others never.
   test:
-    name: Tests
+    name: Tests (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -98,7 +117,7 @@ jobs:
         run: npm ci
 
       - name: Run Tests
-        run: npm run test
+        run: npx vitest run --coverage=false --shard=${{ matrix.shard }}/4
 
   renderer:
     name: Native theme layout regression
@@ -139,8 +158,12 @@ jobs:
         run: node scripts/theme-studio-contrast-check.mjs
 
   shuffle:
-    name: Test order independence
+    name: Test order independence (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -186,11 +209,17 @@ jobs:
       # for option --sequence.seed"). Vitest prints the seed it used, so any
       # failure — here or locally — is reproducible from the log.
       #
-      # No coverage here (--coverage=false in the script): the `test` job above
-      # already measured it, and instrumenting twice doubles the slowest step for
-      # nothing.
+      # No coverage here (--coverage=false in the script), like the `test` job.
+      #
+      # ★ SPLIT INTO FOUR like the `test` job (it took 12 to 20 minutes as one).
+      # `--shard` divides the FILES and the seed then orders the files and the
+      # tests inside each one, so the order within a file, where order
+      # dependence lives (files run isolated), is still not declaration order.
+      # To reproduce a failure, run that one file with the same seed:
+      #
+      #   npx vitest run --coverage=false --sequence.shuffle --sequence.seed=20260813 path/to/file.test.ts
       - name: Test Order Independence
-        run: npm run test:shuffle
+        run: npm run test:shuffle -- --shard=${{ matrix.shard }}/4
 
   build:
     name: Build

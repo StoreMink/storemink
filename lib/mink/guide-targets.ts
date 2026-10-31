@@ -94,9 +94,9 @@ export const MINK_GUIDE_TARGETS = {
   },
   customize_storefront: {
     destination: "storefront",
-    label: "Customize",
-    hint: "Opens Website Builder for the current theme.",
-    text: "^customi[sz]e$",
+    label: "Customise storefront",
+    hint: "Asks a few questions, then Mink AI redesigns the storefront in a new chat.",
+    text: "^customi[sz]e storefront$",
     role: "button",
   },
   add_location: {

@@ -1578,8 +1578,8 @@ export async function seedDemoStore(themeId: string): Promise<SeedDemoResult> {
     publish: true,
     reset: true,
     // A demo store IS the showcase — its whole job is to look like a finished
-    // shop, so its sample catalogue must be live. Real merchant stores seed
-    // these as drafts (see applyTheme's publishSampleProducts).
+    // shop, so its sample catalogue must be live. Real merchant stores get no
+    // sample catalogue at all (lib/themes/switch.ts).
     publishSampleProducts: true,
   });
 

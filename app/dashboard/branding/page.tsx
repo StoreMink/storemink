@@ -5,7 +5,6 @@ import { getStorePlanContext } from "@/lib/plans/entitlements";
 import { loggableError } from "@/lib/db/errors";
 import { logError } from "@/lib/observability/logger";
 import { BrandingForm } from "./branding-form";
-import { BrandVoiceForm } from "./brand-voice-form";
 
 export const metadata = { title: "Branding" };
 
@@ -35,14 +34,15 @@ export default async function BrandingPage() {
     readRemoveBadge(storeId),
   ]);
   const canManage = access.can("branding", "manage");
+  // One editor for the whole page (branding and brand voice share its save
+  // bar). Only the guide and the answers cross to the client: the voice read
+  // also carries the store's Mink credit usage, which this page never shows.
   return (
-    <>
-      <BrandingForm
-        initial={brand}
-        canManage={canManage}
-        removeBadge={removeBadge}
-      />
-      <BrandVoiceForm initial={voice} canManage={canManage} />
-    </>
+    <BrandingForm
+      initial={brand}
+      voice={{ content: voice.content, structured: voice.structured }}
+      canManage={canManage}
+      removeBadge={removeBadge}
+    />
   );
 }
