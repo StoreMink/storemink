@@ -196,7 +196,7 @@
     ),
     var(--hc-surface);
   border-bottom: 1px solid var(--hc-line);
-  padding: 64px 0 52px;
+  padding: 10px 0 10px;
   text-align: center;
 }
 .hc-hero .kicker {
