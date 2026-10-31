@@ -11,6 +11,15 @@ import { ResponsiveTable } from "@/app/dashboard/components/responsive-table";
 import { useState, useTransition } from "react";
 import { Loader2, RotateCcw } from "lucide-react";
 import { formatPrice } from "@/lib/pricing";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   getShiftReport,
   type ShiftListRow,
@@ -83,7 +92,7 @@ export function ShiftsClient({
             {/* Empty is ordinary for a store that has not opened a drawer yet,
                 and should read that way rather than as a failure. */}
             <p className="text-sm">
-              No shifts yet. They appear here once one is opened in POS.
+              No shifts yet. They appear once one is opened in POS.
             </p>
           </div>
         ) : (
@@ -186,18 +195,23 @@ function ZReport({
   ];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="dashboard-shell max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5">
-        <header className="mb-3">
-          <h2 className="text-base font-semibold">
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
             {report.locationName} ·{" "}
             {report.status === "open" ? "Open" : "Z-report"}
-          </h2>
-          <p className="text-xs text-muted-foreground">
+          </DialogTitle>
+          <DialogDescription>
             {when(report.openedAt)} → {when(report.closedAt)}
             {report.closedByName ? ` · closed by ${report.closedByName}` : ""}
-          </p>
-        </header>
+          </DialogDescription>
+        </DialogHeader>
 
         {/* ★ THE WHOLE EQUATION, not just the answer. "Expected ₹1,895" is only
             trustworthy if you can see what fed it — the same reason /pos/shift
@@ -295,17 +309,13 @@ function ZReport({
         )}
 
         {report.note && (
-          <p className="mt-3 text-sm text-muted-foreground">{report.note}</p>
+          <p className="text-sm text-muted-foreground">{report.note}</p>
         )}
 
-        <button
-          type="button"
-          onClick={onClose}
-          className="dash-btn dash-btn-primary mt-4 w-full"
-        >
-          Close
-        </button>
-      </div>
-    </div>
+        <DialogFooter>
+          <Button onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

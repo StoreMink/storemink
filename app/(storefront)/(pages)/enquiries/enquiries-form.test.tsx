@@ -182,7 +182,7 @@ describe("EnquiriesForm", () => {
     await user.type(screen.getByLabelText(/message/i), "  Hello there  ");
     await user.click(btn);
 
-    expect(await screen.findByText("Enquiry sent!")).toBeTruthy();
+    expect(await screen.findByText("Enquiry sent")).toBeTruthy();
     expect(mockedSubmit).toHaveBeenCalledTimes(1);
     expect(mockedSubmit).toHaveBeenCalledWith({
       name: "Ada L",
@@ -201,7 +201,7 @@ describe("EnquiriesForm", () => {
     render(<EnquiriesForm />);
 
     // Type a 10+ digit national number (defaultCountry IN).
-    const phoneField = screen.getByPlaceholderText(/mobile number/i);
+    const phoneField = screen.getByLabelText(/^phone/i, { selector: "input" });
     await user.type(phoneField, "9876543210");
 
     await user.click(screen.getByRole("button", { name: /^verify$/i }));
@@ -254,7 +254,7 @@ describe("EnquiriesForm", () => {
 
     expect(await screen.findByText("boom")).toBeTruthy();
     // Still on the form, not the success screen.
-    expect(screen.queryByText("Enquiry sent!")).toBeNull();
+    expect(screen.queryByText("Enquiry sent")).toBeNull();
   });
 
   // --------------------------------------------------------- success reset
@@ -270,7 +270,7 @@ describe("EnquiriesForm", () => {
     await user.type(screen.getByLabelText(/message/i), "Hello");
     await user.click(screen.getByRole("button", { name: /send enquiry/i }));
 
-    expect(await screen.findByText("Enquiry sent!")).toBeTruthy();
+    expect(await screen.findByText("Enquiry sent")).toBeTruthy();
     await user.click(
       screen.getByRole("button", { name: /send another enquiry/i }),
     );
@@ -286,7 +286,8 @@ describe("EnquiriesForm", () => {
       screen.getByRole("button", { name: /^verify$/i }) as HTMLButtonElement;
     const changeButton = () =>
       screen.getByRole("button", { name: /^change$/i });
-    const phoneField = () => screen.getByPlaceholderText(/mobile number/i);
+    const phoneField = () =>
+      screen.getByLabelText(/^phone/i, { selector: "input" });
 
     async function enterPhone(
       user: ReturnType<typeof userEvent.setup>,

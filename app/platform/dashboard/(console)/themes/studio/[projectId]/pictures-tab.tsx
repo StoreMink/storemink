@@ -89,8 +89,8 @@ export async function PicturesTab({
   if (!listing) {
     return (
       <p className="studio-muted">
-        The pictures of this design could not be read. Reload the page, or
-        choose another design in the list at the top.
+        The pictures of this design could not be read. Reload the page or choose
+        another design.
       </p>
     );
   }
@@ -168,11 +168,8 @@ export async function PicturesTab({
     <div className="grid max-w-5xl gap-5">
       <div className="grid gap-2">
         <p className="text-sm">
-          Every picture {design} shows. Upload a replacement for any picture, or
-          tick a drawn one or a placeholder to have it drawn again. An upload is
-          cropped to its slot&apos;s shape and compressed to the
-          storefront&apos;s limits; say where it came from, because Publish
-          relies on it. Saving makes a new design, and {design} stays as it is.
+          Every picture {design} shows. Upload a replacement or tick one to
+          redraw it; saving makes a new design and {design} stays as it is.
         </p>
         <p className="studio-muted text-sm">
           {artwork > 0

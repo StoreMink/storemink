@@ -82,8 +82,7 @@ export default async function SettingsPage() {
       <div className="p-6">
         <h1 className="text-[22px] font-medium">Settings</h1>
         <p className="mt-2 text-[14px] text-[#6a6a6a]">
-          You don&apos;t have access to any settings for this store. Ask an
-          owner to grant you a section.
+          You don&apos;t have access to any settings. Ask an owner for access.
         </p>
       </div>
     );
@@ -92,9 +91,6 @@ export default async function SettingsPage() {
   return (
     <div className="max-w-[900px] sm:p-6">
       <h1 className="text-[22px] font-medium">Settings</h1>
-      <p className="mt-1 text-[14px] text-[#6a6a6a]">
-        Everything that configures this store.
-      </p>
 
       {timeZone ? <BusinessTimeZoneForm timeZone={timeZone} /> : null}
 

@@ -181,7 +181,7 @@ export function MinkStorefrontPublicationControls({
           setApproval(null);
         } else {
           setError(
-            "StoreMink couldn't confirm the publication outcome. Approve this same request again - repeating it is safe and reports the committed result.",
+            "StoreMink couldn't confirm the publication outcome. Approve this same request again; repeating it is safe.",
           );
         }
       } else {
@@ -239,8 +239,8 @@ export function MinkStorefrontPublicationControls({
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="max-w-lg text-[9px] leading-4 text-[#625b72]">
-              Run the exact proposed section in isolated 1,280 px desktop and
-              390 px mobile frames before requesting publication.
+              Check the section on desktop and mobile before you request
+              publication.
             </p>
             <button
               type="button"
@@ -300,7 +300,7 @@ export function MinkStorefrontPublicationControls({
                 ? `Desktop, mobile, runtime, CSP and accessibility checks passed in ${browserValidation.browser.family} ${browserValidation.browser.major}.`
                 : browserValidation.browser.supported
                   ? "One or more publication checks failed. Correct the proposal and generate a new one."
-                  : "This browser is below the supported publication-check floor. Use a current Chrome, Edge, Firefox or Safari browser."}
+                  : "This browser can't run the publication checks. Use a current Chrome, Edge, Firefox or Safari."}
             </div>
           ) : null}
 

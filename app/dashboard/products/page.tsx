@@ -335,9 +335,7 @@ export default async function ProductsPage({
           <span>⚠️</span> Failed to load products
         </div>
         <p className="leading-relaxed text-destructive/80">
-          Make sure the <code>products</code>, <code>categories</code> and{" "}
-          <code>product_variants</code> tables exist and you have the correct
-          permissions.
+          Refresh the page to try again.
         </p>
       </div>
     );

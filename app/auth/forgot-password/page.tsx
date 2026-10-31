@@ -57,8 +57,7 @@ export default function ForgotPasswordPage() {
           Forgot Password
         </h1>
         <p className="mt-2 text-sm text-[#6B7280]">
-          Enter your email address and we will send you a link to reset your
-          password.
+          We&apos;ll email you a link to reset your password.
         </p>
       </div>
 
@@ -70,7 +69,6 @@ export default function ForgotPasswordPage() {
           <Input
             id="email"
             type="email"
-            placeholder="you@example.com"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}

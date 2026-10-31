@@ -82,9 +82,8 @@ export function CompGrantCard({
           {date(comp.active.expiresAt)}
         </div>
         <p className="mt-1 text-xs text-violet-800">
-          Started {date(comp.active.startsAt)}. It runs to the end - there is no
-          mid-window cancel. Their own subscription is unaffected and still
-          billed.
+          Started {date(comp.active.startsAt)}. It can&apos;t be cancelled
+          early; their own subscription is still billed.
         </p>
       </div>
     );
@@ -99,8 +98,7 @@ export function CompGrantCard({
           {comp.offer.durationDays} days
         </div>
         <p className="mt-1 text-xs text-slate-600">
-          Waiting for the merchant to accept on their Plans &amp; Billing page.
-          The clock starts then, not now.
+          Starts when the merchant accepts it on Plans &amp; Billing.
           {comp.offer.offeredAt
             ? ` Offered ${date(comp.offer.offeredAt)}.`
             : ""}
@@ -128,9 +126,8 @@ export function CompGrantCard({
         Offer a free plan
       </div>
       <p className="mt-1 text-xs text-slate-600">
-        A free upgrade on top of whatever they already pay for. Their own
-        subscription keeps billing as usual, and when the comp ends they fall
-        back to it.
+        A free upgrade on top of their paid plan, which keeps billing and
+        returns when the offer ends.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <select

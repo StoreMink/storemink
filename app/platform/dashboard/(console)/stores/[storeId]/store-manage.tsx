@@ -1,9 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ArrowUpCircle, Coins, Power, Trash2 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   deleteStore,
   grantAiCredits,
@@ -61,28 +70,44 @@ const DURATIONS = [
 ] as const;
 type Duration = (typeof DURATIONS)[number]["id"];
 
-function Modal({
+const PRIMARY = "dash-btn dash-btn-primary pointer-coarse:min-h-11";
+const GHOST = "dash-btn dash-btn-ghost pointer-coarse:min-h-11";
+const DANGER =
+  "inline-flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11";
+const LABEL = "mb-1 block text-sm font-medium text-[var(--dash-text)]";
+
+/** One of the bar's dialogs, in the console's standard dialog look. */
+function ManageDialog({
   title,
+  description,
   onClose,
+  footer,
   children,
 }: {
   title: string;
+  description?: React.ReactNode;
   onClose: () => void;
+  footer: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-        <div className="mt-4">{children}</div>
-      </div>
-    </div>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          {description ? (
+            <DialogDescription>{description}</DialogDescription>
+          ) : null}
+        </DialogHeader>
+        <div className="space-y-4">{children}</div>
+        <DialogFooter>{footer}</DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -123,6 +148,8 @@ export function StoreManageBar({
   const [confirmText, setConfirmText] = useState("");
 
   const [suspendOpen, setSuspendOpen] = useState(false);
+
+  const fieldId = useId();
 
   if (!canManage) return null;
 
@@ -276,32 +303,65 @@ export function StoreManageBar({
       ) : null}
 
       {planOpen && (
-        <Modal
+        <ManageDialog
           title={`Change plan - ${name}`}
-          onClose={() => setPlanOpen(false)}
+          onClose={() => !busy && setPlanOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className={GHOST}
+                onClick={() => setPlanOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={PRIMARY}
+                disabled={busy}
+                onClick={savePlan}
+              >
+                {busy ? "Saving…" : "Save plan"}
+              </button>
+            </>
+          }
         >
-          <label className="block text-sm font-medium text-slate-700">
-            Plan
-          </label>
-          <select
-            className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            value={targetPlan}
-            onChange={(e) => setTargetPlan(e.target.value as Plan)}
-          >
-            {PLAN_IDS.map((id) => (
-              <option key={id} value={id}>
-                {PLAN_META[id]?.name ?? id}
-              </option>
-            ))}
-          </select>
+          <div>
+            <label htmlFor={`${fieldId}-plan`} className={LABEL}>
+              Plan
+            </label>
+            <select
+              id={`${fieldId}-plan`}
+              className="dash-input w-full"
+              value={targetPlan}
+              onChange={(e) => setTargetPlan(e.target.value as Plan)}
+            >
+              {PLAN_IDS.map((id) => (
+                <option key={id} value={id}>
+                  {PLAN_META[id]?.name ?? id}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {targetPlan !== "free" && (
-            <>
-              <label className="mt-4 block text-sm font-medium text-slate-700">
-                Duration
-              </label>
+            <div>
+              <div className="mb-1 flex items-center gap-1.5">
+                <label
+                  htmlFor={`${fieldId}-duration`}
+                  className="text-sm font-medium text-[var(--dash-text)]"
+                >
+                  Duration
+                </label>
+                <InfoTip label="About the duration">
+                  A timed grant lapses to Free when it ends. Paid billing may
+                  raise an operator grant, never lower it.
+                </InfoTip>
+              </div>
               <select
-                className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                id={`${fieldId}-duration`}
+                className="dash-input w-full"
                 value={duration}
                 onChange={(e) => setDuration(e.target.value as Duration)}
               >
@@ -314,114 +374,116 @@ export function StoreManageBar({
               {duration === "custom" && (
                 <input
                   type="date"
-                  className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
+                  aria-label="Expiry date"
+                  className="dash-input mt-2 w-full"
                   value={customDate}
                   onChange={(e) => setCustomDate(e.target.value)}
                 />
               )}
-              <p className="mt-2 text-xs text-slate-500">
-                A timed grant lapses to Free automatically. An operator grant is
-                a floor: paid billing may raise it, never lower it.
-              </p>
-            </>
+            </div>
           )}
-
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              className="rounded-md px-3.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-              onClick={() => setPlanOpen(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded-md bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-              disabled={busy}
-              onClick={savePlan}
-            >
-              {busy ? "Saving…" : "Save plan"}
-            </button>
-          </div>
-        </Modal>
+        </ManageDialog>
       )}
 
       {creditsOpen && (
-        <Modal
+        <ManageDialog
           title={`Grant Mink credits - ${name}`}
-          onClose={() => setCreditsOpen(false)}
+          description="Credits never expire and are used after the monthly allowance. The grant and your note are recorded under your email."
+          onClose={() => !busy && setCreditsOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className={GHOST}
+                onClick={() => setCreditsOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={PRIMARY}
+                disabled={busy}
+                onClick={saveCredits}
+              >
+                {busy ? "Granting…" : "Grant"}
+              </button>
+            </>
+          }
         >
-          <label className="block text-sm font-medium text-slate-700">
-            Credits
-          </label>
-          <input
-            type="number"
-            min={1}
-            className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            value={creditAmount}
-            onChange={(e) => setCreditAmount(e.target.value)}
-          />
-          <label className="mt-4 block text-sm font-medium text-slate-700">
-            Note <span className="font-normal text-slate-400">(optional)</span>
-          </label>
-          <input
-            className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            placeholder="Why this grant was made"
-            value={creditNote}
-            onChange={(e) => setCreditNote(e.target.value)}
-          />
-          <p className="mt-2 text-xs text-slate-500">
-            Recorded in the credit ledger against your email. Credits never
-            expire and are spent only after the monthly allowance.
-          </p>
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              className="rounded-md px-3.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-              onClick={() => setCreditsOpen(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded-md bg-slate-900 px-3.5 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-              disabled={busy}
-              onClick={saveCredits}
-            >
-              {busy ? "Granting…" : "Grant"}
-            </button>
+          <div>
+            <label htmlFor={`${fieldId}-credits`} className={LABEL}>
+              Credits
+            </label>
+            <input
+              id={`${fieldId}-credits`}
+              type="number"
+              min={1}
+              className="dash-input w-full"
+              value={creditAmount}
+              onChange={(e) => setCreditAmount(e.target.value)}
+            />
           </div>
-        </Modal>
+          <div>
+            <label htmlFor={`${fieldId}-note`} className={LABEL}>
+              Note{" "}
+              <span className="font-normal text-[var(--dash-text-2)]">
+                (optional)
+              </span>
+            </label>
+            <input
+              id={`${fieldId}-note`}
+              className="dash-input w-full"
+              value={creditNote}
+              onChange={(e) => setCreditNote(e.target.value)}
+            />
+          </div>
+        </ManageDialog>
       )}
 
       {deleteOpen && (
-        <Modal title={`Delete ${name}?`} onClose={() => setDeleteOpen(false)}>
-          <p className="text-sm text-slate-600">
-            This permanently removes the store, its orders, products, customers,
-            uploaded media and every login attached to it. It cannot be undone.
-          </p>
-          <label className="mt-4 block text-sm font-medium text-slate-700">
-            Type <code className="rounded bg-slate-100 px-1">{slug}</code> to
-            confirm
-          </label>
-          <input
-            className="mt-1 w-full rounded-md border border-slate-200 px-3 py-2 text-sm"
-            value={confirmText}
-            onChange={(e) => setConfirmText(e.target.value)}
-            autoComplete="off"
-          />
-          <div className="mt-6 flex justify-end gap-2">
-            <button
-              className="rounded-md px-3.5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
-              onClick={() => setDeleteOpen(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="rounded-md bg-red-600 px-3.5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-              disabled={busy || confirmText !== slug}
-              onClick={confirmDelete}
-            >
-              {busy ? "Deleting…" : "Delete permanently"}
-            </button>
+        <ManageDialog
+          title={`Delete ${name}?`}
+          description="This permanently removes the store, all its data and every login attached to it. It cannot be undone."
+          onClose={() => !busy && setDeleteOpen(false)}
+          footer={
+            <>
+              <button
+                type="button"
+                className={GHOST}
+                onClick={() => setDeleteOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={DANGER}
+                disabled={busy || confirmText !== slug}
+                onClick={confirmDelete}
+              >
+                {busy ? "Deleting…" : "Delete permanently"}
+              </button>
+            </>
+          }
+        >
+          <div>
+            <label htmlFor={`${fieldId}-confirm`} className={LABEL}>
+              Type{" "}
+              <code className="rounded bg-[var(--dash-surface-2)] px-1">
+                {slug}
+              </code>{" "}
+              to confirm
+            </label>
+            <input
+              id={`${fieldId}-confirm`}
+              className="dash-input w-full"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              autoComplete="off"
+            />
           </div>
-        </Modal>
+        </ManageDialog>
       )}
     </>
   );

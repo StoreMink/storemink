@@ -267,9 +267,11 @@ describe("step 1, find it", () => {
       <BlockForm superadmin={false} complaint={null} />,
     );
     const address = screen.getByLabelText("Address");
-    expect(address.getAttribute("placeholder")).toBe(
-      "Paste a store address or an image address",
-    );
+    // A format cue only; what to paste sits behind the "i" beside the label.
+    expect(address.getAttribute("placeholder")).toBe("https://");
+    expect(
+      screen.getByRole("button", { name: "About the address" }),
+    ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Find" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "Or choose a store and search it" }),
@@ -845,7 +847,7 @@ describe("step 3, why", () => {
     expect(message.value).toBe(defaultStoreMessage("terms_breach", "product"));
     expect(
       screen.getByText(
-        "The store sees this in its dashboard and by email. Do not include the complainant's name or contact details unless they agreed.",
+        "The store sees this. Leave out the complainant's name and contact unless they agreed.",
       ),
     ).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Reason"), {

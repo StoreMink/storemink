@@ -224,7 +224,7 @@ export function CategoriesManagementView({
               <Search className="h-4 w-4 shrink-0 opacity-50" />
               <input
                 type="text"
-                placeholder="Search categories..."
+                placeholder="Search categories"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -375,9 +375,8 @@ export function CategoriesManagementView({
           <DialogHeader>
             <DialogTitle>Delete category</DialogTitle>
             <DialogDescription>
-              Delete &ldquo;{deleteTarget?.name}&rdquo;? Products in this
-              category won&rsquo;t be deleted - they&rsquo;ll become
-              uncategorized.
+              Delete &ldquo;{deleteTarget?.name}&rdquo;? Its products stay and
+              become uncategorized.
             </DialogDescription>
           </DialogHeader>
           {(deleteTarget?.product_count ?? 0) > 0 && (

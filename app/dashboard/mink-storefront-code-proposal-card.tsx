@@ -414,8 +414,8 @@ export function MinkStorefrontCodeProposalCard({
         ) : null}
 
         <div className="rounded-xl border border-[#e5e1eb] bg-[#f8f7fa] px-3 py-2 text-[9px] leading-4 text-[#65616b]">
-          Applying here changes only your private Website Builder draft.
-          Publishing and rollback keep their separate checks and approval.
+          Applying changes only your private Website Builder draft. Publishing
+          and rollback need their own approval.
         </div>
       </div>
     </section>
@@ -770,7 +770,7 @@ function readActionValues(value: unknown): MinkStorefrontCodeActionValues {
 }
 
 const UNKNOWN_STOREFRONT_ACTION_OUTCOME =
-  "We couldn't confirm whether the Builder draft was saved. Check Website Builder, or retry here - the same save cannot apply twice.";
+  "We couldn't confirm whether the Builder draft was saved. Check Website Builder, or retry; it can't save twice.";
 
 class StorefrontActionRequestError extends Error {
   constructor(

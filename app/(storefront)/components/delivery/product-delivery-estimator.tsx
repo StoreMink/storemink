@@ -92,7 +92,7 @@ export function ProductDeliveryEstimator({
           }}
           inputMode="numeric"
           autoComplete="postal-code"
-          placeholder="Enter delivery PIN code"
+          placeholder="PIN code"
           aria-label="Delivery PIN code"
         />
         <button

@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useId, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   deleteWhatsAppTemplate,
   refreshWhatsAppTemplates,
@@ -148,6 +149,7 @@ function TemplateEditor({
   onCancel: () => void;
 }) {
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+  const messageId = useId();
   const [isPending, startTransition] = useTransition();
   const L = CUSTOM_TEMPLATE_LIMITS;
   const patch = (next: Partial<Draft>) => setDraft((d) => ({ ...d, ...next }));
@@ -199,9 +201,7 @@ function TemplateEditor({
         <div>
           <div className="dash-card-title">New template</div>
           <div className="dash-card-sub max-w-xl">
-            Meta reviews the exact words, usually within a day. Write
-            placeholders as {"{{1}}"}, {"{{2}}"} for the parts you will fill in
-            when you send it.
+            Meta reviews the exact words, usually within a day.
           </div>
         </div>
       </div>
@@ -293,9 +293,18 @@ function TemplateEditor({
           />
         </label>
 
-        <label className="flex flex-col gap-1 text-[13px]">
-          <span className="text-[var(--dash-text-3)]">Message</span>
+        <div className="flex flex-col gap-1 text-[13px]">
+          <div className="flex items-center gap-1.5">
+            <label htmlFor={messageId} className="text-[var(--dash-text-3)]">
+              Message
+            </label>
+            <InfoTip label="About placeholders">
+              Write {"{{1}}"}, {"{{2}}"} for the parts you fill in when you send
+              it.
+            </InfoTip>
+          </div>
           <textarea
+            id={messageId}
             className="dash-input w-full"
             rows={4}
             aria-label="Template message"
@@ -307,11 +316,25 @@ function TemplateEditor({
           <span className="text-right text-[12px] text-[var(--dash-text-3)]">
             {draft.body.length} / {L.bodyMaxChars}
           </span>
-        </label>
+        </div>
 
         {slots.length > 0 ? (
           <div className="flex flex-col gap-2">
-            <div className="text-[13px] font-semibold">Placeholders</div>
+            <div className="flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold">Placeholders</div>
+              <InfoTip label="About placeholder labels and samples">
+                The label names what each placeholder holds. The sample is what
+                Meta sees when it reviews the template.
+              </InfoTip>
+            </div>
+            <div
+              aria-hidden="true"
+              className="hidden gap-2 text-[12px] text-[var(--dash-text-3)] sm:grid sm:grid-cols-[6rem_1fr_1fr]"
+            >
+              <span />
+              <span>Label</span>
+              <span>Sample for Meta</span>
+            </div>
             {slots.map((n, i) => (
               <div key={n} className="grid gap-2 sm:grid-cols-[6rem_1fr_1fr]">
                 <span className="self-center font-mono text-[13px]">
@@ -323,7 +346,6 @@ function TemplateEditor({
                   type="text"
                   className="dash-input w-full"
                   aria-label={`Placeholder ${n} label`}
-                  placeholder="label, e.g. customer_name"
                   value={variables[i]?.name ?? ""}
                   maxLength={L.variableNameMaxChars}
                   disabled={isPending}
@@ -339,7 +361,6 @@ function TemplateEditor({
                   type="text"
                   className="dash-input w-full"
                   aria-label={`Placeholder ${n} sample`}
-                  placeholder="sample for Meta, e.g. Rohan"
                   value={variables[i]?.sample ?? ""}
                   maxLength={L.sampleMaxChars}
                   disabled={isPending}
@@ -370,8 +391,14 @@ function TemplateEditor({
         </label>
 
         <div className="flex flex-col gap-2">
-          <div className="text-[13px] font-semibold">
-            Buttons (up to {L.maxButtons})
+          <div className="flex items-center gap-1.5">
+            <div className="text-[13px] font-semibold">
+              Buttons (up to {L.maxButtons})
+            </div>
+            <InfoTip label="About template buttons">
+              A picture header, a link with a placeholder or a copy-code button
+              can&apos;t be sent from the inbox, so they aren&apos;t offered.
+            </InfoTip>
           </div>
           {draft.buttons.map((b, i) => (
             <div
@@ -393,16 +420,18 @@ function TemplateEditor({
                   </option>
                 ))}
               </select>
-              <input
-                type="text"
-                className="dash-input w-44"
-                aria-label={`Button ${i + 1} label`}
-                placeholder="Label"
-                value={b.text}
-                maxLength={L.buttonTextMaxChars}
-                disabled={isPending}
-                onChange={(e) => setButton(b.key, { text: e.target.value })}
-              />
+              <label className="flex flex-col gap-1 text-[12px] text-[var(--dash-text-3)]">
+                Button text
+                <input
+                  type="text"
+                  className="dash-input w-44"
+                  aria-label={`Button ${i + 1} label`}
+                  value={b.text}
+                  maxLength={L.buttonTextMaxChars}
+                  disabled={isPending}
+                  onChange={(e) => setButton(b.key, { text: e.target.value })}
+                />
+              </label>
               {b.type === "url" ? (
                 <input
                   type="url"
@@ -415,15 +444,19 @@ function TemplateEditor({
                 />
               ) : null}
               {b.type === "phone" ? (
-                <input
-                  type="tel"
-                  className="dash-input w-48"
-                  aria-label={`Button ${i + 1} phone`}
-                  placeholder="+91 98765 43210"
-                  value={b.phone}
-                  disabled={isPending}
-                  onChange={(e) => setButton(b.key, { phone: e.target.value })}
-                />
+                <label className="flex flex-col gap-1 text-[12px] text-[var(--dash-text-3)]">
+                  Phone with country code
+                  <input
+                    type="tel"
+                    className="dash-input w-48"
+                    aria-label={`Button ${i + 1} phone`}
+                    value={b.phone}
+                    disabled={isPending}
+                    onChange={(e) =>
+                      setButton(b.key, { phone: e.target.value })
+                    }
+                  />
+                </label>
               ) : null}
               <button
                 type="button"
@@ -466,9 +499,7 @@ function TemplateEditor({
             </div>
           ) : null}
           <p className="text-[12px] text-[var(--dash-text-3)]">
-            Quick replies come first. A picture header, a link with a
-            placeholder or a copy-code button can&apos;t be sent from the inbox,
-            so they aren&apos;t offered here.
+            Quick replies come first.
           </p>
         </div>
 
@@ -567,8 +598,8 @@ export function TemplatesClient({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-[13px] text-[var(--dash-text-3)]">
           {view.templates.length} template
-          {view.templates.length === 1 ? "" : "s"}. Meta usually answers a
-          review within a day; press Refresh to read its latest answer.
+          {view.templates.length === 1 ? "" : "s"}. Refresh to read Meta&apos;s
+          latest answers.
         </p>
         <div className="flex gap-2">
           {view.canManage ? (

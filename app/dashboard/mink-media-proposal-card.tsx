@@ -156,7 +156,7 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
                 {proposal.purpose === "blog_cover"
                   ? "The blog proposal shown with this response can use this exact cover."
                   : proposal.purpose === "product"
-                    ? "Check it against the real item before approving the product photo change shown with this response. It is AI-made from your own photo and carries an invisible AI marker."
+                    ? "Check it against the real item before approving the product photo change shown with this response."
                     : "If you requested a page change, apply the Website Builder draft shown with this response."}
               </p>
             </div>
@@ -164,9 +164,8 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#ded8f4] bg-[#faf8ff] p-3">
             <p className="max-w-lg text-[9px] leading-4 text-[#5f5969]">
-              Saving keeps this image in your Media Library so Mink can propose
-              it on a page. Placing it on your storefront is a separate step you
-              approve on its own.
+              Saving keeps this image private in your Media Library. Placing it
+              on your storefront is a separate approval.
             </p>
             <button
               type="button"
@@ -216,8 +215,8 @@ export function MinkMediaProposalCard({ proposal }: { proposal: Proposal }) {
 
         <div className="rounded-xl border border-[#e5e1eb] bg-[#f8f7fa] px-3 py-2 text-[9px] leading-4 text-[#65616b]">
           {proposal.purpose === "product"
-            ? "Made by Mink AI from your own photo, with an invisible SynthID watermark. Mink redraws the product in the scene, so compare it with the real item before you use it: small details such as a print or a label can change."
-            : "AI-generated ecommerce artwork with an invisible SynthID watermark. Store images may guide it, but it does not replace an original catalogue product photograph."}
+            ? "Made by Mink AI from your own photo, with an invisible SynthID watermark. Small details can change, so compare it with the real item."
+            : "AI-made artwork with an invisible SynthID watermark. It does not replace an original product photo."}
         </div>
       </div>
     </section>

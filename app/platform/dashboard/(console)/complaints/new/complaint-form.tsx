@@ -19,7 +19,7 @@ import {
   FORM_CHANNELS,
   complaintHref,
   istDateTime,
-  kindHelpParts,
+  KindRadioRow,
 } from "../complaints-console";
 
 // ---------------------------------------------------------------------------
@@ -257,8 +257,8 @@ export function ComplaintForm({ maxReceivedAt }: { maxReceivedAt: string }) {
             />
           </label>
           <span id="receivedAt-hint" className={HINT}>
-            The time on the email, letter or order, in India time. Every
-            deadline counts from this time, not from when you log it.
+            In India time. Every deadline counts from this, not from when you
+            log it.
           </span>
           {fieldError("receivedAt")}
         </div>
@@ -295,32 +295,16 @@ export function ComplaintForm({ maxReceivedAt }: { maxReceivedAt: string }) {
         <fieldset aria-describedby={describe("kind", false)}>
           <legend className={LABEL}>What is it?</legend>
           <div className="grid gap-2">
-            {COMPLAINT_KINDS.map((value) => {
-              const { head, rest } = kindHelpParts(value);
-              return (
-                <label
-                  key={value}
-                  className={`flex cursor-pointer items-start gap-2 rounded-[var(--dash-radius-sm)] border px-3 py-2 text-sm pointer-coarse:min-h-11 ${
-                    kind === value
-                      ? "border-[var(--dash-accent)] bg-[var(--dash-accent-soft)]"
-                      : "border-[var(--dash-border-strong)]"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="kind"
-                    value={value}
-                    checked={kind === value}
-                    onChange={() => setKind(value)}
-                    disabled={pending}
-                    className="mt-1"
-                  />
-                  <span className="text-[var(--dash-text)]">
-                    <span className="font-medium">{head}:</span> {rest}
-                  </span>
-                </label>
-              );
-            })}
+            {COMPLAINT_KINDS.map((value) => (
+              <KindRadioRow
+                key={value}
+                kind={value}
+                name="kind"
+                checked={kind === value}
+                disabled={pending}
+                onSelect={() => setKind(value)}
+              />
+            ))}
           </div>
           {fieldError("kind")}
         </fieldset>

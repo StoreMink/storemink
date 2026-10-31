@@ -53,10 +53,8 @@ export default async function ReconciliationPage({
 
       <h1 className="text-2xl font-bold text-[#111827]">Reconciliation</h1>
       <p className="mt-1 mb-5 max-w-2xl text-sm text-[#5b6472]">
-        What the hourly sweep found and could not decide on its own - an amount
-        that differs from what we asked for, or a payment that maps to no store.
-        The payment itself is always recorded first; these are the questions
-        left over.
+        Payment questions the hourly sweep could not decide, such as an amount
+        that differs or a payment with no store.
       </p>
 
       <div className="mb-5 flex flex-wrap gap-2">

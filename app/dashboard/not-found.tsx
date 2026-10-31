@@ -38,8 +38,7 @@ export default function DashboardNotFound() {
 
         <h1 className="dash404-title">We couldn&rsquo;t find that</h1>
         <p className="dash404-text">
-          This item may have been deleted, or you may not have access to it on
-          this store. It hasn&rsquo;t affected the rest of your dashboard.
+          It may have been deleted, or you may not have access to it.
         </p>
 
         <div className="dash404-actions">

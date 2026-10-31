@@ -273,7 +273,7 @@ export function ImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[88vh] gap-0 overflow-y-auto sm:max-w-[680px]">
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-[680px]">
         <DialogHeader>
           <DialogTitle>Import {resource.label.toLowerCase()}</DialogTitle>
           <DialogDescription>{resource.description}</DialogDescription>
@@ -462,40 +462,30 @@ export function ImportDialog({
           </div>
         ) : null}
 
-        <DialogFooter className="mt-1 items-center border-t border-[var(--dash-border)] pt-4 sm:justify-between">
-          {phase === "review" && counts ? (
-            <>
-              {/* Says where they are about to end up. The redirect is the part
-                  of this flow people don't expect, so it should not be a
-                  surprise. */}
-              <p className="hidden text-xs text-[var(--dash-text-3)] sm:block">
-                Runs on our servers - we&apos;ll take you to its log.
-              </p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="dash-btn dash-btn-ghost"
-                  onClick={() => close(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="dash-btn dash-btn-primary"
-                  disabled={starting || counts.rows === counts.bad}
-                  onClick={() => void run()}
-                >
-                  {starting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Upload className="h-4 w-4" />
-                  )}
-                  Import {counts.unique.toLocaleString("en-IN")} {resource.noun}
-                </button>
-              </div>
-            </>
-          ) : null}
-        </DialogFooter>
+        {phase === "review" && counts ? (
+          <DialogFooter>
+            <button
+              type="button"
+              className="dash-btn dash-btn-ghost"
+              onClick={() => close(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="dash-btn dash-btn-primary"
+              disabled={starting || counts.rows === counts.bad}
+              onClick={() => void run()}
+            >
+              {starting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
+              Import {counts.unique.toLocaleString("en-IN")} {resource.noun}
+            </button>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

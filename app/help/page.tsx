@@ -83,7 +83,7 @@ export default async function HelpHome() {
           </p>
 
           <div className="hc-hero-search">
-            <HelpSearchBox placeholder="Search guides..." />
+            <HelpSearchBox placeholder="Search guides" />
             <AskMinkButton className="hc-hero-mink-pill" expand>
               <MinkFace size={36} />
               <span>

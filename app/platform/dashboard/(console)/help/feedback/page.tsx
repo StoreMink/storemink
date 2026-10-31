@@ -96,9 +96,8 @@ export default async function HelpFeedbackPage({
           </Link>
           <h1>Mink AI feedback</h1>
           <p>
-            What visitors said about Mink AI&apos;s answers on{" "}
-            {HELP_URL.replace(/^https?:\/\//, "")}. Read the &quot;Not
-            helpful&quot; ones to find guides that need work.
+            Visitor ratings of Mink AI&apos;s answers on{" "}
+            {HELP_URL.replace(/^https?:\/\//, "")}.
           </p>
         </div>
       </div>

@@ -270,7 +270,7 @@ describe("Cancel at the end of the cycle", () => {
     );
     expect(
       screen.getByText(
-        "Cancel Acme Retail's Pro plan at the end of its cycle on 31 Oct 2026? Do this only on the merchant's written request. They keep the plan until then, autopay stops at once, and any renewal payment for the next cycle is refunded when the plan ends.",
+        "End Acme Retail's Pro plan on 31 Oct 2026? Only on the merchant's written request. Autopay stops now; a renewal paid for the next cycle is refunded.",
       ),
     ).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Where did they ask?"), {
@@ -495,7 +495,7 @@ describe("End the plan now", () => {
     });
     expect(
       screen.getByText(
-        "The date the feature was removed or reduced. The Terms promise a refund for the part of the cycle after the change.",
+        "The date the feature was removed or reduced; the refund covers the cycle after it.",
       ),
     ).toBeTruthy();
   });

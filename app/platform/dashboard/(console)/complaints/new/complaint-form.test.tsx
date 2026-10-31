@@ -60,7 +60,7 @@ describe("the form's words (design 6.3)", () => {
     expect(when).toHaveValue("");
     expect(when).toHaveAttribute("max", MAX);
     expect(when).toHaveAccessibleDescription(
-      "The time on the email, letter or order, in India time. Every deadline counts from this time, not from when you log it.",
+      "In India time. Every deadline counts from this, not from when you log it.",
     );
     expect(
       screen.getByRole("group", { name: "How did it reach us?" }),
@@ -217,7 +217,7 @@ describe("logging", () => {
     expect(
       screen.getByLabelText("When did it reach us?"),
     ).toHaveAccessibleDescription(
-      "The time on the email, letter or order, in India time. Every deadline counts from this time, not from when you log it. That time is in the future.",
+      "In India time. Every deadline counts from this, not from when you log it. That time is in the future.",
     );
     expect(state.push).not.toHaveBeenCalled();
   });

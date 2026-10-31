@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   createUserWithEmailAndPassword,
@@ -270,16 +270,17 @@ export function RegisterClient({
         {step === "password" && (
           <div className="space-y-3">
             <Input
+              label="Password"
+              hint="At least 8 characters."
               type="password"
               value={password}
               onChange={setPassword}
-              placeholder="Create a password (min 8)"
             />
             <Input
+              label="Confirm password"
               type="password"
               value={confirm}
               onChange={setConfirm}
-              placeholder="Confirm password"
             />
             <Primary onClick={handlePassword} busy={busy}>
               Continue
@@ -291,14 +292,19 @@ export function RegisterClient({
           <div className="space-y-3">
             {!phoneSent ? (
               <>
-                <div className="pos-phone rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2">
-                  <PhoneInput
-                    international
-                    defaultCountry="IN"
-                    value={phone}
-                    onChange={setPhone}
-                    placeholder="Phone number"
-                  />
+                <div>
+                  <span className="mb-1 block text-xs font-medium text-[var(--pos-ink-2)]">
+                    Mobile number
+                  </span>
+                  <div className="pos-phone rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-3 py-2">
+                    <PhoneInput
+                      international
+                      defaultCountry="IN"
+                      value={phone}
+                      onChange={setPhone}
+                      numberInputProps={{ "aria-label": "Mobile number" }}
+                    />
+                  </div>
                 </div>
                 <Primary onClick={handleSendOtp} busy={busy}>
                   Send code
@@ -307,11 +313,11 @@ export function RegisterClient({
             ) : (
               <>
                 <Input
+                  label="6-digit code"
                   value={phoneCode}
                   onChange={(v) =>
                     setPhoneCode(v.replace(/\D/g, "").slice(0, 6))
                   }
-                  placeholder="6-digit code"
                   inputMode="numeric"
                 />
                 <Primary onClick={handleVerifyOtp} busy={busy}>
@@ -335,16 +341,16 @@ export function RegisterClient({
         {step === "pin" && (
           <div className="space-y-3">
             <Input
+              label="8-digit PIN"
               value={pin}
               onChange={(v) => setPin(v.replace(/\D/g, "").slice(0, 8))}
-              placeholder="Set an 8-digit PIN"
               inputMode="numeric"
               type="password"
             />
             <Input
+              label="Confirm PIN"
               value={pinConfirm}
               onChange={(v) => setPinConfirm(v.replace(/\D/g, "").slice(0, 8))}
-              placeholder="Confirm PIN"
               inputMode="numeric"
               type="password"
             />
@@ -384,28 +390,40 @@ function Stepper({ step }: { step: Step }) {
 }
 
 function Input({
+  label,
+  hint,
   value,
   onChange,
-  placeholder,
   type = "text",
   inputMode,
 }: {
+  label: string;
+  hint?: string;
   value: string;
   onChange: (v: string) => void;
-  placeholder: string;
   type?: string;
   inputMode?: "numeric" | "email" | "text";
 }) {
+  const id = useId();
   return (
-    <input
-      value={value}
-      type={type}
-      inputMode={inputMode}
-      autoCapitalize="none"
-      placeholder={placeholder}
-      onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-4 py-3 text-sm outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)]"
-    />
+    <div>
+      <label
+        htmlFor={id}
+        className="mb-1 block text-xs font-medium text-[var(--pos-ink-2)]"
+      >
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        type={type}
+        inputMode={inputMode}
+        autoCapitalize="none"
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-4 py-3 text-sm outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)]"
+      />
+      {hint && <p className="mt-1 text-xs text-[var(--pos-ink-3)]">{hint}</p>}
+    </div>
   );
 }
 

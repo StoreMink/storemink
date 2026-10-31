@@ -244,7 +244,6 @@ export function BrandingForm({
             <h1>Branding</h1>
             <p>
               Your logo, colour, store details and the voice Mink AI writes in.
-              They show across your storefront.
             </p>
           </div>
           <a
@@ -261,8 +260,8 @@ export function BrandingForm({
         {disabled && (
           <p className="brandingNotice">
             <Lock size={14} aria-hidden />
-            You can see these details, but changing them needs permission to
-            manage branding. Ask your store owner.
+            You can view these details. Ask your store owner for permission to
+            change them.
           </p>
         )}
 
@@ -302,8 +301,7 @@ export function BrandingForm({
                     <p className="brandingHint">No logo yet.</p>
                   )}
                   <p className="brandingHint">
-                    Shown in your store&apos;s header, footer and browser tab.
-                    Without one, your store name is shown instead.
+                    Shown in your header, footer and browser tab.
                   </p>
                 </div>
               </div>
@@ -337,8 +335,8 @@ export function BrandingForm({
                   />
                 </div>
                 <p className="brandingHint" id="primaryColor-hint">
-                  Used for buttons, links and highlights on your storefront.
-                  Type a hex code like #1a73e8 or pick one.
+                  Used for buttons, links and highlights. Type a hex code or
+                  pick one.
                 </p>
               </div>
             </Card>
@@ -371,14 +369,13 @@ export function BrandingForm({
               <Field
                 id="tagline"
                 label="Tagline"
-                hint="A short line about your store. It shows on your shop page and under your store's name in search results."
+                hint="Shown on your shop page and in search results."
               >
                 <input
                   id="tagline"
                   className="dash-input"
                   value={draft.tagline}
                   onChange={(e) => set("tagline", e.target.value)}
-                  placeholder="e.g. Fresh groceries, delivered the same day"
                   disabled={disabled}
                   aria-describedby="tagline-hint"
                 />
@@ -393,7 +390,6 @@ export function BrandingForm({
                   className="dash-input brandingTextarea"
                   value={draft.blurb}
                   onChange={(e) => set("blurb", e.target.value)}
-                  placeholder="e.g. We source from farms within 50 km of Pune and deliver within hours."
                   disabled={disabled}
                   rows={3}
                   aria-describedby="blurb-hint"
@@ -417,7 +413,6 @@ export function BrandingForm({
                     className="dash-input"
                     value={draft.email}
                     onChange={(e) => set("email", e.target.value)}
-                    placeholder="hello@yourstore.com"
                     disabled={disabled}
                     aria-invalid={errors.email ? true : undefined}
                     aria-describedby={errors.email ? "email-error" : undefined}
@@ -432,7 +427,6 @@ export function BrandingForm({
                     className="dash-input"
                     value={draft.phone}
                     onChange={(e) => set("phone", e.target.value)}
-                    placeholder="+91 98765 43210"
                     disabled={disabled}
                   />
                 </Field>
@@ -442,7 +436,6 @@ export function BrandingForm({
                     className="dash-input"
                     value={draft.hours}
                     onChange={(e) => set("hours", e.target.value)}
-                    placeholder="Mon to Sat, 10am to 6pm"
                     disabled={disabled}
                   />
                 </Field>
@@ -459,7 +452,7 @@ export function BrandingForm({
                 label="Instagram"
                 icon={<InstagramMark />}
                 value={draft.instagram}
-                placeholder="instagram.com/yourstore"
+                placeholder="instagram.com/…"
                 disabled={disabled}
                 onChange={(v) => set("instagram", v)}
               />
@@ -468,7 +461,7 @@ export function BrandingForm({
                 label="YouTube"
                 icon={<YoutubeMark />}
                 value={draft.youtube}
-                placeholder="youtube.com/@yourstore"
+                placeholder="youtube.com/@…"
                 disabled={disabled}
                 onChange={(v) => set("youtube", v)}
               />
@@ -477,7 +470,7 @@ export function BrandingForm({
                 label="WhatsApp"
                 icon={<WhatsappMark />}
                 value={draft.whatsapp}
-                placeholder="wa.me/919876543210"
+                placeholder="wa.me/…"
                 disabled={disabled}
                 onChange={(v) => set("whatsapp", v)}
               />
@@ -500,7 +493,6 @@ export function BrandingForm({
                   className="dash-input"
                   value={draft.legalName}
                   onChange={(e) => set("legalName", e.target.value)}
-                  placeholder="e.g. Acme Foods Pvt. Ltd."
                   disabled={disabled}
                   aria-describedby="legalName-hint"
                 />
@@ -543,8 +535,7 @@ export function BrandingForm({
               </div>
             </div>
             <p className="brandingAsideNote">
-              Your theme decides the exact fonts and layout. Open your store to
-              see the real thing once you save.
+              Your theme decides the exact fonts and layout.
             </p>
           </aside>
         </div>

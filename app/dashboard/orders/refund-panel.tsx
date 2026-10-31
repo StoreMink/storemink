@@ -330,17 +330,16 @@ export function RefundPanel({
               max={methodCap}
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
-              placeholder={String(methodCap)}
               className="mt-0.5 w-full rounded-md border border-border px-2 py-1 text-sm"
             />
           </label>
 
           {method === "store_credit" && (
             <p className="text-xs text-muted-foreground">
-              Adds to their balance here - no money leaves.
+              No money leaves; it adds to their balance
               {creditBalance > 0 &&
-                ` They currently hold ${formatPrice(creditBalance)}.`}{" "}
-              Make sure they&apos;ve agreed to this rather than a refund.
+                ` (they hold ${formatPrice(creditBalance)})`}
+              . Check they agreed to credit, not a refund.
             </p>
           )}
           {method === "manual" && (
@@ -351,7 +350,6 @@ export function RefundPanel({
               <input
                 value={reference}
                 onChange={(e) => setReference(e.target.value)}
-                placeholder="e.g. UPI 402913887711"
                 className="mt-0.5 w-full rounded-md border border-border px-2 py-1 text-sm"
               />
             </label>
@@ -364,7 +362,6 @@ export function RefundPanel({
             <input
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Damaged on arrival"
               className="mt-0.5 w-full rounded-md border border-border px-2 py-1 text-sm"
             />
           </label>

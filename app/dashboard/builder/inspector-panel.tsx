@@ -290,11 +290,11 @@ export function InspectorPanel({
                     anchor: e.target.value.trim().toLowerCase(),
                   })
                 }
-                placeholder="our-story"
+                aria-label="Anchor id"
               />
               <p className="text-muted-foreground mt-1 text-[11px]">
-                Link straight to this section with /{draft.slug || ""}#anchor.
-                Lowercase letters, numbers, hyphens; must start with a letter.
+                Link to it with /{draft.slug || ""}#id. Use lowercase letters,
+                numbers and hyphens.
               </p>
             </div>
 
@@ -435,9 +435,6 @@ export function StyleForm({
             </button>
           ))}
         </div>
-        <p className="text-muted-foreground mt-1 text-[11px]">
-          One-click starting points - tweak anything below after.
-        </p>
       </div>
 
       {canScheme && (
@@ -486,8 +483,8 @@ export function StyleForm({
           </div>
           {scheme && !previews[scheme].readable ? (
             <p className="mt-1 text-[11px] text-amber-700">
-              Some text is hard to read in this scheme with your current
-              colours. Try another, or adjust your colours under Brand.
+              Some text is hard to read in this scheme. Try another, or change
+              your colours under Brand.
             </p>
           ) : (
             <p className="text-muted-foreground mt-1 text-[11px]">
@@ -506,6 +503,7 @@ export function StyleForm({
             <input
               type="color"
               className="h-9 w-11 cursor-pointer rounded-md border p-0.5"
+              aria-label="Pick background color"
               value={
                 /^#[0-9a-f]{6}$/i.test(style.background ?? "")
                   ? (style.background as string)
@@ -517,7 +515,7 @@ export function StyleForm({
               className={fieldClass}
               value={style.background ?? ""}
               onChange={(e) => set("background", e.target.value)}
-              placeholder="transparent"
+              aria-label="Background color"
             />
             {style.background && (
               <Button
@@ -698,7 +696,7 @@ export function PageSettingsForm({
             className={fieldClass}
             value={seoTitle}
             onChange={(e) => setSeoTitle(e.target.value)}
-            placeholder={title || "Page title"}
+            placeholder={title}
           />
         </div>
 

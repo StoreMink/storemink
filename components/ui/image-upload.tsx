@@ -342,8 +342,8 @@ export function ImageUpload({
           </figure>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Check that the product looks exactly like the real item before you use
-          it. The refined copy is also saved in your Media Library.
+          Check it matches the real item before using it. A copy is saved in
+          your Media Library.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <Button
@@ -434,15 +434,14 @@ export function ImageUpload({
             </div>
             {canRefine && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Retouches lighting and background and resizes to exactly{" "}
-                {slot?.width} × {slot?.height} px. You&rsquo;ll compare before
-                using it.
+                Retouches the photo and resizes it to {slot?.width} ×{" "}
+                {slot?.height} px. You compare before using it.
               </p>
             )}
             {canBackground && (
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Keeps your real product exactly as photographed and puts it on
-                white, a colour or a transparent background.
+                Puts your real product on white, a colour or a transparent
+                background.
               </p>
             )}
           </div>

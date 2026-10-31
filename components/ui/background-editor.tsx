@@ -275,8 +275,8 @@ export function BackgroundEditor({
       )}
 
       <p className="mt-2 text-xs text-muted-foreground">
-        Your product stays exactly as photographed: only the background changes,
-        and the product is centred at {slot.width} × {slot.height} px.
+        Only the background changes. The product is centred at {slot.width} ×{" "}
+        {slot.height} px.
       </p>
 
       {error && <p className="mt-2 text-sm text-destructive">{error}</p>}

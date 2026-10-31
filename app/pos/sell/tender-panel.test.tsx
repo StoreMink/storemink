@@ -143,10 +143,10 @@ describe("checkout customer details", () => {
       onGstin: vi.fn(),
     });
 
-    expect(screen.queryByPlaceholderText("name@example.com")).toBeNull();
+    expect(screen.queryByLabelText(/receipt email/i)).toBeNull();
     fireEvent.click(button(/add receipt email or gstin/i));
-    expect(screen.getByPlaceholderText("name@example.com")).toBeVisible();
-    expect(screen.getByPlaceholderText("22AAAAA0000A1Z5")).toBeVisible();
+    expect(screen.getByLabelText(/receipt email/i)).toBeVisible();
+    expect(screen.getByLabelText(/customer gstin/i)).toBeVisible();
   });
 });
 
@@ -229,7 +229,7 @@ describe("one-method payments", () => {
 
     fireEvent.click(button(/^card terminal/i));
     fireEvent.click(button(/^complete sale$/i));
-    const pin = await screen.findByPlaceholderText(/manager's 8-digit pin/i);
+    const pin = await screen.findByLabelText(/manager's pin/i);
     fireEvent.change(pin, { target: { value: "12345678" } });
     fireEvent.click(button(/^approve$/i));
 

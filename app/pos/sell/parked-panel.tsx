@@ -136,8 +136,8 @@ export function ParkedPanel({
         {/* Said plainly, because the alternative — assuming a hold reserves
             stock — is how a cashier promises something that then sells. */}
         <p className="mt-3 text-center text-xs text-[var(--pos-ink-3)]">
-          Holding a sale doesn&apos;t reserve stock. Prices and availability are
-          checked again when it&apos;s completed.
+          A held sale doesn&apos;t reserve stock. Prices and stock are checked
+          again when it&apos;s completed.
         </p>
       </div>
     </div>

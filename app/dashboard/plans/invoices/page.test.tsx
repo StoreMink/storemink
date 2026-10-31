@@ -100,9 +100,7 @@ describe("InvoicesPage", () => {
   it("says it lists invoices and credit notes", async () => {
     await renderPage();
     expect(
-      screen.getByText(
-        /Every subscription invoice and credit note StoreMink has issued to this store/,
-      ),
+      screen.getByText(/Your StoreMink invoices and credit notes/),
     ).toBeInTheDocument();
   });
 

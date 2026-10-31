@@ -90,6 +90,9 @@ export function CategoryEditorDialog({
   // the product editor's is (takedown fix pass). Every other field stays open.
   const blockId = isEditing ? blockedByStoreMink : null;
   const statusId = useId();
+  const nameId = useId();
+  const slugId = useId();
+  const descriptionId = useId();
   const statusReasonId = `${statusId}-blocked`;
 
   useEffect(() => {
@@ -192,22 +195,26 @@ export function CategoryEditorDialog({
             </p>
           )}
           <div>
-            <label className={labelClass}>Name *</label>
+            <label className={labelClass} htmlFor={nameId}>
+              Name *
+            </label>
             <input
+              id={nameId}
               className={fieldClass}
               value={form.name}
               onChange={(e) => handleNameChange(e.target.value)}
-              placeholder="e.g. Almond Milk"
             />
           </div>
 
           <div>
-            <label className={labelClass}>Slug</label>
+            <label className={labelClass} htmlFor={slugId}>
+              Slug
+            </label>
             <input
+              id={slugId}
               className={fieldClass}
               value={form.slug}
               onChange={(e) => handleSlugChange(e.target.value)}
-              placeholder="auto-generated from name"
             />
             <p className="mt-1 text-[11px] text-[var(--dash-text-3)]">
               Leave blank to generate from the name.
@@ -215,12 +222,14 @@ export function CategoryEditorDialog({
           </div>
 
           <div>
-            <label className={labelClass}>Description</label>
+            <label className={labelClass} htmlFor={descriptionId}>
+              Description
+            </label>
             <textarea
+              id={descriptionId}
               className={`${fieldClass} min-h-[72px] resize-y`}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="Optional short description"
             />
           </div>
 

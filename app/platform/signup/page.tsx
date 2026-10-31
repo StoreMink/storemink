@@ -1257,7 +1257,6 @@ export default function SignupPage() {
                     name="email"
                     type="email"
                     className="sgn-input"
-                    placeholder="you@example.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     autoFocus
@@ -1274,7 +1273,7 @@ export default function SignupPage() {
                       name="password"
                       type={showPassword ? "text" : "password"}
                       className="sgn-input"
-                      placeholder="At least 8 characters"
+                      aria-describedby="signup-password-hint"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="new-password"
@@ -1293,6 +1292,9 @@ export default function SignupPage() {
                       )}
                     </button>
                   </div>
+                  <p id="signup-password-hint" className="sgn-hint neutral">
+                    At least 8 characters.
+                  </p>
                 </div>
                 <button
                   type="submit"
@@ -1523,7 +1525,6 @@ export default function SignupPage() {
                   <input
                     id="signup-store-name"
                     className="sgn-input"
-                    placeholder="For example, Saffron Studio"
                     value={name}
                     onChange={(e) => onNameChange(e.target.value)}
                     autoFocus={!!firstName}
@@ -1553,9 +1554,8 @@ export default function SignupPage() {
                     ))}
                   </select>
                   <p className="sgn-help">
-                    Next, your dashboard walks you through choosing your
-                    store&apos;s look, your business address and your mobile
-                    before the store opens.
+                    Your dashboard then walks you through the rest before your
+                    store opens.
                   </p>
                 </div>
 
@@ -1575,8 +1575,8 @@ export default function SignupPage() {
             <div className="sgn-step">
               <h1 className="sgn-title">Choose your plan</h1>
               <p className="sgn-sub">
-                Start on Free, or choose a paid plan to unlock more from day
-                one. You can change plans any time.
+                Start on Free or pick a paid plan. You can change plans any
+                time.
               </p>
 
               {planNotice && (
@@ -1706,9 +1706,8 @@ export default function SignupPage() {
 
               {quote && !quote.paidCheckout && (
                 <p className="sgn-help sgn-plan-help">
-                  Paid plans can&apos;t be bought during signup right now. Your
-                  store starts on Free, and you can upgrade from {BILLING_PAGE}{" "}
-                  in your dashboard.
+                  Paid plans can&apos;t be bought during signup right now.
+                  Upgrade later from {BILLING_PAGE} in your dashboard.
                 </p>
               )}
 

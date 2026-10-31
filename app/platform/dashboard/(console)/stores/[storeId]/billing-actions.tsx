@@ -268,9 +268,8 @@ export function IssueRefundDialog({
         <DialogHeader>
           <DialogTitle>Issue a refund</DialogTitle>
           <DialogDescription>
-            The money goes back to the payment this invoice was paid with. A
-            credit note is issued and the merchant is emailed when Razorpay
-            confirms it.
+            The money goes back to the payment this invoice was paid with. The
+            merchant gets a credit note and an email once Razorpay confirms it.
           </DialogDescription>
         </DialogHeader>
 
@@ -399,7 +398,6 @@ function PlanNoteDialog({
   title,
   description,
   label,
-  placeholder,
   confirmLabel,
   onSubmit,
   onClose,
@@ -407,7 +405,6 @@ function PlanNoteDialog({
   title: string;
   description: string;
   label: string;
-  placeholder?: string;
   confirmLabel: string;
   onSubmit: (note: string) => Promise<string | null>;
   onClose: () => void;
@@ -450,7 +447,6 @@ function PlanNoteDialog({
             className="dash-input w-full"
             rows={3}
             value={note}
-            placeholder={placeholder}
             onChange={(e) => setNote(e.target.value)}
             disabled={pending}
           />
@@ -604,10 +600,8 @@ function EndPlanDialog({
             End {storeName}&apos;s {planName} plan now?
           </DialogTitle>
           <DialogDescription>
-            The store moves to the Free plan straight away and any open POS
-            shift is closed. Use this when a merchant who declined new Terms, or
-            who is leaving after a main feature was cut, asks us to end their
-            plan.
+            The store moves to the Free plan at once and any open POS shift is
+            closed. Use this only when the merchant asks us to end their plan.
           </DialogDescription>
         </DialogHeader>
 
@@ -676,8 +670,8 @@ function EndPlanDialog({
             </label>
             {reason === "feature_removed" ? (
               <p className={`-mt-2 ${HINT}`}>
-                The date the feature was removed or reduced. The Terms promise a
-                refund for the part of the cycle after the change.
+                The date the feature was removed or reduced; the refund covers
+                the cycle after it.
               </p>
             ) : null}
 
@@ -867,9 +861,8 @@ export function StoreBillingTools({
       {canManage && open === "cancel" && sub ? (
         <PlanNoteDialog
           title="Cancel at the end of the cycle"
-          description={`Cancel ${billing.storeName}'s ${planName} plan at the end of its cycle on ${fmtDate(sub.currentPeriodEnd)}? Do this only on the merchant's written request. They keep the plan until then, autopay stops at once, and any renewal payment for the next cycle is refunded when the plan ends.`}
+          description={`End ${billing.storeName}'s ${planName} plan on ${fmtDate(sub.currentPeriodEnd)}? Only on the merchant's written request. Autopay stops now; a renewal paid for the next cycle is refunded.`}
           label="Where did they ask?"
-          placeholder="Email of 26 Oct from owner@..."
           confirmLabel="Cancel plan"
           onClose={close}
           onSubmit={async (note) => {

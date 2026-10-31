@@ -13,7 +13,7 @@
 // a carrier will accept.
 // ---------------------------------------------------------------------------
 
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { MessageSquare, Trash2 } from "lucide-react";
 import {
@@ -22,6 +22,7 @@ import {
   type SmsTemplate,
 } from "@/app/actions/sms-template-actions";
 import { DLT_VARIABLE, checkDltTemplate, smsSegments } from "@/lib/sms/dlt";
+import { InfoTip } from "@/components/ui/info-tip";
 
 export function SmsTemplateEditor({
   eventKey,
@@ -45,6 +46,7 @@ export function SmsTemplateEditor({
   const [mapping, setMapping] = useState<string[]>(initial?.variables ?? []);
   const [existing, setExisting] = useState<SmsTemplate | null>(initial);
   const [isPending, startTransition] = useTransition();
+  const bodyId = useId();
 
   // The same pure rules the server enforces on save, so the count and the
   // warning below are what will actually happen rather than a guess.
@@ -88,7 +90,7 @@ export function SmsTemplateEditor({
   function remove() {
     if (
       !window.confirm(
-        "Remove this SMS template? Your DLT registration is untouched - this only stops us sending this notification by SMS.",
+        "Remove this SMS template? Your DLT registration stays; this only stops sending it by SMS.",
       )
     )
       return;
@@ -116,24 +118,11 @@ export function SmsTemplateEditor({
             SMS isn&apos;t connected for this store
           </p>
           <p className="mt-1">
-            Connect your own Twilio account in Channels first. You can save a
-            template here now, but nothing will send until it&apos;s connected.
+            Connect Twilio in Channels first. You can save a template now, but
+            nothing sends until then.
           </p>
         </div>
       )}
-
-      <div className="rounded-lg border border-[var(--dash-border)] p-3 text-[12px] text-[var(--dash-text-3)]">
-        <p className="text-[13px] font-medium text-[var(--dash-text)]">
-          This mirrors a template you registered on your DLT portal
-        </p>
-        <p className="mt-1">
-          Paste the body exactly as it was approved, using{" "}
-          <code className="font-mono">{DLT_VARIABLE}</code> where each variable
-          goes. Carriers in India drop any message whose text doesn&apos;t match
-          - with no bounce and no error - so the wording here has to be
-          character-for-character what your operator approved.
-        </p>
-      </div>
 
       <label className="block">
         <span className="mb-1 block text-[12px] font-medium text-[var(--dash-text-2)]">
@@ -143,21 +132,30 @@ export function SmsTemplateEditor({
           value={templateId}
           readOnly={readOnly}
           onChange={(e) => setTemplateId(e.target.value)}
-          placeholder="1707161234567890123"
           className="w-full rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] px-3 py-2 font-mono text-[13px] text-[var(--dash-text)] outline-none"
         />
       </label>
 
-      <label className="block">
-        <span className="mb-1 block text-[12px] font-medium text-[var(--dash-text-2)]">
-          Approved message
-        </span>
+      <div>
+        <div className="mb-1 flex items-center gap-1.5">
+          <label
+            htmlFor={bodyId}
+            className="text-[12px] font-medium text-[var(--dash-text-2)]"
+          >
+            Approved message
+          </label>
+          <InfoTip label="About DLT templates">
+            Paste the body exactly as approved on your DLT portal, with{" "}
+            {DLT_VARIABLE} for each variable. Carriers silently drop any message
+            that doesn&apos;t match.
+          </InfoTip>
+        </div>
         <textarea
+          id={bodyId}
           value={body}
           readOnly={readOnly}
           rows={4}
           onChange={(e) => setBody(e.target.value)}
-          placeholder={`Hi ${DLT_VARIABLE}, your order ${DLT_VARIABLE} is confirmed. - Your Store`}
           className="w-full rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] px-3 py-2 text-[13px] text-[var(--dash-text)] outline-none"
         />
         <span className="mt-1.5 flex flex-wrap items-center gap-3 text-[12px] text-[var(--dash-text-3)]">
@@ -172,8 +170,8 @@ export function SmsTemplateEditor({
           </span>
           {segments > 1 && (
             <span className="text-amber-700 dark:text-amber-500">
-              Over one segment - check for ₹, emoji or curly quotes, which cut
-              the limit from 160 characters to 70.
+              Over one segment: ₹, emoji or curly quotes cut the limit from 160
+              to 70 characters.
             </span>
           )}
         </span>
@@ -182,7 +180,7 @@ export function SmsTemplateEditor({
             {shape.error}
           </span>
         )}
-      </label>
+      </div>
 
       {slots > 0 && (
         <div>
@@ -208,7 +206,7 @@ export function SmsTemplateEditor({
                   }}
                   className="flex-1 rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] px-3 py-2 text-[13px] text-[var(--dash-text)] outline-none"
                 >
-                  <option value="">Choose a value…</option>
+                  <option value="">Select</option>
                   {variables.map((v) => (
                     <option key={v.name} value={v.name}>
                       {v.name} - {v.description}

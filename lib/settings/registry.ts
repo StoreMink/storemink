@@ -131,7 +131,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "blogs.requireApproval",
     label: "Require approval before publishing",
     description:
-      "Customer submissions wait in a review queue until an admin approves them. Turn off to let customer blogs go live immediately.",
+      "Customer posts wait in a review queue until an admin approves them.",
     group: "Blogs",
     section: "blogs",
     type: "boolean",
@@ -142,7 +142,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pages.customCode",
     label: "Allow custom code",
     description:
-      "Let admins add custom HTML/CSS/JavaScript sections to pages. Code runs in a secure sandbox. Turn off to disable custom-code sections store-wide.",
+      "Let admins add custom HTML, CSS and JavaScript sections, which run in a secure sandbox.",
     group: "Website",
     section: "builder",
     type: "boolean",
@@ -154,7 +154,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "marketing.showAllCoupons",
     label: "Show all active coupons on storefront",
     description:
-      "If enabled, all active coupons will be displayed to shoppers in the cart, overriding individual coupon visibility settings.",
+      "Show every active coupon in the cart, whatever each coupon's own visibility setting.",
     group: "Marketing",
     section: "marketing",
     type: "boolean",
@@ -164,7 +164,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "inventory.simpleTrackDefault",
     label: "Track inventory for new simple products",
     description:
-      "By default, new simple products (without variants) will have inventory tracking enabled.",
+      "New products without variants start with inventory tracking on.",
     group: "Inventory",
     section: "inventory",
     type: "boolean",
@@ -174,7 +174,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "inventory.lowStockThreshold",
     label: "Store-wide low stock threshold",
     description:
-      "When an item's stock falls to or below this number, it will be marked as 'Low Stock' unless overridden at the product level.",
+      "Items at or below this stock level show as Low stock, unless a product sets its own threshold.",
     group: "Inventory",
     section: "inventory",
     type: "number",
@@ -199,7 +199,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.idleLockMinutes",
     label: "Auto-lock POS after",
     description:
-      "Minutes of inactivity before POS locks and asks for the cashier's PIN again. Stops the next person selling as whoever walked away.",
+      "Minutes without activity before POS locks and asks for a PIN again.",
     group: "Point of Sale",
     section: "pos",
     type: "number",
@@ -212,7 +212,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.allowPriceOverride",
     label: "Allow price overrides in POS",
     description:
-      "Lets an item's price be changed during a POS sale. Turn off to make listed prices final. Who may do it is governed by the setting below.",
+      "Let an item's price be changed during a POS sale; who may do it is set below.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -223,7 +223,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.ownerOnlyDiscounts",
     label: "Only the owner can give discounts",
     description:
-      "Cashiers and managers cannot discount a sale, mark a line down, or override a price - not even with a manager's PIN. A price override is a discount by another name, so it is covered here too. Turn this off to let cashiers discount up to the limit below, with a manager approving anything larger.",
+      "Cashiers and managers can't discount, mark down or override a price, even with a manager's PIN.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -234,7 +234,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.requireManagerForDiscount",
     label: "Require a manager's PIN for large discounts",
     description:
-      "Only applies when 'Only the owner can give discounts' is off. Cashiers must then get a manager's PIN to discount beyond the limit below (managers and owners are never prompted).",
+      "When the owner-only rule is off, cashiers need a manager's PIN to discount beyond the limit below.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -245,7 +245,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.maxDiscountPercent",
     label: "Discount a cashier can give without approval",
     description:
-      "Percent of the sale a cashier may discount before a manager's PIN is required. Only applies when 'Only the owner can give discounts' is off.",
+      "Largest discount, as a percent of the sale, a cashier can give without a manager's PIN.",
     group: "Point of Sale",
     section: "pos",
     type: "number",
@@ -259,7 +259,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.requireOpenShift",
     label: "Require an open shift to sell",
     description:
-      "Cashiers must open the drawer with a counted float before ringing a sale. Off by default - turning it on stops sales in POS until someone opens a shift, so it is the merchant's call.",
+      "Cashiers must open a shift with a counted float before selling; POS can't sell until one is open.",
     group: "Point of Sale",
     section: "pos",
     type: "boolean",
@@ -270,7 +270,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "pos.cashVarianceTolerance",
     label: "Cash variance tolerance",
     description:
-      "Rupees a closing count may differ from expected before it is flagged as over or short. A drawer counted by hand is rarely exact.",
+      "How many rupees a closing count may differ from expected before it is flagged over or short.",
     group: "Point of Sale",
     section: "pos",
     type: "number",
@@ -283,7 +283,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "fulfilment.offerPickup",
     label: "Offer pickup at checkout",
     description:
-      "Shoppers can collect from a shop instead of having it delivered. Only locations with the Customer pickup capability are offered.",
+      "Let shoppers collect from a shop that has the Customer pickup capability.",
     group: "Checkout",
     section: "locations",
     type: "boolean",
@@ -294,7 +294,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "fulfilment.pickupReadyDays",
     label: "Orders are ready for collection in",
     description:
-      "0 means same-day collection. Shown at checkout and in the confirmation email, and the hold window starts from this date.",
+      "Days until a collection order is ready (0 means same day); the hold period starts from then.",
     group: "Checkout",
     section: "locations",
     type: "number",
@@ -308,7 +308,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "fulfilment.pickupHoldDays",
     label: "Hold uncollected orders for",
     description:
-      "Counted from the day it's ready. After this, an uncollected order is cancelled and its stock returns to the shelf.",
+      "Counted from the ready date; after this, an uncollected order is cancelled and restocked.",
     group: "Checkout",
     section: "locations",
     type: "number",
@@ -322,7 +322,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "fulfilment.pickupPayment",
     label: "Payment for collection orders",
     description:
-      "Whether a shopper collecting from a shop pays online when they order, or at the counter when they collect.",
+      "Whether shoppers pay online when they order, or at the counter when they collect.",
     group: "Checkout",
     section: "locations",
     type: "select",
@@ -339,7 +339,7 @@ export const SETTINGS: readonly SettingDef[] = [
         value: "prepaid",
         label: "Pay online only",
         description:
-          "Collection orders must be paid for when they are placed. Needs a connected payment gateway.",
+          "Paid when the order is placed; needs a connected payment gateway.",
       },
       {
         value: "at_store",
@@ -355,7 +355,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "orders.allowCustomerCancellation",
     label: "Let customers cancel their own orders",
     description:
-      "A shopper can cancel from their order page while it hasn't shipped and is inside the window below. Stock returns automatically; the refund is still yours to approve.",
+      "Shoppers can cancel an unshipped order within the window below; you still approve any refund.",
     group: "Orders",
     section: "orders",
     type: "boolean",
@@ -367,8 +367,7 @@ export const SETTINGS: readonly SettingDef[] = [
   {
     key: "orders.cancellationWindow",
     label: "Cancellation window",
-    description:
-      "How long after ordering a customer may ask to cancel. 'Until fulfilled' is the usual choice - it tracks your own packing rather than a guess at how long it takes.",
+    description: "How long after ordering a customer may ask to cancel.",
     group: "Orders",
     section: "orders",
     type: "select",
@@ -409,8 +408,7 @@ export const SETTINGS: readonly SettingDef[] = [
   {
     key: "orders.cancellationWindowHours",
     label: "Customers can cancel within",
-    description:
-      "Used only when the cancellation window above is set to Custom hours.",
+    description: "Used only when the window above is Custom hours.",
     group: "Orders",
     section: "orders",
     type: "number",
@@ -441,7 +439,7 @@ export const SETTINGS: readonly SettingDef[] = [
         value: "auto",
         label: "Approve automatically",
         description:
-          "An eligible request cancels the order immediately. Restocks, and refunds per your choice below.",
+          "Cancels an eligible order at once, restocks it and refunds per your setting below.",
       },
     ],
     dependsOn: "orders.allowCustomerCancellation",
@@ -455,7 +453,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.enabled",
     label: "Accept returns",
     description:
-      "The master switch. Off, nothing here applies and no return can be started anywhere.",
+      "When off, no return can be started anywhere and nothing below applies.",
     group: "Returns",
     section: "orders",
     type: "boolean",
@@ -468,7 +466,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.windowDays",
     label: "Returns accepted within",
     description:
-      "Days from DELIVERY, not from the order date - a window counted from checkout can expire before a slow parcel even arrives. Individual products can override this.",
+      "Days counted from delivery, not the order date; products can set their own window.",
     group: "Returns",
     section: "orders",
     type: "number",
@@ -481,7 +479,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.selfServe",
     label: "Customers can start a return themselves",
     description:
-      "Off, they have to contact you and you record the return yourself.",
+      "When off, customers contact you and you record the return yourself.",
     group: "Returns",
     section: "orders",
     type: "boolean",
@@ -492,7 +490,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.autoApprove",
     label: "Approve straightforward returns automatically",
     description:
-      "Only ever applies to no-fault reasons. A claim that the item was damaged or wrong always goes to a person - otherwise anyone could waive your fees by picking that reason.",
+      "Only for no-fault reasons; damaged or wrong-item claims always go to a person.",
     group: "Returns",
     section: "orders",
     type: "boolean",
@@ -514,7 +512,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.restockingFeePercent",
     label: "Restocking fee",
     description:
-      "Percent of the returned goods value. NEVER charged when the return is your fault - damaged, faulty, wrong item, not as described, or late.",
+      "Percent of the returned goods value, never charged when the return is your fault.",
     group: "Returns",
     section: "orders",
     type: "number",
@@ -527,7 +525,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.returnShippingFee",
     label: "Return postage charged to the customer",
     description:
-      "A flat amount deducted when they post it back. Waived on the same fault reasons as the restocking fee.",
+      "A flat amount deducted when they post it back, waived for the same fault reasons.",
     group: "Returns",
     section: "orders",
     type: "number",
@@ -562,7 +560,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "returns.allowInStore",
     label: "Accept online returns in your shops",
     description:
-      "Customers can bring an online order back to a counter. Each location still needs the Accept returns capability.",
+      "Customers can bring an online order back to a counter; each location also needs Accept returns.",
     group: "Returns",
     section: "orders",
     type: "boolean",
@@ -586,8 +584,7 @@ export const SETTINGS: readonly SettingDef[] = [
   {
     key: "returns.maxRefundWithoutApproval",
     label: "Refunds above this need the owner",
-    description:
-      "0 means no limit. Below it, anyone who manages orders can refund; above it, only the owner can.",
+    description: "0 means no limit; refunds above this amount need the owner.",
     group: "Returns",
     section: "orders",
     type: "number",
@@ -600,7 +597,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "offers.autoApply",
     label: "Apply offers automatically",
     description:
-      "Let offers apply themselves at checkout without a code. Offers set to use a discount code always work, whatever this is set to.",
+      "Let offers apply at checkout without a code; offers that use a code always work.",
     group: "Offers",
     section: "promotions",
     type: "boolean",
@@ -640,7 +637,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "offers.showNearMiss",
     label: "Tell shoppers when they are close to an offer",
     description:
-      "Show “add ₹200 more to get free delivery” in the cart. Never shown for offers that need a code or are limited to a customer group.",
+      "Show “add ₹200 more to get free delivery” in the cart, never for code or group-only offers.",
     group: "Offers",
     section: "promotions",
     type: "boolean",
@@ -664,7 +661,7 @@ export const SETTINGS: readonly SettingDef[] = [
         value: "best",
         label: "Charge whichever is lower",
         description:
-          "The customer pays the sale price or the offer price, whichever is cheaper. They are never combined.",
+          "The customer pays whichever is cheaper; the two are never combined.",
       },
       {
         value: "skip",
@@ -675,7 +672,7 @@ export const SETTINGS: readonly SettingDef[] = [
         value: "stack",
         label: "Apply the offer on top of the sale price",
         description:
-          "Discounts twice. This is what an “extra 20% off sale” promotion needs.",
+          "Discounts twice, as an “extra 20% off sale” promotion needs.",
       },
     ],
   },
@@ -683,7 +680,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "offers.maxTotalDiscountPercent",
     label: "Most an offer may take off one order",
     description:
-      "A ceiling on how deep any single order can be discounted, whatever combination of offers applies. Set to 0 to stop offers discounting anything.",
+      "The most offers combined can take off one order; 0 stops offers discounting anything.",
     group: "Offers",
     section: "promotions",
     type: "number",
@@ -702,7 +699,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "whatsapp.updatePrecedence",
     label: "When a customer has both WhatsApp and SMS",
     description:
-      "Which channel carries an order update when the customer can receive it on both. The other is used only when the first cannot deliver.",
+      "Which channel carries an order update when the customer can get both; the other is the fallback.",
     group: "WhatsApp",
     section: "channels",
     type: "select",
@@ -737,7 +734,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "whatsapp.chatButton",
     label: "Show a WhatsApp chat button on the storefront",
     description:
-      "A button on every page of your store that opens a chat with your connected WhatsApp number. Shown only while the number is connected and live.",
+      "A button on every store page that opens a chat with your WhatsApp number, while it is connected.",
     group: "WhatsApp",
     section: "channels",
     type: "boolean",
@@ -751,7 +748,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "whatsapp.codConfirmation",
     label: "Ask cash-on-delivery customers to confirm on WhatsApp",
     description:
-      "Website cash-on-delivery orders get a WhatsApp message with Confirm order and Cancel order buttons instead of the usual order message. Cancel order cancels it straight away if it hasn't shipped. Sent only to customers who agreed to WhatsApp updates, once Meta approves the message.",
+      "COD customers who opted in to WhatsApp get Confirm and Cancel buttons; Cancel ends an unshipped order.",
     group: "WhatsApp",
     section: "channels",
     type: "boolean",
@@ -764,7 +761,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "whatsapp.codReminder",
     label: "Remind customers who haven't answered after 24 hours",
     description:
-      "Sends the confirmation message once more to a customer whose cash-on-delivery order is still waiting for an answer 24 hours later.",
+      "Sends the confirmation again to a COD customer who hasn't answered after 24 hours.",
     group: "WhatsApp",
     section: "channels",
     type: "boolean",
@@ -779,7 +776,7 @@ export const SETTINGS: readonly SettingDef[] = [
     key: "whatsapp.codAutoCancel",
     label: "Cancel orders not confirmed within 48 hours",
     description:
-      "Cancels a pending cash-on-delivery order whose customer has not confirmed it on WhatsApp 48 hours after the message. Its stock goes back on sale and the customer is told.",
+      "Cancels a pending COD order not confirmed on WhatsApp within 48 hours, restocks it and tells the customer.",
     group: "WhatsApp",
     section: "channels",
     type: "boolean",

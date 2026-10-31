@@ -307,6 +307,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                           }))
                         }
                         className={styles.returnSwap}
+                        aria-label={`Refund or swap ${l.name}`}
                       >
                         <option value="">Refund me instead</option>
                         {l.swapOptions.map((o) => (
@@ -332,6 +333,7 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
                     }))
                   }
                   className={styles.returnQty}
+                  aria-label={`Quantity of ${l.name} to return`}
                 >
                   {Array.from({ length: l.remaining + 1 }, (_, i) => (
                     <option key={i} value={i}>
@@ -364,7 +366,6 @@ export function ReturnRequest({ view }: { view: ReturnableOrderView }) {
               rows={2}
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="Tell the store what happened"
             />
           </label>
 

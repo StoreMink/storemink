@@ -19,8 +19,7 @@ export default async function ProductCreatePage() {
           <h1 className="text-xl font-semibold">Product limit reached</h1>
           <p className="mt-2 text-sm text-[var(--dash-muted)]">
             Your {data.plan === "free" ? "Free" : "Basic"} plan includes up to{" "}
-            {data.productLimit} products. Your {data.productCount} existing
-            products are safe and remain editable. Upgrade to add another.
+            {data.productLimit} products. Upgrade to add another.
           </p>
           <div className="mt-5 flex gap-2">
             <Link href="/dashboard/plans" className="dash-btn dash-btn-primary">

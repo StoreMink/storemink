@@ -205,10 +205,7 @@ function RankingTable({
 }) {
   if (rows.length === 0) {
     return (
-      <div className="dash-search-ranking-empty">
-        No rows are available for this range. Google may omit rare searches to
-        protect user privacy.
-      </div>
+      <div className="dash-search-ranking-empty">No data for this range.</div>
     );
   }
   return (
@@ -285,8 +282,7 @@ export function SearchRankingWidget({
         )}
         {data.state === "ready" ? (
           <p className="dash-search-note">
-            Rare searches can be omitted, so rows may not add up to total
-            impressions.
+            Rows may not add up, as rare searches are omitted.
           </p>
         ) : null}
         {/* Source, freshness and any warning are shown once, on the

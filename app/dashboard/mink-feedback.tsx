@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { InfoTip } from "@/components/ui/info-tip";
 import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkMessage, MinkUiError } from "./mink-ai";
 
@@ -130,7 +131,12 @@ export function MinkFeedbackControls({
       {reporting ? (
         <div className="mt-2 rounded-xl border border-[#e4e0ef] bg-white p-3 shadow-sm">
           <div className="flex items-center justify-between text-xs font-semibold text-[#3e3262]">
-            What went wrong?
+            <span className="flex items-center gap-1.5">
+              What went wrong?
+              <InfoTip label="About issue reports">
+                Don&apos;t include passwords, codes or customer details.
+              </InfoTip>
+            </span>
             <button
               type="button"
               onClick={() => setReporting(false)}
@@ -156,7 +162,8 @@ export function MinkFeedbackControls({
             onChange={(event) => setDetails(event.target.value)}
             maxLength={1000}
             rows={2}
-            placeholder="Optional details - do not include passwords, OTPs, or customer data"
+            aria-label="Issue details (optional)"
+            placeholder="Add details"
             className="mt-2 w-full resize-none rounded-lg border border-[#dedede] px-2.5 py-2 text-xs outline-none focus:border-[#6d4dff]"
           />
           {error ? (

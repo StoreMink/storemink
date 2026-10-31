@@ -180,7 +180,8 @@ export function CouponsManagementView({
             <Search className="h-4 w-4 shrink-0 opacity-50" />
             <input
               type="text"
-              placeholder="Search coupons..."
+              placeholder="Search coupons"
+              aria-label="Search coupons"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -372,8 +373,8 @@ export function CouponsManagementView({
           <DialogHeader>
             <DialogTitle>Delete coupon</DialogTitle>
             <DialogDescription>
-              Delete &ldquo;{deleteTarget?.code}&rdquo;? Shoppers will no longer
-              be able to apply this code. This can&rsquo;t be undone.
+              Delete &ldquo;{deleteTarget?.code}&rdquo;? Shoppers can no longer
+              use it. This can&rsquo;t be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -24,6 +24,7 @@ import {
   FilesTable,
   HoldsTable,
   KIND_HELP,
+  KIND_INFO,
   OUTCOME_LABEL,
   RepliesTable,
   blockItemHref,
@@ -247,8 +248,13 @@ describe("statuses and labels", () => {
       "Court order: remove or block within 3 hours.",
     );
     expect(KIND_HELP.intimate_or_impersonation).toBe(
-      "Intimate image or impersonation: shows someone naked, partly naked or in a sexual act, or pretends to be them, including faked or morphed images. Remove or block within 2 hours, at any hour, and resolve within 36 hours.",
+      "Intimate image or impersonation: remove or block within 2 hours, at any hour. Resolve within 36 hours.",
     );
+    // What a kind covers sits behind its "i", not in the radio's name.
+    expect(KIND_INFO.intimate_or_impersonation).toBe(
+      "Shows someone naked, partly naked or in a sexual act, or pretends to be them, including faked or morphed images.",
+    );
+    expect(KIND_INFO.court_order).toBeUndefined();
     expect(KIND_HELP.data_request).toBe(
       "Personal data request: answer within 10 working days.",
     );

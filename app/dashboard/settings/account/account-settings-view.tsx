@@ -185,17 +185,21 @@ function ProfileTab({
               id="firstName"
               value={first}
               onChange={(e) => setFirst(e.target.value)}
-              placeholder="First name"
               required
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="lastName">Last name</Label>
+            <Label htmlFor="lastName">
+              Last name
+              <span className="font-normal text-[var(--dash-text-3)]">
+                {" "}
+                (optional)
+              </span>
+            </Label>
             <Input
               id="lastName"
               value={last}
               onChange={(e) => setLast(e.target.value)}
-              placeholder="Last name (optional)"
             />
           </div>
         </div>
@@ -207,8 +211,7 @@ function ProfileTab({
             {email || "-"}
           </div>
           <p className="text-xs text-[var(--dash-text-3)]">
-            Email is tied to your login and cannot be changed here. Ask a
-            superadmin to update it.
+            Linked to your login. Ask your store owner to change it.
           </p>
         </div>
 
@@ -314,7 +317,6 @@ function PasswordCard({ autoFocus }: { autoFocus: boolean }) {
             value={next}
             onChange={(e) => setNext(e.target.value)}
             autoComplete="new-password"
-            placeholder="Minimum 8 characters"
           />
           {strength && (
             <div className="mt-1 flex items-center gap-2">

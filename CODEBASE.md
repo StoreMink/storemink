@@ -10234,6 +10234,17 @@ wholesip/
 │
 ├── components/
 │   ├── ui/                    # shadcn/ui primitives (button, dialog, table, sidebar…)
+│   │                          # ★ ui/info-tip.tsx: the "i" button beside a field
+│   │                          # label (a Base UI popover: hover with a mouse, tap
+│   │                          # on a phone) that holds guidance instead of a
+│   │                          # placeholder or a paragraph (§5 convention 46).
+│   │                          # ★ ui/dialog.tsx sets the standard dialog look:
+│   │                          # padding through `--dialog-pad` (the footer reads it
+│   │                          # to run edge to edge, so set the variable, never a
+│   │                          # bare `p-*`), a 17px semibold title, and footer
+│   │                          # buttons 36px tall. Button, Input and Badge carry
+│   │                          # their rounded corners again (the shadcn copy had
+│   │                          # lost them, so dialog buttons rendered square).
 │   │                          # ★ ui/image-refine-registry.ts: the tab's Refine
 │   │                          # registry (one entry per scope + slot size + photo,
 │   │                          # stop token, page exits, dead-request outcome, the
@@ -28038,6 +28049,39 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       (`DB_NAME` stubbed to `storemink_local`), `follow-ups` (block erasure,
       the claims against the real schema) and
       `lib/storefront/queries.local.test.ts`.
+
+46. **Placeholders and descriptions are short and general (owner's rule,
+    31 Oct 2026).** The owner found example data from a real store in
+    placeholders everywhere ("Cold-pressed mustard and groundnut oils for
+    families who cook at home", "Pressed in our own mill in Faridkot since
+    1998") and paragraph descriptions on every card, dialog and field.
+    - **A placeholder is kept only when it is short, general and useful:** a
+      search or filter box ("Search products"), a message composer ("Message
+      Mink AI"), or a pure format cue that cannot be mistaken for real data
+      ("https://", "0.00"). Never an example drawn from a store, product,
+      person, place, number or date, never the label repeated, never an
+      instruction. A control whose placeholder was its only name gets a label
+      or an `aria-label`.
+    - **A description is one sentence, two at most, never more than two
+      rendered lines**, and none at all when the heading already says it:
+      page subtitles, card and dialog descriptions, settings toggles, empty
+      states. A field hint stays only when it must be read before typing and
+      fits one line. Footnote paragraphs are deleted. Warnings about money or
+      irreversible actions stay, cut to the essential sentence.
+    - **Guidance a merchant needs now and then goes behind the "i" button**
+      (`components/ui/info-tip.tsx`, placed BESIDE the label, never inside it,
+      so the field's accessible name is unchanged), in one or two short
+      sentences. The Storefront page's Customise storefront dialog is the
+      reference.
+    - **Dialogs share one look** (`components/ui/dialog.tsx`): actions in
+      `DialogFooter`, no per-dialog title or description typography, and a
+      different padding only through `[--dialog-pad:…]`.
+    - Out of scope, deliberately: marketing page copy, Help Centre articles,
+      emails, legal and consent text, `lib/billing/tax-copy.ts` and
+      `lib/moderation/copy.ts` (pinned wording), theme definitions and Mink
+      AI prompts. No merchant step changes, so no Help Centre update; button
+      labels, headings and field labels were kept, because Mink AI's spotlight
+      (`lib/mink/guide-targets.ts`), tests and Help guides name them.
 
 ## 6. Commands
 

@@ -500,8 +500,8 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
         {draft.kind === "product_images" ? (
           <div className="space-y-2">
             <p className="text-xs">
-              Review the primary photo and ordered gallery. Saving keeps this
-              private; approve the photo change to update the product.
+              Saving keeps this private. Approve the change to update the
+              product.
             </p>
             <ProductPhotoPreview
               value={draft.before.images_json}
@@ -768,8 +768,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                       className="h-9 w-full rounded-lg border border-[#dfdce5] bg-white px-2.5 text-xs text-[#252228] outline-none focus:border-[#6d4dff] focus:ring-1 focus:ring-[#6d4dff]"
                     />
                     <span className="mt-1 block text-[9px] leading-4 text-[#82798d]">
-                      Choose at least 5 minutes and no more than 90 days ahead.
-                      The server stores this instant in UTC.
+                      Between 5 minutes and 90 days ahead.
                     </span>
                   </label>
                 ) : null}
@@ -783,9 +782,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                     Audience
                   </div>
                   <p className="mt-0.5 text-[9px] leading-4 text-[#82798d]">
-                    Mink snapshots eligible email addresses only when you
-                    review. Missing, invalid and suppressed addresses are
-                    excluded.
+                    Invalid and unsubscribed addresses are left out.
                   </p>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
                     <label className="flex cursor-pointer items-center gap-2 rounded-md border border-[#e4dfef] px-2.5 py-2 text-[10px] text-[#44365f]">
@@ -889,8 +886,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
                         className="h-9 w-full rounded-lg border border-[#dfdce5] bg-white px-2.5 text-xs text-[#252228] outline-none focus:border-[#6d4dff] focus:ring-1 focus:ring-[#6d4dff]"
                       />
                       <span className="mt-1 block text-[9px] leading-4 text-[#82798d]">
-                        Choose at least 5 minutes and no more than 30 days
-                        ahead. The server stores the exact instant in UTC.
+                        Between 5 minutes and 30 days ahead.
                       </span>
                     </label>
                   ) : null}
@@ -1256,7 +1252,7 @@ const UNREACHABLE_MINK_ACTION =
   "StoreMink couldn't reach Mink AI. Check your connection and try again.";
 
 const UNKNOWN_ACTION_OUTCOME =
-  "StoreMink couldn't confirm whether that change was applied, so nothing was assumed either way. Confirm this same approval again - repeating it is safe and reports what actually happened.";
+  "StoreMink couldn't confirm whether that change was applied. Confirm again; repeating it is safe.";
 
 /**
  * A failed Mink action request, carrying whether the server actually decided.
@@ -1358,7 +1354,7 @@ export function proposalRollbackNote(kind: MinkDraftKind): string {
     kind === "bulk_price_update" ||
     kind === "order_status_transition"
   ) {
-    return " This change cannot be rolled back from here; correct it with a new proposal or in the dashboard.";
+    return " This change can't be undone from here.";
   }
   if (kind === "coupon_email") {
     return " A queued campaign cannot be recalled.";
@@ -1378,7 +1374,7 @@ export function proposalRollbackNote(kind: MinkDraftKind): string {
     kind === "category_create" ||
     kind === "category_update"
   ) {
-    return " You can roll an approved change back from this card while nothing else has changed it.";
+    return " You can roll it back here until something else changes it.";
   }
   return "";
 }
@@ -1408,34 +1404,34 @@ function actionHeading(kind: MinkDraftKind) {
 
 function actionScope(kind: MinkDraftKind) {
   if (kind === "product_create") {
-    return "Needs the Products permission. The product is created as a draft with no variants, stock, images or category until you edit it.";
+    return "Needs the Products permission. The product is created as an unpublished draft.";
   }
   if (kind === "coupon_create" || kind === "coupon_update") {
-    return "Needs the Marketing permission. The coupon stays switched off and hidden; you turn it on, show it and choose its audience from Offers.";
+    return "Needs the Marketing permission. The coupon stays switched off and hidden.";
   }
   if (kind === "customer_group_create" || kind === "customer_group_update") {
-    return "Needs the Customers permission. Only the group's name, description and colour change; membership never does.";
+    return "Needs the Customers permission. Group members are not changed.";
   }
   if (kind === "category_create" || kind === "category_update") {
-    return "Needs the Categories permission. Only the category's name, URL slug, description, image and visibility change; the products in it never do.";
+    return "Needs the Categories permission. Products in the category are not changed.";
   }
   if (kind === "inventory_adjustment") {
-    return "Needs the Inventory permission. The SKU, location, quantity, resulting stock, reason and note are checked again when you approve.";
+    return "Needs the Inventory permission. Everything is checked again when you approve.";
   }
   if (kind === "bulk_inventory_adjustment") {
-    return "Needs the Inventory permission. Every line is checked again when you approve; one stale line stops the whole batch, so stock never half-changes.";
+    return "Needs the Inventory permission. One outdated line stops the whole batch.";
   }
   if (kind === "bulk_price_update") {
-    return "Needs the Products permission. Every SKU and price is checked again when you approve; one stale line stops the whole set. Existing orders keep the prices they were placed at.";
+    return "Needs the Products permission. One outdated line stops the whole set.";
   }
   if (kind === "order_status_transition") {
-    return "Needs the Orders permission. Moves one delivery order forward by one step (pending, processing, shipped, delivered). Payment, cancellation, pickup and customer contact are not touched.";
+    return "Needs the Orders permission. Moves one delivery order forward one step.";
   }
   if (kind === "blog") {
-    return "Needs the Blogs permission. Exactly this saved title, excerpt, body and SEO text become one new post.";
+    return "Needs the Blogs permission. This saved text becomes one new post.";
   }
   if (kind === "coupon_email") {
-    return "Needs the Marketing permission and a Pro plan. The audience, sender, coupon and copy are frozen when you confirm, and only then is anything queued.";
+    return "Needs the Marketing permission and a Pro plan. Nothing is sent until you confirm.";
   }
   return "Needs the Products permission. Price, stock, status and publishing are not touched.";
 }
@@ -1873,8 +1869,7 @@ function BulkPriceDraftEditor({
         </button>
       </div>
       <p className="rounded-md bg-[#fff9e8] px-2 py-1.5 text-[9px] leading-4 text-[#735b17]">
-        Enter the full final tuple. MRP must be at least selling price; special
-        price must be at most selling price. Leave special price empty to clear
+        MRP ≥ selling price ≥ special price. Leave special price empty to clear
         it.
       </p>
       {lines.map((line, index) => (

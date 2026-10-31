@@ -8,10 +8,13 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   Select,
   SelectContent,
@@ -62,7 +65,6 @@ export function InviteUserDialog({
   const router = useRouter();
 
   const chosen = findRole(roles, role);
-  const isPosRole = chosen?.kind === "pos";
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -109,81 +111,79 @@ export function InviteUserDialog({
         <UserPlus className="h-4 w-4" />
         {label}
       </DialogTrigger>
-      <DialogContent className="gap-6 p-8 sm:max-w-[520px] overflow-y-auto max-h-[90vh]">
-        <DialogHeader className="space-y-2 p-0">
-          <DialogTitle className="text-[20px] font-semibold">
-            Invite user
-          </DialogTitle>
-          <p className="text-muted-foreground text-[14px]">
-            Send an invitation to a new team member.
-          </p>
-        </DialogHeader>
+      <DialogContent className="sm:max-w-[520px]">
+        <form onSubmit={handleSubmit} className="grid gap-5">
+          <DialogHeader>
+            <DialogTitle>Invite user</DialogTitle>
+            <DialogDescription>
+              We email them a link to set up their account.
+            </DialogDescription>
+          </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-5">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-2">
-              <Label
-                htmlFor="invite-first-name"
-                className="text-[14px] font-medium"
-              >
+              <Label htmlFor="invite-first-name">
                 First name <span className="text-[var(--dash-red)]">*</span>
               </Label>
               <Input
                 id="invite-first-name"
                 type="text"
-                placeholder="John"
                 required
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 disabled={isPending}
-                className="h-11 px-3 text-[14px]"
+                className="h-10 px-3"
               />
             </div>
             <div className="flex flex-col gap-2">
-              <Label
-                htmlFor="invite-last-name"
-                className="text-[14px] font-medium"
-              >
-                Last name
+              <Label htmlFor="invite-last-name">
+                Last name{" "}
+                <span className="font-normal text-[var(--dash-text-3)]">
+                  (optional)
+                </span>
               </Label>
               <Input
                 id="invite-last-name"
                 type="text"
-                placeholder="Doe (optional)"
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 disabled={isPending}
-                className="h-11 px-3 text-[14px]"
+                className="h-10 px-3"
               />
             </div>
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="invite-email" className="text-[14px] font-medium">
+            <Label htmlFor="invite-email">
               Email address <span className="text-[var(--dash-red)]">*</span>
             </Label>
             <Input
               id="invite-email"
               type="email"
-              placeholder="user@company.com"
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               disabled={isPending}
-              className="h-11 px-3 text-[14px]"
+              className="h-10 px-3"
             />
           </div>
 
           <div className="flex flex-col gap-2">
-            <Label htmlFor="invite-role" className="text-[14px] font-medium">
-              Role <span className="text-[var(--dash-red)]">*</span>
-            </Label>
+            <div className="flex items-center gap-1.5">
+              <Label htmlFor="invite-role">
+                Role <span className="text-[var(--dash-red)]">*</span>
+              </Label>
+              <InfoTip label="About roles">
+                Dashboard roles sign in to the dashboard. Manager and Cashier
+                sign in to POS only, with an 8-digit PIN they choose.
+              </InfoTip>
+            </div>
             <Select
               value={role}
               onValueChange={(val) => setRole(val ?? "member")}
               disabled={isPending}
             >
-              <SelectTrigger id="invite-role" className="h-11 px-3 text-[14px]">
+              <SelectTrigger id="invite-role" className="h-10 px-3">
                 <SelectValue placeholder="Select a role" />
               </SelectTrigger>
               <SelectContent>
@@ -210,20 +210,13 @@ export function InviteUserDialog({
               </SelectContent>
             </Select>
             {chosen && (
-              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
+              <p className="text-[12.5px] text-[var(--dash-text-3)]">
                 {chosen.description}
               </p>
             )}
             {!posEnabled && (
-              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
+              <p className="text-[12.5px] text-[var(--dash-text-3)]">
                 Manager and Cashier use POS. Switch on POS to invite them.
-              </p>
-            )}
-            {isPosRole && (
-              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
-                They get an email link to set a password, verify their phone and
-                choose an 8-digit PIN. They sign in to POS only, never the
-                dashboard.
               </p>
             )}
           </div>
@@ -232,12 +225,10 @@ export function InviteUserDialog({
               picker there would imply a restriction that does not apply.
               Hidden for a single-location store for the same reason. */}
           {locations.length > 1 && role !== "superadmin" && (
-            <div className="flex flex-col gap-2">
-              <Label className="text-[14px] font-medium">Locations</Label>
-              <p className="-mt-1 text-[12.5px] text-[var(--dash-text-3)]">
-                {isPosRole
-                  ? "Which shops they can work at. Leave all unticked to assign them to every location."
-                  : "Which shops they can see. Leave all unticked for full access to every location."}
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium">Locations</legend>
+              <p className="text-[12.5px] text-[var(--dash-text-3)]">
+                Leave all unticked for every location.
               </p>
               <div className="flex flex-col gap-1.5 rounded-md border border-[var(--dash-border)] p-3">
                 {locations.map((l) => {
@@ -265,18 +256,21 @@ export function InviteUserDialog({
                   );
                 })}
               </div>
-            </div>
+            </fieldset>
           )}
 
           {error && (
-            <div className="rounded-md border border-[var(--dash-red)]/30 bg-[var(--dash-red)]/10 px-4 py-3">
+            <div
+              role="alert"
+              className="rounded-md border border-[var(--dash-red)]/30 bg-[var(--dash-red)]/10 px-4 py-3"
+            >
               <p className="text-[14px] font-medium text-[var(--dash-red)]">
                 {error}
               </p>
             </div>
           )}
 
-          <div className="flex justify-end gap-3">
+          <DialogFooter>
             <Button
               type="button"
               variant="outline"
@@ -295,7 +289,7 @@ export function InviteUserDialog({
                 "Send invite"
               )}
             </Button>
-          </div>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>

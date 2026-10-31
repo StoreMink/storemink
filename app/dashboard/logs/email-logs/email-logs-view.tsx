@@ -92,8 +92,8 @@ export function EmailLogsView({
           <h1>Email logs</h1>
           <p>
             {platform
-              ? "Platform delivery history for signup, operator access and StoreMink billing. Signup verification codes are visible here for assisted and test-store creation; password-reset and staff-invite credentials remain redacted."
-              : "Every email this store has sent - order notifications, campaigns, invites and sign-in codes. Password resets and staff invites are recorded without their contents, because the link inside is a working credential."}
+              ? "Emails StoreMink sends for signup, operator access and billing. Password resets and staff invites are stored without their contents."
+              : "Every email this store has sent. Password resets and staff invites are stored without their contents."}
           </p>
         </div>
       </header>
@@ -111,7 +111,7 @@ export function EmailLogsView({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by recipient or subject"
+              placeholder="Search emails"
               aria-label="Search email logs"
               className="w-full rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] py-[7px] pl-9 pr-3 text-[13px] text-[var(--dash-text)] outline-none"
             />
@@ -195,7 +195,7 @@ export function EmailLogsView({
               <p className="dash-empty-text">
                 {hasFilters
                   ? "Try a wider date range or clear the filters."
-                  : "Order confirmations, campaigns and account emails will appear here as they're sent."}
+                  : "Emails appear here as they're sent."}
               </p>
             </div>
           ) : (

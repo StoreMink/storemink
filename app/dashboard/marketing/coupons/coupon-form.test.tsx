@@ -71,7 +71,7 @@ describe("CouponForm", () => {
     const user = userEvent.setup();
     render(<CouponForm coupon={null} groups={[]} />);
 
-    const code = screen.getByPlaceholderText("e.g. SUMMER25");
+    const code = screen.getByLabelText(/^Code/);
     await user.type(code, "summer25");
     expect(code).toHaveValue("SUMMER25");
   });
@@ -81,7 +81,7 @@ describe("CouponForm", () => {
     vi.mocked(createCoupon).mockResolvedValue({} as any);
     render(<CouponForm coupon={null} groups={[]} />);
 
-    await user.type(screen.getByPlaceholderText("e.g. SUMMER25"), "summer25");
+    await user.type(screen.getByLabelText(/^Code/), "summer25");
     await user.click(screen.getByRole("button", { name: "Create coupon" }));
 
     await waitFor(() =>
@@ -103,7 +103,7 @@ describe("CouponForm", () => {
     vi.mocked(createCoupon).mockResolvedValue({ error: "bad" } as any);
     render(<CouponForm coupon={null} groups={[]} />);
 
-    await user.type(screen.getByPlaceholderText("e.g. SUMMER25"), "bad");
+    await user.type(screen.getByLabelText(/^Code/), "bad");
     await user.click(screen.getByRole("button", { name: "Create coupon" }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("bad"));
@@ -132,7 +132,7 @@ describe("CouponForm", () => {
     expect(
       screen.getByRole("heading", { name: "Edit coupon" }),
     ).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("e.g. SUMMER25")).toHaveValue("WELCOME");
+    expect(screen.getByLabelText(/^Code/)).toHaveValue("WELCOME");
 
     await user.click(screen.getByRole("button", { name: "Save changes" }));
 
@@ -163,7 +163,7 @@ describe("CouponForm", () => {
       screen.getByText("Empty = everyone can use this coupon."),
     ).toBeInTheDocument();
 
-    await user.type(screen.getByPlaceholderText("e.g. SUMMER25"), "vip10");
+    await user.type(screen.getByLabelText(/^Code/), "vip10");
     await user.click(screen.getByRole("button", { name: "VIP" }));
 
     expect(

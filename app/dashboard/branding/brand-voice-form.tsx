@@ -3,40 +3,35 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { generateBrandVoice } from "@/app/actions/brand-voice-actions";
+import { InfoTip } from "@/components/ui/info-tip";
 import type { BrandVoiceStructured } from "@/lib/ai/brand-voice";
 import type { VoiceDraft } from "./branding-state";
 
 const QUESTIONS: {
   key: keyof BrandVoiceStructured;
   label: string;
-  placeholder: string;
   wide?: boolean;
 }[] = [
   {
     key: "sell",
     label: "What do you sell?",
-    placeholder: "e.g. Fresh groceries and daily staples, delivered same-day",
     wide: true,
   },
   {
     key: "audience",
     label: "Who buys it?",
-    placeholder: "e.g. Busy families who want fresh food without the trip",
   },
   {
     key: "personality",
     label: "Three words for your personality",
-    placeholder: "e.g. warm, honest, a little playful",
   },
   {
     key: "why",
     label: "Why does your brand exist?",
-    placeholder: "e.g. Fresh food shouldn't be a luxury or a chore",
   },
   {
     key: "avoid",
     label: "Words or claims to avoid",
-    placeholder: "e.g. cheap, guilt-free, medical claims",
   },
 ];
 
@@ -147,7 +142,6 @@ export function BrandVoiceSection({
                     className="dash-input"
                     value={voice.answers[q.key] ?? ""}
                     onChange={(e) => setAnswer(q.key, e.target.value)}
-                    placeholder={q.placeholder}
                     disabled={!canManage}
                     maxLength={600}
                   />
@@ -164,7 +158,13 @@ export function BrandVoiceSection({
           <div className="bvStepBody">
             <div className="bvGuideHead">
               <div>
-                <h3 className="bvStepTitle">Your brand guide</h3>
+                <div className="flex items-center gap-1.5">
+                  <h3 className="bvStepTitle">Your brand guide</h3>
+                  <InfoTip label="About your brand guide">
+                    Until a guide is saved, Mink AI uses a simple voice built
+                    from your store name and tagline.
+                  </InfoTip>
+                </div>
                 <p className="brandingHint">
                   Let AI draft it from your answers, or write your own.
                 </p>
@@ -211,7 +211,6 @@ export function BrandVoiceSection({
                   const content = e.target.value;
                   onChange((prev) => ({ ...prev, content }));
                 }}
-                placeholder="Generate a draft, or write how your brand sounds: tone, words you like, words you never use. Until a guide is saved, Mink AI uses a simple voice built from your store name and tagline."
                 disabled={!canManage}
                 rows={12}
                 maxLength={20000}

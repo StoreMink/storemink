@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   saveMinkCreditPacks,
   savePlanCreditAllowances,
@@ -123,10 +124,8 @@ export function PricingPanel({
         <header className="mb-4">
           <h2 className="text-lg font-bold">Plan pricing</h2>
           <p className="text-sm text-[var(--stq-muted)]">
-            Changes show on the pricing page immediately.{" "}
-            <b>Anyone already subscribed keeps the price they signed up at</b> -
-            a new price creates a new Razorpay plan and never reprices a live
-            mandate.
+            Changes show on the pricing page at once.{" "}
+            <b>Existing subscribers keep the price they signed up at.</b>
           </p>
         </header>
 
@@ -137,7 +136,15 @@ export function PricingPanel({
                 <th className="py-2 pr-4 font-medium">Plan</th>
                 <th className="py-2 pr-4 font-medium">Charged / month</th>
                 <th className="py-2 pr-4 font-medium">Charged / year</th>
-                <th className="py-2 pr-4 font-medium">Was / month</th>
+                <th className="py-2 pr-4 font-medium">
+                  <span className="inline-flex items-center gap-1.5">
+                    Was / month
+                    <InfoTip label="About Was prices">
+                      Leave Was blank when no offer is running. A Was price must
+                      be at least the price you charge.
+                    </InfoTip>
+                  </span>
+                </th>
                 <th className="py-2 pr-4 font-medium">Was / year</th>
                 <th className="py-2 font-medium">On the page</th>
               </tr>
@@ -175,7 +182,9 @@ export function PricingPanel({
                             className="stq-input w-28"
                             inputMode="numeric"
                             value={r[key]}
-                            placeholder={key.startsWith("base") ? "none" : "0"}
+                            placeholder={
+                              key.startsWith("base") ? undefined : "0"
+                            }
                             onChange={(e) => set(r.plan, key, e.target.value)}
                             aria-label={`${r.plan} ${key}`}
                           />
@@ -225,12 +234,6 @@ export function PricingPanel({
             <span className="text-sm text-[var(--stq-bad)]">{msg.error}</span>
           )}
         </div>
-
-        <p className="mt-3 text-xs text-[var(--stq-muted)]">
-          Leave a “Was” field blank when no offer is running - the page then
-          shows one price with no strike-through. A “Was” price must be at least
-          the price you charge.
-        </p>
       </section>
       <MinkCreditAllowances
         allowances={minkAllowances}
@@ -281,11 +284,16 @@ function MinkCreditAllowances({
   return (
     <section className="stq-card">
       <header className="mb-4">
-        <h2 className="text-lg font-bold">Included Mink credits</h2>
+        <h2 className="flex items-center gap-1.5 text-lg font-bold">
+          Included Mink credits
+          <InfoTip label="About allowance changes">
+            Balances are not topped up retroactively. Lowering an allowance can
+            leave a store over the new cap until its 30-day window turns.
+          </InfoTip>
+        </h2>
         <p className="text-sm text-[var(--stq-muted)]">
-          What each plan grants every 30 days, before any top-up pack. Applies
-          to every store on that plan at its next request -{" "}
-          <b>including stores already subscribed</b>, unlike a price change.
+          Credits each plan grants every 30 days.{" "}
+          <b>Changes also reach existing subscribers.</b>
         </p>
       </header>
       <div className="overflow-x-auto">
@@ -346,12 +354,6 @@ function MinkCreditAllowances({
           <span className="text-sm text-[var(--stq-bad)]">{msg.error}</span>
         )}
       </div>
-      <p className="mt-3 text-xs text-[var(--stq-muted)]">
-        A balance is not topped up retroactively: raising an allowance gives
-        every store on that plan the higher cap from its current 30-day window,
-        and lowering one can leave a store already over the new cap until the
-        window turns.
-      </p>
     </section>
   );
 }
@@ -474,9 +476,7 @@ function MinkCreditPacks({ packs }: { packs: CreditPack[] }) {
       <header className="mb-4">
         <h2 className="text-lg font-bold">Mink credit top-ups</h2>
         <p className="text-sm text-[var(--stq-muted)]">
-          The packs every store can buy once its included credits run out. Size,
-          price, order and the highlighted pack are all yours; add or remove as
-          many as you need.
+          The packs a store can buy once its included credits run out.
         </p>
       </header>
 
@@ -611,10 +611,7 @@ function MinkCreditPacks({ packs }: { packs: CreditPack[] }) {
         )}
       </div>
       <p className="mt-3 text-xs text-[var(--stq-muted)]">
-        Removing a pack does not affect past purchases - an order records the
-        credits and the amount it was sold for, so history and balances are
-        untouched. A merchant mid-purchase on a removed pack is asked to pick
-        again.
+        Removing a pack never changes past purchases or balances.
       </p>
     </section>
   );

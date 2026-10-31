@@ -138,9 +138,8 @@ export function EmailLogDetail({
                 <div className="flex items-start gap-2 rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface-2)] px-3 py-3 text-[13px] text-[var(--dash-text-2)]">
                   <ShieldOff className="mt-0.5 h-4 w-4 shrink-0 text-[var(--dash-text-3)]" />
                   <span>
-                    The contents of this email aren&apos;t stored. Password
-                    resets and staff invites carry a working credential, so only
-                    the delivery record is kept.
+                    This email&apos;s contents aren&apos;t stored, only its
+                    delivery record.
                   </span>
                 </div>
               )}

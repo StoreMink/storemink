@@ -109,8 +109,7 @@ export default async function AnnouncementPage({
 
           {recipients.length === 0 ? (
             <p className="px-5 py-8 text-center text-sm text-slate-500">
-              No recipient rows yet - the worker resolves them within a minute
-              of sending.
+              No recipients yet. They appear within a minute of sending.
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -177,8 +176,7 @@ export default async function AnnouncementPage({
 
           {recipients.length === 500 ? (
             <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-400">
-              Showing the 500 most recent. The full record is in Logs → Email
-              logs, filtered to the announcement mailer.
+              Showing the 500 most recent. The full record is in Email logs.
             </p>
           ) : null}
         </section>

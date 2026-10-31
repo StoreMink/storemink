@@ -406,8 +406,8 @@ export function MediaLibraryView({
         <div className="dash-card-body">
           {tab === "products" && (
             <p className="mb-3 text-[12.5px] text-[var(--dash-text-3)]">
-              Every photo your products use, including variant and colour
-              photos. To change or remove one, open the product.
+              Every photo your products use. To change or remove one, open the
+              product.
             </p>
           )}
           {tab === "library" && assets.length === 0 ? (
@@ -522,7 +522,7 @@ export function MediaLibraryView({
       >
         <DialogContent className="sm:max-w-[640px]">
           <DialogHeader>
-            <DialogTitle className="truncate pr-6">
+            <DialogTitle className="truncate">
               {viewing?.kind === "library"
                 ? viewing.asset.filename || "Media"
                 : "Product photo"}
@@ -672,10 +672,8 @@ export function MediaLibraryView({
               <DialogHeader>
                 <DialogTitle>Delete this image?</DialogTitle>
                 <DialogDescription>
-                  This permanently removes &ldquo;
-                  {deleteTarget?.filename || "the image"}
-                  &rdquo; from your library and from storage. Anything still
-                  linking to its URL will break. This can&apos;t be undone.
+                  &ldquo;{deleteTarget?.filename || "This image"}&rdquo; is
+                  deleted for good, and anything linking to it will break.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>

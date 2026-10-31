@@ -429,7 +429,7 @@ export function InboxClient({
               <input
                 name="q"
                 defaultValue={q}
-                placeholder="Search name, number or message"
+                placeholder="Search conversations"
                 aria-label="Search conversations"
               />
             </form>
@@ -504,7 +504,7 @@ export function InboxClient({
             <p className="inbox-note">
               {q || filter !== "all" || assignee || labelFilter
                 ? "No conversations match."
-                : "No messages yet. Customers who reply to an order update, scan your QR code or tap the chat button will appear here."}
+                : "No messages yet. Customer chats on WhatsApp appear here."}
             </p>
           ) : (
             <ul className={`inbox-rows ${listBusy ? "is-busy" : ""}`}>
@@ -1838,8 +1838,8 @@ function Composer({
           </>
         ) : (
           <span>
-            More than 24 hours since the customer last wrote. WhatsApp allows
-            only an approved template until they message again.
+            Over 24 hours since they last wrote, so only an approved template
+            can be sent.
           </span>
         )}
       </div>
@@ -1848,8 +1848,8 @@ function Composer({
         <div className="inbox-template">
           {templates.length === 0 ? (
             <p className="inbox-note">
-              No approved customer templates yet. They appear here once Meta
-              approves them (Settings → Channels → WhatsApp).
+              No approved templates yet. They appear here once Meta approves
+              them.
             </p>
           ) : (
             <>
@@ -2058,9 +2058,7 @@ function Composer({
                   if (text.trim() || attachment) void send();
                 }
               }}
-              placeholder={
-                attachment ? "Add a caption (optional)" : "Type a message"
-              }
+              placeholder={attachment ? "Add a caption" : "Write a reply"}
               title="Enter to send, Shift+Enter for a new line"
               rows={1}
               maxLength={attachment ? INBOX_CAPTION_MAX : INBOX_REPLY_MAX_CHARS}
@@ -2113,9 +2111,7 @@ function NoteComposer({
     <div className="inbox-composer is-note">
       {modeSwitch}
       <div className="inbox-window">
-        <span>
-          Only your team sees a note. The customer is not sent anything.
-        </span>
+        <span>Only your team sees notes.</span>
       </div>
       <div className="inbox-compose-row">
         <textarea
@@ -2128,7 +2124,7 @@ function NoteComposer({
               void save();
             }
           }}
-          placeholder="Write a private note"
+          placeholder="Add a note"
           rows={2}
           maxLength={INBOX_NOTE_MAX}
           aria-label="Note"

@@ -181,9 +181,8 @@ export function PosLoginClient({
           </div>
           <h1 className="mt-4 text-lg font-semibold">Set up this device</h1>
           <p className="mt-2 text-sm text-[var(--pos-ink-2)]">
-            Your sign-in is correct. For security POS only runs on a device the
-            store owner has approved - enter a pairing code from Dashboard → POS
-            → Devices to set this one up.
+            POS runs only on devices the store owner approved. Enter a pairing
+            code from Dashboard → POS → Devices.
           </p>
 
           <input
@@ -192,6 +191,7 @@ export function PosLoginClient({
             autoCapitalize="characters"
             autoCorrect="off"
             placeholder="8-character code"
+            aria-label="Pairing code"
             onChange={(e) =>
               setPairCode(e.target.value.toUpperCase().slice(0, 8))
             }
@@ -277,6 +277,7 @@ export function PosLoginClient({
           inputMode="email"
           autoCapitalize="none"
           placeholder="Email"
+          aria-label="Email"
           className="mb-4 w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-4 py-3 text-center text-sm outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)]"
         />
 
@@ -334,6 +335,7 @@ export function PosLoginClient({
               onChange={(e) => setPassword(e.target.value)}
               type="password"
               placeholder="Password"
+              aria-label="Password"
               onKeyDown={(e) => e.key === "Enter" && submitPassword()}
               className="mb-4 w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] px-4 py-3 text-center text-sm outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)]"
             />

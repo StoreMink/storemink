@@ -95,8 +95,7 @@ export function ThemesPanel({
         <div>
           <h2 className="dash-card-title">Theme demo stores</h2>
           <p className="studio-muted mt-0.5 text-sm">
-            The live stores the signup picker&apos;s Preview button opens.
-            Reseeding resets a demo to the theme&apos;s pristine state.
+            The live stores Preview opens. Reseed resets one to its theme.
           </p>
         </div>
       </div>

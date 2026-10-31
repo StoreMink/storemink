@@ -148,10 +148,7 @@ export function OffersView({
       <header className="dash-page-header row">
         <div>
           <h1>Offers</h1>
-          <p>
-            Discount codes and automatic offers, across your online store and
-            POS.
-          </p>
+          <p>Discount codes and automatic offers, online and in POS.</p>
         </div>
         {/* ★ NO SETTINGS BUTTON HERE. It was the fix for settings being
             stranded at the bottom of the page — but the section's own sidebar
@@ -171,8 +168,7 @@ export function OffersView({
 
       {loadError && (
         <div className="dash-card mb-4 border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
-          {loadError} Your offers are safe - this is a read problem, and nothing
-          has changed.
+          {loadError} Your offers are safe; nothing has changed.
         </div>
       )}
 
@@ -188,17 +184,14 @@ export function OffersView({
               till, and the row itself said "Active" — so this is the only
               place a merchant can find out. */}
           <p className="mt-1">
-            They are set to apply automatically, but this store has automatic
-            offers switched off, so no discount is given online or in POS. Turn
-            on{" "}
+            Automatic offers are switched off for this store. Turn on{" "}
             <Link
               href="/dashboard/offers/settings"
               className="font-medium underline"
             >
               “Apply offers automatically”
             </Link>{" "}
-            in offer settings to let them run. Offers with a discount code are
-            unaffected.
+            to let them run.
           </p>
         </div>
       )}
@@ -219,8 +212,7 @@ export function OffersView({
         {atCap && (
           <p className="px-5 pb-3 text-sm text-[var(--dash-ink-2)]">
             You are using all {limit} active offers your plan includes. Pause
-            one to activate another - nothing is deleted, and a paused offer
-            keeps its settings and its history.
+            one to activate another.
           </p>
         )}
 
@@ -229,10 +221,7 @@ export function OffersView({
             <p className="mb-1 font-medium text-[var(--dash-ink)]">
               Nothing running yet
             </p>
-            <p>
-              An offer can apply automatically or on a code. When several could
-              apply, the one that saves the customer most wins.
-            </p>
+            <p>Create an offer that applies automatically or on a code.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -417,10 +406,8 @@ export function OffersView({
 
       {locationCount > 1 && (
         <p className="mt-4 text-xs text-[var(--dash-ink-2)]">
-          An offer limited to particular locations applies in POS at those
-          locations only. Online orders are never location-limited - the shop
-          that fulfils a web order is chosen by your routing rules, not by the
-          customer.
+          Location limits apply in POS only. Online orders are never
+          location-limited.
         </p>
       )}
 
@@ -436,13 +423,12 @@ export function OffersView({
                   discount they were given — the offer's name is snapshotted on
                   every line it touched, so invoices and returns are unaffected.
                   What goes is the record of who redeemed it. */}
-              Orders that already used this offer keep their prices and their
-              records - invoices and returns are unaffected. What is deleted is
-              this offer&rsquo;s own redemption history
+              Past orders keep their prices. This offer&rsquo;s redemption
+              history
               {confirmDelete && confirmDelete.redemptionCount > 0
                 ? ` (${confirmDelete.redemptionCount} so far)`
-                : ""}
-              . To stop it without losing that, pause it instead.
+                : ""}{" "}
+              is deleted; pause it instead to keep that.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

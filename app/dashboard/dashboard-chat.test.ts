@@ -403,7 +403,7 @@ describe("Mink full view", () => {
         screen.getByRole("button", { name: "Delete Storefront redesign" }),
       );
       expect(screen.getByRole("alertdialog")).toHaveTextContent(
-        "“Storefront redesign” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.",
+        "“Storefront redesign” and its messages will be permanently deleted, so you can no longer apply or undo its redesign here. Changes you approved or published from this chat stay in your store.",
       );
     });
 
@@ -426,7 +426,7 @@ describe("Mink full view", () => {
       } as unknown as ReturnType<typeof useChat>);
       view.rerender(createElement(DashboardChat, { variant: "overlay" }));
       expect(screen.getByRole("alertdialog")).toHaveTextContent(
-        "“Diwali coupon” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.",
+        "“Diwali coupon” and its messages will be permanently deleted, so you can no longer apply or undo its redesign here. Changes you approved or published from this chat stay in your store.",
       );
     });
   });

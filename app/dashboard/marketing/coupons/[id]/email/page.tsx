@@ -25,8 +25,7 @@ export default async function CouponEmailPage({
         <div className="dash-card p-6">
           <h1 className="text-xl font-semibold">Email campaigns require Pro</h1>
           <p className="mt-2 text-sm text-[var(--dash-muted)]">
-            Upgrade to create and send coupon campaigns. Existing campaign
-            history and queued records are retained through a downgrade.
+            Upgrade to create and send coupon campaigns.
           </p>
           <Link
             href="/dashboard/plans"

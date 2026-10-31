@@ -877,17 +877,11 @@ export function CounterClient({
           ref={boxRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          // Says every kind of thing it takes, because the whole point of the
-          // merge is that the cashier no longer has to know which kind of visit
-          // this is before they can look it up. The Returns door leads with the
-          // order number — the customer holding a parcel usually has one, and
-          // rarely a collection code — but the box behaves identically, so a
-          // scanned code still resolves here.
-          placeholder={
-            isReturns
-              ? "Order number, phone or email - or scan a code…"
-              : "Scan a collection code, or type an order number, phone or email…"
-          }
+          // One box takes an order number, phone, email or a scanned
+          // collection code, so the cashier never has to know which kind of
+          // visit this is before they can look it up.
+          placeholder="Search or scan"
+          aria-label="Search by order number, phone, email or collection code"
           className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] py-3.5 pl-11 pr-11 text-base outline-none focus:border-[var(--pos-border-strong)]"
         />
         {pending && (
@@ -923,8 +917,7 @@ export function CounterClient({
                 Search for the order the customer is bringing back.
               </p>
               <p className="mt-1 text-sm text-[var(--pos-ink-3)]">
-                Their order number, the phone or email they ordered with, or a
-                scanned collection code.
+                Order number, phone, email or collection code.
               </p>
             </>
           ) : (
@@ -988,9 +981,9 @@ export function CounterClient({
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span>
                 <strong className="font-semibold">{expiringSoon.length}</strong>{" "}
-                {expiringSoon.length === 1 ? "collection" : "collections"} on
-                the shelf expiring within {PICKUP_WARN_HOURS} hours. Ring the
-                customer, or they lapse and the stock goes back.
+                {expiringSoon.length === 1 ? "collection" : "collections"}{" "}
+                {expiringSoon.length === 1 ? "expires" : "expire"} within{" "}
+                {PICKUP_WARN_HOURS} hours. Ring the customer before it lapses.
               </span>
             </div>
           )}

@@ -476,15 +476,8 @@ export function OrdersManagementView({
                   <Search className="h-4 w-4 shrink-0 opacity-50" />
                   <input
                     type="text"
-                    placeholder={
-                      !supportsPos
-                        ? "Search orders…"
-                        : channel === "all"
-                          ? "Order, receipt or customer…"
-                          : channel === "pos"
-                            ? "Receipt, customer, location…"
-                            : "Order or customer…"
-                    }
+                    aria-label="Search orders"
+                    placeholder="Search orders"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />

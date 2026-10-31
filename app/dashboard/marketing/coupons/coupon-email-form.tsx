@@ -13,6 +13,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { ArrowLeft, Mail, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   CustomerMultiselect,
   type CustomerOption,
@@ -219,10 +220,7 @@ export function CouponEmailForm({ coupon, groups }: Props) {
           Back to coupons
         </Link>
         <h1>Send email - {coupon.code}</h1>
-        <p>
-          Promote this coupon by email. Write it yourself or generate a draft
-          with AI, then preview before sending.
-        </p>
+        <p>Write or generate an email for this coupon, then preview it.</p>
       </header>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -303,7 +301,18 @@ export function CouponEmailForm({ coupon, groups }: Props) {
 
           <div>
             <div className="mb-1.5 flex items-center justify-between">
-              <label className={`${labelClass} mb-0`}>Subject</label>
+              <div className="flex items-center gap-1.5">
+                <label
+                  className="block text-xs font-medium uppercase tracking-wide text-[#6b7280]"
+                  htmlFor="coupon-email-subject"
+                >
+                  Subject
+                </label>
+                <InfoTip label="About personalising">
+                  Use {"{{first_name}}"} in the subject or body to add each
+                  customer&rsquo;s first name.
+                </InfoTip>
+              </div>
               <button
                 type="button"
                 onClick={handleGenerate}
@@ -316,34 +325,37 @@ export function CouponEmailForm({ coupon, groups }: Props) {
               </button>
             </div>
             <input
+              id="coupon-email-subject"
               className={fieldClass}
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
-              placeholder="e.g. A little something for you, {{first_name}}"
             />
           </div>
 
           <div>
-            <label className={labelClass}>Body</label>
+            <label className={labelClass} htmlFor="coupon-email-body">
+              Body
+            </label>
             <textarea
+              id="coupon-email-body"
               className={`${fieldClass} min-h-[200px] resize-y`}
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="Write your message, or use Generate with AI. Use {{first_name}} to personalise the greeting."
             />
             <p className="mt-1 text-[11px] text-[#9ca3af]">
-              The coupon code, discount and validity are added automatically
-              below your copy.
+              The code, discount and dates are added below your message.
             </p>
           </div>
 
           <div>
-            <label className={labelClass}>AI direction (optional)</label>
+            <label className={labelClass} htmlFor="coupon-email-direction">
+              AI direction (optional)
+            </label>
             <input
+              id="coupon-email-direction"
               className={fieldClass}
               value={instructions}
               onChange={(e) => setInstructions(e.target.value)}
-              placeholder="e.g. Mention it's a thank-you for loyal customers"
             />
           </div>
 

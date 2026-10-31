@@ -15,6 +15,7 @@ import {
 } from "@/lib/products/options";
 import { uploadImage } from "@/lib/storage/uploads";
 import { ImageSourceMenu } from "@/components/ui/image-source-menu";
+import { InfoTip } from "@/components/ui/info-tip";
 import { MediaLibraryPicker } from "../components/media-library-picker";
 
 // ---------------------------------------------------------------------------
@@ -185,7 +186,6 @@ function OptionRow({
             className={fieldClass}
             value={option.name}
             onChange={(e) => onChange({ name: e.target.value })}
-            placeholder={index === 0 ? "Size" : "Colour"}
             maxLength={40}
           />
         </div>
@@ -200,12 +200,17 @@ function OptionRow({
       </div>
 
       <div>
-        <label
-          htmlFor={valuesId}
-          className="mb-1 block text-[12px] font-medium text-[#374151]"
-        >
-          Values
-        </label>
+        <div className="mb-1 flex items-center gap-1.5">
+          <label
+            htmlFor={valuesId}
+            className="block text-[12px] font-medium text-[#374151]"
+          >
+            Values
+          </label>
+          <InfoTip label="About values">
+            Type a value and press Enter or a comma to add it.
+          </InfoTip>
+        </div>
         <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[#d1d5db] bg-white p-1.5">
           {option.values.map((value) => (
             <span
@@ -254,11 +259,6 @@ function OptionRow({
               }
             }}
             onBlur={() => commit(draft)}
-            placeholder={
-              option.values.length === 0
-                ? "Type a value and press Enter"
-                : "Add value"
-            }
           />
         </div>
       </div>
@@ -282,15 +282,16 @@ function OptionRow({
 
       {photos && option.values.length > 0 && (
         <div className="space-y-2 border-t border-[#f3f4f6] pt-2">
-          <p className="text-[12px] font-medium text-[#374151]">
-            Photos for each {option.name.trim().toLowerCase() || "colour"}
-          </p>
-          <p className="text-[11px] text-[#6b7280]">
-            Shown when a shopper picks that{" "}
-            {option.name.trim().toLowerCase() || "colour"}, for every size of
-            it. The first photo is the one on product cards. Use the same size
-            as your product photos.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-[12px] font-medium text-[#374151]">
+              Photos for each {option.name.trim().toLowerCase() || "colour"}
+            </p>
+            <InfoTip label="About these photos">
+              Shown when a shopper picks that{" "}
+              {option.name.trim().toLowerCase() || "colour"}. The first photo is
+              used on product cards.
+            </InfoTip>
+          </div>
           {option.values.map((value) => (
             <ValuePhotos
               key={value}

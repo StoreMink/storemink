@@ -186,8 +186,7 @@ export function MinkWorkflowCard({ artifact }: { artifact: WorkflowArtifact }) {
         ) : null}
         {workflow.status === "cancelled" ? (
           <p className="rounded-xl bg-[#f5f5f5] px-3 py-2 text-[10px] leading-4 text-[#66616e]">
-            This workflow was cancelled. Cancelled workflows cannot resume or
-            continue changing state.
+            This workflow was cancelled and can&apos;t resume.
           </p>
         ) : null}
         {error ? (
@@ -886,8 +885,8 @@ function DelayedPickupReview({
         </div>
       ) : (
         <p className="rounded-xl border border-[#e6e3e9] bg-[#fafafa] px-3 py-2 text-[10px] text-[#625c68]">
-          No live pickup is overdue for preparation or inside the 48-hour
-          collection-risk window in this scope.
+          No live pickup is overdue for preparation or at risk in the next 48
+          hours.
         </p>
       )}
 

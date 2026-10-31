@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/actions/store-domain", () => ({
@@ -26,7 +26,7 @@ const INDEXING = {
 };
 
 describe("DomainSettingsView", () => {
-  it("shows registrar-relative names and the fully-qualified result", () => {
+  it("shows registrar-relative names and the fully-qualified result", async () => {
     const { container } = render(
       <DomainSettingsView
         rootDomain="staging.storemink.com"
@@ -61,8 +61,10 @@ describe("DomainSettingsView", () => {
     expect(
       screen.getByText("Creates _acme-challenge.storiq.in"),
     ).toBeInTheDocument();
+    // The registrar note lives behind the "i" beside the heading.
+    fireEvent.click(screen.getByRole("button", { name: "About record names" }));
     expect(
-      screen.getByText(/GoDaddy and most DNS providers/),
+      await screen.findByText(/GoDaddy and most DNS providers/),
     ).toBeInTheDocument();
 
     const copyValues = [...container.querySelectorAll("code")].map(

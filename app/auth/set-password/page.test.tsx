@@ -45,9 +45,9 @@ vi.mock("next/navigation", () => ({
 }));
 // A plain input in place of the phone library keeps these tests about sending.
 vi.mock("react-phone-number-input", () => ({
-  default: ({ value, onChange, placeholder, disabled }: any) => (
+  default: ({ value, onChange, id, disabled }: any) => (
     <input
-      placeholder={placeholder}
+      id={id}
       disabled={disabled}
       value={value ?? ""}
       onChange={(e) => onChange(e.target.value)}
@@ -67,7 +67,7 @@ const A = "+919876543210";
 const B = "+919812345678";
 
 function enterPhone(number: string) {
-  fireEvent.change(screen.getByPlaceholderText("Mobile number"), {
+  fireEvent.change(screen.getByLabelText("Phone Number"), {
     target: { value: number },
   });
 }
@@ -98,7 +98,7 @@ describe("SetPasswordPage phone code sends", () => {
     });
     await act(async () => resolveSend("vid-1"));
 
-    await screen.findByPlaceholderText("Enter 6-digit OTP");
+    await screen.findByLabelText("6-digit OTP");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(1);
   });
 
@@ -120,12 +120,12 @@ describe("SetPasswordPage phone code sends", () => {
   it("★ Edit, then the same number inside the cooldown, resumes the live code", async () => {
     render(<SetPasswordPage />);
     sendTo(A);
-    await screen.findByPlaceholderText("Enter 6-digit OTP");
+    await screen.findByLabelText("6-digit OTP");
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     fireEvent.click(screen.getByRole("button", { name: "Send OTP" }));
 
-    const otp = await screen.findByPlaceholderText("Enter 6-digit OTP");
+    const otp = await screen.findByLabelText("6-digit OTP");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(/code was just sent/i)).toBeNull();
 
@@ -146,10 +146,10 @@ describe("SetPasswordPage phone code sends", () => {
       .mockResolvedValueOnce("vid-B");
     render(<SetPasswordPage />);
     sendTo(A);
-    await screen.findByPlaceholderText("Enter 6-digit OTP");
+    await screen.findByLabelText("6-digit OTP");
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     sendTo(B);
-    await screen.findByPlaceholderText("Enter 6-digit OTP");
+    await screen.findByLabelText("6-digit OTP");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(2);
     expect(fb.verifyPhoneNumber.mock.calls[1][0]).toBe(B);
 
@@ -159,7 +159,7 @@ describe("SetPasswordPage phone code sends", () => {
     sendTo(A);
     expect(await screen.findByText(/code was just sent/i)).toBeTruthy();
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(2);
-    expect(screen.queryByPlaceholderText("Enter 6-digit OTP")).toBeNull();
+    expect(screen.queryByLabelText("6-digit OTP")).toBeNull();
   });
 
   it("a non-rate-limit failure keeps the link mapper and does not lock the number", async () => {
@@ -173,7 +173,7 @@ describe("SetPasswordPage phone code sends", () => {
     ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Send OTP" }));
-    await screen.findByPlaceholderText("Enter 6-digit OTP");
+    await screen.findByLabelText("6-digit OTP");
     expect(fb.verifyPhoneNumber).toHaveBeenCalledTimes(2);
   });
 });

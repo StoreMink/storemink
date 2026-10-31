@@ -327,13 +327,13 @@ export async function ChecksTab({
           {shots && shots.samples.length
             ? checkCoverageWords(shots.coverage)
             : nothingYet
-              ? `${design} has not been checked yet. The checks open every page at five screen widths and test links, readable text, pictures, menus, the cart, security and the design.`
+              ? `${design} has not been checked yet. The checks cover every page at five screen widths.`
               : `Every page of ${design} at five screen widths: links, readable text, pictures, menus and the cart, security, and the design review.`}
         </p>
         {project.status === "generating" && isCurrent ? (
           <p className="studio-notice" data-tone="info">
             Theme Studio is working on this theme. These are the newest finished
-            checks; the list updates when it finishes.
+            checks.
           </p>
         ) : null}
         {stopped ? (
@@ -362,7 +362,7 @@ export async function ChecksTab({
         {latest && !latest.currentBuild ? (
           <p className="studio-notice" data-tone="warning">
             {autoChecks
-              ? "These checks ran on an earlier StoreMink build. Publish checks this design again on today's build first, about 3 to 5 minutes."
+              ? "These checks ran on an earlier StoreMink build. Publish checks this design again on today's build first."
               : "These checks ran on an earlier StoreMink build. Run them again before publishing."}
           </p>
         ) : null}
@@ -370,9 +370,8 @@ export async function ChecksTab({
           <p className="studio-notice" data-tone="warning">
             {design} still looks like a theme already in the catalogue (
             {Math.round(distinct.score * 100)}% different; at least{" "}
-            {Math.round(distinct.threshold * 100)}% counts as distinct). Look at
-            its layout before publishing. This is a warning; it does not stop
-            Publish.
+            {Math.round(distinct.threshold * 100)}% counts as distinct). This is
+            a warning; it does not stop Publish.
           </p>
         ) : null}
         {canCheckAgain ? (
@@ -384,9 +383,8 @@ export async function ChecksTab({
               revision={revision}
             />
             <p className="studio-muted max-w-xl text-sm">
-              Measures {design} again on today&apos;s StoreMink build with its
-              design review, about 3 to 5 minutes; nothing is redrawn and you
-              can leave this page.
+              Measures {design} again on today&apos;s build, about 3 to 5
+              minutes. Nothing is redrawn.
             </p>
           </div>
         ) : null}
@@ -421,7 +419,7 @@ export async function ChecksTab({
               {nothingYet
                 ? "Nothing to show until the first check finishes."
                 : unfinished
-                  ? "The checks stopped before they finished, so they don't count as passed. The reason and what to do next are above."
+                  ? "The checks stopped before they finished, so they don't count as passed."
                   : "Nothing stops Publish in these checks."}
             </p>
           ) : (
@@ -821,8 +819,8 @@ export async function ChecksTab({
               </h3>
               <p className="studio-muted">
                 {autoChecks
-                  ? "A fallback while Check again is new: it measures the pages in this tab, which must stay open and visible. It does not run the design review, so Publish still checks the design on today's build first."
-                  : "The automatic checks are off on this deployment, so the pages are measured in this tab, which must stay open and visible."}
+                  ? "Measures the pages in this tab, which must stay open. It skips the design review, so Publish still checks the design first."
+                  : "The automatic checks are off on this deployment, so the pages are measured in this tab, which must stay open."}
               </p>
               <AcceptanceRunner
                 projectId={project.id}

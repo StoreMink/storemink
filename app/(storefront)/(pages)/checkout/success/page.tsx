@@ -41,7 +41,7 @@ export default async function CheckoutSuccessPage({
 
       <div className="max-w-xl mx-auto px-4 py-24 text-center">
         <CheckCircle className="w-20 h-20 text-green-500 mx-auto mb-6" />
-        <h1 className="text-4xl font-bold mb-4">Order Confirmed!</h1>
+        <h1 className="text-4xl font-bold mb-4">Order confirmed</h1>
         <p className="text-muted-foreground text-lg mb-8">
           {isPickup
             ? "Thank you for your purchase. We'll have it packed and ready for you to collect."

@@ -257,8 +257,8 @@ export function MinkStorefrontDesignProposalCard({
         </details>
 
         <div className="rounded-xl border border-[#e5e1eb] bg-[#f8f7fa] px-3 py-2 text-[9px] leading-4 text-[#65616b]">
-          Applying here changes only your private Website Builder draft.
-          Publishing remains a separate step in Website Builder.
+          Applying changes only your private Website Builder draft. Publishing
+          is a separate step.
         </div>
       </div>
     </section>
@@ -414,7 +414,7 @@ function Badge({ children }: { children: ReactNode }) {
 }
 
 const UNKNOWN_DESIGN_OUTCOME =
-  "We could not confirm whether the design was saved. Check Website Builder, or retry here - the same save cannot apply twice.";
+  "We could not confirm whether the design was saved. Check Website Builder, or retry; it can't save twice.";
 
 class DesignActionRequestError extends Error {
   constructor(

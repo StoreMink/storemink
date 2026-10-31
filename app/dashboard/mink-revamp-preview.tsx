@@ -368,8 +368,8 @@ export function MinkRevampPreview({
 
         {inProgress ? (
           <p className="border-b border-[#ebe7f7] bg-[#fbfaff] px-4 py-2 text-xs text-[#5f5969]">
-            Design in progress. Photographs appear after their checks pass.
-            Apply becomes available when the redesign is ready.
+            Design in progress. Photographs appear once checked, and Apply
+            unlocks when the redesign is ready.
           </p>
         ) : null}
 

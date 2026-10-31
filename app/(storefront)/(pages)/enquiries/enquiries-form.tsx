@@ -374,11 +374,11 @@ export default function EnquiriesForm({
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               </div>
-              <h2 className={styles.successTitle}>Enquiry sent!</h2>
+              <h2 className={styles.successTitle}>Enquiry sent</h2>
               <p className={styles.successText}>
-                Thanks, {name.trim() || "there"} - we&rsquo;ve received your
-                message and will be in touch within 1&ndash;2 business days. A
-                confirmation has been sent to <strong>{email.trim()}</strong>.
+                Thanks, {name.trim() || "there"}. We&rsquo;ll be in touch within
+                1 to 2 business days. A confirmation has been sent to{" "}
+                <strong>{email.trim()}</strong>.
               </p>
               <button
                 type="button"
@@ -402,8 +402,7 @@ export default function EnquiriesForm({
         <header className={styles.header}>
           <h1 className={styles.title}>Get in touch</h1>
           <p className={styles.subtitle}>
-            Got a question, a suggestion, or just want to say hi? Send us a
-            message and we&rsquo;ll get back to you soon.
+            Send us a message and we&rsquo;ll get back to you soon.
           </p>
         </header>
 
@@ -437,7 +436,6 @@ export default function EnquiriesForm({
                 id="enq-name"
                 className={styles.input}
                 type="text"
-                placeholder="Your name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 autoComplete="name"
@@ -452,7 +450,6 @@ export default function EnquiriesForm({
                 id="enq-email"
                 className={styles.input}
                 type="email"
-                placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
@@ -490,7 +487,6 @@ export default function EnquiriesForm({
                       defaultCountry="IN"
                       countrySelectComponent={CountrySelect}
                       labels={customPhoneLabels}
-                      placeholder="Mobile number"
                       value={phone}
                       onChange={setPhone}
                       disabled={otpSent}
@@ -620,7 +616,7 @@ export default function EnquiriesForm({
                   className={styles.input}
                   style={{ marginTop: 8 }}
                   type="text"
-                  placeholder="Tell us the subject"
+                  aria-label="Your topic"
                   value={customSubject}
                   onChange={(e) => setCustomSubject(e.target.value)}
                   autoFocus
@@ -635,7 +631,6 @@ export default function EnquiriesForm({
               <textarea
                 id="enq-message"
                 className={`${styles.input} ${styles.textarea}`}
-                placeholder="How can we help?"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
                 rows={5}

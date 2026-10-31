@@ -144,7 +144,7 @@ describe("acknowledging", () => {
     expect(dialog().getByText("Send acknowledgement")).toBeInTheDocument();
     expect(
       dialog().getByText(
-        "Send the acknowledgement to asha@example.com? It confirms we received the complaint, gives the reference SM-000123 with a copy of the complaint as we recorded it, and says when we will resolve it.",
+        "Email asha@example.com the reference SM-000123, a copy of the complaint as we recorded it, and when we will resolve it.",
       ),
     ).toBeInTheDocument();
     fireEvent.click(dialog().getByRole("button", { name: "Send" }));

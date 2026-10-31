@@ -7,6 +7,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -78,7 +79,7 @@ export function TargetsManager({
       <UpgradePopover
         lock={lock}
         feature="Set targets"
-        pitch="Set a goal for sales, orders or new customers and watch your progress on the dashboard, with days left and whether you are on track."
+        pitch="Set a goal for sales, orders or new customers and track it on the dashboard."
         triggerClassName="dash-an-btn is-locked"
         triggerLabel="Targets need a paid plan"
       >
@@ -281,7 +282,6 @@ export function TargetsManager({
                     min="0"
                     step={meta.format === "percent" ? "0.1" : "1"}
                     max={meta.format === "percent" ? 100 : undefined}
-                    placeholder={meta.format === "percent" ? "3.5" : "100000"}
                     value={draft.targetValue}
                     onChange={(event) =>
                       setDraft({ ...draft, targetValue: event.target.value })
@@ -296,7 +296,7 @@ export function TargetsManager({
                   {error}
                 </p>
               ) : null}
-              <div className="dash-target-actions">
+              <DialogFooter>
                 {targets.length > 0 ? (
                   <button
                     type="button"
@@ -306,7 +306,16 @@ export function TargetsManager({
                   >
                     Back
                   </button>
-                ) : null}
+                ) : (
+                  <button
+                    type="button"
+                    className="dash-btn dash-btn-ghost"
+                    onClick={() => setOpen(false)}
+                    disabled={pending}
+                  >
+                    Cancel
+                  </button>
+                )}
                 <button
                   type="submit"
                   className="dash-btn dash-btn-primary"
@@ -314,7 +323,7 @@ export function TargetsManager({
                 >
                   {pending ? "Saving…" : "Save target"}
                 </button>
-              </div>
+              </DialogFooter>
             </form>
           ) : (
             <div className="dash-target-list">
@@ -378,17 +387,19 @@ export function TargetsManager({
                   {error}
                 </p>
               ) : null}
-              {canManage ? (
-                <button
-                  type="button"
-                  className="dash-btn dash-btn-primary"
-                  onClick={() => openEditor()}
-                >
-                  <Plus aria-hidden /> New target
-                </button>
-              ) : null}
             </div>
           )}
+          {!draft && canManage ? (
+            <DialogFooter>
+              <button
+                type="button"
+                className="dash-btn dash-btn-primary"
+                onClick={() => openEditor()}
+              >
+                <Plus aria-hidden /> New target
+              </button>
+            </DialogFooter>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

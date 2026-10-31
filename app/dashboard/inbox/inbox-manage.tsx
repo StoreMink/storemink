@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   deleteInboxCannedReply,
   deleteInboxLabel,
@@ -81,12 +82,11 @@ export function InboxManageButtons({
         open={open === "labels"}
         onOpenChange={(o) => !o && setOpen(null)}
       >
-        <DialogContent className="dashboard-shell">
+        <DialogContent>
           <DialogHeader>
             <DialogTitle>Labels</DialogTitle>
             <DialogDescription>
-              Tag conversations so your team can filter them. Up to{" "}
-              {INBOX_LABEL_MAX} per store.
+              Tag conversations so your team can filter them.
             </DialogDescription>
           </DialogHeader>
           <LabelsEditor labels={workspace.labels} onChanged={refresh} />
@@ -96,13 +96,11 @@ export function InboxManageButtons({
         open={open === "replies"}
         onOpenChange={(o) => !o && setOpen(null)}
       >
-        <DialogContent className="dashboard-shell inbox-dialog-wide">
+        <DialogContent className="inbox-dialog-wide">
           <DialogHeader>
             <DialogTitle>Saved replies</DialogTitle>
             <DialogDescription>
-              Type &ldquo;/&rdquo; in the message box to use one. Write{" "}
-              <code>{"{{name}}"}</code> where the customer&rsquo;s first name
-              should go. Up to {INBOX_CANNED_MAX} per store.
+              Type &ldquo;/&rdquo; in the message box to use one.
             </DialogDescription>
           </DialogHeader>
           <RepliesEditor
@@ -354,7 +352,6 @@ function RepliesEditor({
                 setEditing({ ...editing, shortcut: e.target.value })
               }
               maxLength={30}
-              placeholder="hours"
               autoFocus
             />
           </span>
@@ -365,20 +362,24 @@ function RepliesEditor({
             value={editing.title}
             onChange={(e) => setEditing({ ...editing, title: e.target.value })}
             maxLength={INBOX_CANNED_TITLE_MAX}
-            placeholder="Opening hours"
           />
         </label>
       </div>
-      <label className="inbox-field">
-        <span>Reply</span>
+      <div className="inbox-field">
+        <span className="flex items-center gap-1.5">
+          <label htmlFor="saved-reply-body">Reply</label>
+          <InfoTip label="About saved replies">
+            Write {"{{name}}"} where the customer&rsquo;s first name should go.
+          </InfoTip>
+        </span>
         <textarea
+          id="saved-reply-body"
           value={editing.body}
           onChange={(e) => setEditing({ ...editing, body: e.target.value })}
           maxLength={INBOX_CANNED_BODY_MAX}
           rows={4}
-          placeholder="Hi {{name}}, we're open 10 am to 7 pm, Monday to Saturday."
         />
-      </label>
+      </div>
       <div className="inbox-manage-actions">
         <button
           type="button"

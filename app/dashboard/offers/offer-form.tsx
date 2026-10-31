@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
+import { InfoTip } from "@/components/ui/info-tip";
 import { describeReward, describeTrigger } from "@/lib/offers/describe";
 import {
   createOffer,
@@ -127,7 +128,7 @@ const CONDITION_LABELS: Record<
 > = {
   payment_method: {
     title: "Payment method",
-    hint: "Website only. POS shows the total before payment is taken, so it cannot change once a method is chosen.",
+    hint: "Website only. POS fixes the total before payment is taken.",
   },
   fulfilment_type: {
     title: "Delivery or pickup",
@@ -135,11 +136,11 @@ const CONDITION_LABELS: Record<
   },
   first_order: {
     title: "First order only",
-    hint: "Needs a signed-in customer - there is no order history to check for a guest, so a guest checkout will not qualify.",
+    hint: "Needs a signed-in customer. Guests never qualify.",
   },
   time_window: {
     title: "Days and times",
-    hint: "Uses your store's timezone, so the window means the same thing to every customer. An end time earlier than the start runs past midnight, and counts as the day it began on.",
+    hint: "Uses your store's timezone. An end time before the start runs past midnight.",
   },
 };
 
@@ -199,12 +200,16 @@ function ConditionsEditor({
 
   return (
     <div className="mt-5 border-t border-[#f0f0f0] pt-5">
-      <h3 className="text-sm font-medium">Extra conditions</h3>
+      <div className="flex items-center gap-1.5">
+        <h3 className="text-sm font-medium">Extra conditions</h3>
+        <InfoTip label="About extra conditions">
+          For either of two situations, make two offers. The better one is
+          chosen automatically.
+        </InfoTip>
+      </div>
       <p className={hintClass}>
         Optional. <strong>All</strong> of them must be true for the offer to
-        apply - they narrow it, never widen it. For &ldquo;either of two
-        situations&rdquo;, make two offers; the better one is chosen
-        automatically.
+        apply.
       </p>
 
       {form.conditions.length > 0 ? (
@@ -236,8 +241,8 @@ function ConditionsEditor({
 
                 {blocked ? (
                   <p className="mt-2 text-xs text-[#b45309]">
-                    This offer includes POS, where this condition cannot work.
-                    Set the offer to your website only, or remove the condition.
+                    This condition cannot work in POS. Set the offer to your
+                    website only, or remove the condition.
                   </p>
                 ) : null}
 
@@ -381,15 +386,12 @@ function ConditionsEditor({
                     ) : null}
                     {c.startMinute === c.endMinute ? (
                       <p className="mt-2 text-xs text-[#b45309]">
-                        The start and end are the same, so the offer would never
-                        apply. For all day, remove this condition.
+                        Start and end are the same, so this never applies. For
+                        all day, remove the condition.
                       </p>
                     ) : c.endMinute < c.startMinute ? (
                       <p className={hintClass}>
-                        This runs past midnight, and counts as the day it starts
-                        on - {DAY_LABELS[c.days[0] ?? 0]}{" "}
-                        {minuteToTime(c.startMinute)} reaches into the next
-                        morning.
+                        Runs past midnight and counts as the day it starts on.
                       </p>
                     ) : null}
                   </div>
@@ -583,8 +585,7 @@ function LadderEditor({
 
       {notRising ? (
         <p className="mt-2 text-xs text-[#b45309]">
-          Each level has to give more than the one below it, or the higher level
-          never does anything.
+          Each level must give more than the one below it.
         </p>
       ) : null}
       {duplicated ? (
@@ -595,8 +596,8 @@ function LadderEditor({
 
       <span className={hintClass}>
         {isSpend
-          ? "The highest level the order reaches applies - never several at once. Levels are judged on the order total before any discount."
-          : "Units are counted across all the products you choose, and once a level is reached every one of those items is discounted."}
+          ? "Only the highest level reached applies, judged on the order total before discounts."
+          : "Units count across the chosen products. Once a level is reached, all of them are discounted."}
       </span>
     </div>
   );
@@ -774,15 +775,25 @@ const subscribeToNothing = () => () => {};
 function OfferCard({
   title,
   subtitle,
+  tip,
   children,
 }: {
   title: string;
   subtitle?: string;
+  /** Guidance kept behind an "i" beside the title, never under it. */
+  tip?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="dash-card p-4 sm:p-5">
-      <h2 className="text-sm font-semibold text-[var(--dash-ink)]">{title}</h2>
+      <div className="flex items-center gap-1.5">
+        <h2 className="text-sm font-semibold text-[var(--dash-ink)]">
+          {title}
+        </h2>
+        {tip ? (
+          <InfoTip label={`About ${title.toLowerCase()}`}>{tip}</InfoTip>
+        ) : null}
+      </div>
       {subtitle && (
         <p className="mt-0.5 text-xs text-[var(--dash-ink-2)]">{subtitle}</p>
       )}
@@ -1236,15 +1247,14 @@ export function OfferForm({
                     {form.delivery === "automatic" && !autoApplyOn && (
                       <span className="mt-1 block text-[11px] text-amber-700">
                         Your store has automatic offers switched off, so this
-                        will not apply to anything - online or in POS - however
-                        you set it up here. Turn on{" "}
+                        will not apply. Turn on{" "}
                         <Link
                           href="/dashboard/offers/settings"
                           className="underline"
                         >
                           “Apply offers automatically”
                         </Link>{" "}
-                        to let it run, or give it a discount code instead.
+                        or use a discount code.
                       </span>
                     )}
                   </label>
@@ -1255,7 +1265,6 @@ export function OfferForm({
                         className={`${fieldClass} font-mono uppercase`}
                         value={form.code}
                         onChange={(e) => set("code", e.target.value)}
-                        placeholder="LAUNCH10"
                       />
                       <span className={hintClass}>
                         Not case-sensitive. Spaces are removed.
@@ -1289,10 +1298,8 @@ export function OfferForm({
                     <span>
                       Show this coupon on my storefront
                       <span className={hintClass}>
-                        Lists the code in the cart under &ldquo;Available
-                        coupons&rdquo;, so any shopper can apply it in one tap.
-                        Leave it off for a code you only want to send to
-                        particular customers.
+                        Lists the code in the cart for every shopper. Leave it
+                        off for codes you send to particular customers.
                       </span>
                     </span>
                   </label>
@@ -1332,7 +1339,6 @@ export function OfferForm({
                       className={fieldClass}
                       value={form.name}
                       maxLength={120}
-                      placeholder="Launch week"
                       onChange={(e) => set("name", e.target.value)}
                     />
                     <span className={hintClass}>
@@ -1345,7 +1351,6 @@ export function OfferForm({
                       className={fieldClass}
                       value={form.description}
                       onChange={(e) => set("description", e.target.value)}
-                      placeholder="Why this offer exists"
                     />
                   </label>
                 </div>
@@ -1438,26 +1443,16 @@ export function OfferForm({
                         </label>
                       ))}
                       <span className={`${hintClass} sm:col-span-3`}>
-                        Items are counted across the basket, and the most
-                        expensive qualifying ones go into the bundle - which
-                        gives the customer the biggest saving and means a bundle
-                        can never charge more than the items were worth. If they
-                        come to less than the bundle price, the offer does not
-                        apply.{" "}
+                        The most expensive qualifying items form each bundle.{" "}
                         {form.maxSets > 0 ? (
-                          <>
-                            <strong>
-                              Your limit of {form.maxSets}{" "}
-                              {form.maxSets === 1 ? "bundle" : "bundles"} caps
-                              it
-                            </strong>{" "}
-                            - a bigger basket earns no more.
-                          </>
+                          <strong>
+                            Your limit of {form.maxSets}{" "}
+                            {form.maxSets === 1 ? "bundle" : "bundles"} caps it.
+                          </strong>
                         ) : (
                           <>
-                            It repeats for as long as the basket allows; a{" "}
-                            <strong>total budget</strong> under Limits is the
-                            way to bound what you give away.
+                            It repeats as the basket allows; a{" "}
+                            <strong>total budget</strong> caps it.
                           </>
                         )}
                       </span>
@@ -1479,16 +1474,12 @@ export function OfferForm({
                         />
                       </label>
                       <span className={hintClass}>
-                        The customer pays full price today and receives store
-                        credit afterwards. It does not reduce the order total,
-                        change the tax or appear on the invoice, because nothing
-                        about what they paid has changed.
+                        Customers pay full price and get the credit afterwards.
+                        The order total and tax do not change.
                       </span>
                       <p className="mt-2 text-xs text-[#b45309]">
-                        This is money you owe. Unlike a discount, which costs
-                        you once, credit sits on the customer&rsquo;s account
-                        until they spend it - set a budget if you want a ceiling
-                        on how much you issue.
+                        Store credit is money you owe until it is spent. Set a
+                        budget to cap how much you issue.
                       </p>
                     </div>
                   ) : form.rewardType === "free_item" ? (
@@ -1525,18 +1516,12 @@ export function OfferForm({
                       {/* ★★ THE TWO THINGS A MERCHANT WOULD OTHERWISE DISCOVER THE
                                   HARD WAY, said before they save rather than after. */}
                       <span className={hintClass}>
-                        The gift is added to the order at ₹0 and its stock is
-                        reserved like any sold item, so it is taken off your
-                        shelf and appears on the order and the receipt. The
-                        offer stops applying on its own when the gift runs out -
-                        customers are never promised one you cannot send.
+                        Added to the order at ₹0 and taken from stock. The offer
+                        stops when the gift runs out.
                       </span>
                       <p className="mt-2 text-xs text-[#b45309]">
-                        Tax on free goods: the line records the gift&rsquo;s own
-                        tax class, and tax on a zero value is zero. Whether GST
-                        is due on a free item given with a sale depends on your
-                        circumstances - check with your accountant before
-                        relying on this for a return.
+                        Tax on the gift is calculated as zero. Check with your
+                        accountant whether GST is due on free items.
                       </p>
                     </div>
                   ) : form.rewardType === "tiered" ||
@@ -1549,7 +1534,15 @@ export function OfferForm({
                                   stored. The boxes stay visible and editable underneath, so
                                   an unusual combination is still reachable — a preset is a
                                   shortcut, not a restriction. */}
-                      <span className={hintClass}>Common offers</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="block text-[11px] text-[#9ca3af]">
+                          Common offers
+                        </span>
+                        <InfoTip label="About buy X, get Y">
+                          The cheapest qualifying items are the discounted ones,
+                          counted across the whole basket.
+                        </InfoTip>
+                      </div>
                       <div className="mb-3 mt-1 flex flex-wrap gap-2">
                         {BXGY_PRESETS.map((preset) => {
                           const active =
@@ -1620,26 +1613,20 @@ export function OfferForm({
                         {form.getQuantity || 0} = {setSize} items - so a basket
                         of {setSize * 2} means the customer pays for{" "}
                         {(form.buyQuantity || 0) * 2} and{" "}
-                        {(form.getQuantity || 0) * 2} come free. The cheapest
-                        qualifying items are the discounted ones, counted across
-                        the whole basket.{" "}
+                        {(form.getQuantity || 0) * 2} come free.{" "}
                         {form.maxSets > 0 ? (
                           <>
                             <strong>
                               Your limit of {form.maxSets}{" "}
                               {form.maxSets === 1 ? "set" : "sets"} caps that
-                            </strong>{" "}
-                            - however many they buy, only{" "}
-                            {(form.getQuantity || 0) * form.maxSets} can ever be
-                            free.
+                            </strong>
+                            : only {(form.getQuantity || 0) * form.maxSets} can
+                            ever be free.
                           </>
                         ) : (
                           <>
-                            It repeats for as long as the basket allows. To
-                            bound what you give away, set a{" "}
-                            <strong>total budget</strong> under Limits - it
-                            stops the offer at a rupee figure you choose, rather
-                            than changing what it means.
+                            It repeats for as long as the basket allows; a{" "}
+                            <strong>total budget</strong> caps it.
                           </>
                         )}
                       </span>
@@ -1748,8 +1735,8 @@ export function OfferForm({
                                 offer, and the whole basket is discounted once it does. */}
                   <p className={`${hintClass} mb-2`}>
                     {scopeIsReward
-                      ? "Only these lines are discounted. The rest of the basket is charged as normal."
-                      : "The basket has to include one of these. Once it does, the discount applies to the whole basket."}
+                      ? "Only these items are discounted."
+                      : "The basket must include one of these; the discount then applies to the whole basket."}
                   </p>
 
                   {categories.length > 0 && (
@@ -1787,7 +1774,8 @@ export function OfferForm({
                       </span>
                       <input
                         className={`${fieldClass} mt-1`}
-                        placeholder="Filter products…"
+                        placeholder="Filter products"
+                        aria-label="Filter products"
                         value={productFilter}
                         onChange={(e) => setProductFilter(e.target.value)}
                       />
@@ -1889,7 +1877,7 @@ export function OfferForm({
                 >
                   <p className={`${hintClass} mb-2`}>
                     {allowsGroups
-                      ? "Leave all unticked to offer it to everyone. A restricted offer is never suggested to shoppers who cannot use it."
+                      ? "Leave all unticked to offer it to everyone."
                       : "Restricting an offer to customer groups is available on Basic and Pro."}
                   </p>
                   <div className="flex flex-wrap gap-3">
@@ -1913,12 +1901,11 @@ export function OfferForm({
                 </OfferCard>
               )}
 
-              <OfferCard title="Maximum uses" subtitle={limitsSummary}>
-                <p className={`${hintClass} mb-2`}>
-                  When several offers could apply, the one that saves the
-                  customer most wins - so a budget is the safest way to bound a
-                  new offer.
-                </p>
+              <OfferCard
+                title="Maximum uses"
+                subtitle={limitsSummary}
+                tip="When several offers apply, the one that saves the customer most wins. A budget is the safest cap for a new offer."
+              >
                 <div className="mt-2 grid gap-4 sm:grid-cols-3">
                   <label className="block">
                     <span className={hintClass}>Total budget (₹)</span>
@@ -1984,8 +1971,8 @@ export function OfferForm({
                   }
                 >
                   <p className={`${hintClass} mb-2`}>
-                    Leave all unticked to run at every location. Online orders
-                    are never location-limited.
+                    Leave all unticked to run everywhere. Online orders are
+                    never location-limited.
                   </p>
                   <div className="flex flex-wrap gap-3">
                     {locations.map((l) => (
@@ -2009,7 +1996,7 @@ export function OfferForm({
 
               <OfferCard
                 title="Combinations"
-                subtitle="Extra rules that must ALL be true. They narrow the offer, never widen it."
+                subtitle="Optional rules. They narrow the offer, never widen it."
               >
                 <ConditionsEditor form={form} setForm={setForm} />
               </OfferCard>

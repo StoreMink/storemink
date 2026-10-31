@@ -58,8 +58,8 @@ export function CatalogPictures({
       <div className="dash-card-body grid gap-3">
         <p className="studio-muted text-sm">
           {captureEnabled
-            ? "The theme catalog shows this card and these screenshots. Every final check takes them again from the design's preview store, so you never capture them by hand."
-            : "The theme catalog shows this card and these screenshots. The browser job that takes them is switched off on this deployment, so upload them in the list below."}
+            ? "The theme catalog shows this card and these screenshots. Every final check takes them again from the preview store."
+            : "Capture is switched off on this deployment, so upload them in the list below."}
         </p>
         <ul className="flex flex-wrap gap-3">
           {slots.map((slot) => (

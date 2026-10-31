@@ -99,11 +99,9 @@ export function AutoRefundsSwitch({
         ) : null}
       </label>
       <p className="mt-2 max-w-2xl text-xs text-[var(--dash-text-2)]">
-        When on, the hourly billing run sends each refund StoreMink owes as soon
-        as it&apos;s owed, back to the payment it came from. When off, each one
-        waits on the Refunds page for an operator to press Send, and merchants
-        who were told their refund is on its way wait too. Refunds an operator
-        issues are always sent at once.
+        When on, the hourly billing run sends each refund StoreMink owes. When
+        off, each waits for Send on the Refunds page. Refunds an operator issues
+        are always sent at once.
       </p>
       {!canEdit ? (
         <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[var(--dash-text-2)]">

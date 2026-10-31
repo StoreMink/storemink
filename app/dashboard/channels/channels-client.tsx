@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useId,
   useMemo,
   useState,
   useTransition,
@@ -15,7 +16,6 @@ import {
   ShieldCheck,
   Lock,
   Unplug,
-  X,
   Search,
   Truck,
   MessageSquare,
@@ -49,6 +49,16 @@ import {
   setWhatsAppEnabled,
   type WhatsAppChannelState,
 } from "@/app/actions/whatsapp-provider-actions";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { InfoTip } from "@/components/ui/info-tip";
 import { WhatsAppModal } from "./whatsapp-modal";
 import type { EditorSetting } from "@/app/actions/store-settings";
 
@@ -381,9 +391,8 @@ export function ChannelsClient({
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-[#111827]">Channels</h1>
         <p className="mt-1 text-sm text-[#5b6472]">
-          Connect the services your store sells and operates through. Money from
-          online payments settles directly in your own gateway account -
-          StoreMink never touches it and takes no transaction fee.
+          Connect the services your store runs on. Online payments settle in
+          your own account, with no StoreMink fee.
         </p>
       </div>
 
@@ -417,7 +426,8 @@ export function ChannelsClient({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by name"
+          placeholder="Search channels"
+          aria-label="Search channels"
           className="flex-1 border-none bg-transparent text-sm outline-none placeholder:text-[#9ca3af]"
         />
       </div>
@@ -628,214 +638,196 @@ function ShiprocketModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <div
-        className="w-full max-w-xl rounded-xl bg-white shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-[rgba(17,24,39,0.08)] p-5">
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-[7.5rem] items-center justify-center">
+            <span className="flex h-10 w-[7.5rem] shrink-0 items-center justify-center">
               <ChannelLogo def={SHIPROCKET_CHANNEL} height={24} />
             </span>
-            <div>
-              <h2 className="text-base font-semibold text-[#111827]">
-                Shiprocket
-              </h2>
-              <p className="text-xs text-[#5b6472]">
+            <div className="grid gap-1">
+              <DialogTitle>Shiprocket</DialogTitle>
+              <DialogDescription>
                 Courier aggregation on your own account
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#6b7280] hover:bg-[#f3f4f6]"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="space-y-4 p-5">
-          {!state.availableOnPlan ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              Shiprocket is available on Basic and Pro. This saved connection,
-              warehouse mappings and shipment history are retained and will work
-              again after an upgrade.
-            </div>
-          ) : null}
-          {state.connected && !showForm ? (
-            <>
-              <div className="rounded-lg border border-[rgba(17,24,39,0.08)] bg-[#f9fafb] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-[#111827]">
-                      {state.accountEmail}
-                    </p>
-                    <p className="mt-1 text-xs text-[#5b6472]">
-                      Password and API token are encrypted and never displayed.
-                    </p>
-                  </div>
-                  <ShieldCheck className="h-5 w-5 text-green-600" />
+        {!state.availableOnPlan ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Shiprocket is on Basic and Pro. Your saved connection and shipment
+            history stay and work again after an upgrade.
+          </div>
+        ) : null}
+        {state.connected && !showForm ? (
+          <>
+            <div className="rounded-lg border border-[rgba(17,24,39,0.08)] bg-[#f9fafb] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[#111827]">
+                    {state.accountEmail}
+                  </p>
+                  <p className="mt-1 text-xs text-[#5b6472]">
+                    Password and API token are encrypted and never displayed.
+                  </p>
                 </div>
-                <div className="mt-3 text-xs text-[#5b6472]">
-                  {state.mappedLocations} of {state.eligibleLocations}{" "}
-                  online-fulfilment locations synced
-                </div>
+                <ShieldCheck className="h-5 w-5 text-green-600" />
               </div>
+              <div className="mt-3 text-xs text-[#5b6472]">
+                {state.mappedLocations} of {state.eligibleLocations}{" "}
+                online-fulfilment locations synced
+              </div>
+            </div>
 
-              <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-4">
+            <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-4">
+              <div className="flex items-center gap-1.5">
                 <p className="text-sm font-semibold text-[#111827]">
                   Live tracking webhook
                 </p>
-                <p className="mt-1 text-xs text-[#5b6472]">
+                <InfoTip label="About the tracking webhook">
                   In Shiprocket, open Settings → API → Webhooks. Paste this URL
-                  and use the token as the <code>x-api-key</code> header.
-                </p>
-                {webhookUrl && (
+                  and use the token as the x-api-key header.
+                </InfoTip>
+              </div>
+              {webhookUrl && (
+                <button
+                  type="button"
+                  onClick={() => copy(webhookUrl, "Webhook URL")}
+                  className="mt-3 flex w-full items-center justify-between gap-2 rounded-md border bg-white px-3 py-2 text-left font-mono text-xs text-[#344054]"
+                >
+                  <span className="truncate">{webhookUrl}</span>
+                  <Copy className="h-3.5 w-3.5 shrink-0" />
+                </button>
+              )}
+              {webhookSecret ? (
+                <div className="mt-2">
                   <button
                     type="button"
-                    onClick={() => copy(webhookUrl, "Webhook URL")}
-                    className="mt-3 flex w-full items-center justify-between gap-2 rounded-md border bg-white px-3 py-2 text-left font-mono text-xs text-[#344054]"
+                    onClick={() => copy(webhookSecret, "Webhook token")}
+                    className="flex w-full items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left font-mono text-xs text-amber-900"
                   >
-                    <span className="truncate">{webhookUrl}</span>
+                    <span className="truncate">{webhookSecret}</span>
                     <Copy className="h-3.5 w-3.5 shrink-0" />
                   </button>
-                )}
-                {webhookSecret ? (
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={() => copy(webhookSecret, "Webhook token")}
-                      className="flex w-full items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left font-mono text-xs text-amber-900"
-                    >
-                      <span className="truncate">{webhookSecret}</span>
-                      <Copy className="h-3.5 w-3.5 shrink-0" />
-                    </button>
-                    <p className="mt-1 text-[11px] text-amber-700">
-                      Copy now. This token will not be shown again.
-                    </p>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handleRotate}
-                    disabled={!canManage || !state.availableOnPlan || busy}
-                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" /> Generate a new webhook
-                    token
-                  </button>
-                )}
-              </div>
-
-              {canManage && state.availableOnPlan && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="dash-btn dash-btn-primary"
-                    onClick={handleSync}
-                    disabled={busy}
-                  >
-                    Sync warehouses
-                  </button>
-                  <button
-                    type="button"
-                    className="dash-btn"
-                    onClick={handleToggle}
-                    disabled={busy}
-                  >
-                    {state.enabled ? "Pause" : "Resume"}
-                  </button>
-                  <button
-                    type="button"
-                    className="dash-btn"
-                    onClick={() => setShowForm(true)}
-                    disabled={busy}
-                  >
-                    Replace login
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                    onClick={handleDisconnect}
-                    disabled={busy}
-                  >
-                    <Unplug className="h-4 w-4" /> Disconnect
-                  </button>
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    Copy now. This token will not be shown again.
+                  </p>
                 </div>
-              )}
-            </>
-          ) : (
-            <form onSubmit={handleSave} className="space-y-4">
-              <p className="text-sm text-[#5b6472]">
-                Use a dedicated Shiprocket API user. We verify the login before
-                storing it; bookings and charges stay in the merchant&apos;s
-                Shiprocket account.
-              </p>
-              <div>
-                <label
-                  htmlFor="sr-email"
-                  className="mb-1.5 block text-sm font-medium text-[#344054]"
-                >
-                  API user email
-                </label>
-                <input
-                  id="sr-email"
-                  type="email"
-                  className="dash-input w-full"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                  disabled={!canManage || !state.availableOnPlan || busy}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="sr-password"
-                  className="mb-1.5 block text-sm font-medium text-[#344054]"
-                >
-                  API user password
-                </label>
-                <input
-                  id="sr-password"
-                  type="password"
-                  className="dash-input w-full"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                  autoComplete="off"
-                  disabled={!canManage || !state.availableOnPlan || busy}
-                />
-              </div>
-              <div className="flex gap-2">
+              ) : (
                 <button
-                  type="submit"
-                  className="dash-btn dash-btn-primary"
+                  type="button"
+                  onClick={handleRotate}
                   disabled={!canManage || !state.availableOnPlan || busy}
+                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
                 >
-                  {busy ? "Verifying…" : "Verify & connect"}
+                  <RefreshCw className="h-3.5 w-3.5" /> Generate a new webhook
+                  token
                 </button>
-                {state.connected && (
-                  <button
-                    type="button"
-                    className="dash-btn"
-                    onClick={() => setShowForm(false)}
-                    disabled={busy}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
+              )}
+            </div>
+
+            {canManage && state.availableOnPlan && (
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700 sm:mr-auto"
+                  onClick={handleDisconnect}
+                  disabled={busy}
+                >
+                  <Unplug /> Disconnect
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowForm(true)}
+                  disabled={busy}
+                >
+                  Replace login
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleToggle}
+                  disabled={busy}
+                >
+                  {state.enabled ? "Pause" : "Resume"}
+                </Button>
+                <Button type="button" onClick={handleSync} disabled={busy}>
+                  Sync warehouses
+                </Button>
+              </DialogFooter>
+            )}
+          </>
+        ) : (
+          <form onSubmit={handleSave} className="grid gap-4">
+            <p className="text-sm text-[#5b6472]">
+              Use a dedicated Shiprocket API user. We verify the login before
+              saving it.
+            </p>
+            <div>
+              <label
+                htmlFor="sr-email"
+                className="mb-1.5 block text-sm font-medium text-[#344054]"
+              >
+                API user email
+              </label>
+              <input
+                id="sr-email"
+                type="email"
+                className="dash-input w-full"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+                disabled={!canManage || !state.availableOnPlan || busy}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="sr-password"
+                className="mb-1.5 block text-sm font-medium text-[#344054]"
+              >
+                API user password
+              </label>
+              <input
+                id="sr-password"
+                type="password"
+                className="dash-input w-full"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+                autoComplete="off"
+                disabled={!canManage || !state.availableOnPlan || busy}
+              />
+            </div>
+            <DialogFooter>
+              {state.connected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowForm(false)}
+                  disabled={busy}
+                >
+                  Cancel
+                </Button>
+              )}
+              <Button
+                type="submit"
+                disabled={!canManage || !state.availableOnPlan || busy}
+              >
+                {busy ? "Verifying…" : "Verify & connect"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1022,77 +1014,63 @@ function RazorpayModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <div
-        className="w-full max-w-lg rounded-xl bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-[rgba(17,24,39,0.08)] p-5">
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
           <div className="flex items-center gap-3">
             <Image
               src="/channels/razorpay.webp"
               alt="Razorpay logo"
               width={Math.round(28 * (132 / 38))}
               height={28}
-              className="object-contain"
+              className="shrink-0 object-contain"
             />
-            <div>
-              <h2 className="text-base font-semibold text-[#111827]">
-                Razorpay
-              </h2>
-              <p className="text-xs text-[#5b6472]">
+            <div className="grid gap-1">
+              <DialogTitle>Razorpay</DialogTitle>
+              <DialogDescription>
                 UPI, cards & netbanking on your own account
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        {!state.planAllowsOnlinePayments ? (
+          <div className="flex items-start gap-3 rounded-md bg-amber-50 p-4">
+            <Lock className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
+            <div className="text-sm text-amber-800">
+              <p className="font-medium">
+                Online payments are included from the Basic plan.
+              </p>
+              <p className="mt-1">
+                Until you upgrade, checkout stays Cash&nbsp;on&nbsp;Delivery.
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#6b7280] hover:bg-[#f3f4f6]"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <div className="p-5">
-          {!state.planAllowsOnlinePayments ? (
-            <div className="flex items-start gap-3 rounded-md bg-amber-50 p-4">
-              <Lock className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
-              <div className="text-sm text-amber-800">
-                <p className="font-medium">
-                  Online payments are included from the Basic plan.
-                </p>
-                <p className="mt-1">
-                  Upgrade your plan to connect your own Razorpay account -
-                  checkout stays Cash&nbsp;on&nbsp;Delivery until then.
-                </p>
-              </div>
-            </div>
-          ) : state.connected && !showForm ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between rounded-lg border border-[rgba(17,24,39,0.08)] bg-[#f9fafb] px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium text-[#344054]">
-                    Key ID
-                  </div>
-                  <div className="mt-0.5 font-mono text-sm text-[#111827]">
-                    {state.keyId}
-                  </div>
-                  <div className="mt-1 text-xs text-[#5b6472]">
-                    The key secret is stored encrypted and never shown again.
-                  </div>
+        ) : state.connected && !showForm ? (
+          <>
+            <div className="flex items-center justify-between rounded-lg border border-[rgba(17,24,39,0.08)] bg-[#f9fafb] px-4 py-3">
+              <div>
+                <div className="text-sm font-medium text-[#344054]">Key ID</div>
+                <div className="mt-0.5 font-mono text-sm text-[#111827]">
+                  {state.keyId}
                 </div>
-                <ShieldCheck className="h-5 w-5 text-green-600" />
+                <div className="mt-1 text-xs text-[#5b6472]">
+                  The key secret is stored encrypted and never shown again.
+                </div>
               </div>
+              <ShieldCheck className="h-5 w-5 text-green-600" />
+            </div>
 
-              {/* ★ Without this, a payment is only noticed when the shopper's
-                  success page loads or the hourly reaper sweeps — so a closed
-                  tab leaves a paid order sitting `pending`. */}
-              <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-4">
+            {/* ★ Without this, a payment is only noticed when the shopper's
+                success page loads or the hourly reaper sweeps — so a closed
+                tab leaves a paid order sitting `pending`. */}
+            <div className="rounded-lg border border-violet-100 bg-violet-50/50 p-4">
+              <div className="flex items-center gap-1.5">
                 <p className="text-sm font-semibold text-[#111827]">
                   Payment webhook{" "}
                   {state.webhookConfigured && (
@@ -1101,150 +1079,146 @@ function RazorpayModal({
                     </span>
                   )}
                 </p>
-                <p className="mt-1 text-xs text-[#5b6472]">
+                <InfoTip label="About the payment webhook">
                   In Razorpay, open Settings → Webhooks → Add New Webhook. Paste
-                  this URL, set the same secret, and tick{" "}
-                  <code>payment.captured</code>. Orders are then confirmed the
-                  moment payment clears, even if the shopper closes the tab.
-                </p>
-                {state.webhookUrl && (
+                  this URL, set the same secret and tick payment.captured.
+                </InfoTip>
+              </div>
+              <p className="mt-1 text-xs text-[#5b6472]">
+                Confirms orders the moment payment clears, even if the shopper
+                closes the tab.
+              </p>
+              {state.webhookUrl && (
+                <button
+                  type="button"
+                  onClick={() => copy(state.webhookUrl!, "Webhook URL")}
+                  className="mt-3 flex w-full items-center justify-between gap-2 rounded-md border bg-white px-3 py-2 text-left font-mono text-xs text-[#344054]"
+                >
+                  <span className="truncate">{state.webhookUrl}</span>
+                  <Copy className="h-3.5 w-3.5 shrink-0" />
+                </button>
+              )}
+              {payWebhookSecret ? (
+                <div className="mt-2">
                   <button
                     type="button"
-                    onClick={() => copy(state.webhookUrl!, "Webhook URL")}
-                    className="mt-3 flex w-full items-center justify-between gap-2 rounded-md border bg-white px-3 py-2 text-left font-mono text-xs text-[#344054]"
+                    onClick={() => copy(payWebhookSecret, "Webhook secret")}
+                    className="flex w-full items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left font-mono text-xs text-amber-900"
                   >
-                    <span className="truncate">{state.webhookUrl}</span>
+                    <span className="truncate">{payWebhookSecret}</span>
                     <Copy className="h-3.5 w-3.5 shrink-0" />
                   </button>
-                )}
-                {payWebhookSecret ? (
-                  <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={() => copy(payWebhookSecret, "Webhook secret")}
-                      className="flex w-full items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-left font-mono text-xs text-amber-900"
-                    >
-                      <span className="truncate">{payWebhookSecret}</span>
-                      <Copy className="h-3.5 w-3.5 shrink-0" />
-                    </button>
-                    <p className="mt-1 text-[11px] text-amber-700">
-                      Copy now. This secret will not be shown again.
-                    </p>
-                  </div>
-                ) : (
-                  canManage && (
-                    <button
-                      type="button"
-                      onClick={handleGenerateWebhook}
-                      className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      {state.webhookConfigured
-                        ? "Generate a new secret"
-                        : "Generate a webhook secret"}
-                    </button>
-                  )
-                )}
-              </div>
-
-              {canManage && (
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    className="dash-btn dash-btn-primary"
-                    onClick={handleToggle}
-                    disabled={toggling}
-                  >
-                    {toggling
-                      ? "Saving…"
-                      : state.enabled
-                        ? "Pause online payments"
-                        : "Resume online payments"}
-                  </button>
-                  <button
-                    type="button"
-                    className="dash-btn"
-                    onClick={() => setShowForm(true)}
-                  >
-                    Replace keys
-                  </button>
-                  <button
-                    type="button"
-                    className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                    onClick={handleDisconnect}
-                  >
-                    <Unplug className="h-4 w-4" /> Disconnect
-                  </button>
+                  <p className="mt-1 text-[11px] text-amber-700">
+                    Copy now. This secret will not be shown again.
+                  </p>
                 </div>
+              ) : (
+                canManage && (
+                  <button
+                    type="button"
+                    onClick={handleGenerateWebhook}
+                    className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-700"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {state.webhookConfigured
+                      ? "Generate a new secret"
+                      : "Generate a webhook secret"}
+                  </button>
+                )
               )}
             </div>
-          ) : (
-            <form onSubmit={handleSave} className="space-y-4">
-              <p className="text-sm text-[#5b6472]">
-                Paste the API keys from your Razorpay dashboard (Settings → API
-                keys). We verify them with Razorpay before saving; the secret is
-                encrypted and never displayed again.
-              </p>
-              <div>
-                <label
-                  htmlFor="rzp-key-id"
-                  className="mb-1.5 block text-sm font-medium text-[#344054]"
+
+            {canManage && (
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-red-600 hover:bg-red-50 hover:text-red-700 sm:mr-auto"
+                  onClick={handleDisconnect}
                 >
-                  Key ID
-                </label>
-                <input
-                  id="rzp-key-id"
-                  className="dash-input w-full font-mono"
-                  placeholder="rzp_live_…"
-                  value={keyId}
-                  onChange={(e) => setKeyId(e.target.value)}
-                  required
-                  disabled={!canManage || saving}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="rzp-key-secret"
-                  className="mb-1.5 block text-sm font-medium text-[#344054]"
+                  <Unplug /> Disconnect
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowForm(true)}
                 >
-                  Key Secret
-                </label>
-                <input
-                  id="rzp-key-secret"
-                  type="password"
-                  className="dash-input w-full font-mono"
-                  placeholder="••••••••••••"
-                  value={keySecret}
-                  onChange={(e) => setKeySecret(e.target.value)}
-                  required
-                  autoComplete="off"
-                  disabled={!canManage || saving}
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  type="submit"
-                  className="dash-btn dash-btn-primary"
-                  disabled={!canManage || saving}
+                  Replace keys
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleToggle}
+                  disabled={toggling}
                 >
-                  {saving ? "Verifying…" : "Verify & save"}
-                </button>
-                {state.connected && (
-                  <button
-                    type="button"
-                    className="dash-btn"
-                    onClick={() => setShowForm(false)}
-                    disabled={saving}
-                  >
-                    Cancel
-                  </button>
-                )}
-              </div>
-            </form>
-          )}
-        </div>
-      </div>
-    </div>
+                  {toggling
+                    ? "Saving…"
+                    : state.enabled
+                      ? "Pause online payments"
+                      : "Resume online payments"}
+                </Button>
+              </DialogFooter>
+            )}
+          </>
+        ) : (
+          <form onSubmit={handleSave} className="grid gap-4">
+            <p className="text-sm text-[#5b6472]">
+              Find your keys in Razorpay under Settings → API keys. We verify
+              them before saving.
+            </p>
+            <div>
+              <label
+                htmlFor="rzp-key-id"
+                className="mb-1.5 block text-sm font-medium text-[#344054]"
+              >
+                Key ID
+              </label>
+              <input
+                id="rzp-key-id"
+                className="dash-input w-full font-mono"
+                placeholder="rzp_live_…"
+                value={keyId}
+                onChange={(e) => setKeyId(e.target.value)}
+                required
+                disabled={!canManage || saving}
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="rzp-key-secret"
+                className="mb-1.5 block text-sm font-medium text-[#344054]"
+              >
+                Key Secret
+              </label>
+              <input
+                id="rzp-key-secret"
+                type="password"
+                className="dash-input w-full font-mono"
+                value={keySecret}
+                onChange={(e) => setKeySecret(e.target.value)}
+                required
+                autoComplete="off"
+                disabled={!canManage || saving}
+              />
+            </div>
+            <DialogFooter>
+              {state.connected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowForm(false)}
+                  disabled={saving}
+                >
+                  Cancel
+                </Button>
+              )}
+              <Button type="submit" disabled={!canManage || saving}>
+                {saving ? "Verifying…" : "Verify & save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1346,179 +1320,163 @@ function TwilioModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/50 p-4 sm:p-8"
-      onClick={onClose}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <div
-        className="w-full max-w-xl rounded-xl bg-white shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-[rgba(17,24,39,0.08)] p-5">
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-[7.5rem] items-center justify-center">
+            <span className="flex h-10 w-[7.5rem] shrink-0 items-center justify-center">
               <ChannelLogo def={TWILIO_CHANNEL} height={24} />
             </span>
-            <div>
-              <h2 className="text-base font-semibold text-[#111827]">
-                Twilio SMS
-              </h2>
-              <p className="text-xs text-[#5b6472]">
+            <div className="grid gap-1">
+              <DialogTitle>Twilio SMS</DialogTitle>
+              <DialogDescription>
                 Your own Twilio account and DLT registration
-              </p>
+              </DialogDescription>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-[#6b7280] hover:bg-[#f3f4f6]"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        </DialogHeader>
 
-        <div className="space-y-4 p-5">
-          {state.connected && !showForm ? (
-            <>
-              <div className="rounded-lg border border-[rgba(17,24,39,0.08)] bg-[#f9fafb] p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate font-mono text-sm text-[#111827]">
-                      {state.accountSid}
-                    </p>
-                    <p className="mt-1 text-xs text-[#5b6472]">
-                      The auth token is encrypted and never displayed.
-                    </p>
-                  </div>
-                  <ShieldCheck className="h-5 w-5 shrink-0 text-green-600" />
+        {state.connected && !showForm ? (
+          <>
+            <div className="rounded-lg border border-[rgba(17,24,39,0.08)] bg-[#f9fafb] p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate font-mono text-sm text-[#111827]">
+                    {state.accountSid}
+                  </p>
+                  <p className="mt-1 text-xs text-[#5b6472]">
+                    The auth token is encrypted and never displayed.
+                  </p>
                 </div>
-                <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <dt className="text-[#5b6472]">Sender header</dt>
-                    <dd className="font-mono text-[#111827]">
-                      {state.senderHeader}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-[#5b6472]">DLT Entity ID</dt>
-                    <dd className="truncate font-mono text-[#111827]">
-                      {state.dltEntityId}
-                    </dd>
-                  </div>
-                </dl>
+                <ShieldCheck className="h-5 w-5 shrink-0 text-green-600" />
               </div>
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <dt className="text-[#5b6472]">Sender header</dt>
+                  <dd className="font-mono text-[#111827]">
+                    {state.senderHeader}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[#5b6472]">DLT Entity ID</dt>
+                  <dd className="truncate font-mono text-[#111827]">
+                    {state.dltEntityId}
+                  </dd>
+                </div>
+              </dl>
+            </div>
 
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-                <p className="text-sm font-semibold text-[#111827]">
-                  Messages still need approved templates
-                </p>
-                <p className="mt-1 text-xs text-[#5b6472]">
-                  Carriers in India drop any message whose text doesn&apos;t
-                  match a template you registered on your DLT portal - with no
-                  bounce and no error. Add each one under Settings →
-                  Notifications before switching a message on.
-                </p>
-              </div>
-            </>
-          ) : (
-            <form onSubmit={handleSave} className="space-y-3">
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs text-[#5b6472]">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-[#111827]">
+                Messages still need approved templates
+              </p>
+              <p className="mt-1 text-xs text-[#5b6472]">
+                Carriers silently drop any message that doesn&apos;t match a
+                template registered on your DLT portal. Add each one under
+                Settings → Notifications.
+              </p>
+            </div>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                className="text-red-600 hover:bg-red-50 hover:text-red-700 sm:mr-auto"
+                onClick={handleDisconnect}
+                disabled={busy || !canManage}
+              >
+                <Unplug />
+                Disconnect
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowForm(true)}
+                disabled={!canManage}
+              >
+                Update credentials
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleToggle}
+                disabled={busy || !canManage}
+              >
+                {state.enabled ? "Pause SMS" : "Resume SMS"}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <form onSubmit={handleSave} className="grid gap-3">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs text-[#5b6472]">
+              <div className="flex items-center gap-1.5">
                 <p className="text-sm font-semibold text-[#111827]">
                   You need a DLT registration first
                 </p>
-                <p className="mt-1">
+                <InfoTip label="About DLT registration">
                   India&apos;s TRAI rules require every business to register its
-                  own entity, sender header and message templates with an
-                  operator DLT portal. It takes 7–21 days, and SMS to Indian
-                  numbers is blocked at the carrier until it is done. StoreMink
-                  can&apos;t send under a shared header on your behalf.
-                </p>
+                  own entity, sender header and templates on an operator DLT
+                  portal. It takes 7 to 21 days.
+                </InfoTip>
               </div>
+              <p className="mt-1">
+                SMS to Indian numbers is blocked until your business is
+                registered.
+              </p>
+            </div>
 
-              <Field
-                label="Twilio Account SID"
-                value={accountSid}
-                onChange={setAccountSid}
-                placeholder="AC…"
-                mono
-              />
-              <Field
-                label="Twilio Auth Token"
-                value={authToken}
-                onChange={setAuthToken}
-                type="password"
-                placeholder="Your auth token"
-                mono
-              />
-              <Field
-                label="DLT sender header"
-                value={senderHeader}
-                onChange={(v) => setSenderHeader(v.toUpperCase().slice(0, 6))}
-                placeholder="CORNRS"
-                hint="Exactly six letters - the transactional form. A numeric header is promotional and will be rejected."
-                mono
-              />
-              <Field
-                label="DLT Principal Entity ID"
-                value={dltEntityId}
-                onChange={setDltEntityId}
-                placeholder="1701234567890123456"
-                hint="From your DLT portal. Sent with every message; without it carriers drop the message silently."
-                mono
-              />
+            <Field
+              label="Twilio Account SID"
+              value={accountSid}
+              onChange={setAccountSid}
+              placeholder="AC…"
+              mono
+            />
+            <Field
+              label="Twilio Auth Token"
+              value={authToken}
+              onChange={setAuthToken}
+              type="password"
+              mono
+            />
+            <Field
+              label="DLT sender header"
+              value={senderHeader}
+              onChange={(v) => setSenderHeader(v.toUpperCase().slice(0, 6))}
+              info="Exactly six letters, the transactional form. A numeric header is promotional and is rejected."
+              mono
+            />
+            <Field
+              label="DLT Principal Entity ID"
+              value={dltEntityId}
+              onChange={setDltEntityId}
+              info="From your DLT portal. It's sent with every message; without it carriers drop messages silently."
+              mono
+            />
 
-              <button
-                type="submit"
-                disabled={busy || !canManage}
-                className="w-full rounded-md bg-[#111827] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {busy ? "Verifying…" : "Verify & save"}
-              </button>
+            <DialogFooter>
               {state.connected && (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => setShowForm(false)}
-                  className="w-full rounded-md px-4 py-2 text-sm text-[#5b6472] hover:bg-[#f3f4f6]"
                 >
                   Cancel
-                </button>
+                </Button>
               )}
-            </form>
-          )}
-
-          {state.connected && !showForm && (
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={handleToggle}
-                disabled={busy || !canManage}
-                className="rounded-md border px-3 py-2 text-sm text-[#344054] disabled:opacity-50"
-              >
-                {state.enabled ? "Pause SMS" : "Resume SMS"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowForm(true)}
-                disabled={!canManage}
-                className="rounded-md border px-3 py-2 text-sm text-[#344054] disabled:opacity-50"
-              >
-                Update credentials
-              </button>
-              <button
-                type="button"
-                onClick={handleDisconnect}
-                disabled={busy || !canManage}
-                className="ml-auto flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
-              >
-                <Unplug className="h-4 w-4" />
-                Disconnect
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+              <Button type="submit" disabled={busy || !canManage}>
+                {busy ? "Verifying…" : "Verify & save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1527,7 +1485,7 @@ function Field({
   value,
   onChange,
   placeholder,
-  hint,
+  info,
   type = "text",
   mono,
 }: {
@@ -1535,16 +1493,22 @@ function Field({
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
-  hint?: string;
+  /** Guidance shown behind an "i" button beside the label. */
+  info?: string;
   type?: string;
   mono?: boolean;
 }) {
+  const id = useId();
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium text-[#344054]">
-        {label}
-      </span>
+    <div>
+      <div className="mb-1 flex items-center gap-1.5">
+        <label htmlFor={id} className="text-xs font-medium text-[#344054]">
+          {label}
+        </label>
+        {info && <InfoTip label={`About ${label}`}>{info}</InfoTip>}
+      </div>
       <input
+        id={id}
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -1555,9 +1519,6 @@ function Field({
           mono ? "font-mono" : ""
         }`}
       />
-      {hint && (
-        <span className="mt-1 block text-[11px] text-[#5b6472]">{hint}</span>
-      )}
-    </label>
+    </div>
   );
 }

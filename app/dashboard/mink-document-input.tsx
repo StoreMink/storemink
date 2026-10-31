@@ -65,9 +65,8 @@ export function MinkDocumentInput({
       {text !== null && (
         <div className="space-y-2 rounded-lg border p-3">
           <p>
-            Review before adding. Only this text will be sent to Vertex when you
-            send the message and retained in conversation history. It is not
-            saved as a memory or media file. Remove secrets and customer details
+            Only this text is sent with your message and kept in chat history,
+            not saved as a memory or file. Remove secrets and customer details
             first.
           </p>
           <label className="block">

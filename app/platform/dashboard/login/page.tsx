@@ -108,7 +108,6 @@ export default function OperatorLoginPage() {
                 id="email"
                 type="email"
                 className="stq-input"
-                placeholder="you@storemink.com"
                 autoFocus
                 autoComplete="email"
                 value={email}
@@ -139,7 +138,6 @@ export default function OperatorLoginPage() {
                 autoComplete="one-time-code"
                 maxLength={6}
                 className="stq-input"
-                placeholder="000000"
                 autoFocus
                 value={code}
                 onChange={(e) => {

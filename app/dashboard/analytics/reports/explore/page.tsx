@@ -90,9 +90,8 @@ export default async function ExplorePage({
           </span>
           <h2>Build your own reports</h2>
           <p>
-            Pick what to measure and how to group it: sales by channel, by
-            discount code, by customer region, orders by month, and more. Save
-            the reports you use and export any of them to CSV.
+            Choose what to measure and how to group it, then save and export
+            your reports.
           </p>
           {canUpgrade ? (
             <Link href="/dashboard/plans" className="dash-an-upsell-cta">

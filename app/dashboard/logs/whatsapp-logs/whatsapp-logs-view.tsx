@@ -111,10 +111,8 @@ export function WhatsAppLogsView({
         <div>
           <h1>WhatsApp logs</h1>
           <p>
-            Every message this store has sent on its WhatsApp number, and what
-            happened to it. Meta reports delivery and reads back, so a row says
-            more than &ldquo;sent&rdquo;; a failed row carries Meta&rsquo;s
-            reason.
+            Every message sent on your WhatsApp number, with its delivery status
+            from Meta.
           </p>
         </div>
       </header>
@@ -132,7 +130,7 @@ export function WhatsAppLogsView({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by number or notification"
+              placeholder="Search messages"
               aria-label="Search WhatsApp logs"
               className="w-full rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] py-[7px] pl-9 pr-3 text-[13px] text-[var(--dash-text)] outline-none"
             />

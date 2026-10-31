@@ -178,7 +178,7 @@ describe("New theme, the page", () => {
     ).toBe(true);
     expect(
       screen.getByText(
-        /Theme Studio designs it, draws the pictures and checks every page\. Usually 40 to 60 minutes\./,
+        /Theme Studio designs the theme, draws its pictures and checks every page\. Usually 40 to 60 minutes\./,
       ),
     ).toBeTruthy();
     expect(data.reads).toEqual(["range"]);

@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { InfoTip } from "@/components/ui/info-tip";
 import {
   Dialog,
   DialogContent,
@@ -113,11 +114,11 @@ export function liftDialogLines(input: {
   } else if (input.kind === "file") {
     if (input.fileStage === "replaced") {
       lines.push(
-        "The original file goes back to its address. In rare cases some image sizes keep showing the placeholder for up to 4 hours.",
+        "The original file goes back to its address. Some image sizes may show the placeholder for up to 4 hours.",
       );
     } else if (input.fileStage === "removed_by_hand") {
       lines.push(
-        "Pages show it again. Put the file itself back by hand from the archived copy if it should return (see the runbook).",
+        "Pages show it again. Put the file back by hand from the archived copy if needed (see the runbook).",
       );
     } else {
       lines.push("Pages show it again.");
@@ -202,6 +203,11 @@ function ActionDialog({
             {error}
           </p>
         ) : null}
+        {blockedReason ? (
+          <p id={reasonId} className="text-xs text-[var(--dash-text-2)]">
+            {blockedReason}
+          </p>
+        ) : null}
         <DialogFooter>
           <button
             type="button"
@@ -224,11 +230,6 @@ function ActionDialog({
             {confirmLabel}
           </button>
         </DialogFooter>
-        {blockedReason ? (
-          <p id={reasonId} className={HINT}>
-            {blockedReason}
-          </p>
-        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -240,14 +241,12 @@ function TextField({
   onChange,
   hint,
   rows = 3,
-  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   hint?: string;
   rows?: number;
-  placeholder?: string;
 }) {
   // The hint sits outside the label, so the field's name stays the label alone.
   const hintId = useId();
@@ -259,7 +258,6 @@ function TextField({
           className="dash-input w-full"
           rows={rows}
           value={value}
-          placeholder={placeholder}
           onChange={(e) => onChange(e.target.value)}
           aria-describedby={hint ? hintId : undefined}
         />
@@ -486,7 +484,8 @@ export function MarkRemovedButton({ blockId }: { blockId: string }) {
       </button>
       {open ? (
         <ActionDialog
-          title="Mark it as removed? Do this only after it is deleted."
+          title="Mark it as removed?"
+          description="Do this only after the file is deleted."
           confirmLabel="Mark as removed"
           onClose={() => setOpen(false)}
           onSubmit={() => markRemovedByHandAction(blockId, note)}
@@ -880,7 +879,7 @@ export function ArchiveCopy({
             label="Who asked"
             value={whoAsked}
             onChange={setWhoAsked}
-            hint="The authority and their reference, for example the police station and letter number."
+            hint="The authority and their reference number."
           />
         </ActionDialog>
       ) : null}
@@ -941,7 +940,7 @@ function OpenCopyDialogBody({
         label="Why are you opening it?"
         value={reason}
         onChange={setReason}
-        hint="For example the complaint reference or the authority that asked."
+        hint="The complaint reference or the authority that asked."
       />
       {error ? (
         <p role="alert" className={ERROR}>
@@ -1014,15 +1013,22 @@ export function StoreReplyForms({ blockId }: { blockId: string }) {
         }}
         className="space-y-2"
       >
-        <label htmlFor={replyId} className={LABEL}>
-          Reply to the store
-        </label>
+        <div className="mb-1 flex items-center gap-1.5">
+          <label
+            htmlFor={replyId}
+            className="text-sm font-medium text-[var(--dash-text)]"
+          >
+            Reply to the store
+          </label>
+          <InfoTip label="About replies">
+            The store sees this in its dashboard and by email.
+          </InfoTip>
+        </div>
         <textarea
           id={replyId}
           className="dash-input w-full"
           rows={3}
           value={body}
-          placeholder="The store sees this in its dashboard and by email."
           onChange={(e) => setBody(e.target.value)}
           disabled={pending}
         />

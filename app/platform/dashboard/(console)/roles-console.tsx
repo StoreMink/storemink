@@ -146,9 +146,8 @@ export function RolesConsole({
             Roles
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            The staff roles every store picks from. A store cannot add its own;
-            what you change here reaches every person holding the role, on every
-            store, on their next request.
+            The staff roles every store picks from. Changes reach everyone
+            holding the role, on every store.
           </p>
         </div>
         {canManage && (
@@ -394,7 +393,7 @@ function RoleEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[560px]">
+      <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? `Edit role - ${role?.name}` : "New dashboard role"}
@@ -414,7 +413,6 @@ function RoleEditorDialog({
                 className={fieldClass}
                 value={form.name}
                 onChange={(e) => set("name", e.target.value)}
-                placeholder="e.g. Content editor"
                 maxLength={ROLE_NAME_MAX}
               />
               {isEditing && (
@@ -451,7 +449,6 @@ function RoleEditorDialog({
               className={`${fieldClass} min-h-[60px] resize-y`}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="Who is this role for?"
               maxLength={ROLE_DESCRIPTION_MAX}
             />
           </div>
@@ -471,9 +468,8 @@ function RoleEditorDialog({
               <div className="flex items-start gap-2 rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface-2)] px-3 py-3 text-sm text-[var(--dash-text-2)]">
                 <ScanLine className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
-                  POS roles never reach the dashboard. Their POS capabilities
-                  (selling, returns, stock, the cash drawer) are fixed in code
-                  and cannot be edited here.
+                  POS roles have no dashboard access. What they can do in POS is
+                  fixed in code.
                 </span>
               </div>
             ) : (

@@ -253,10 +253,7 @@ export function UsersManagementView({
       <header className="dash-page-header row">
         <div>
           <h1>Staff</h1>
-          <p>
-            Everyone who works in your store, on the dashboard or in POS. Each
-            person has one of the roles StoreMink defines.
-          </p>
+          <p>Everyone who works in your store, on the dashboard or in POS.</p>
         </div>
         {canManage && canInvite && (
           <InviteUserDialog
@@ -273,8 +270,8 @@ export function UsersManagementView({
         <div className="dash-card mb-3.5 flex items-center justify-between gap-3 px-4 py-3.5 text-[13px]">
           <span>
             Your plan includes {staffLimit} staff account
-            {staffLimit === 1 ? "" : "s"}, including the owner. Existing staff
-            and their assignments remain safe; upgrade to invite someone new.
+            {staffLimit === 1 ? "" : "s"}, including the owner. Upgrade to
+            invite someone new.
           </span>
           <Link
             href="/dashboard/plans"
@@ -462,16 +459,16 @@ export function UsersManagementView({
             <DialogDescription>
               {actionType === "delete" &&
                 (selected?.kind === "pos"
-                  ? "Are you sure you want to remove this person? Their POS login will be deleted. This cannot be undone."
-                  : "Are you sure you want to remove this user? This cannot be undone.")}
+                  ? "Remove this person and delete their POS login? This can't be undone."
+                  : "Remove this user? This can't be undone.")}
               {actionType === "role" &&
                 (selected?.kind === "pos"
                   ? "Select a new POS role for this person."
                   : "Select a new role for this user.")}
               {actionType === "locations" &&
                 (selected?.kind === "pos"
-                  ? "Which shops this person can work at. Untick everything to assign them to every location."
-                  : "Which shops this person can see. Untick everything for full access to all locations.")}
+                  ? "Choose the shops this person can work at."
+                  : "Choose the shops this person can see.")}
               {actionType === "suspend" &&
                 selected &&
                 (isInactive(selected)
@@ -544,13 +541,13 @@ export function UsersManagementView({
                 </p>
                 {selected.kind === "pos" ? (
                   <p className="text-[12.5px] text-[var(--dash-text-3)]">
-                    To give this person the dashboard instead, remove them from
-                    Staff first, then invite them again with a dashboard role.
+                    To switch to a dashboard role, remove them and invite them
+                    again.
                   </p>
                 ) : (
                   <p className="text-[12.5px] text-[var(--dash-text-3)]">
-                    To give this person POS access instead, remove them from
-                    Staff first, then invite them again as a Manager or Cashier.
+                    To switch to Manager or Cashier, remove them and invite them
+                    again.
                   </p>
                 )}
               </div>

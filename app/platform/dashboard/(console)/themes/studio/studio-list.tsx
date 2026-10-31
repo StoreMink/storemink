@@ -293,8 +293,8 @@ export function StudioList({
         <div className="dash-empty">
           <h2 className="dash-empty-title">No themes yet</h2>
           <p className="studio-muted mb-4 mt-1.5 max-w-md text-sm">
-            Describe a store and Theme Studio designs a theme for it, draws its
-            pictures and checks every page.
+            Describe a store and Theme Studio designs, draws and checks a theme
+            for it.
           </p>
           <Link
             href="/dashboard/themes/studio/new"

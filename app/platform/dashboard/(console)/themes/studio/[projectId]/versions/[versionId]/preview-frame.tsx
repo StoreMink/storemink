@@ -313,8 +313,7 @@ export function PreviewFrame({
         </div>
       </div>
       <p className="studio-muted text-xs">
-        Links inside the preview work as they would in a live store. Checkout is
-        switched off, and the preview closes itself a day after it was last
+        Checkout is off in previews. A preview closes a day after it was last
         opened.
       </p>
     </div>

@@ -207,7 +207,8 @@ export default function ReviewsSection({
           </div>
           <textarea
             className="pdp-review-textarea"
-            placeholder="Share what you thought about this product…"
+            placeholder="Write a review"
+            aria-label="Your review"
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             rows={3}

@@ -103,7 +103,8 @@ export function SalesClient({
         <input
           value={query}
           onChange={(e) => search(e.target.value)}
-          placeholder="Receipt number, order number or customer…"
+          placeholder="Search sales"
+          aria-label="Search by receipt number, order number or customer"
           className="w-full rounded-xl border border-[var(--pos-border)] bg-[var(--pos-surface)] py-3 pr-4 pl-10 text-base outline-none focus:border-[var(--pos-border-strong)]"
         />
       </form>

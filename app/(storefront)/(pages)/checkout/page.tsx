@@ -800,8 +800,7 @@ export default function CheckoutPage() {
       <main className={styles.center}>
         <h1 className={styles.centerTitle}>Sign in to continue</h1>
         <p className={styles.centerText}>
-          Please sign in to review your order and check out - your cart is
-          saved.
+          Sign in to check out. Your cart is saved.
         </p>
         <Button size="lg" onClick={openAuthModal}>
           Sign in
@@ -1123,7 +1122,6 @@ export default function CheckoutPage() {
                       id="addressLine1"
                       name="addressLine1"
                       className={styles.input}
-                      placeholder="House no., building, street"
                       value={addrForm.addressLine1}
                       onChange={changeAddr}
                       disabled={savingAddr}
@@ -1138,7 +1136,6 @@ export default function CheckoutPage() {
                       id="addressLine2"
                       name="addressLine2"
                       className={styles.input}
-                      placeholder="Area, landmark"
                       value={addrForm.addressLine2}
                       onChange={changeAddr}
                       disabled={savingAddr}
@@ -1448,9 +1445,8 @@ export default function CheckoutPage() {
                       Collection isn&apos;t available right now
                     </div>
                     <div className={styles.payDesc}>
-                      This store takes payment online for collection orders, and
-                      online payment is temporarily unavailable. Choose
-                      delivery, or try again shortly.
+                      Online payment is unavailable right now. Choose delivery,
+                      or try again shortly.
                     </div>
                   </div>
                 </div>
@@ -1466,7 +1462,6 @@ export default function CheckoutPage() {
                   id="notes"
                   name="notes"
                   className={styles.input}
-                  placeholder="e.g. Leave at the front desk"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   maxLength={500}
@@ -1564,8 +1559,7 @@ export default function CheckoutPage() {
                   than a field that quietly does nothing (§23's rule). */}
               {offersApplied ? (
                 <p className={styles.couponNote}>
-                  An automatic offer is already applied to this order, so a
-                  discount code cannot be added on top.
+                  An offer is already applied, so a code can&apos;t be added.
                 </p>
               ) : (
                 <CouponField />
@@ -1731,9 +1725,8 @@ export default function CheckoutPage() {
                   button that fails after the shopper has filled in an address. */}
               {payConfig?.demo && (
                 <p className={styles.demoNotice} role="status">
-                  <strong>This is a demo store.</strong> It shows what a
-                  StoreMink storefront looks like, so orders can&rsquo;t be
-                  placed and nothing here will be delivered or charged.
+                  <strong>This is a demo store.</strong> Orders can&rsquo;t be
+                  placed here.
                 </p>
               )}
 
@@ -1828,7 +1821,8 @@ export default function CheckoutPage() {
               <input
                 value={pickerQuery}
                 onChange={(e) => setPickerQuery(e.target.value)}
-                placeholder="Postcode, city or shop name"
+                placeholder="Search shops"
+                aria-label="Search shops by postcode, city or name"
                 className={styles.pickerInput}
                 autoFocus
               />

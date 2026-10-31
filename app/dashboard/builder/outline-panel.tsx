@@ -349,7 +349,7 @@ function SortableSectionRow({
           {hiddenOnPage && section.enabled && (
             <span
               className="sm-builder-hiddenbadge"
-              title="Not visible on the page - it has nothing to show yet (e.g. no products/content)."
+              title="Hidden on the page: it has nothing to show yet."
             >
               empty
             </span>

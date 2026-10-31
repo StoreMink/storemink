@@ -238,7 +238,7 @@ export default async function LiveViewPage() {
             <div className="dash-widget size-full">
               <ProLocked
                 title="Carts and checkouts, live"
-                text="See how many shoppers have something in their cart, are checking out, or just bought, as it happens."
+                text="See who has a cart, is checking out or just bought, as it happens."
                 canUpgrade={canUpgrade}
               />
             </div>
@@ -308,7 +308,7 @@ export default async function LiveViewPage() {
             <div className="dash-widget size-half">
               <ProLocked
                 title="Who is shopping right now"
-                text="Top locations, the products shoppers are looking at, and a live feed of views, carts and checkouts."
+                text="Top locations, products being viewed, and a live feed of shopper activity."
                 canUpgrade={canUpgrade}
               />
             </div>

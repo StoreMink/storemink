@@ -133,12 +133,7 @@ export function HelpSearchBox({
         }}
         onKeyDown={onKeyDown}
         onFocus={() => suggestions.length > 0 && setOpen(true)}
-        placeholder={
-          placeholder ??
-          (compact
-            ? "Search help or ask a question…"
-            : "Ask in any language - payments, domains, products…")
-        }
+        placeholder={placeholder ?? (compact ? "Search help" : "Search guides")}
         aria-label="Search the help centre"
         enterKeyHint="search"
       />

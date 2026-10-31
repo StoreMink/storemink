@@ -3,7 +3,14 @@
 
 import type { SchemeDesign } from "@/lib/themes/schemes";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import {
   ArrowLeft,
   ExternalLink,
@@ -1233,9 +1240,8 @@ export function BuilderClient({
           <DialogHeader>
             <DialogTitle>This page changed somewhere else</DialogTitle>
             <DialogDescription>
-              It was edited from another tab or by a teammate. Reload to
-              continue from their version, or keep yours: copy your changes as a
-              backup, or overwrite theirs with what you have here.
+              It was edited in another tab or by a teammate. Reload to use their
+              version, or keep yours.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="flex-col gap-2 sm:flex-col">
@@ -1394,6 +1400,8 @@ function NewPageDialog({
   // Once the user edits the slug by hand, stop auto-deriving it from the title.
   const slugEdited = useRef(false);
   const [isPending, startTransition] = useTransition();
+  const titleId = useId();
+  const slugId = useId();
 
   useEffect(() => {
     if (open) {
@@ -1429,13 +1437,16 @@ function NewPageDialog({
         <DialogHeader>
           <DialogTitle>New page</DialogTitle>
           <DialogDescription>
-            Give it a title and a URL slug. You can change these later.
+            You can change the title and URL slug later.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-2">
           <div>
-            <label className={labelClass}>Title</label>
+            <label htmlFor={titleId} className={labelClass}>
+              Title
+            </label>
             <input
+              id={titleId}
               className={fieldClass}
               value={title}
               onChange={(e) => {
@@ -1443,22 +1454,23 @@ function NewPageDialog({
                 setTitle(next);
                 if (!slugEdited.current) setSlug(slugify(next));
               }}
-              placeholder="About Us"
               autoFocus
             />
           </div>
           <div>
-            <label className={labelClass}>URL slug</label>
+            <label htmlFor={slugId} className={labelClass}>
+              URL slug
+            </label>
             <div className="flex items-center gap-1 text-sm">
               <span className="text-muted-foreground">/</span>
               <input
+                id={slugId}
                 className={fieldClass}
                 value={slug}
                 onChange={(e) => {
                   slugEdited.current = true;
                   setSlug(e.target.value);
                 }}
-                placeholder="about-us"
               />
             </div>
             <p className="text-muted-foreground mt-1 text-[11px]">

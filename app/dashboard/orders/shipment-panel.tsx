@@ -111,8 +111,7 @@ export function ShipmentPanel({
               Pack at {view.locationName ?? "the assigned warehouse"}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Confirm the packed parcel measurements. Shiprocket uses them to
-              select and bill the courier.
+              Shiprocket uses these to choose and bill the courier.
             </p>
             <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Measure
@@ -182,24 +181,30 @@ export function ShipmentPanel({
 
             {manual && (
               <div className="mt-3 space-y-2 border-t border-border pt-3">
-                <input
-                  className="dash-input w-full"
-                  placeholder="Courier name"
-                  value={courier}
-                  onChange={(event) => setCourier(event.target.value)}
-                />
-                <input
-                  className="dash-input w-full"
-                  placeholder="Tracking / AWB number"
-                  value={awb}
-                  onChange={(event) => setAwb(event.target.value)}
-                />
-                <input
-                  className="dash-input w-full"
-                  placeholder="Tracking URL (optional)"
-                  value={trackingUrl}
-                  onChange={(event) => setTrackingUrl(event.target.value)}
-                />
+                <label className="block text-xs text-muted-foreground">
+                  Courier name
+                  <input
+                    className="dash-input mt-1 w-full"
+                    value={courier}
+                    onChange={(event) => setCourier(event.target.value)}
+                  />
+                </label>
+                <label className="block text-xs text-muted-foreground">
+                  Tracking or AWB number
+                  <input
+                    className="dash-input mt-1 w-full"
+                    value={awb}
+                    onChange={(event) => setAwb(event.target.value)}
+                  />
+                </label>
+                <label className="block text-xs text-muted-foreground">
+                  Tracking URL (optional)
+                  <input
+                    className="dash-input mt-1 w-full"
+                    value={trackingUrl}
+                    onChange={(event) => setTrackingUrl(event.target.value)}
+                  />
+                </label>
                 <button
                   type="button"
                   className="dash-btn dash-btn-primary"

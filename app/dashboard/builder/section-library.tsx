@@ -137,7 +137,7 @@ function SectionLibraryPanel({
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search sections…"
+              placeholder="Search sections"
               aria-label="Search sections"
             />
           </div>

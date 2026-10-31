@@ -1300,7 +1300,7 @@ export function DashboardChat({
                   className="mt-1 text-sm leading-5 text-[#5c5f62]"
                 >
                   {deleteRow?.hasRedesignCard
-                    ? `“${deleteTarget.title}” and its messages will be permanently deleted, along with its storefront redesign card, so you can no longer apply or undo that redesign from Mink AI. Changes you approved or published from this chat stay in your store.`
+                    ? `“${deleteTarget.title}” and its messages will be permanently deleted, so you can no longer apply or undo its redesign here. Changes you approved or published from this chat stay in your store.`
                     : `“${deleteTarget.title}” and its messages will be permanently deleted. Changes you approved or published from this chat stay in your store.`}
                 </p>
                 {deleteFailure && (

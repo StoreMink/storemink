@@ -153,12 +153,7 @@ export function NotificationOverview({
         <div>
           <h1>Notifications</h1>
           <p>
-            The emails your customers receive, and the alerts your team gets.
-            Everything that happens is recorded in{" "}
-            <Link href="/dashboard/logs" className="underline">
-              Activity
-            </Link>{" "}
-            whether or not it notifies anyone.
+            The emails your customers receive and the alerts your team gets.
           </p>
         </div>
         <Link
@@ -278,8 +273,7 @@ export function NotificationOverview({
             All notifications
           </span>
           <span className="mt-0.5 block text-[12.5px] text-[var(--dash-text-3)]">
-            Every notification with filters, search, and channel-by-channel
-            control - {total} in total.
+            Search and filter all {total}, channel by channel.
           </span>
         </span>
         <ChevronRight className="h-4 w-4 shrink-0 text-[var(--dash-text-3)]" />
@@ -287,8 +281,7 @@ export function NotificationOverview({
 
       {!canManage && (
         <p className="text-[12.5px] text-[var(--dash-text-3)]">
-          You can view these settings but not change them. Ask an owner for
-          “manage” on Notifications in Roles &amp; Permissions.
+          You can view these settings but not change them.
         </p>
       )}
     </div>

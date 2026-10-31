@@ -91,10 +91,7 @@ export function InventoryHistoryDrawer({
         ) : movements.length === 0 ? (
           <div className="flex flex-col items-center justify-center p-12 text-center border-2 border-dashed rounded-xl border-border bg-muted/20">
             <p className="text-sm font-medium text-foreground">
-              No stock movements found.
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Stock changes will appear here.
+              No stock changes yet.
             </p>
           </div>
         ) : (

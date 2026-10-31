@@ -8,6 +8,7 @@ import {
 } from "@/app/actions/store-policy-actions";
 import { htmlToPlain, plainToHtml } from "@/lib/legal/policy-text";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
+import { InfoTip } from "@/components/ui/info-tip";
 
 export function PoliciesView({
   policies,
@@ -21,9 +22,7 @@ export function PoliciesView({
       <header className="mb-6">
         <h1 className="text-xl font-semibold">Policies</h1>
         <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-          Your store&apos;s own policies. Each one is published as a page on
-          your storefront and linked in the footer. Customers accept your Terms
-          and Refund Policy at checkout.
+          Each policy is a page on your storefront, linked in the footer.
         </p>
       </header>
 
@@ -81,18 +80,25 @@ function PolicyCard({
     <section className="dash-card p-5">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="flex items-center gap-2 text-base font-semibold">
-            {policy.title}
-            {policy.live ? (
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                Live
-              </span>
-            ) : (
-              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                Not written
-              </span>
+          <div className="flex items-center gap-1.5">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              {policy.title}
+              {policy.live ? (
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                  Live
+                </span>
+              ) : (
+                <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+                  Not written
+                </span>
+              )}
+            </h2>
+            {editable && (
+              <InfoTip label={`About writing the ${policy.title}`}>
+                Write plain paragraphs, with a blank line between them.
+              </InfoTip>
             )}
-          </h2>
+          </div>
           <p className="text-muted-foreground mt-0.5 text-sm">
             {policy.description}
           </p>
@@ -133,7 +139,7 @@ function PolicyCard({
               setText(e.target.value);
               setSaved(false);
             }}
-            placeholder="Write your policy here. Leave a blank line between paragraphs."
+            aria-label={policy.title}
           />
 
           <div className="mt-3 flex items-center gap-3">
@@ -160,8 +166,7 @@ function PolicyCard({
         <div className="flex flex-wrap items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5">
           <AlertCircle className="h-4 w-4 shrink-0 text-amber-700" />
           <p className="flex-1 text-xs text-amber-900">
-            This page has formatting beyond plain paragraphs, so it&apos;s
-            edited in the website builder to avoid losing it.
+            This page has extra formatting, so edit it in the website builder.
           </p>
           <a
             href={`/dashboard/builder`}

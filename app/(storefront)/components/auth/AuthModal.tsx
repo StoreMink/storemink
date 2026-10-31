@@ -482,7 +482,6 @@ export default function AuthModal() {
           defaultCountry="IN"
           countrySelectComponent={CountrySelect}
           labels={customPhoneLabels}
-          placeholder="Mobile number"
           value={phone}
           onChange={setPhone}
           onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) =>
@@ -494,6 +493,7 @@ export default function AuthModal() {
             className: styles.phoneInput,
             autoComplete: "tel-national",
             id: "auth-phone-input",
+            "aria-label": "Mobile number",
           }}
         />
       </div>
@@ -638,7 +638,7 @@ export default function AuthModal() {
         </div>
       </div>
 
-      <h2 className={styles.title}>Almost there!</h2>
+      <h2 className={styles.title}>Almost there</h2>
       <p className={styles.subtitle}>Complete your profile to get started</p>
 
       <div className={styles.inputGroup}>
@@ -649,7 +649,6 @@ export default function AuthModal() {
           id="auth-first-name"
           className={styles.textInput}
           type="text"
-          placeholder="Your first name"
           value={firstName}
           onChange={(e) => setFirstName(e.target.value)}
           autoFocus
@@ -659,13 +658,12 @@ export default function AuthModal() {
 
       <div className={styles.inputGroup}>
         <label className={styles.label} htmlFor="auth-last-name">
-          Last name
+          Last name (optional)
         </label>
         <input
           id="auth-last-name"
           className={styles.textInput}
           type="text"
-          placeholder="Your last name (optional)"
           value={lastName}
           onChange={(e) => setLastName(e.target.value)}
           autoComplete="family-name"
@@ -674,13 +672,12 @@ export default function AuthModal() {
 
       <div className={styles.inputGroup}>
         <label className={styles.label} htmlFor="auth-email">
-          Email
+          Email (optional)
         </label>
         <input
           id="auth-email"
           className={styles.textInput}
           type="email"
-          placeholder="you@example.com (optional)"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           autoComplete="email"

@@ -105,9 +105,7 @@ export function RolesManagementView({ roles }: Props) {
         <div>
           <h1>Roles &amp; Permissions</h1>
           <p>
-            StoreMink defines the roles every store uses. Pick the closest one
-            when you invite someone, and use Locations to limit them to their
-            shops.
+            What each role can do. StoreMink defines the roles every store uses.
           </p>
         </div>
       </header>
@@ -201,9 +199,8 @@ export function RolesManagementView({ roles }: Props) {
           <div>
             <div className="dash-card-title">In POS</div>
             <div className="dash-card-sub">
-              Managers and cashiers sign in at /pos on an authorised device and
-              never see the dashboard. Discounts, price overrides and
-              authorising a device stay with the owner.
+              They sign in to POS only. Discounts, price overrides and new
+              devices stay with the owner.
             </div>
           </div>
         </div>

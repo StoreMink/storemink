@@ -11,6 +11,7 @@ import {
   CAPTURED_DRAFT_REPAIR,
   KEPT_DRAFT_REPAIR,
 } from "@/lib/billing/tax-copy";
+import { InfoTip } from "@/components/ui/info-tip";
 import { RecordRefundDialog } from "../refunds/refunds-table";
 import { IssueRefundDialog } from "../../stores/[storeId]/billing-actions";
 
@@ -120,7 +121,7 @@ export const REPAIR_COPY: Record<RepairKind, { title: string; hint: string }> =
     },
     kept_before_refunds: {
       title: "Payment kept after the plan ended, before automatic refunds",
-      hint: "Check the Razorpay dashboard for a refund already made by hand. If there was one, record it; if not, issue the refund. Then close this.",
+      hint: "Check Razorpay for a refund made by hand. Record it if there was one, or issue the refund, then close this.",
     },
     refund_refused: {
       title: "An automatic refund was refused",
@@ -128,11 +129,11 @@ export const REPAIR_COPY: Record<RepairKind, { title: string; hint: string }> =
     },
     purchase_refused: {
       title: "A paid purchase was not applied",
-      hint: "Nothing was applied or refunded. Do what the note says: apply the purchase by hand, or refund the payment in the Razorpay dashboard. Then close this with what you did.",
+      hint: "Nothing was applied or refunded. Apply it by hand or refund it in the Razorpay dashboard, then close this.",
     },
     purchase_unapplied: {
       title: "A paid purchase was invoiced but not applied",
-      hint: "The invoice is issued and the merchant was told not to pay again. Apply the purchase by hand as the note says, or issue a refund. Then close this with what you did.",
+      hint: "The merchant was told not to pay again. Apply it by hand or issue a refund, then close this.",
     },
     captured_draft: {
       title: CAPTURED_DRAFT_REPAIR.title,
@@ -248,7 +249,7 @@ export function ReconciliationQueue({
         </p>
         <p className="mx-auto mt-1 max-w-md text-sm text-[#6b7280]">
           {status === "open"
-            ? "The hourly sweep files anything it finds and cannot decide - an amount that differs from what we asked for, or a payment that maps to no store."
+            ? "The hourly sweep files payment questions it cannot decide here."
             : "No items with this outcome yet."}
         </p>
       </div>
@@ -684,9 +685,7 @@ function CloseForm({ id, onDone }: { id: string; onDone: () => void }) {
     <div className="mt-4 border-t border-[#e5e5e5] pt-4">
       {/* ★ Stated at the point of action, not in a header nobody re-reads. */}
       <p className="mb-3 rounded-lg bg-[#f9fafb] px-3 py-2 text-xs text-[#5b6472]">
-        This records what you found. It does <strong>not</strong> move money -
-        refunding a difference or issuing a credit happens on the store&apos;s
-        own billing screens.
+        This records what you found. It does <strong>not</strong> move money.
       </p>
 
       <div className="mb-3 flex flex-wrap gap-2">
@@ -716,12 +715,23 @@ function CloseForm({ id, onDone }: { id: string; onDone: () => void }) {
         ))}
       </div>
 
+      <div className="mb-1 flex items-center gap-1.5">
+        <label
+          htmlFor={`close-note-${id}`}
+          className="text-sm font-medium text-[#111827]"
+        >
+          What did you find?
+        </label>
+        <InfoTip label="About the note">
+          Required. The note is the audit trail for this item.
+        </InfoTip>
+      </div>
       <textarea
+        id={`close-note-${id}`}
         className="dash-input w-full"
         rows={2}
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="What did you find? (required - this is the audit trail)"
       />
 
       <button

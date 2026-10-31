@@ -113,8 +113,8 @@ export async function ThemeStudioTile() {
           </>
         ) : (
           <p role="alert" className="text-sm text-[var(--dash-text)]">
-            Theme Studio figures are unavailable: the read failed. Open Theme
-            Studio to see each theme.
+            Theme Studio figures are unavailable. Open Theme Studio to see each
+            theme.
           </p>
         )}
       </div>

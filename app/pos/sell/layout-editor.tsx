@@ -209,7 +209,8 @@ export function LayoutEditMode({
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search…"
+                placeholder="Search products"
+                aria-label="Search products"
                 className="w-full rounded-lg border border-[var(--pos-border)] bg-[var(--pos-surface)] py-2 pl-8 pr-2 text-sm outline-none placeholder:text-[var(--pos-ink-3)] focus:border-[var(--pos-border-strong)]"
               />
             </div>
@@ -287,8 +288,7 @@ function GridDropArea({
       {empty ? (
         <div className="flex h-full min-h-40 items-center justify-center px-6 text-center">
           <p className="max-w-xs text-sm text-[var(--pos-ink-3)]">
-            Drag products here to build the product grid. Leave it empty and POS
-            keeps showing every product.
+            Drag products here. Leave it empty to show every product.
           </p>
         </div>
       ) : (

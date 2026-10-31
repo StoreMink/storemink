@@ -276,62 +276,7 @@
   background: var(--dash-surface-2);
 }
 
-/* ---- Invoice preview modal ---- */
-.billPreviewOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 40px 20px;
-  overflow-y: auto;
-  background: rgba(17, 24, 39, 0.55);
-}
-.billPreviewPanel {
-  width: 100%;
-  max-width: 860px;
-  background: var(--dash-surface);
-  border-radius: 14px;
-  box-shadow: var(--dash-shadow-lg);
-  overflow: hidden;
-}
-.billPreviewHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--dash-border);
-  position: sticky;
-  top: 0;
-  background: var(--dash-surface);
-}
-.billPreviewTitle {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--dash-text);
-}
-.billPreviewNote {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--dash-text-3);
-}
-.billPreviewClose {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid var(--dash-border);
-  background: var(--dash-surface);
-  color: var(--dash-text-2);
-  cursor: pointer;
-}
-.billPreviewClose:hover {
-  background: var(--dash-surface-2);
-}
+/* ---- Invoice preview (inside the standard dialog) ---- */
 /* The invoice sheet is print-styled; give it a soft canvas in the modal. */
 .billPreviewBody {
   padding: 24px;

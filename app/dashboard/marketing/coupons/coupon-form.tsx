@@ -6,6 +6,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import { NumberField } from "@/components/ui/number-field";
 import {
   createCoupon,
@@ -126,12 +127,14 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
       <div className="dash-card max-w-[640px] p-6">
         <div className="space-y-4">
           <div>
-            <label className={labelClass}>Code *</label>
+            <label className={labelClass} htmlFor="coupon-code">
+              Code *
+            </label>
             <input
+              id="coupon-code"
               className={`${fieldClass} font-mono uppercase`}
               value={form.code}
               onChange={(e) => set("code", e.target.value.toUpperCase())}
-              placeholder="e.g. SUMMER25"
             />
             <p className="mt-1 text-[11px] text-[#9ca3af]">
               Case-insensitive. Shoppers type this exactly.
@@ -139,12 +142,22 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
           </div>
 
           <div>
-            <label className={labelClass}>Description</label>
+            <div className="flex items-center gap-1.5">
+              <label
+                className="block text-xs font-medium uppercase tracking-wide text-[#6b7280]"
+                htmlFor="coupon-description"
+              >
+                Description
+              </label>
+              <InfoTip label="About the description">
+                Optional. Shown with the code when it is listed in the cart.
+              </InfoTip>
+            </div>
             <input
-              className={fieldClass}
+              id="coupon-description"
+              className={`${fieldClass} mt-1.5`}
               value={form.description}
               onChange={(e) => set("description", e.target.value)}
-              placeholder="Optional - internal note (e.g. Summer sale)"
             />
           </div>
 
@@ -244,9 +257,8 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
               Show on Storefront
             </label>
             <p className="mt-1 text-[11px] text-[#9ca3af] ml-6">
-              If checked, this coupon will be shown as an option in the
-              shopper&apos;s cart. (This is overridden if the global &quot;Show
-              all coupons&quot; setting is on).
+              Lists this coupon in the cart. The &quot;Show all coupons&quot;
+              setting overrides it.
             </p>
           </div>
 
@@ -254,9 +266,7 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
             <label className={labelClass}>Restrict to user groups</label>
             {!allowsGroups ? (
               <p className="rounded-md border border-[#e5e7eb] bg-[#f9fafb] p-3 text-xs text-[#6b7280]">
-                Customer-group targeting is available on Basic and Pro. Any
-                restrictions saved before a downgrade are retained and return
-                when the store upgrades.{" "}
+                Customer-group targeting is available on Basic and Pro.{" "}
                 <Link
                   href="/dashboard/plans"
                   className="font-semibold text-[#4f46e5]"
@@ -266,8 +276,7 @@ export function CouponForm({ coupon, groups, allowsGroups = true }: Props) {
               </p>
             ) : groups.length === 0 ? (
               <p className="text-[11px] text-[#9ca3af]">
-                No user groups yet. Create groups under Users → User Groups to
-                limit a coupon to specific customers.
+                No user groups yet. Create them under Users → User Groups.
               </p>
             ) : (
               <>

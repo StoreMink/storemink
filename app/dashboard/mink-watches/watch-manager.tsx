@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { InfoTip } from "@/components/ui/info-tip";
 import { WATCH_KINDS } from "@/lib/mink/watch-policy";
 import type { WatchView } from "@/lib/mink/watches";
 import { MinkBusinessBrief } from "../mink-business-brief";
@@ -216,20 +217,15 @@ export function MinkWatchManager() {
                 </label>
               </div>
             )}
-            <p className="text-sm text-muted-foreground">
-              Sales, returns and payment checks cover completed local days, not
-              live incidents. Stock is checked per location at run time. Briefs
-              notify each scheduled period; other watches notify on new
-              attention. Unchanged conditions stay quiet. Quiet hours defer and
-              coalesce alerts. No email, SMS, extra Gemini call or automatic
-              business action.
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Up to 5 watches per admin and 20 per store, including paused
-              watches. The selected scope, timezone and inventory threshold are
-              captured now. New locations do not join automatically. Check time
-              is approximate; missed schedules do not produce a catch-up burst.
-            </p>
+            <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <p>
+                Alerts appear in the dashboard only. Up to 5 watches per admin.
+              </p>
+              <InfoTip label="About watches">
+                Sales, returns and payments are checked over completed days,
+                stock per location. You&apos;re told only about something new.
+              </InfoTip>
+            </div>
             <label className="flex items-start gap-2">
               <input
                 type="checkbox"
@@ -281,8 +277,8 @@ export function MinkWatchManager() {
                 {w.errorCode && (
                   <p role="status" className="text-sm text-amber-700">
                     {w.errorCode === "authorization_revoked"
-                      ? "Access or location scope changed. Review your permissions; recreate this watch if its scope changed."
-                      : "The check could not complete. This is not an all-clear. The watch is paused; review access and resume to try at the next scheduled time."}
+                      ? "Your access changed, so this watch is paused. Recreate it if its scope changed."
+                      : "The check couldn't finish, so this watch is paused. Resume it to try again."}
                   </p>
                 )}
                 <div className="flex gap-2">

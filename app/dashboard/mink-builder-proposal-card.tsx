@@ -59,7 +59,7 @@ const completed: Record<Proposal["operation"], string> = {
     "Header and footer draft restored. This action did not publish it.",
   page_create: "Draft page created. This action did not publish it.",
   page_update:
-    "Page changes saved. Page sections need publication; details on an already published page take effect immediately.",
+    "Page changes saved. Sections go live when published; details of a live page apply now.",
   page_delete: "Page deleted.",
   page_publish: "Page published to your live store.",
   page_unpublish: "Page unpublished and removed from your live store.",

@@ -174,12 +174,14 @@ function LinkList({
               className="sm-b-input"
               value={link.label}
               placeholder="Label"
+              aria-label={`Link ${i + 1} label`}
               onChange={(e) => set(i, { label: e.target.value })}
             />
             <input
               className="sm-b-input sm-b-input-mono"
               value={link.href}
-              placeholder="/shop"
+              placeholder="Link"
+              aria-label={`Link ${i + 1} address`}
               onChange={(e) => set(i, { href: e.target.value })}
             />
           </div>
@@ -218,12 +220,7 @@ function LinkList({
         <Plus className="h-3.5 w-3.5" />
         {addLabel}
       </button>
-      {links.length === 0 && (
-        <p className="sm-b-hint">
-          No links yet. Visitors will still reach your pages from the footer and
-          from links inside your content.
-        </p>
-      )}
+      {links.length === 0 && <p className="sm-b-hint">No links yet.</p>}
     </div>
   );
 }
@@ -243,8 +240,8 @@ const NAV_LEVEL_CAP = [
  *   anywhere else would be a field that silently does nothing — the cleaner
  *   drops it on save.
  * ★ A row with sub-links may leave its link empty: it then only opens its
- *   menu. The placeholder says so, rather than letting the merchant find out
- *   that an empty leaf was dropped on save.
+ *   menu. The placeholder says the link is optional there, rather than
+ *   letting the merchant find out that an empty leaf was dropped on save.
  */
 export function NavTreeList({
   links,
@@ -301,7 +298,7 @@ export function NavTreeList({
                 <input
                   className="sm-b-input sm-b-input-mono"
                   value={link.href}
-                  placeholder={hasChildren ? "Optional: /shop" : "/shop"}
+                  placeholder={hasChildren ? "Link (optional)" : "Link"}
                   aria-label={`${depth ? "Sub-link" : "Menu link"} ${i + 1} link`}
                   onChange={(e) => set(i, { href: e.target.value })}
                 />
@@ -410,10 +407,7 @@ export function NavTreeList({
         </button>
       )}
       {depth === 0 && links.length === 0 && (
-        <p className="sm-b-hint">
-          No links yet. Visitors will still reach your pages from the footer and
-          from links inside your content.
-        </p>
+        <p className="sm-b-hint">No links yet.</p>
       )}
     </div>
   );
@@ -434,7 +428,7 @@ export function HeaderForm({
     <>
       <Group
         title="Menu"
-        hint="The links across the top of every page. Give a link sub-links to open a menu from it; give those sub-links their own to lay the menu out in columns."
+        hint="Links across the top of every page. Add sub-links to open a menu."
       >
         <NavTreeList links={h.links} onChange={(links) => patch({ links })} />
       </Group>
@@ -467,7 +461,7 @@ export function HeaderForm({
 
       <Group
         title="Announcement bar"
-        hint="One line above the header on every page: a delivery promise, a sale, a season's opening line. Leave the text empty to show your theme's own announcement, when it has one."
+        hint="One line above the header on every page. Leave the text empty to use your theme's own."
       >
         <Toggle
           label="Show the announcement bar"
@@ -484,7 +478,6 @@ export function HeaderForm({
                 className="sm-b-input"
                 value={h.announcement.text}
                 maxLength={160}
-                placeholder="Free delivery on orders over ₹999"
                 onChange={(e) =>
                   patch({
                     announcement: { ...h.announcement, text: e.target.value },
@@ -497,7 +490,6 @@ export function HeaderForm({
               <input
                 className="sm-b-input"
                 value={h.announcement.href}
-                placeholder="/collections/sale"
                 onChange={(e) =>
                   patch({
                     announcement: { ...h.announcement, href: e.target.value },
@@ -511,8 +503,7 @@ export function HeaderForm({
 
       <Group title="Logo" defaultOpen={false}>
         <p className="sm-b-hint">
-          Your logo and store name come from your brand, so they stay the same
-          everywhere - invoices and emails included.{" "}
+          Your logo and store name come from your branding.{" "}
           <a href="/dashboard/branding" target="_blank" rel="noopener">
             Edit branding
           </a>
@@ -551,6 +542,7 @@ export function FooterForm({
                 className="sm-b-input sm-b-input-strong"
                 value={group.title}
                 placeholder="Column title"
+                aria-label={`Column ${i + 1} title`}
                 onChange={(e) => setGroup(i, { title: e.target.value })}
               />
               <button
@@ -744,7 +736,7 @@ function DesignForm({
     <>
       <Group
         title="Colours"
-        hint="Leave a colour on its theme value, or set your own. Publishes with the website."
+        hint="Leave a colour on its theme value, or set your own."
       >
         {DESIGN_PALETTE_TOKENS.map((token) => {
           const overridden = design.palette[token];
@@ -785,8 +777,7 @@ function DesignForm({
         })}
         {issues.length > 0 ? (
           <p className="sm-b-warn" role="status">
-            {issues.join(" ")} You can keep editing, but this cannot be
-            published until it is readable.
+            {issues.join(" ")} Fix this before you publish.
           </p>
         ) : null}
       </Group>
@@ -988,7 +979,7 @@ function TemplatesForm({
     <>
       <Group
         title="Product page"
-        hint="The gallery's shape and the blocks under the product name, in order. Price and the quantity and buttons are always shown. The preview shows the product page after a reload."
+        hint="The gallery and the blocks under the product name. The preview updates after a reload."
         defaultOpen={false}
       >
         <label className="sm-b-field">
@@ -1173,7 +1164,7 @@ function TemplatesForm({
                           }}
                         />
                         <span className="sm-b-hint">
-                          Chest, Waist, Length. Up to {MAX_SIZE_GUIDE_COLUMNS}.
+                          Up to {MAX_SIZE_GUIDE_COLUMNS}.
                         </span>
                       </label>
                       <BlockList<SizeGuideRow>
@@ -1238,8 +1229,7 @@ function TemplatesForm({
                         onChange={(e) => setItem({ html: e.target.value })}
                       />
                       <span className="sm-b-hint">
-                        Paragraphs, links, bold and lists; anything else is
-                        removed when the page renders.
+                        Paragraphs, links, bold and lists only.
                       </span>
                     </label>
                   )}
@@ -1252,7 +1242,7 @@ function TemplatesForm({
 
       <Group
         title="Collection page"
-        hint="Where the filters sit, how the grid pages, and the promotional tiles among the products. The preview shows the shop after a reload."
+        hint="Filters, paging and promotional tiles. The preview updates after a reload."
         defaultOpen={false}
       >
         <label className="sm-b-field">
@@ -1388,7 +1378,6 @@ function TemplatesForm({
                     <input
                       className="sm-b-input"
                       value={tile.href}
-                      placeholder="/collections/sale"
                       onChange={(e) => setTile({ href: e.target.value })}
                     />
                   </label>
@@ -1454,7 +1443,7 @@ function TemplatesForm({
                       <input
                         className="sm-b-input sm-b-input-mono"
                         value={tile.background}
-                        placeholder="Theme ink"
+                        placeholder="Theme default"
                         onChange={(e) =>
                           setTile({ background: e.target.value })
                         }
@@ -1662,7 +1651,7 @@ export function BrandForm({
 
       <Group
         title="Storefront layout"
-        hint="Use the theme default, or override individual surfaces. Changes publish with the website."
+        hint="Use the theme default or choose your own. Changes go live when you publish."
       >
         <label className="sm-b-field">
           <span>Header</span>
@@ -1723,8 +1712,7 @@ export function BrandForm({
             <option value="square">Square 1:1 (1200 × 1200 photos)</option>
           </select>
           <span className="sm-b-hint">
-            Classic cards fill this frame edge to edge. Match it to your product
-            photos so nothing is cropped.
+            Match your product photos so nothing is cropped.
           </span>
         </label>
         <label className="sm-b-field">
@@ -1743,9 +1731,7 @@ export function BrandForm({
             <option value="colour">One card per colour</option>
           </select>
           <span className="sm-b-hint">
-            One card per colour shows each colour of a product as its own card,
-            with that colour&rsquo;s photos. It applies to products with photos
-            for each colour.
+            Each colour with its own photos gets its own card.
           </span>
         </label>
         <label className="sm-b-field">
@@ -1817,7 +1803,7 @@ export function BrandForm({
           <input
             className="sm-b-input sm-b-input-mono"
             value={brand.logoUrl ?? ""}
-            placeholder="https://…"
+            placeholder="https://"
             onChange={(e) =>
               onChange({ ...brand, logoUrl: e.target.value || null })
             }
@@ -1834,9 +1820,7 @@ export function BrandForm({
 
       <Group title="Everything else" defaultOpen={false}>
         <p className="sm-b-hint">
-          Your store name, contact details, social profiles and legal name are
-          store identity - they also appear on invoices and in email, so they
-          live in{" "}
+          Store name, contact details, social profiles and legal name live in{" "}
           <a href="/dashboard/branding" target="_blank" rel="noopener">
             branding
           </a>

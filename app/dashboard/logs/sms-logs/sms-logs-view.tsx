@@ -90,8 +90,8 @@ export function SmsLogsView({
           <h1>SMS logs</h1>
           <p>
             {platform
-              ? "Every text StoreMink itself has sent. Merchants' own messages to their shoppers are logged in their store, not here - SMS is a per-store connection."
-              : "Every text this store has sent. A message blocked by a carrier for not matching its DLT template arrives here as sent - carriers drop those silently, so a delivery report is the only place it shows."}
+              ? "Every text StoreMink itself has sent. Stores' own texts are logged in each store."
+              : "Every text this store has sent. Sent means Twilio accepted it, not that it was delivered."}
           </p>
         </div>
       </header>
@@ -109,7 +109,7 @@ export function SmsLogsView({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by number or notification"
+              placeholder="Search messages"
               aria-label="Search SMS logs"
               className="w-full rounded-md border border-[var(--dash-border)] bg-[var(--dash-surface)] py-[7px] pl-9 pr-3 text-[13px] text-[var(--dash-text)] outline-none"
             />
@@ -159,12 +159,10 @@ export function SmsLogsView({
             <MessageSquare className="mx-auto mb-2 h-5 w-5 opacity-40" />
             {platform ? (
               <>
-                No platform messages - and there cannot be any yet.
+                No platform messages yet.
                 <span className="mt-1.5 block">
-                  StoreMink has no SMS sender of its own. The one-time code sent
-                  during signup comes from Firebase phone auth, which Google
-                  delivers on its own infrastructure and which never passes
-                  through this system, so it leaves no row here.
+                  StoreMink has no SMS sender of its own. Signup codes come from
+                  Firebase phone auth.
                 </span>
               </>
             ) : (

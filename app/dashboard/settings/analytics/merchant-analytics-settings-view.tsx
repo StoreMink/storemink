@@ -78,7 +78,8 @@ function IntegrationCard({
   title: string;
   description: string;
   idLabel: string;
-  placeholder: string;
+  /** A pure format cue only (GA4's "G-…"); never sample data. */
+  placeholder?: string;
   value: string;
   enabled: boolean;
   /** What is actually PERSISTED. The status line and the Active badge are
@@ -237,8 +238,8 @@ export function MerchantAnalyticsSettingsView({
           Analytics tracking
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-slate-600">
-          Connect your own Google Analytics and Meta accounts. StoreMink loads
-          optional tracking only after the visitor makes a privacy choice.
+          Connect your own Google Analytics and Meta accounts. Tracking loads
+          only after a visitor consents.
         </p>
       </header>
 
@@ -247,8 +248,8 @@ export function MerchantAnalyticsSettingsView({
         <div>
           <strong>Consent is enforced automatically.</strong>
           <p className="mt-1 text-violet-800">
-            GA4 waits for analytics consent. Meta Pixel waits for marketing
-            consent. Rejecting optional tracking keeps both scripts unloaded.
+            GA4 waits for analytics consent and Meta Pixel for marketing
+            consent.
           </p>
         </div>
       </div>
@@ -283,7 +284,6 @@ export function MerchantAnalyticsSettingsView({
         title="Meta Pixel"
         description="Send consenting storefront page views to your Meta web dataset."
         idLabel="Meta Pixel ID"
-        placeholder="123456789012345"
         value={values.metaPixelId}
         enabled={values.metaPixelEnabled}
         savedValue={saved.metaPixelId}

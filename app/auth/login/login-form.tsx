@@ -103,7 +103,6 @@ export function LoginForm({ storeName }: { storeName: string }) {
           <Input
             id="email"
             type="email"
-            placeholder="you@example.com"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -126,7 +125,6 @@ export function LoginForm({ storeName }: { storeName: string }) {
           <Input
             id="password"
             type="password"
-            placeholder="••••••••"
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -145,8 +143,7 @@ export function LoginForm({ storeName }: { storeName: string }) {
       </form>
 
       <p className="mt-6 text-center text-xs text-muted-foreground">
-        Signed up with Google? Use “Continue with Google” above. To also set a
-        password, use “Forgot password?”.
+        Signed up with Google? Use “Continue with Google” above.
       </p>
     </div>
   );
