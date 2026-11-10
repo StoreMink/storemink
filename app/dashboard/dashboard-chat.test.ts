@@ -2067,3 +2067,191 @@ describe("★★ one card per storefront redesign in a thread (25 Oct 2026)", ()
     expect(card).toHaveFocus();
   });
 });
+
+describe("Mink AI top-bar pop-out hand-off", () => {
+  const skill = (id: string, label: string, prompt: string) => ({
+    id,
+    slash: id,
+    label,
+    description: label,
+    prompt,
+    section: "dashboard",
+    action: "view",
+    starterOn: ["/dashboard"],
+  });
+
+  it("names the panel so the top-bar controls can point at it", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      isExpanded: false,
+    } as unknown as ReturnType<typeof useChat>);
+    const { container } = render(
+      createElement(DashboardChat, { variant: "panel" }),
+    );
+    expect(container.querySelector("#mink-chat-panel")).not.toBeNull();
+  });
+
+  it("puts focus in the composer when the pop-out opens the panel", async () => {
+    const closed = {
+      ...baseChatState,
+      isExpanded: false,
+      focusComposerOnOpen: 0,
+    } as unknown as ReturnType<typeof useChat>;
+    vi.mocked(useChat).mockReturnValue(closed);
+    const { rerender } = render(
+      createElement(DashboardChat, { variant: "panel" }),
+    );
+    const composer = screen.getByRole("textbox", { name: "Message Mink AI" });
+    expect(composer).not.toHaveFocus();
+    vi.mocked(useChat).mockReturnValue({
+      ...closed,
+      focusComposerOnOpen: 1,
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(createElement(DashboardChat, { variant: "panel" }));
+    await waitFor(() => expect(composer).toHaveFocus());
+  });
+
+  it("keeps the composer focused when a new chat gets its id and the composer remounts", async () => {
+    const closed = {
+      ...baseChatState,
+      isExpanded: false,
+      activeConversationId: null,
+      focusComposerOnOpen: 0,
+    } as unknown as ReturnType<typeof useChat>;
+    vi.mocked(useChat).mockReturnValue(closed);
+    const { rerender } = render(
+      createElement(DashboardChat, { variant: "panel" }),
+    );
+    vi.mocked(useChat).mockReturnValue({
+      ...closed,
+      focusComposerOnOpen: 1,
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(createElement(DashboardChat, { variant: "panel" }));
+    const first = screen.getByRole("textbox", { name: "Message Mink AI" });
+    await waitFor(() => expect(first).toHaveFocus());
+
+    // The stream's status event names the new chat: the composer remounts.
+    vi.mocked(useChat).mockReturnValue({
+      ...closed,
+      focusComposerOnOpen: 1,
+      activeConversationId: "c-new",
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(createElement(DashboardChat, { variant: "panel" }));
+    const second = screen.getByRole("textbox", { name: "Message Mink AI" });
+    expect(second).not.toBe(first);
+    await waitFor(() => expect(second).toHaveFocus());
+  });
+
+  it("does not take focus back once the merchant has focused something else", async () => {
+    const closed = {
+      ...baseChatState,
+      isExpanded: false,
+      activeConversationId: null,
+      focusComposerOnOpen: 0,
+    } as unknown as ReturnType<typeof useChat>;
+    vi.mocked(useChat).mockReturnValue(closed);
+    const { rerender } = render(
+      createElement(DashboardChat, { variant: "panel" }),
+    );
+    vi.mocked(useChat).mockReturnValue({
+      ...closed,
+      focusComposerOnOpen: 1,
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(createElement(DashboardChat, { variant: "panel" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Message Mink AI" }),
+      ).toHaveFocus(),
+    );
+    const close = screen.getByRole("button", { name: "Close chat" });
+    act(() => close.focus());
+    vi.mocked(useChat).mockReturnValue({
+      ...closed,
+      focusComposerOnOpen: 1,
+      activeConversationId: "c-new",
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(createElement(DashboardChat, { variant: "panel" }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(close).toHaveFocus();
+  });
+
+  it("closing the panel returns focus to the top-bar face", async () => {
+    const dock = document.createElement("div");
+    dock.className = "dash-mink-dock";
+    const face = document.createElement("button");
+    face.setAttribute("aria-controls", "mink-chat-panel");
+    face.textContent = "Mink AI";
+    dock.appendChild(face);
+    document.body.appendChild(dock);
+    try {
+      vi.mocked(useChat).mockReturnValue({
+        ...baseChatState,
+        isExpanded: false,
+      } as unknown as ReturnType<typeof useChat>);
+      render(createElement(DashboardChat, { variant: "panel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close chat" }));
+      await waitFor(() => expect(face).toHaveFocus());
+    } finally {
+      dock.remove();
+    }
+  });
+
+  it("in the Website Builder, closing returns focus to the builder's Mink AI button", async () => {
+    const dock = document.createElement("div");
+    dock.className = "dash-mink-dock";
+    const face = document.createElement("button");
+    face.setAttribute("aria-controls", "mink-chat-panel");
+    dock.appendChild(face);
+    const builder = document.createElement("div");
+    builder.className = "sm-builder";
+    const builderMink = document.createElement("button");
+    builderMink.className = "sm-builder-mink";
+    builder.appendChild(builderMink);
+    document.body.append(dock, builder);
+    try {
+      vi.mocked(useChat).mockReturnValue({
+        ...baseChatState,
+        isExpanded: false,
+      } as unknown as ReturnType<typeof useChat>);
+      render(createElement(DashboardChat, { variant: "panel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close chat" }));
+      await waitFor(() => expect(builderMink).toHaveFocus());
+      expect(face).not.toHaveFocus();
+    } finally {
+      dock.remove();
+      builder.remove();
+    }
+  });
+
+  it("leaves focus alone when the counter has not moved", async () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      isExpanded: false,
+      focusComposerOnOpen: 3,
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "panel" }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(
+      screen.getByRole("textbox", { name: "Message Mink AI" }),
+    ).not.toHaveFocus();
+  });
+
+  it("leads the suggested prompts with the page's question and drops its duplicate", () => {
+    vi.mocked(useChat).mockReturnValue({
+      ...baseChatState,
+      skills: [
+        skill("add-product", "Add a product", "How do I add my first product?"),
+        skill("sales", "Sales today", "How were sales today?"),
+      ],
+      pageSuggestion: {
+        label: "How do I add my first product?",
+        prompt: "How do I add my first product?",
+      },
+    } as unknown as ReturnType<typeof useChat>);
+    render(createElement(DashboardChat, { variant: "overlay" }));
+    const chips = within(screen.getByLabelText("Suggested prompts"))
+      .getAllByRole("button")
+      .map((button) => button.textContent);
+    expect(chips).toEqual(["How do I add my first product?", "Sales today"]);
+  });
+});

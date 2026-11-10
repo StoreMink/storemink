@@ -232,6 +232,26 @@ export function isMinkInAppLinkClick(
   );
 }
 
+/**
+ * Closing the chat from its own Close button puts focus back on the control
+ * that reopens it: the top-bar Mink AI face (the pop-out bar is not shown
+ * while the chat is open), or, while the Website Builder is mounted, the
+ * builder's own Mink AI button, since the builder canvas covers the top bar.
+ */
+function returnFocusToMinkFace() {
+  if (typeof window === "undefined") return;
+  window.requestAnimationFrame(() => {
+    const target =
+      document.querySelector<HTMLButtonElement>(
+        ".sm-builder .sm-builder-mink",
+      ) ??
+      document.querySelector<HTMLButtonElement>(
+        '.dash-mink-dock > button[aria-controls="mink-chat-panel"]',
+      );
+    target?.focus();
+  });
+}
+
 // Two surfaces, one conversation (state lives in ChatProvider):
 //  - "panel"   → the resizable right sheet opened from the topbar
 //  - "overlay" → the full-view takeover opened from Home/maximize
@@ -276,6 +296,8 @@ export function DashboardChat({
     memoryPrompt,
     saveMemorySuggestion,
     dismissMemorySuggestion,
+    pageSuggestion = null,
+    focusComposerOnOpen = 0,
   } = useChat();
   // The spoken conversation, run by ChatProvider. While it is on, the thread
   // stays on screen (cards included) and the voice bar takes the composer's
@@ -291,6 +313,11 @@ export function DashboardChat({
   const autoAnchorSubmissionRef = useRef(true);
   const turnAnchorSpaceRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // The top-bar bar and its touch tab bump `focusComposerOnOpen`; the
+  // surface that is showing then lands focus in its composer. Starts at the
+  // value at mount, so a remount never steals focus.
+  const handledComposerFocus = useRef(focusComposerOnOpen);
+  const pendingComposerFocus = useRef(false);
   // A dictated transcript can arrive while the empty box is hidden behind the
   // recorder, so focusing it inside onAdd misses; this retries after the
   // render that shows it again.
@@ -513,6 +540,48 @@ export function DashboardChat({
   }, [historyOpen, input, isOverlay, panelWidth]);
 
   useEffect(() => {
+    if (focusComposerOnOpen === handledComposerFocus.current) return;
+    if (!isChatOpen || isOverlay !== isExpanded) return;
+    handledComposerFocus.current = focusComposerOnOpen;
+    pendingComposerFocus.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      composerRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusComposerOnOpen, isChatOpen, isExpanded, isOverlay]);
+
+  // ★ The composer sits inside a component keyed on the conversation, so it
+  // remounts when a new chat gets its id (the stream's first status event,
+  // about a second after the panel opens) and focus drops to the page. The
+  // request stays pending until the merchant focuses something else, and the
+  // composer that replaces it takes the focus back.
+  useEffect(() => {
+    if (!isChatOpen) {
+      pendingComposerFocus.current = false;
+      return;
+    }
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target !== composerRef.current) {
+        pendingComposerFocus.current = false;
+      }
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, [isChatOpen]);
+
+  useEffect(() => {
+    if (!pendingComposerFocus.current || !isChatOpen) return;
+    if (isOverlay !== isExpanded) return;
+    const frame = window.requestAnimationFrame(() => {
+      const composer = composerRef.current;
+      if (!composer || !pendingComposerFocus.current) return;
+      const active = document.activeElement;
+      if (!active || active === document.body) composer.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeConversationId, isChatOpen, isExpanded, isOverlay]);
+
+  useEffect(() => {
     if (!deleteTarget) return;
     deleteButtonRef.current?.focus();
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
@@ -714,7 +783,26 @@ export function DashboardChat({
 
   const hasThread = messages.length > 0 || isReplying || Boolean(error);
   const creditWarning = minkCredits ? minkCreditWarning(minkCredits) : null;
-  const starterSkills = minkStarterSkills(skills, pathname);
+  // The page's own question (the go-live card's open task) leads the chips;
+  // a starter skill asking the same thing is dropped.
+  const starterSkills: {
+    id: string;
+    label: string;
+    prompt: string;
+    description: string;
+  }[] = pageSuggestion
+    ? [
+        {
+          id: "page-suggestion",
+          label: pageSuggestion.label,
+          prompt: pageSuggestion.prompt,
+          description: pageSuggestion.label,
+        },
+        ...minkStarterSkills(skills, pathname).filter(
+          (skill) => skill.prompt !== pageSuggestion.prompt,
+        ),
+      ].slice(0, 4)
+    : minkStarterSkills(skills, pathname);
   const latestAssistantIndex = (() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index]?.role === "assistant") return index;
@@ -731,6 +819,7 @@ export function DashboardChat({
 
   return (
     <div
+      id="mink-chat-panel"
       data-testid="mink-chat-surface"
       className={wrapperClass}
       style={panelStyle}
@@ -826,7 +915,10 @@ export function DashboardChat({
           </button>
           <button
             type="button"
-            onClick={closeChat}
+            onClick={() => {
+              closeChat();
+              returnFocusToMinkFace();
+            }}
             className="rounded-md p-1.5 transition-colors hover:bg-[#f1f1f1]"
             aria-label="Close chat"
           >

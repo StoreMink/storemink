@@ -18,6 +18,7 @@ import { useChat } from "./chat-context";
 import { NotificationBell } from "./components/notification-bell";
 import { LocationTag } from "./location-tag";
 import { MinkMark } from "./mink-mark";
+import { MinkDock } from "./mink-dock";
 
 // Plan pill styling on the dark topbar — neutral for free, brand-tinted as the
 // plan climbs, mirroring the console's plan colours.
@@ -377,7 +378,7 @@ export function DashboardTopbar({
             </kbd>
           </form>
           {searchOpen && (
-            <div className="absolute left-0 right-0 top-[calc(100%+8px)] overflow-hidden rounded-xl border border-[var(--dash-border)] bg-[var(--dash-surface)] text-[var(--dash-text)] shadow-[var(--dash-shadow-lg)]">
+            <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[200] overflow-hidden rounded-xl border border-[var(--dash-border)] bg-[var(--dash-surface)] text-[var(--dash-text)] shadow-[var(--dash-shadow-lg)]">
               {resultList("dashboard-search-results")}
             </div>
           )}
@@ -404,16 +405,23 @@ export function DashboardTopbar({
           <Search className="h-[18px] w-[18px]" />
         </button>
 
-        <button
-          type="button"
-          onClick={toggleChat}
-          className={`relative text-slate-300 hover:text-white w-8 h-8 rounded-md flex items-center justify-center transition-colors hover:bg-slate-700 shrink-0 ${
-            isChatOpen ? "bg-slate-700 text-white" : ""
-          }`}
-          aria-label="Mink AI"
-        >
-          <MinkMark size="sm" />
-        </button>
+        {/* The "Ask Mink AI" pop-out bar hangs under the face, positioned
+            against this wrapper (mink-dock.tsx, dashboard.css). */}
+        <div className="dash-mink-dock relative shrink-0">
+          <button
+            type="button"
+            onClick={toggleChat}
+            className={`relative text-slate-300 hover:text-white w-8 h-8 rounded-md flex items-center justify-center transition-colors hover:bg-slate-700 shrink-0 ${
+              isChatOpen ? "bg-slate-700 text-white" : ""
+            }`}
+            aria-label="Mink AI"
+            aria-controls="mink-chat-panel"
+            aria-expanded={isChatOpen}
+          >
+            <MinkMark size="sm" />
+          </button>
+          <MinkDock />
+        </div>
 
         <NotificationBell />
 

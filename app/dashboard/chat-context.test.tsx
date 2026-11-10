@@ -9,6 +9,7 @@ import {
   type MinkVoiceComposer,
 } from "./chat-context";
 import type { MinkVoiceModeInput } from "./mink-voice-mode";
+import { MinkPageSuggestion } from "./mink-page-suggestion";
 
 // The dashboard address (`?chat=<id>`, B20). Empty unless a test sets it,
 // so the provider behaves as it does on any other dashboard page.
@@ -285,6 +286,147 @@ describe("★★ ChatProvider: which chat a question goes into", () => {
     expect(chat.current?.activeConversationId).toBeNull();
     expect(chat.current?.messages).toEqual([]);
     expect(chat.current?.conversations).toHaveLength(1);
+  });
+
+  it("the top-bar bar asks in the side panel, in a new chat, never the full view", async () => {
+    rememberChat(5);
+    const requests = stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() =>
+      expect(chat.current?.activeConversationId).toBe(CHAT_ID),
+    );
+    const before = chat.current?.focusComposerOnOpen ?? 0;
+
+    act(() => chat.current?.askInPanel("  Which orders are waiting?  "));
+
+    await waitFor(() => expect(chat.current?.isReplying).toBe(false));
+    expect(chat.current?.isChatOpen).toBe(true);
+    expect(chat.current?.isExpanded).toBe(false);
+    expect(chat.current?.focusComposerOnOpen).toBe(before + 1);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.message).toBe("Which orders are waiting?");
+    expect(requests[0]?.conversationId).toBeUndefined();
+  });
+
+  it("while Mink is still answering, the bar's question waits in the box", async () => {
+    const requests = stub({ holdAnswer: true });
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+    act(() => chat.current?.send("Stock?"));
+    await waitFor(() => expect(chat.current?.isReplying).toBe(true));
+
+    const before = chat.current?.focusComposerOnOpen ?? 0;
+    act(() => chat.current?.askInPanel("How were sales today?"));
+
+    expect(chat.current?.input).toBe("How were sales today?");
+    expect(chat.current?.isChatOpen).toBe(true);
+    expect(chat.current?.isExpanded).toBe(false);
+    expect(chat.current?.focusComposerOnOpen).toBe(before + 1);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("an empty question opens the panel on the current chat without sending", async () => {
+    rememberChat(5);
+    const requests = stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() =>
+      expect(chat.current?.activeConversationId).toBe(CHAT_ID),
+    );
+
+    act(() => chat.current?.askInPanel("   "));
+
+    expect(chat.current?.isChatOpen).toBe(true);
+    expect(chat.current?.isExpanded).toBe(false);
+    expect(chat.current?.activeConversationId).toBe(CHAT_ID);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("openChat opens without toggling or expanding", async () => {
+    rememberChat(5);
+    stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() =>
+      expect(chat.current?.activeConversationId).toBe(CHAT_ID),
+    );
+
+    act(() => chat.current?.openChat());
+    act(() => chat.current?.openChat());
+
+    expect(chat.current?.isChatOpen).toBe(true);
+    expect(chat.current?.isExpanded).toBe(false);
+    expect(chat.current?.activeConversationId).toBe(CHAT_ID);
+  });
+
+  it("keeps a page's suggestion until it is cleared", async () => {
+    stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current).not.toBeNull());
+    expect(chat.current?.pageSuggestion).toBeNull();
+
+    act(() =>
+      chat.current?.setPageSuggestion({
+        label: "How do I add my first product?",
+        prompt: "How do I add my first product?",
+      }),
+    );
+    await waitFor(() =>
+      expect(chat.current?.pageSuggestion?.label).toBe(
+        "How do I add my first product?",
+      ),
+    );
+
+    act(() => chat.current?.setPageSuggestion(null));
+    await waitFor(() => expect(chat.current?.pageSuggestion).toBeNull());
+  });
+
+  it("a page's MinkPageSuggestion sets the suggestion, follows it, and clears it on unmount", async () => {
+    stub();
+    const page = (label: string | null) => (
+      <ChatProvider minkEnabled>
+        <Probe />
+        {label ? (
+          <MinkPageSuggestion label={label} prompt={`${label}?`} />
+        ) : null}
+      </ChatProvider>
+    );
+    const { rerender } = render(page("Add your first product"));
+    await waitFor(() =>
+      expect(chat.current?.pageSuggestion).toEqual({
+        label: "Add your first product",
+        prompt: "Add your first product?",
+      }),
+    );
+
+    rerender(page("Publish your store policies"));
+    await waitFor(() =>
+      expect(chat.current?.pageSuggestion?.label).toBe(
+        "Publish your store policies",
+      ),
+    );
+
+    // Leaving the page (the provider stays, it lives in the layout).
+    rerender(page(null));
+    await waitFor(() => expect(chat.current?.pageSuggestion).toBeNull());
   });
 });
 

@@ -235,6 +235,284 @@
   }
 }
 
+/* ---------- Mink AI pop-out bar (mink-dock.tsx) ----------
+   A small "Ask Mink AI" tab hangs from the top bar, centred under the Mink
+   face, in the top bar's own colour (`--dash-topbar-bg`) and joined to it by
+   concave fillets. Pointing at it or focusing it slides it out leftwards into
+   a bar with a question field, one suggestion and a send button. It is a
+   child of the top bar (`relative z-40`), so it paints above `.dash-content`
+   (z-10) and below the Mink panel (z-45), dialogs (z-50) and the search
+   results, bell and profile menus (z-[200]). Unlayered, so it beats Tailwind utilities.
+   Hidden where it would cover something that matters (rules below;
+   app/dashboard/mink-dock-css.test.ts). */
+.dashboard-shell .dash-mink-pop {
+  position: absolute;
+  /* The 32px face sits 12px above the bottom of the 56px top bar. */
+  top: calc(100% + 12px);
+  right: 50%;
+  translate: 50% 0;
+  z-index: 1;
+  width: 128px;
+  height: 28px;
+}
+
+.dashboard-shell .dash-mink-pop-tab {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px 2px;
+  border-radius: 0 0 12px 12px;
+  background: var(--dash-topbar-bg, #2a3439);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow:
+    0 10px 22px -14px rgba(15, 23, 42, 0.55),
+    0 3px 8px -4px rgba(15, 23, 42, 0.28);
+}
+
+/* Concave fillets where the tab and the bar meet the top bar. */
+.dashboard-shell .dash-mink-pop-tab::before,
+.dashboard-shell .dash-mink-pop-tab::after,
+.dashboard-shell .dash-mink-pop-bar::before,
+.dashboard-shell .dash-mink-pop-bar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+.dashboard-shell .dash-mink-pop-tab::before,
+.dashboard-shell .dash-mink-pop-bar::before {
+  left: -10px;
+  background: radial-gradient(
+    circle at 0 100%,
+    transparent 9.5px,
+    var(--dash-topbar-bg, #2a3439) 10px
+  );
+}
+.dashboard-shell .dash-mink-pop-tab::after,
+.dashboard-shell .dash-mink-pop-bar::after {
+  right: -10px;
+  background: radial-gradient(
+    circle at 100% 100%,
+    transparent 9.5px,
+    var(--dash-topbar-bg, #2a3439) 10px
+  );
+}
+
+/* While the bar is out the tab sits see-through under it. Not
+   visibility:hidden: the tab keeps focus (Escape returns focus to it, and
+   tabbing to it opens the bar without moving focus), and a browser refuses
+   focus() on a visibility:hidden element. The bar carries its focus ring. */
+.dashboard-shell .dash-mink-pop[data-open="true"] .dash-mink-pop-tab {
+  opacity: 0;
+  pointer-events: none;
+}
+.dashboard-shell
+  .dash-mink-pop:has(.dash-mink-pop-tab:focus-visible)
+  .dash-mink-pop-bar {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* The bar grows leftwards from the tab's right edge. */
+.dashboard-shell .dash-mink-pop-bar {
+  --dash-mink-pop-w: min(520px, calc(100vw - 32px));
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  width: var(--dash-mink-pop-w);
+  height: 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 0 0 12px 12px;
+  background: var(--dash-topbar-bg, #2a3439);
+  box-shadow:
+    0 22px 44px -20px rgba(15, 23, 42, 0.6),
+    0 6px 14px -8px rgba(15, 23, 42, 0.35);
+  animation: dash-mink-pop-out 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.dashboard-shell .dash-mink-pop-bar[hidden] {
+  display: none;
+}
+
+.dashboard-shell .dash-mink-pop-bar > * {
+  animation: dash-mink-pop-fade 200ms ease 80ms both;
+}
+
+@keyframes dash-mink-pop-out {
+  from {
+    width: 128px;
+  }
+  to {
+    width: var(--dash-mink-pop-w);
+  }
+}
+
+@keyframes dash-mink-pop-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.dashboard-shell .dash-mink-pop-field {
+  display: flex;
+  min-width: 0;
+  height: 34px;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 8px;
+  border-radius: 10px;
+  background: #ffffff;
+  cursor: text;
+}
+
+.dashboard-shell .dash-mink-pop-field input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--dash-text, #1a1a1a);
+  font: inherit;
+  font-size: 14px;
+}
+
+.dashboard-shell .dash-mink-pop-field input::placeholder {
+  color: #6b7280;
+}
+
+.dashboard-shell .dash-mink-pop-field:focus-within {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+.dashboard-shell .dash-mink-pop-suggest {
+  display: inline-flex;
+  max-width: 45%;
+  height: 34px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 178, 36, 0.4);
+  border-radius: 10px;
+  background: rgba(255, 178, 36, 0.12);
+  color: #ffe2a8;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dashboard-shell .dash-mink-pop-suggest-lead {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 600;
+}
+
+.dashboard-shell .dash-mink-pop-suggest-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .dashboard-shell .dash-mink-pop-suggest:hover {
+    border-color: rgba(255, 178, 36, 0.65);
+    background: rgba(255, 178, 36, 0.22);
+  }
+  .dashboard-shell .dash-mink-pop-send:hover {
+    background: #ffc44d;
+  }
+}
+
+.dashboard-shell .dash-mink-pop-send {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #ffb224;
+  color: #141522;
+  cursor: pointer;
+}
+
+/* The dashboard's indigo ring does not show on the dark top bar. */
+.dashboard-shell .dash-mink-pop-tab:focus-visible,
+.dashboard-shell .dash-mink-pop-suggest:focus-visible,
+.dashboard-shell .dash-mink-pop-send:focus-visible {
+  outline: 2px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* Touch screens: the tab is a plain button that opens the panel. The
+   visible tab stays 28px; an invisible hit area (rendered only on touch)
+   makes it 44px tall without losing the fillets. It grows upward into the
+   empty top bar under the face (which ends 12px above the tab) rather than
+   down over the page, whose content starts 8px below the tab. */
+.dashboard-shell .dash-mink-pop-hit {
+  position: absolute;
+  top: -12px;
+  right: 0;
+  bottom: -4px;
+  left: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-shell .dash-mink-pop-bar,
+  .dashboard-shell .dash-mink-pop-bar > * {
+    animation: none;
+  }
+}
+
+/* ★ Where the pop-out bar stays hidden; the face itself always stays.
+   • Below 768px the top bar is compact and the page has no top margin, so a
+     tab would cover page content. The face opens the full-screen chat.
+   • While the Website Builder is mounted the top bar drops to `z-index:
+     auto` (rule above), so the tab would paint over the builder's own top
+     bar (Back, Save, Publish). The builder carries its own Mink AI button.
+   • In analytics edit mode the workspace takes the screen.
+   • A bar pinned to the top of the scroll column (the contextual save bar,
+     the offer editor header, the product editor header, the Invoices &
+     Billing header, the analytics editor) sits right under the tab
+     with its Save button at the right, where the tab hangs.
+     mink-dock-css.test.ts fails when a new top-pinned bar is not listed. */
+@media (max-width: 767px) {
+  .dashboard-shell .dash-mink-pop {
+    display: none;
+  }
+}
+.dashboard-frame:has(.sm-builder) .dash-mink-pop,
+.dashboard-frame.is-analytics-editing .dash-mink-pop,
+.dashboard-frame:has(
+    .dash-savebar,
+    .dash-offer-header,
+    .dash-editor-header,
+    .billHead,
+    .dash-editor-mode
+  )
+  .dash-mink-pop {
+  display: none;
+}
+
 /* On phones the drawer and expanded variants deliberately share one full-
    screen shape. Leaving an 8vw strip exposed made the dashboard a second
    touch target and let its scroll move behind the conversation. */
@@ -1490,9 +1768,12 @@ a.dash-status-pill:hover {
 }
 
 .dashboard-shell .dash-topbar {
+  /* Read by the Mink AI pop-out bar too (`.dash-mink-pop`), so the tab that
+     hangs from the top bar can never drift from its colour. */
+  --dash-topbar-bg: #2a3439;
   height: 56px;
   flex-shrink: 0;
-  background-color: #2a3439;
+  background-color: var(--dash-topbar-bg);
   color: #ffffff;
   border-bottom: none;
   display: flex;

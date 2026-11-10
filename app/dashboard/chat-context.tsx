@@ -51,6 +51,19 @@ interface ChatContextType {
   // Home "Ask anything…" box → open the chat in full view AND send the
   // message, in a new chat (see lib/mink/chat-session).
   startExpandedChat: (message: string) => void;
+  /**
+   * The top-bar "Ask Mink AI" bar: opens the docked side panel (never the
+   * full view), starts a new chat and sends. While a reply runs the question
+   * waits in the box. An empty message opens the panel on the current chat.
+   */
+  askInPanel: (message: string) => void;
+  /** Opens the docked panel on the current chat; never toggles or expands. */
+  openChat: () => void;
+  /** A better question the current page offers (the go-live card's task). */
+  pageSuggestion: MinkPageSuggestionValue | null;
+  setPageSuggestion: (suggestion: MinkPageSuggestionValue | null) => void;
+  /** Bumped by each entry point that should land focus in the composer. */
+  focusComposerOnOpen: number;
   /** Mink AI is switched on for this store (History's search shows only then). */
   enabled: boolean;
   // The shared Mink AI conversation (one thread across the Home box + panel).
@@ -143,6 +156,11 @@ interface ChatContextType {
     issueCategory?: MinkFeedbackIssue | null;
     details?: string;
   }) => Promise<MinkUiError | null>;
+}
+
+export interface MinkPageSuggestionValue {
+  label: string;
+  prompt: string;
 }
 
 export interface MinkCreditSummary {
@@ -353,6 +371,30 @@ export function ChatProvider({
   }, []);
   const toggleExpand = useCallback(() => setIsExpanded((prev) => !prev), []);
 
+  // A page that knows a better question than the skills catalogue (the
+  // go-live card's open task) offers it here; the top-bar bar and the panel's
+  // empty state show it first.
+  const [pageSuggestion, setPageSuggestionState] =
+    useState<MinkPageSuggestionValue | null>(null);
+  const setPageSuggestion = useCallback(
+    (next: MinkPageSuggestionValue | null) =>
+      setPageSuggestionState((prev) =>
+        prev?.label === next?.label && prev?.prompt === next?.prompt
+          ? prev
+          : next,
+      ),
+    [],
+  );
+  const [focusComposerOnOpen, setFocusComposerOnOpen] = useState(0);
+
+  // The top-bar tab's tap on a touch screen: open, never toggle, never expand.
+  const openChat = useCallback(() => {
+    if (!isChatOpen) resumeOrStartFresh();
+    setIsChatOpen(true);
+    setIsExpanded(false);
+    setFocusComposerOnOpen((n) => n + 1);
+  }, [isChatOpen, resumeOrStartFresh]);
+
   // ★ A question from Home or an "Ask Mink" button is a new topic, so it
   // starts a new chat rather than landing in whatever thread was open last.
   // While Mink is still answering, the question waits in the box instead:
@@ -369,6 +411,28 @@ export function ChatProvider({
       send(message);
     },
     [isReplying, setInput, startNewChat, send],
+  );
+
+  // The top-bar "Ask Mink AI" bar asks in the docked panel: the rules of
+  // startExpandedChat, without the full view. An empty question just opens.
+  const askInPanel = useCallback(
+    (message: string) => {
+      const text = message.trim();
+      if (!text) {
+        openChat();
+        return;
+      }
+      setIsChatOpen(true);
+      setIsExpanded(false);
+      setFocusComposerOnOpen((n) => n + 1);
+      if (isReplying) {
+        setInput(text);
+        return;
+      }
+      startNewChat();
+      send(text);
+    },
+    [openChat, isReplying, setInput, startNewChat, send],
   );
 
   // ★★ An address that names a chat (`?chat=<id>`, robustness audit B20; the
@@ -398,6 +462,11 @@ export function ChatProvider({
       closeChat,
       toggleExpand,
       startExpandedChat,
+      askInPanel,
+      openChat,
+      pageSuggestion,
+      setPageSuggestion,
+      focusComposerOnOpen,
       ...mink,
       send,
       sendPrepared,
@@ -414,6 +483,11 @@ export function ChatProvider({
       closeChat,
       toggleExpand,
       startExpandedChat,
+      askInPanel,
+      openChat,
+      pageSuggestion,
+      setPageSuggestion,
+      focusComposerOnOpen,
       mink,
       send,
       sendPrepared,
@@ -493,6 +567,11 @@ export function useChat() {
       closeChat: () => {},
       toggleExpand: () => {},
       startExpandedChat: () => {},
+      askInPanel: () => {},
+      openChat: () => {},
+      pageSuggestion: null,
+      setPageSuggestion: () => {},
+      focusComposerOnOpen: 0,
       enabled: false,
       messages: [],
       conversations: [],
