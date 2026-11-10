@@ -28835,7 +28835,23 @@ NEXT_PUBLIC_NOINDEX !== "1"`) is the single gate for `robots.ts` (non-prod →
   required task is done, and folds** (collapsed by default with a count).
   Mink's prompt, the six setup tiles and "All caught up" return once the store
   is open. `setup-guide.test.tsx` pins the open-first-unfinished, hidden-then-
-  folded and owner-only rules. **The mobile task is done IN the card**: for a
+  folded and owner-only rules. ★ **The card's look (the "Aurora hero",
+  chosen 2026-11-10; presentation only, no behaviour changed)**: the password,
+  Go live and a progress ring share one band over a soft indigo, violet and
+  sky wash (`setup-guide.module.css`: the wash, a blurred ribbon, a dot grid
+  from `@sm`, a gradient seam, and Go live's sheen, one sweep that ends
+  within 5 seconds (WCAG 2.2.2), and only with motion allowed). The open task is a tinted panel with a
+  gradient left bar and a gradient icon tile; unfinished tasks show their
+  number in the ring. Go live is a grey well until the store is ready, then
+  an indigo-to-violet button with a halo; the ring turns green at 100%.
+  Copy, New and Preview are 44px tall on a touch screen. Every layout follows
+  the CARD's width (container queries), since the Mink AI panel can squeeze
+  it to about 230px. ⚠ The hero's padding, ring and gap are tied to the task
+  list's padding and icon column (`HERO_SLOT`/`HERO_ROW` against
+  `ICON_SLOT`/`TITLE_INDENT`), so the ring sits on the task icons' centre and
+  the hero's text on the task titles' left edge; change one side and the
+  other must move with it. No Help Centre update: no merchant step changed.
+  **The mobile task is done IN the card**: for a
   viewer who is one of the store's real owners (`ownerCanVerifyPhone`, an
   admins row with role superadmin, which a platform operator's synthetic
   superadmin profile is not) it renders `VerifyPhoneForm` (next/dynamic, so

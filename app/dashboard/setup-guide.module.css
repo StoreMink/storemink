@@ -1,0 +1,120 @@
+/* Aurora hero: the decorative layers behind the setup card's head. Nothing
+   here carries meaning; every element using these classes is aria-hidden or a
+   purely visual hook. Colours stay in the dashboard's indigo family with a sky
+   hint, at low alpha so the text on top keeps its contrast (the darkest point
+   of the wash still leaves the band's muted text above 6:1). */
+
+/* The wash: three soft lights (violet, sky, indigo) over a faintly lavender
+   base. Radial gradients rather than blurred blobs, so nothing repaints. */
+.aurora {
+  background:
+    radial-gradient(
+      48% 130% at 0% 0%,
+      rgba(124, 58, 237, 0.19),
+      transparent 64%
+    ),
+    radial-gradient(
+      42% 120% at 100% 0%,
+      rgba(14, 165, 233, 0.18),
+      transparent 66%
+    ),
+    radial-gradient(
+      56% 90% at 58% 112%,
+      rgba(99, 102, 241, 0.16),
+      transparent 72%
+    ),
+    linear-gradient(180deg, #f8f7ff 0%, #fcfcff 62%, #ffffff 100%);
+}
+
+/* The aurora's light itself: a soft diagonal ribbon (violet into indigo into
+   sky) across the top of the band, blurred so it has no edges. Static: the
+   blur is painted once and never animated. Its box stays exactly as wide as
+   the band, and the tilt is a vertical skew, which moves nothing sideways,
+   so the ribbon can never widen the page on a phone. */
+.ribbon {
+  position: absolute;
+  top: -76px;
+  left: 0;
+  right: 0;
+  height: 152px;
+  background: linear-gradient(
+    100deg,
+    rgba(124, 58, 237, 0.04) 0%,
+    rgba(124, 58, 237, 0.2) 24%,
+    rgba(99, 102, 241, 0.14) 50%,
+    rgba(14, 165, 233, 0.19) 76%,
+    rgba(14, 165, 233, 0.04) 100%
+  );
+  filter: blur(32px);
+  transform: skewY(-3deg);
+}
+
+/* A faint dot grid, strongest top right where the band has the most space,
+   fading out before it reaches the text. */
+.dots {
+  background-image: radial-gradient(
+    rgba(79, 70, 229, 0.24) 1px,
+    transparent 1.35px
+  );
+  background-size: 14px 14px;
+  background-position: 7px 7px;
+  -webkit-mask-image: radial-gradient(
+    62% 95% at 92% 0%,
+    #000 0%,
+    transparent 74%
+  );
+  mask-image: radial-gradient(62% 95% at 92% 0%, #000 0%, transparent 74%);
+}
+
+/* The seam under the band: a hairline that picks up the aurora's colours
+   instead of a flat grey rule. */
+.seam {
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(124, 58, 237, 0.26),
+    rgba(79, 70, 229, 0.32) 50%,
+    rgba(14, 165, 233, 0.28)
+  );
+}
+
+/* Go live's sheen: one highlight across the button, the card's only
+   motion. It sweeps once and then rests, so every motion ends within 5
+   seconds of the button becoming pressable (WCAG 2.2.2). It runs only
+   while the button can be pressed, and never for anyone who asks the system
+   for less motion. It sits under the label
+   (z-index -1 inside the button's own stacking context) and moves its
+   background, not itself, so it never reaches outside the button's box. */
+.sheen {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+      105deg,
+      transparent 42%,
+      rgba(255, 255, 255, 0.34) 50%,
+      transparent 58%
+    )
+    no-repeat;
+  background-size: 250% 100%;
+  /* Parked just off the left edge. */
+  background-position: 100% 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .goLive:enabled .sheen {
+    animation: sheen 1.8s ease-in-out 1.2s 1;
+  }
+}
+
+@keyframes sheen {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0% 0;
+  }
+}
