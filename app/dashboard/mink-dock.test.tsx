@@ -21,11 +21,12 @@ vi.mock("./chat-context", async (importOriginal) => {
   return {
     ...actual,
     // Null: the real hook outside a provider (the platform console).
-    useChat: () => chat.value ?? actual.useChat(),
+    useMinkDock: () => chat.value ?? actual.useMinkDock(),
   };
 });
 
 import {
+  MINK_DOCK_CLICK_GUARD_MS,
   MINK_DOCK_CLOSE_DELAY_MS,
   MINK_DOCK_OPEN_DELAY_MS,
   MinkDock,
@@ -44,7 +45,7 @@ const SKILLS: MinkSkill[] = [
   },
 ];
 
-const askInPanel = vi.fn();
+const startChat = vi.fn();
 const openChat = vi.fn();
 
 function setChat(overrides: ChatValue = {}) {
@@ -53,7 +54,7 @@ function setChat(overrides: ChatValue = {}) {
     isChatOpen: false,
     skills: SKILLS,
     pageSuggestion: null,
-    askInPanel,
+    startChat,
     openChat,
     ...overrides,
   };
@@ -77,7 +78,7 @@ const field = () =>
 const dock = () => document.querySelector("[data-mink-dock]") as HTMLElement;
 
 beforeEach(() => {
-  askInPanel.mockReset();
+  startChat.mockReset();
   openChat.mockReset();
   mockPointer(false);
   setChat();
@@ -112,7 +113,8 @@ describe("MinkDock", () => {
   it("rests as a tab, with the bar and its suggestion out of reach", () => {
     render(<MinkDock />);
     expect(tab()).toHaveAttribute("aria-expanded", "false");
-    expect(tab()).toHaveAttribute("aria-controls", "mink-dock-bar");
+    // It names the bar only while the bar is on screen.
+    expect(tab()).not.toHaveAttribute("aria-controls");
     expect(
       screen.queryByRole("button", { name: "Ask: Pending orders" }),
     ).toBeNull();
@@ -125,6 +127,7 @@ describe("MinkDock", () => {
     expect(dock()).toHaveAttribute("data-open", "true");
     expect(tab()).toHaveFocus();
     expect(tab()).toHaveAttribute("aria-expanded", "true");
+    expect(tab()).toHaveAttribute("aria-controls", "mink-dock-bar");
     // Still in the tab order, so the next Tab reaches the field.
     expect(tab()).not.toHaveAttribute("tabindex", "-1");
     expect(
@@ -144,7 +147,7 @@ describe("MinkDock", () => {
     act(() => tab().focus());
     fireEvent.change(field(), { target: { value: "How were sales today?" } });
     fireEvent.submit(field().closest("form") as HTMLFormElement);
-    expect(askInPanel).toHaveBeenCalledWith("How were sales today?");
+    expect(startChat).toHaveBeenCalledWith("How were sales today?");
     act(() => tab().blur());
     act(() => tab().focus());
     expect(field()).toHaveValue("");
@@ -155,7 +158,7 @@ describe("MinkDock", () => {
     act(() => tab().focus());
     fireEvent.change(field(), { target: { value: "Stock?" } });
     fireEvent.click(screen.getByRole("button", { name: "Send question" }));
-    expect(askInPanel).toHaveBeenCalledWith("Stock?");
+    expect(startChat).toHaveBeenCalledWith("Stock?");
     act(() => tab().blur());
     act(() => tab().focus());
     expect(field()).toHaveValue("");
@@ -165,7 +168,7 @@ describe("MinkDock", () => {
     render(<MinkDock />);
     act(() => tab().focus());
     fireEvent.click(screen.getByRole("button", { name: "Send question" }));
-    expect(askInPanel).toHaveBeenCalledWith("");
+    expect(startChat).toHaveBeenCalledWith("");
   });
 
   it("the suggestion sends its prompt", () => {
@@ -174,9 +177,7 @@ describe("MinkDock", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Ask: Pending orders" }),
     );
-    expect(askInPanel).toHaveBeenCalledWith(
-      "Which orders are waiting to ship?",
-    );
+    expect(startChat).toHaveBeenCalledWith("Which orders are waiting to ship?");
   });
 
   it("a page's own suggestion wins over the skills", () => {
@@ -193,7 +194,7 @@ describe("MinkDock", () => {
         name: "Ask: How do I add my first product?",
       }),
     );
-    expect(askInPanel).toHaveBeenCalledWith("How do I add my first product?");
+    expect(startChat).toHaveBeenCalledWith("How do I add my first product?");
   });
 
   it("offers no suggestion when there is none", () => {
@@ -331,9 +332,81 @@ describe("MinkDock", () => {
     mockPointer(true);
     render(<MinkDock />);
     fireEvent.click(tab());
+    // Opens without raising the keyboard.
     expect(openChat).toHaveBeenCalledTimes(1);
+    expect(openChat).toHaveBeenCalledWith({ focusComposer: false });
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(tab()).not.toHaveAttribute("aria-expanded");
+    // The panel it opens is not on screen yet, so nothing names it.
+    expect(tab()).not.toHaveAttribute("aria-controls");
+  });
+
+  it("a click just after the pointer opened the bar was meant for the tab: it lands in the field and sends nothing", () => {
+    vi.useFakeTimers();
+    render(<MinkDock />);
+    fireEvent.mouseEnter(dock());
+    act(() => vi.advanceTimersByTime(MINK_DOCK_OPEN_DELAY_MS));
+    act(() => vi.advanceTimersByTime(MINK_DOCK_CLICK_GUARD_MS - 50));
+    fireEvent.click(screen.getByRole("button", { name: "Send question" }), {
+      detail: 1,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ask: Pending orders" }),
+      {
+        detail: 1,
+      },
+    );
+    expect(startChat).not.toHaveBeenCalled();
+    expect(field()).toHaveFocus();
+    expect(dock()).toHaveAttribute("data-open", "true");
+  });
+
+  it("a later click on the bar's suggestion asks it", () => {
+    vi.useFakeTimers();
+    render(<MinkDock />);
+    fireEvent.mouseEnter(dock());
+    act(() => vi.advanceTimersByTime(MINK_DOCK_OPEN_DELAY_MS));
+    act(() => vi.advanceTimersByTime(MINK_DOCK_CLICK_GUARD_MS));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ask: Pending orders" }),
+      {
+        detail: 1,
+      },
+    );
+    expect(startChat).toHaveBeenCalledWith("Which orders are waiting to ship?");
+  });
+
+  it("a mouse press on the tab does not open the bar by focus; the click opens it into the field", () => {
+    vi.useFakeTimers();
+    render(<MinkDock />);
+    fireEvent.mouseDown(tab());
+    act(() => tab().focus());
+    expect(dock()).toHaveAttribute("data-open", "false");
+    fireEvent.mouseUp(tab());
+    fireEvent.click(tab());
+    act(() => vi.advanceTimersByTime(0));
+    expect(dock()).toHaveAttribute("data-open", "true");
+    expect(field()).toHaveFocus();
+  });
+
+  it("pressing a bar button keeps focus in the field", () => {
+    render(<MinkDock />);
+    act(() => tab().focus());
+    for (const name of ["Send question", "Ask: Pending orders"]) {
+      const notCancelled = fireEvent.mouseDown(
+        screen.getByRole("button", { name }),
+      );
+      expect(notCancelled, name).toBe(false);
+    }
+  });
+
+  it("a blur that names nothing while the pointer is inside keeps the bar out (Safari)", () => {
+    render(<MinkDock />);
+    act(() => tab().focus());
+    act(() => field().focus());
+    fireEvent.mouseEnter(dock());
+    fireEvent.blur(field(), { relatedTarget: null });
+    expect(dock()).toHaveAttribute("data-open", "true");
   });
 
   it("gives every control its own name", () => {

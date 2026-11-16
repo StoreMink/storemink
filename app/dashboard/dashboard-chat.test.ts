@@ -29,6 +29,7 @@ import {
 import { MINK_MAX_RUN_CREDITS } from "@/lib/mink/metering";
 import type { RevampArtifact, RevampStatus } from "@/lib/mink/revamp/contract";
 import { useChat } from "./chat-context";
+import { rememberMinkOpener } from "./mink-opener";
 import { addSavedMinkMediaReference } from "@/lib/mink/media-attachment";
 
 const voiceChat = vi.hoisted(() => ({
@@ -2142,6 +2143,40 @@ describe("Mink AI top-bar pop-out hand-off", () => {
     await waitFor(() => expect(second).toHaveFocus());
   });
 
+  it("a hidden surface marks the bump handled, so showing it later does not steal focus", async () => {
+    const panelOpen = {
+      ...baseChatState,
+      isExpanded: false,
+      focusComposerOnOpen: 0,
+    } as unknown as ReturnType<typeof useChat>;
+    vi.mocked(useChat).mockReturnValue(panelOpen);
+    const { rerender } = render(
+      createElement(DashboardChat, { variant: "overlay" }),
+    );
+    // The bump lands while the full view is not the surface on screen.
+    vi.mocked(useChat).mockReturnValue({
+      ...panelOpen,
+      focusComposerOnOpen: 1,
+    } as unknown as ReturnType<typeof useChat>);
+    rerender(createElement(DashboardChat, { variant: "overlay" }));
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    try {
+      outside.focus();
+      // Later the merchant maximizes: the same bump must not move focus.
+      vi.mocked(useChat).mockReturnValue({
+        ...panelOpen,
+        isExpanded: true,
+        focusComposerOnOpen: 1,
+      } as unknown as ReturnType<typeof useChat>);
+      rerender(createElement(DashboardChat, { variant: "overlay" }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(outside).toHaveFocus();
+    } finally {
+      outside.remove();
+    }
+  });
+
   it("does not take focus back once the merchant has focused something else", async () => {
     const closed = {
       ...baseChatState,
@@ -2179,7 +2214,7 @@ describe("Mink AI top-bar pop-out hand-off", () => {
     const dock = document.createElement("div");
     dock.className = "dash-mink-dock";
     const face = document.createElement("button");
-    face.setAttribute("aria-controls", "mink-chat-panel");
+    face.setAttribute("data-mink-toggle", "");
     face.textContent = "Mink AI";
     dock.appendChild(face);
     document.body.appendChild(dock);
@@ -2196,11 +2231,60 @@ describe("Mink AI top-bar pop-out hand-off", () => {
     }
   });
 
+  it("closing returns focus to the control that opened the chat", async () => {
+    const dock = document.createElement("div");
+    dock.className = "dash-mink-dock";
+    const face = document.createElement("button");
+    face.setAttribute("data-mink-toggle", "");
+    dock.appendChild(face);
+    const askMink = document.createElement("button");
+    askMink.textContent = "Ask Mink";
+    document.body.append(dock, askMink);
+    try {
+      askMink.focus();
+      rememberMinkOpener();
+      vi.mocked(useChat).mockReturnValue({
+        ...baseChatState,
+        isExpanded: false,
+      } as unknown as ReturnType<typeof useChat>);
+      render(createElement(DashboardChat, { variant: "panel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close chat" }));
+      await waitFor(() => expect(askMink).toHaveFocus());
+    } finally {
+      dock.remove();
+      askMink.remove();
+    }
+  });
+
+  it("an opener that has left the page falls back to the face", async () => {
+    const dock = document.createElement("div");
+    dock.className = "dash-mink-dock";
+    const face = document.createElement("button");
+    face.setAttribute("data-mink-toggle", "");
+    dock.appendChild(face);
+    const gone = document.createElement("button");
+    document.body.append(dock, gone);
+    try {
+      gone.focus();
+      rememberMinkOpener();
+      gone.remove();
+      vi.mocked(useChat).mockReturnValue({
+        ...baseChatState,
+        isExpanded: false,
+      } as unknown as ReturnType<typeof useChat>);
+      render(createElement(DashboardChat, { variant: "panel" }));
+      fireEvent.click(screen.getByRole("button", { name: "Close chat" }));
+      await waitFor(() => expect(face).toHaveFocus());
+    } finally {
+      dock.remove();
+    }
+  });
+
   it("in the Website Builder, closing returns focus to the builder's Mink AI button", async () => {
     const dock = document.createElement("div");
     dock.className = "dash-mink-dock";
     const face = document.createElement("button");
-    face.setAttribute("aria-controls", "mink-chat-panel");
+    face.setAttribute("data-mink-toggle", "");
     dock.appendChild(face);
     const builder = document.createElement("div");
     builder.className = "sm-builder";

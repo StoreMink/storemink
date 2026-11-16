@@ -41,9 +41,10 @@ import type { MinkMemoryPrompt } from "./mink-ai";
 import {
   matchMinkSkills,
   minkSlashQuery,
-  minkStarterSkills,
   type MinkSkill,
 } from "@/lib/mink/skills";
+import { minkSuggestedPrompts } from "@/lib/mink/page-suggestions";
+import { takeMinkOpener } from "./mink-opener";
 import {
   ASSISTANT_NAME,
   type MinkConversationSummary,
@@ -234,20 +235,21 @@ export function isMinkInAppLinkClick(
 
 /**
  * Closing the chat from its own Close button puts focus back on the control
- * that reopens it: the top-bar Mink AI face (the pop-out bar is not shown
+ * that opened it (an "Ask Mink" button, Home's box) while it is still on the
+ * page, else on the control that reopens it: the top-bar Mink AI face (the pop-out bar is not shown
  * while the chat is open), or, while the Website Builder is mounted, the
  * builder's own Mink AI button, since the builder canvas covers the top bar.
  */
 function returnFocusToMinkFace() {
   if (typeof window === "undefined") return;
+  const opener = takeMinkOpener();
   window.requestAnimationFrame(() => {
     const target =
+      (opener?.isConnected ? opener : null) ??
       document.querySelector<HTMLButtonElement>(
         ".sm-builder .sm-builder-mink",
       ) ??
-      document.querySelector<HTMLButtonElement>(
-        '.dash-mink-dock > button[aria-controls="mink-chat-panel"]',
-      );
+      document.querySelector<HTMLButtonElement>("[data-mink-toggle]");
     target?.focus();
   });
 }
@@ -541,8 +543,11 @@ export function DashboardChat({
 
   useEffect(() => {
     if (focusComposerOnOpen === handledComposerFocus.current) return;
-    if (!isChatOpen || isOverlay !== isExpanded) return;
+    // ★ Both surfaces mark the bump handled, the hidden one too: otherwise
+    // the surface that was not on screen keeps it, and focuses its composer
+    // the next time it is shown (maximize later steals focus).
     handledComposerFocus.current = focusComposerOnOpen;
+    if (!isChatOpen || isOverlay !== isExpanded) return;
     pendingComposerFocus.current = true;
     const frame = window.requestAnimationFrame(() => {
       composerRef.current?.focus();
@@ -784,25 +789,8 @@ export function DashboardChat({
   const hasThread = messages.length > 0 || isReplying || Boolean(error);
   const creditWarning = minkCredits ? minkCreditWarning(minkCredits) : null;
   // The page's own question (the go-live card's open task) leads the chips;
-  // a starter skill asking the same thing is dropped.
-  const starterSkills: {
-    id: string;
-    label: string;
-    prompt: string;
-    description: string;
-  }[] = pageSuggestion
-    ? [
-        {
-          id: "page-suggestion",
-          label: pageSuggestion.label,
-          prompt: pageSuggestion.prompt,
-          description: pageSuggestion.label,
-        },
-        ...minkStarterSkills(skills, pathname).filter(
-          (skill) => skill.prompt !== pageSuggestion.prompt,
-        ),
-      ].slice(0, 4)
-    : minkStarterSkills(skills, pathname);
+  // a starter skill asking the same thing is dropped (the bar's rule too).
+  const starterSkills = minkSuggestedPrompts(skills, pathname, pageSuggestion);
   const latestAssistantIndex = (() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (messages[index]?.role === "assistant") return index;

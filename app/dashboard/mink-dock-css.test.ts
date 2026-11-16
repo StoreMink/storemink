@@ -8,9 +8,11 @@ import { describe, expect, it } from "vitest";
  * stylesheet: the tab must be hidden wherever it would cover something that
  * matters (phones, the Website Builder, analytics edit mode, and every bar
  * pinned to the top of the scroll column, whose Save button sits right where
- * the tab hangs).
+ * the tab hangs). A pinned bar says so with `data-dash-pinned-top`; the
+ * markup half of the guard checks every element with a pinned class has it.
  */
 const DASHBOARD = join(process.cwd(), "app", "dashboard");
+const MARKER = "data-dash-pinned-top";
 const CSS_PATH = join(DASHBOARD, "dashboard.css");
 
 type Rule = { selector: string; body: string; file: string };
@@ -45,16 +47,43 @@ function dashboardStylesheets(dir = DASHBOARD): string[] {
 const css = readFileSync(CSS_PATH, "utf8");
 const rules = rulesOf(css, "dashboard.css");
 
-/** The selector list of the rule that hides the tab under pinned bars. */
-function pinnedBarHideSelector(): string {
-  const rule = rules.find(
-    (candidate) =>
-      /\.dash-mink-pop(?![\w-])/.test(candidate.selector) &&
-      /:has\((?=[^)]*\.dash-savebar)/.test(candidate.selector) &&
-      hides(candidate.body),
-  );
-  if (!rule) throw new Error("No rule hides .dash-mink-pop under pinned bars");
-  return rule.selector;
+/** Every source file that renders markup under a directory. */
+function markupFiles(dir: string): string[] {
+  const found: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) found.push(...markupFiles(path));
+    else if (name.endsWith(".tsx") && !name.endsWith(".test.tsx"))
+      found.push(path);
+  }
+  return found;
+}
+
+/** Class names whose rule pins a bar flush to the top of the scroll column. */
+function pinnedClasses(): Set<string> {
+  const pinned = new Set<string>();
+  for (const file of dashboardStylesheets()) {
+    for (const rule of rulesOf(
+      readFileSync(file, "utf8"),
+      relative(DASHBOARD, file),
+    )) {
+      // A bar pinned flush to the top cancels the column's top padding.
+      if (!/top:\s*calc\([^;]*var\(--dash-pad-t/.test(rule.body)) continue;
+      for (const part of rule.selector.split(",")) {
+        const last = part.trim().split(/\s+/).pop() ?? "";
+        const className = last.match(/\.([\w-]+)/)?.[1];
+        if (className) pinned.add(className);
+      }
+    }
+  }
+  return pinned;
+}
+
+/** The class names a JSX opening tag's className lists, as written. */
+function tagClasses(tag: string): string[] {
+  const attr = tag.match(/className=(?:"([^"]*)"|\{([^}]*)\})/);
+  if (!attr) return [];
+  return (attr[1] ?? attr[2] ?? "").split(/[^\w-]+/).filter(Boolean);
 }
 
 describe("the top-bar Mink AI tab", () => {
@@ -90,29 +119,43 @@ describe("the top-bar Mink AI tab", () => {
     ).toBe(true);
   });
 
-  it("is hidden on every page with a bar pinned to the top of the scroll column", () => {
-    const hideSelector = pinnedBarHideSelector();
-    const pinned = new Set<string>();
-    for (const file of dashboardStylesheets()) {
-      for (const rule of rulesOf(
-        readFileSync(file, "utf8"),
-        relative(DASHBOARD, file),
-      )) {
-        // A bar pinned flush to the top cancels the column's top padding.
-        if (!/top:\s*calc\([^;]*var\(--dash-pad-t/.test(rule.body)) continue;
-        for (const part of rule.selector.split(",")) {
-          const last = part.trim().split(/\s+/).pop() ?? "";
-          const className = last.match(/\.([\w-]+)/)?.[1];
-          if (className) pinned.add(className);
+  it("is hidden on every page with a bar marked as pinned to the top", () => {
+    expect(
+      rules.some(
+        (rule) =>
+          rule.selector.includes(`:has([${MARKER}])`) &&
+          /\.dash-mink-pop(?![\w-])/.test(rule.selector) &&
+          hides(rule.body),
+      ),
+    ).toBe(true);
+  });
+
+  it("every element with a top-pinned class carries the marker", () => {
+    const pinned = pinnedClasses();
+    expect(pinned.size).toBeGreaterThan(0);
+    const files = [
+      ...markupFiles(DASHBOARD),
+      ...markupFiles(join(process.cwd(), "components")),
+    ];
+    const used = new Set<string>();
+    const unmarked: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      for (const [tag] of source.matchAll(/<[A-Za-z][\w.]*\s[^<>]*>/g)) {
+        const classes = tagClasses(tag);
+        for (const className of classes) {
+          if (!pinned.has(className)) continue;
+          used.add(className);
+          if (!tag.includes(MARKER))
+            unmarked.push(`${relative(process.cwd(), file)}: ${className}`);
         }
       }
     }
-    expect(pinned.size).toBeGreaterThan(0);
-    const missing = [...pinned].filter(
-      (className) =>
-        !new RegExp(`\\.${className}(?![\\w-])`).test(hideSelector),
+    // The scan reached the bars it guards, and every one is marked.
+    expect([...used].sort()).toEqual(
+      expect.arrayContaining(["dash-offer-header", "dash-savebar"]),
     );
-    expect(missing).toEqual([]);
+    expect(unmarked).toEqual([]);
   });
 
   it("keeps its hover styles to a fine pointer", () => {

@@ -4,7 +4,11 @@ import {
   type LaunchFacts,
 } from "@/lib/store/launch-checklist-rules";
 import { MINK_SKILLS, minkStarterSkills } from "./skills";
-import { goLiveTaskQuestion, minkDockSuggestion } from "./page-suggestions";
+import {
+  goLiveTaskQuestion,
+  minkDockSuggestion,
+  minkSuggestedPrompts,
+} from "./page-suggestions";
 
 /** A store the minute signup finishes: every required task is open. */
 const FRESH: LaunchFacts = {
@@ -54,6 +58,59 @@ describe("minkDockSuggestion", () => {
 
   it("offers nothing when the viewer has no skills and the page none", () => {
     expect(minkDockSuggestion([], "/dashboard", null)).toBeNull();
+  });
+
+  it("ignores a page suggestion with words to show but none to send", () => {
+    const [first] = minkStarterSkills(MINK_SKILLS, "/dashboard", 1);
+    expect(
+      minkDockSuggestion(MINK_SKILLS, "/dashboard", {
+        label: "Check my stock",
+        prompt: "   ",
+      }),
+    ).toEqual({ label: first.label, prompt: first.prompt });
+  });
+});
+
+describe("minkSuggestedPrompts", () => {
+  const page = {
+    label: "How do I add my first product?",
+    prompt: "How do I add my first product?",
+  };
+
+  it("leads with the page's question and keeps to the limit", () => {
+    const chips = minkSuggestedPrompts(MINK_SKILLS, "/dashboard", page);
+    expect(chips).toHaveLength(4);
+    expect(chips[0]).toMatchObject({ id: "page-suggestion", ...page });
+  });
+
+  it("drops a starter skill that asks the same thing as the page", () => {
+    const [first] = minkStarterSkills(MINK_SKILLS, "/dashboard", 1);
+    const chips = minkSuggestedPrompts(MINK_SKILLS, "/dashboard", {
+      label: "Same question",
+      prompt: first.prompt,
+    });
+    expect(chips.filter((chip) => chip.prompt === first.prompt)).toHaveLength(
+      1,
+    );
+    expect(chips[0].id).toBe("page-suggestion");
+  });
+
+  it("is the starter skills alone without a usable page question", () => {
+    const starters = minkStarterSkills(MINK_SKILLS, "/dashboard/orders");
+    expect(
+      minkSuggestedPrompts(MINK_SKILLS, "/dashboard/orders", {
+        label: "",
+        prompt: "x",
+      }).map((chip) => chip.id),
+    ).toEqual(starters.map((skill) => skill.id));
+  });
+
+  it("agrees with the bar about what leads", () => {
+    const [chip] = minkSuggestedPrompts(MINK_SKILLS, "/dashboard", page);
+    expect(minkDockSuggestion(MINK_SKILLS, "/dashboard", page)).toEqual({
+      label: chip.label,
+      prompt: chip.prompt,
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import { StrictMode, useEffect } from "react";
 import {
   ChatProvider,
   useChat,
+  useMinkDock,
   useMinkVoice,
   type MinkVoiceComposer,
 } from "./chat-context";
@@ -301,7 +302,7 @@ describe("★★ ChatProvider: which chat a question goes into", () => {
     );
     const before = chat.current?.focusComposerOnOpen ?? 0;
 
-    act(() => chat.current?.askInPanel("  Which orders are waiting?  "));
+    act(() => chat.current?.startChat("  Which orders are waiting?  "));
 
     await waitFor(() => expect(chat.current?.isReplying).toBe(false));
     expect(chat.current?.isChatOpen).toBe(true);
@@ -324,7 +325,7 @@ describe("★★ ChatProvider: which chat a question goes into", () => {
     await waitFor(() => expect(chat.current?.isReplying).toBe(true));
 
     const before = chat.current?.focusComposerOnOpen ?? 0;
-    act(() => chat.current?.askInPanel("How were sales today?"));
+    act(() => chat.current?.startChat("How were sales today?"));
 
     expect(chat.current?.input).toBe("How were sales today?");
     expect(chat.current?.isChatOpen).toBe(true);
@@ -345,12 +346,101 @@ describe("★★ ChatProvider: which chat a question goes into", () => {
       expect(chat.current?.activeConversationId).toBe(CHAT_ID),
     );
 
-    act(() => chat.current?.askInPanel("   "));
+    act(() => chat.current?.startChat("   "));
 
     expect(chat.current?.isChatOpen).toBe(true);
     expect(chat.current?.isExpanded).toBe(false);
     expect(chat.current?.activeConversationId).toBe(CHAT_ID);
     expect(requests).toHaveLength(0);
+  });
+
+  it("★ a draft in the panel's box survives a question asked from elsewhere", async () => {
+    rememberChat(5);
+    const requests = stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() =>
+      expect(chat.current?.activeConversationId).toBe(CHAT_ID),
+    );
+    act(() => chat.current?.setInput("Half a question about"));
+
+    act(() => chat.current?.startChat("Which orders are waiting?"));
+
+    await waitFor(() => expect(chat.current?.isReplying).toBe(false));
+    expect(requests[0]?.message).toBe("Which orders are waiting?");
+    expect(chat.current?.input).toBe("Half a question about");
+  });
+
+  it("★ while Mink answers, the question waits after the draft, never over it", async () => {
+    const requests = stub({ holdAnswer: true });
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+    act(() => chat.current?.send("Stock?"));
+    await waitFor(() => expect(chat.current?.isReplying).toBe(true));
+    act(() => chat.current?.setInput("Also check"));
+
+    act(() => chat.current?.startChat("How were sales today?"));
+
+    expect(chat.current?.input).toBe("Also check\n\nHow were sales today?");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("startChat with expanded asks in the full view", async () => {
+    stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+    act(() => chat.current?.startChat("Stock?", { expanded: true }));
+    expect(chat.current?.isChatOpen).toBe(true);
+    expect(chat.current?.isExpanded).toBe(true);
+  });
+
+  it("openChat can open without moving focus to the composer (a tap on a touch screen)", async () => {
+    stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+    const before = chat.current?.focusComposerOnOpen ?? 0;
+    act(() => chat.current?.openChat({ focusComposer: false }));
+    expect(chat.current?.isChatOpen).toBe(true);
+    expect(chat.current?.focusComposerOnOpen).toBe(before);
+    act(() => chat.current?.closeChat());
+    act(() => chat.current?.openChat());
+    expect(chat.current?.focusComposerOnOpen).toBe(before + 1);
+  });
+
+  it("★ the pop-out bar's context keeps its identity while a reply streams", async () => {
+    const requests = stub({ holdAnswer: true });
+    const dock: Array<ReturnType<typeof useMinkDock>> = [];
+    function DockProbe() {
+      dock.push(useMinkDock());
+      return null;
+    }
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+        <DockProbe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+    const settled = dock[dock.length - 1];
+    act(() => chat.current?.send("Stock?"));
+    await waitFor(() => expect(chat.current?.isReplying).toBe(true));
+    expect(requests).toHaveLength(1);
+    expect(dock[dock.length - 1]).toBe(settled);
   });
 
   it("openChat opens without toggling or expanding", async () => {

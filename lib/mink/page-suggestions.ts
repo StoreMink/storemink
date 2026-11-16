@@ -15,17 +15,57 @@ export interface MinkDockSuggestion {
   prompt: string;
 }
 
+/** A chip in the panel's empty state, or the bar's one suggestion. */
+export interface MinkSuggestedPrompt extends MinkDockSuggestion {
+  id: string;
+  description: string;
+}
+
+function usableSuggestion(
+  suggestion: MinkDockSuggestion | null | undefined,
+): MinkDockSuggestion | null {
+  if (!suggestion) return null;
+  const label = suggestion.label.trim();
+  const prompt = suggestion.prompt.trim();
+  return label && prompt ? { label, prompt } : null;
+}
+
+/**
+ * The questions offered for a page, best first: the page's own question
+ * (only when it has both words to show and words to send), then the starter
+ * skills for the path, a skill asking the same thing dropped. The bar shows
+ * the first; the panel's empty state shows up to four. One helper, so the
+ * two never disagree about what leads.
+ */
+export function minkSuggestedPrompts(
+  skills: readonly MinkSkill[],
+  pathname: string | null | undefined,
+  pageSuggestion: MinkDockSuggestion | null | undefined,
+  limit = 4,
+): MinkSuggestedPrompt[] {
+  if (limit <= 0) return [];
+  const page = usableSuggestion(pageSuggestion);
+  const starters = minkStarterSkills(skills, pathname, limit + 1)
+    .filter((skill) => !page || skill.prompt.trim() !== page.prompt)
+    .map((skill) => ({
+      id: skill.id,
+      label: skill.label,
+      prompt: skill.prompt,
+      description: skill.description,
+    }));
+  const lead: MinkSuggestedPrompt[] = page
+    ? [{ id: "page-suggestion", ...page, description: page.label }]
+    : [];
+  return [...lead, ...starters].slice(0, limit);
+}
+
 export function minkDockSuggestion(
   skills: readonly MinkSkill[],
   pathname: string | null | undefined,
   pageSuggestion: MinkDockSuggestion | null | undefined,
 ): MinkDockSuggestion | null {
-  if (pageSuggestion && pageSuggestion.label && pageSuggestion.prompt) {
-    return { label: pageSuggestion.label, prompt: pageSuggestion.prompt };
-  }
-  const [first] = minkStarterSkills(skills, pathname, 1);
-  if (!first) return null;
-  return { label: first.label, prompt: first.prompt };
+  const [first] = minkSuggestedPrompts(skills, pathname, pageSuggestion, 1);
+  return first ? { label: first.label, prompt: first.prompt } : null;
 }
 
 /**

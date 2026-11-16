@@ -1118,7 +1118,7 @@ export function OfferForm({
           margins cancel the scroll column's padding so the bar spans it edge to
           edge, and the negative TOP INSET cancels its padding-top — with
           `top: 0` the bar parks 28px down and page content shows above it. */}
-      <header className="dash-offer-header">
+      <header className="dash-offer-header" data-dash-pinned-top="">
         <div className="min-w-0">
           <Link
             href="/dashboard/offers"

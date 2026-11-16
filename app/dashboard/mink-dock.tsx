@@ -3,22 +3,27 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 import { usePathname } from "next/navigation";
 import { ArrowUp } from "lucide-react";
 import { MinkFace } from "@/components/mink/mink-face";
 import { minkDockSuggestion } from "@/lib/mink/page-suggestions";
-import { useChat } from "./chat-context";
+import { useMinkDock } from "./chat-context";
 
 /** The bar opens this long after the pointer arrives, and closes this long
  *  after it leaves (unless focus is inside it). */
 export const MINK_DOCK_OPEN_DELAY_MS = 150;
 export const MINK_DOCK_CLOSE_DELAY_MS = 300;
+/** A pointer click this soon after the pointer opened the bar was aimed at the
+ *  tab the bar now covers, not at the button under it. */
+export const MINK_DOCK_CLICK_GUARD_MS = 400;
 
 const COARSE_QUERY = "(pointer: coarse)";
 
@@ -48,8 +53,10 @@ function readCoarse() {
  * pages with a pinned save bar (dashboard.css, mink-dock-css.test.ts).
  */
 export function MinkDock() {
-  const { enabled, isChatOpen, skills, pageSuggestion, askInPanel, openChat } =
-    useChat();
+  // Its own small context: the main chat context changes with every streamed
+  // token, and the bar has no reason to re-render with them.
+  const { enabled, isChatOpen, skills, pageSuggestion, startChat, openChat } =
+    useMinkDock();
   const pathname = usePathname();
   const coarse = useSyncExternalStore(subscribeCoarse, readCoarse, () => false);
 
@@ -67,14 +74,20 @@ export function MinkDock() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const focusFieldNext = useRef(false);
   const pointerInside = useRef(false);
-  const dismissing = useRef(false);
+  // A mouse press on the tab focuses it before the click: that focus must not
+  // open the bar, or the release lands on the bar and the tab's click is lost.
+  const pointerPress = useRef(false);
+  const hoverOpenedAt = useRef(0);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
 
   const open =
     !coarse &&
     ((hovered && !hoverDismissed) || (focusWithin && !focusDismissed));
-  const suggestion = minkDockSuggestion(skills, pathname, pageSuggestion);
+  const suggestion = useMemo(
+    () => minkDockSuggestion(skills, pathname, pageSuggestion),
+    [skills, pathname, pageSuggestion],
+  );
 
   const clearTimers = useCallback(() => {
     if (openTimer.current !== null) window.clearTimeout(openTimer.current);
@@ -114,12 +127,9 @@ export function MinkDock() {
     clearTimers();
     focusFieldNext.current = false;
     // The tab is never visibility:hidden (only see-through while the bar is
-    // out), so it can take focus now. Moving focus first keeps the field's
-    // blur inside the dock; the guard keeps the root's blur handler from
-    // reading it as focus leaving.
-    dismissing.current = true;
+    // out), so it can take focus now. Focus moves inside the dock, so the
+    // root's blur handler (relatedTarget inside) leaves it alone.
     tabRef.current?.focus();
-    dismissing.current = false;
     // The tab keeps focus but no longer opens the bar until focus has left
     // the dock; the pointer, until it has left the dock.
     setHovered(false);
@@ -150,7 +160,7 @@ export function MinkDock() {
     setDraft("");
     setHovered(false);
     setFocusWithin(false);
-    askInPanel(text);
+    startChat(text);
   };
 
   if (coarse) {
@@ -160,10 +170,11 @@ export function MinkDock() {
           ref={tabRef}
           type="button"
           className="dash-mink-pop-tab"
-          aria-controls="mink-chat-panel"
+          // A tap opens the panel without raising the keyboard: the merchant
+          // chose to open Mink, not to type yet.
           onClick={() => {
             clearTimers();
-            openChat();
+            openChat({ focusComposer: false });
           }}
         >
           <MinkFace size={18} />
@@ -183,6 +194,7 @@ export function MinkDock() {
     if (hoverDismissed || hovered || openTimer.current !== null) return;
     openTimer.current = window.setTimeout(() => {
       openTimer.current = null;
+      hoverOpenedAt.current = Date.now();
       setHovered(true);
     }, MINK_DOCK_OPEN_DELAY_MS);
   };
@@ -214,6 +226,26 @@ export function MinkDock() {
     ask(draft);
   };
 
+  // ★ The bar opens over the tab. A pointer click that lands on one of its
+  // buttons straight after the pointer opened it was meant for the tab, so it
+  // only puts the merchant in the field: never sends a question nobody chose.
+  const clickMeantForTab = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (event.detail === 0 || !hovered) return false;
+    if (Date.now() - hoverOpenedAt.current >= MINK_DOCK_CLICK_GUARD_MS) {
+      return false;
+    }
+    event.preventDefault();
+    inputRef.current?.focus();
+    return true;
+  };
+
+  // Pressing a bar button keeps focus in the field. Safari never focuses a
+  // clicked button, so without this the field's blur names no next element,
+  // the bar hides under the pointer and the click is lost.
+  const keepFieldFocus = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+  };
+
   return (
     <div
       ref={rootRef}
@@ -222,12 +254,26 @@ export function MinkDock() {
       data-open={open ? "true" : "false"}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
+      onMouseDown={() => {
+        pointerPress.current = true;
+        window.setTimeout(() => {
+          pointerPress.current = false;
+        }, 0);
+      }}
       onKeyDown={onKeyDown}
-      onFocus={() => setFocusWithin(true)}
+      onFocus={(event) => {
+        // Only keyboard focus on the tab opens the bar; a mouse press on it
+        // leaves that to the click.
+        if (pointerPress.current && (event.target as Node) === tabRef.current)
+          return;
+        setFocusWithin(true);
+      }}
       onBlur={(event) => {
-        if (dismissing.current) return;
         const next = event.relatedTarget as Node | null;
         if (next && rootRef.current?.contains(next)) return;
+        // A press inside the dock that focused nothing (Safari, a label's
+        // padding) is not focus leaving.
+        if (!next && pointerInside.current) return;
         setFocusWithin(false);
         setFocusDismissed(false);
       }}
@@ -237,7 +283,7 @@ export function MinkDock() {
         type="button"
         className="dash-mink-pop-tab"
         aria-expanded={open}
-        aria-controls="mink-dock-bar"
+        aria-controls={open ? "mink-dock-bar" : undefined}
         // Focusing it opens the bar and leaves focus here (WCAG 3.2.1): the
         // next Tab reaches the field. While the bar is out the tab is only
         // see-through under it, and the bar carries its focus ring.
@@ -277,7 +323,11 @@ export function MinkDock() {
             className="dash-mink-pop-suggest"
             aria-label={`Ask: ${suggestion.label}`}
             title={suggestion.label}
-            onClick={() => ask(suggestion.prompt)}
+            onMouseDown={keepFieldFocus}
+            onClick={(event) => {
+              if (clickMeantForTab(event)) return;
+              ask(suggestion.prompt);
+            }}
           >
             <span className="dash-mink-pop-suggest-lead" aria-hidden="true">
               Ask:
@@ -291,6 +341,10 @@ export function MinkDock() {
           type="submit"
           className="dash-mink-pop-send"
           aria-label="Send question"
+          onMouseDown={keepFieldFocus}
+          onClick={(event) => {
+            clickMeantForTab(event);
+          }}
         >
           <ArrowUp className="h-4 w-4" strokeWidth={2.4} aria-hidden="true" />
         </button>

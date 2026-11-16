@@ -97,7 +97,7 @@ describe("DashboardTopbar Mink AI button", () => {
     renderTopbar();
     const face = screen.getByRole("button", { name: "Mink AI" });
     expect(face).toHaveAttribute("aria-expanded", "false");
-    expect(face).toHaveAttribute("aria-controls", "mink-chat-panel");
+    expect(face).not.toHaveAttribute("aria-controls");
     fireEvent.click(face);
     expect(chat.toggleChat).toHaveBeenCalledTimes(1);
   });
@@ -105,6 +105,10 @@ describe("DashboardTopbar Mink AI button", () => {
   it("says the panel is open while it is", () => {
     chat.isChatOpen = true;
     renderTopbar();
+    expect(screen.getByRole("button", { name: "Mink AI" })).toHaveAttribute(
+      "aria-controls",
+      "mink-chat-panel",
+    );
     expect(screen.getByRole("button", { name: "Mink AI" })).toHaveAttribute(
       "aria-expanded",
       "true",

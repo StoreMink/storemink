@@ -492,9 +492,10 @@
    • In analytics edit mode the workspace takes the screen.
    • A bar pinned to the top of the scroll column (the contextual save bar,
      the offer editor header, the product editor header, the Invoices &
-     Billing header, the analytics editor) sits right under the tab
-     with its Save button at the right, where the tab hangs.
-     mink-dock-css.test.ts fails when a new top-pinned bar is not listed. */
+     Billing header) sits right under the tab with its Save button at the
+     right, where the tab hangs. Each such bar carries data-dash-pinned-top,
+     one marker instead of a list of class names here; mink-dock-css.test.ts
+     fails when an element with a top-pinned class lacks it. */
 @media (max-width: 767px) {
   .dashboard-shell .dash-mink-pop {
     display: none;
@@ -502,14 +503,7 @@
 }
 .dashboard-frame:has(.sm-builder) .dash-mink-pop,
 .dashboard-frame.is-analytics-editing .dash-mink-pop,
-.dashboard-frame:has(
-    .dash-savebar,
-    .dash-offer-header,
-    .dash-editor-header,
-    .billHead,
-    .dash-editor-mode
-  )
-  .dash-mink-pop {
+.dashboard-frame:has([data-dash-pinned-top]) .dash-mink-pop {
   display: none;
 }
 

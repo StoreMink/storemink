@@ -245,7 +245,7 @@ export function BillingClient({
     <div className="billPage">
       {/* Sticky top header (mirrors the product editor): title on the left,
           Save on the right, pinned flush to the top while the form scrolls. */}
-      <header className="billHead">
+      <header className="billHead" data-dash-pinned-top="">
         <h1>Invoices &amp; Billing</h1>
         <div className="billHeadActions">
           {status && (

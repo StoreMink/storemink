@@ -415,8 +415,11 @@ export function DashboardTopbar({
               isChatOpen ? "bg-slate-700 text-white" : ""
             }`}
             aria-label="Mink AI"
-            aria-controls="mink-chat-panel"
+            // Names the panel only while it is on screen: a reference to a
+            // hidden element tells assistive tech nothing.
+            aria-controls={isChatOpen ? "mink-chat-panel" : undefined}
             aria-expanded={isChatOpen}
+            data-mink-toggle=""
           >
             <MinkMark size="sm" />
           </button>
