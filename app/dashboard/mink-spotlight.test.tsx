@@ -54,6 +54,12 @@ describe("MinkSpotlight", () => {
     expect(findMinkGuideElement("go_live")).toBeNull();
   });
 
+  it("never rings a control inside the top-bar Mink AI pop-out", () => {
+    document.body.innerHTML =
+      "<main><div data-mink-dock><button>Go live</button></div><p>nothing</p></main>";
+    expect(findMinkGuideElement("go_live")).toBeNull();
+  });
+
   it("says so when the control is not on the screen, then goes away", () => {
     document.body.innerHTML = "<main><p>Empty</p></main>";
     const onDone = vi.fn();

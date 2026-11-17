@@ -12,6 +12,21 @@ const push = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
+  usePathname: () => "/dashboard",
+}));
+
+const chat = vi.hoisted(() => ({
+  isChatOpen: false,
+  toggleChat: vi.fn(),
+}));
+
+vi.mock("./chat-context", () => ({
+  useChat: () => chat,
+}));
+
+// The pop-out bar has its own suite (mink-dock.test.tsx).
+vi.mock("./mink-dock", () => ({
+  MinkDock: () => <div data-testid="mink-dock" />,
 }));
 
 // Keep these tests about search; the real children have their own data and
@@ -72,6 +87,43 @@ function desktopResults() {
   return within(list as HTMLElement);
 }
 
+describe("DashboardTopbar Mink AI button", () => {
+  beforeEach(() => {
+    chat.isChatOpen = false;
+    chat.toggleChat.mockReset();
+  });
+
+  it("toggles the chat and reports whether the panel is open", () => {
+    renderTopbar();
+    const face = screen.getByRole("button", { name: "Mink AI" });
+    expect(face).toHaveAttribute("aria-expanded", "false");
+    expect(face).not.toHaveAttribute("aria-controls");
+    fireEvent.click(face);
+    expect(chat.toggleChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("says the panel is open while it is", () => {
+    chat.isChatOpen = true;
+    renderTopbar();
+    expect(screen.getByRole("button", { name: "Mink AI" })).toHaveAttribute(
+      "aria-controls",
+      "mink-chat-panel",
+    );
+    expect(screen.getByRole("button", { name: "Mink AI" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("hangs the pop-out bar beside the face, inside its wrapper", () => {
+    renderTopbar();
+    const face = screen.getByRole("button", { name: "Mink AI" });
+    const wrapper = face.parentElement as HTMLElement;
+    expect(wrapper).toHaveClass("dash-mink-dock");
+    expect(within(wrapper).getByTestId("mink-dock")).toBeInTheDocument();
+  });
+});
+
 describe("DashboardTopbar search", () => {
   beforeEach(() => {
     push.mockReset();
@@ -97,6 +149,17 @@ describe("DashboardTopbar search", () => {
 
     fireEvent.click(inventory);
     expect(push).toHaveBeenCalledWith("/dashboard/inventory");
+  });
+
+  // The "Ask Mink AI" tab hangs under the face inside the top bar's stacking
+  // context (z-index 1); the results must paint above it where they overlap.
+  it("paints the results list above the Mink AI tab", () => {
+    renderTopbar();
+    const input = screen.getByRole("combobox", { name: "Search dashboard" });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "inv" } });
+    const list = document.getElementById("dashboard-search-results");
+    expect(list?.parentElement).toHaveClass("z-[200]");
   });
 
   // ★ "Themes" was renamed "Storefront"; people keep typing the old word.

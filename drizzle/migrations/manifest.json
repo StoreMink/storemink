@@ -10740,6 +10740,38 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261110_0277_mink_rail_help",
+      "description": "Help Centre: the dashboard Mink AI guide names the yellow Mink AI face in the top bar and the Ask Mink AI pop-out under it, and points Website Builder users at the Mink AI button in the builder's own top bar. Four sentences corrected in place. Content only.",
+      "file": "sql/20261110_0277_mink_rail_help.sql",
+      "transaction": true,
+      "requires": ["20261031_0276_theme_chosen_once_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the open steps name the Ask Mink AI pop-out under the face",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%or, on a computer, point at <strong>Ask Mink AI</strong> under it and type your question%' and body not like '%Select the Mink AI button in the top bar, or use%'",
+            "equals": "1"
+          },
+          {
+            "name": "the top bar opener is the yellow Mink AI face",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%The yellow Mink AI face in the top bar opens Mink AI.%' and body not like '%The purple robot mark in the dashboard header%'",
+            "equals": "1"
+          },
+          {
+            "name": "in Website Builder the Mink AI button is in the builder's top bar",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Open Website Builder and select the Mink AI button in the builder''s top bar.%' and body not like '%click the purple Mink AI icon in the shared top header%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Website Builder troubleshooting step points at the builder's button",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%select the Mink AI button in the builder''s top bar again.%' and body not like '%try the top-header icon again%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

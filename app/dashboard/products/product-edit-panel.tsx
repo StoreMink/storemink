@@ -49,7 +49,10 @@ export function ProductEditorPanel({
       data-mink-resource-id={product?.id}
     >
       {/* Cancel the scroll container's current padding at every breakpoint. */}
-      <header className="dash-editor-header sticky z-30 mb-5 flex items-center gap-3 border-b border-[#e5e7eb] bg-[var(--dash-surface,#fff)]">
+      <header
+        className="dash-editor-header sticky z-30 mb-5 flex items-center gap-3 border-b border-[#e5e7eb] bg-[var(--dash-surface,#fff)]"
+        data-dash-pinned-top=""
+      >
         <Link
           href="/dashboard/products"
           aria-label="Back to products"

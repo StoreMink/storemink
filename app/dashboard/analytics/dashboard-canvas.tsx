@@ -499,7 +499,7 @@ export function DashboardCanvas({
       className={editing ? "dash-editor-mode" : undefined}
     >
       {editing ? (
-        <div className="dash-savebar">
+        <div className="dash-savebar" data-dash-pinned-top="">
           <div className="dash-savebar-msg">
             <span className="dash-savebar-dot" aria-hidden />
             <span>
