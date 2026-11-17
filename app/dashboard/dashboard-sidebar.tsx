@@ -21,6 +21,7 @@ import {
   unreadBadge,
   useUnreadCounts,
 } from "./components/unread-counts-context";
+import { settingsOwnerHref } from "./settings/settings-nav";
 
 type Child = {
   label: string;
@@ -124,6 +125,7 @@ export function DashboardSidebar({
   groups: navGroups,
   logTypes,
   logsBasePath = "/dashboard/logs",
+  settingsFrame = false,
 }: {
   groups?: Group[];
   /** The log registry for THIS console. Absent = the merchant's (LogsRail's
@@ -134,6 +136,12 @@ export function DashboardSidebar({
    *  today; it is a prop so a future third console cannot silently inherit the
    *  wrong one. */
   logsBasePath?: string;
+  /** The merchant dashboard's Settings pages carry their own settings menu
+   *  (app/dashboard/settings/settings-frame.tsx), so the sidebar shows the
+   *  main nav there instead of a second Settings panel. The operator console
+   *  leaves this off: its paths overlap (/dashboard/billing, /dashboard/roles)
+   *  but it has no settings menu. */
+  settingsFrame?: boolean;
 }) {
   const pathname = usePathname();
   const { open, setOpen } = useMobileNav();
@@ -196,6 +204,13 @@ export function DashboardSidebar({
   // tells them apart, which the generic child matcher below cannot see. So it
   // gets the same panel treatment through its own rail.
   const inLogs = pathname.startsWith(logsBasePath);
+  // ★ ON A SETTINGS PAGE THE SIDEBAR STAYS THE MAIN NAV. The settings menu
+  // sits inside the page, so a Settings panel here would be a second list of
+  // the same pages. The item that owns the page (Settings, or Storefront for
+  // Branding and Website settings) stays highlighted, though the page's
+  // address is not its own.
+  const settingsOwner =
+    settingsFrame && !inLogs ? settingsOwnerHref(pathname) : null;
 
   useEffect(() => {
     setOpen(false);
@@ -243,7 +258,7 @@ export function DashboardSidebar({
                 </Suspense>
               </div>
             </div>
-          ) : activeSection?.children?.length ? (
+          ) : !settingsOwner && activeSection?.children?.length ? (
             (() => {
               const activeChildHref = activeSection
                 .children!.filter((c) => matches(pathname, c.href))
@@ -321,6 +336,11 @@ export function DashboardSidebar({
                         badge={item.badge}
                         badgeTone={item.badgeTone}
                         openInNewTab={item.openInNewTab}
+                        active={
+                          settingsOwner
+                            ? item.href === settingsOwner
+                            : undefined
+                        }
                       />
                     ))}
                   </nav>

@@ -18,7 +18,7 @@ export function BusinessTimeZoneForm({ timeZone }: { timeZone: string }) {
   return (
     <form
       action={action}
-      className="mt-6 rounded-[10px] border border-[#e5e5e5] bg-white p-4"
+      className="rounded-[10px] border border-[#e5e5e5] bg-white p-4"
     >
       <div className="text-[14px] font-medium text-[#1a1a1a]">
         Business time zone

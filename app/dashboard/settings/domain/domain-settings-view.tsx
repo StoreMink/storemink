@@ -379,12 +379,14 @@ function Shell({
   indexing: React.ReactNode;
 }) {
   return (
-    <div className="max-w-4xl space-y-6">
+    <div className="dash-page-enter mx-auto w-full max-w-4xl space-y-6">
+      {/* In a div, so the list spacing below applies: dashboard.css sets
+          the header's own bottom margin, which would win over it. */}
       <div>
-        <h1 className="text-2xl font-bold text-[#111827]">Domain</h1>
-        <p className="mt-1 text-sm text-[#5b6472]">
-          Serve your store from a domain you own.
-        </p>
+        <header className="dash-page-header">
+          <h1>Domain</h1>
+          <p>Serve your store from a domain you own.</p>
+        </header>
       </div>
       {children}
       {indexing}

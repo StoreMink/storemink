@@ -6459,6 +6459,66 @@ the incomplete set. Migration `20260913_0110_mink_current_offers_help` edits
 the existing Mink capability/permission and Offers nudge paragraphs in place;
 it adds no new section.
 
+### Settings: one page with its own menu (2026-11-17)
+
+Settings is now one place, Shopify admin style: a settings menu on the left
+and the open settings page beside it. It used to be a card grid of links, and
+most settings pages lived at their own addresses with nothing tying them
+together. Vansh asked for the storefront pages (Storefront, Branding, Website
+settings, Website Builder) to be in the menu too.
+
+- **`app/dashboard/settings/settings-nav.ts` is the one registry** (pure). Its
+  groups: Store (General, Domain, Policies), Online store (Storefront,
+  Branding, Website settings at `/dashboard/builder/settings`, Website Builder,
+  which opens in a new tab), Selling (Shipping & delivery, Channels, Taxes &
+  invoices), People (Staff, Roles & permissions), Messages (Notifications,
+  Notices from StoreMink), Data (Analytics tracking, Logs) and You and your
+  plan (Account, Plans & Billing). Each item names its permission section
+  (`null` for Account, which everyone has), whether its page renders inside
+  the frame (`wrapped`; the Website Builder and Logs leave Settings) and
+  search keywords ("gstin", "razorpay"). `activeSettingsItem`,
+  `isSettingsPath`, `settingsOwnerHref` and `settingsItemMatches` (every typed
+  word must match) read it.
+- **`settings-shell.tsx` (server) filters, `settings-frame.tsx` (client)
+  draws.** The shell lists only items whose section the viewer can view, and
+  marks "View only" where the section has a manage action the viewer lacks;
+  with no profile it renders the page alone. The frame has the menu's search
+  (Escape clears), the Notices badge from the unread counts, the new-tab mark
+  for the Website Builder, and a "Settings" back link on phones.
+  `settings-shell.css` is a container query on the frame: below 720px it is
+  one column, the menu on the Settings home and the page elsewhere, with 44px
+  targets and a 16px search box. The frame cancels `.dash-content`'s padding
+  and pads its own main column with the same `--dash-pad-*` values, so
+  `.dash-savebar`'s negative margins still line up.
+- **Wrapping is by layout.** A `layout.tsx` calling `SettingsShell` sits in
+  `settings/`, `admins/`, `roles/`, `channels/`, `billing/`, `storefront/`,
+  `branding/` and `builder/settings/`. Plans & Billing wraps itself in its two
+  pages instead, so the printable invoice and credit note under
+  `/dashboard/plans` stay bare.
+- **General** (`general-settings.tsx`, at `/dashboard/settings` and
+  `/dashboard/settings/general`): store details (Edit links to Branding),
+  business details from Taxes & invoices (only with `billing` view), the
+  business time zone (the form for Settings manage, read-only otherwise) and
+  the plan (linking to Plans & Billing with `ai` view). Each read fails on its
+  own: the card says it couldn't be loaded and the rest still render. A role
+  without Settings view sees "Choose a page from the settings menu." on the
+  home.
+- **The dashboard sidebar keeps its own menu on settings pages.**
+  `DashboardSidebar` takes `settingsFrame` (only the store dashboard layout
+  passes it; the operator console, which has its own `/dashboard/billing` and
+  `/dashboard/roles`, does not). On a settings page it does not swap to the
+  Settings sub-panel and highlights the owning item: Storefront for the four
+  storefront pages, Settings for the rest (`SidebarNavLink` takes `active`).
+- The Policies, Domain and Analytics tracking pages now use the same page
+  header and width as the other settings pages.
+- Tests: `settings-nav.test.ts` (every item has a real page, an icon and a
+  real section; every Settings child and `parent: "settings"` section is
+  listed; every wrapped page has a layout), `settings-frame.test.tsx`,
+  `general-settings.test.tsx`, `page.test.tsx`, and the settings-page block of
+  `dashboard-sidebar.test.tsx` (mutation-checked).
+- No merchant step changes: every guide's "Settings → …" path still leads to
+  the same page, so no Help Centre update.
+
 ### Dashboard on phones (2026-10-04)
 
 `app/dashboard/dashboard.css` owns the mobile shell, wrapping page actions,
@@ -7854,7 +7914,14 @@ wholesip/
 │   │   │                      # ★ failures/ = everything that DIDN'T work, read
 │   │   │                      # across the other tables (§33). SIX views, ONE
 │   │   │                      # `activity` permission
-│   │   └── settings/          # account/ + domain/ + shipping/ (checkout rate policy) +
+│   │   └── settings/          # ★ one page with its own menu (2026-11-17):
+│   │                          # settings-nav.ts (the menu registry), settings-shell.tsx
+│   │                          # + settings-frame.tsx + settings-shell.css (the frame,
+│   │                          # wrapped in by layout.tsx here and in admins/, roles/,
+│   │                          # channels/, billing/, storefront/, branding/,
+│   │                          # builder/settings/), general-settings.tsx + general/
+│   │                          # (the home page) +
+│   │                          # account/ + domain/ + shipping/ (checkout rate policy) +
 │   │                          # ★ notices/ (takedown, convention 45): Notices from
 │   │                          # StoreMink, a Settings child (view = Settings view,
 │   │                          # reply = Settings manage): page.tsx (every told block,

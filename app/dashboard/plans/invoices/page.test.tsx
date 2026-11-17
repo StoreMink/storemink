@@ -21,6 +21,11 @@ vi.mock("../../lib/access", () => ({
   requireSectionAccess: vi.fn(async () => ({ can: () => true })),
   getActingStoreId: vi.fn(async () => "store-1"),
 }));
+// The settings frame is an async server component the test renderer cannot
+// draw; the page's own content is what these tests read.
+vi.mock("../../settings/settings-shell", () => ({
+  SettingsShell: ({ children }: { children: React.ReactNode }) => children,
+}));
 vi.mock("@/lib/billing/invoice-history", () => ({
   listInvoices: vi.fn(async () => H.invoices),
 }));

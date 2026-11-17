@@ -20,6 +20,7 @@ import { RefundsNotice } from "./refunds-notice";
 import { CompActiveNotice, CompOfferCard } from "./comp-offer";
 import { GstNotice } from "./gst-notice";
 import { BillingDetailsCard } from "./billing-details-card";
+import { SettingsShell } from "../settings/settings-shell";
 
 /**
  * The GST terms in force now, read LIVE: this page quotes a price and then
@@ -81,37 +82,44 @@ export default async function PlansBillingPage() {
   );
   const canManage = access.can("ai", "manage");
   const paidPlanName = PLAN_META[normalizePlan(data.paidPlan)].name;
+  // Wrapped here rather than in a layout, so the printable invoice and credit
+  // note pages under /dashboard/plans stay bare (no settings menu).
   return (
-    <div className="space-y-6">
-      {/* Banner order (GST design 7.3): the invoice to pay, refunds, then
+    <SettingsShell>
+      <div className="space-y-6">
+        {/* Banner order (GST design 7.3): the invoice to pay, refunds, then
           GST and the merchant's state. */}
-      <OpenInvoices invoices={invoices} canManage={canManage} />
-      <RefundsNotice />
-      <GstNotice terms={terms} renewal={nextRenewal} canManage={canManage} />
-      {/* A comped plan is a gift, not a bill — it sits below what they OWE and
+        <OpenInvoices invoices={invoices} canManage={canManage} />
+        <RefundsNotice />
+        <GstNotice terms={terms} renewal={nextRenewal} canManage={canManage} />
+        {/* A comped plan is a gift, not a bill — it sits below what they OWE and
           above the rest of the page. Offer and active state are mutually
           exclusive (docs/comped-plans-spec.md). */}
-      {data.compActive ? (
-        <CompActiveNotice comp={data.compActive} paidPlanName={paidPlanName} />
-      ) : data.compOffer ? (
-        <CompOfferCard
-          offer={data.compOffer}
-          currentPlanName={paidPlanName}
+        {data.compActive ? (
+          <CompActiveNotice
+            comp={data.compActive}
+            paidPlanName={paidPlanName}
+          />
+        ) : data.compOffer ? (
+          <CompOfferCard
+            offer={data.compOffer}
+            currentPlanName={paidPlanName}
+            canManage={canManage}
+          />
+        ) : null}
+        <PlansBillingClient
+          initialData={data}
+          subscription={subscription}
+          packs={packs}
           canManage={canManage}
+          pricing={pricing}
+          includedCredits={includedCredits}
+          terms={terms}
+          nextRenewal={nextRenewal}
+          billingDetails={billingDetails}
         />
-      ) : null}
-      <PlansBillingClient
-        initialData={data}
-        subscription={subscription}
-        packs={packs}
-        canManage={canManage}
-        pricing={pricing}
-        includedCredits={includedCredits}
-        terms={terms}
-        nextRenewal={nextRenewal}
-        billingDetails={billingDetails}
-      />
-      <BillingDetailsCard details={billingDetails} canManage={canManage} />
-    </div>
+        <BillingDetailsCard details={billingDetails} canManage={canManage} />
+      </div>
+    </SettingsShell>
   );
 }

@@ -7,6 +7,7 @@ import { listInvoices } from "@/lib/billing/invoice-history";
 import { listCreditNotes } from "@/lib/billing/credit-note-store";
 import type { InvoiceSummary } from "@/lib/billing/invoice-types";
 import { invoiceListName } from "@/lib/billing/tax-copy";
+import { SettingsShell } from "../../settings/settings-shell";
 
 export const metadata = { title: "Invoices" };
 
@@ -87,152 +88,159 @@ export default async function InvoicesPage() {
   ]);
 
   return (
-    <div className="dash-page-enter mx-auto w-full max-w-4xl">
-      <Link
-        href="/dashboard/plans"
-        className="mb-4 inline-flex items-center gap-1 text-sm text-[#5b6472] hover:text-[#111827]"
-      >
-        <ChevronLeft className="h-4 w-4" />
-        Plans &amp; Billing
-      </Link>
+    <SettingsShell>
+      <div className="dash-page-enter mx-auto w-full max-w-4xl">
+        <Link
+          href="/dashboard/plans"
+          className="mb-4 inline-flex items-center gap-1 text-sm text-[#5b6472] hover:text-[#111827]"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Plans &amp; Billing
+        </Link>
 
-      <h1 className="text-2xl font-bold text-[#111827]">Invoices</h1>
-      <p className="mt-1 mb-6 text-sm text-[#5b6472]">
-        Your StoreMink invoices and credit notes. Open one to print or save it.
-      </p>
+        <h1 className="text-2xl font-bold text-[#111827]">Invoices</h1>
+        <p className="mt-1 mb-6 text-sm text-[#5b6472]">
+          Your StoreMink invoices and credit notes. Open one to print or save
+          it.
+        </p>
 
-      {invoices.length === 0 ? (
-        // ★ Says WHY it is empty. "No invoices" on a store that has been paying
-        // reads as data loss; the real reason is almost always that they are on
-        // Free, or that an invoice has not been issued yet.
-        <div className="rounded-xl border border-[#e5e5e5] bg-white p-8 text-center">
-          <FileText
-            className="mx-auto mb-3 h-6 w-6 text-[#9aa1ab]"
-            strokeWidth={1.5}
-          />
-          <p className="text-sm font-medium text-[#111827]">No invoices yet</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-[#6b7280]">
-            Your first invoice is issued when you pay for a plan.
-          </p>
-        </div>
-      ) : (
-        <div className="dash-card overflow-hidden">
-          <ResponsiveTable className="dash-table w-full">
-            <thead>
-              <tr>
-                <th>Invoice</th>
-                <th>Issued</th>
-                <th>Period</th>
-                <th className="text-right">Amount</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invoices.map((inv) => {
-                const s = STATUS[inv.status] ?? {
-                  label: inv.status,
-                  cls: "bg-gray-100 text-gray-600",
-                };
-                const refund = refundLine(inv);
-                const ref = inv.invoiceRef ?? inv.id.slice(0, 8);
-                return (
-                  <tr key={inv.id}>
-                    <td>
-                      <span className="text-sm text-[#5b6472]">
-                        {documentWord(ref, inv.taxPaise)}
-                      </span>{" "}
-                      <Link
-                        href={`/dashboard/plans/invoices/${inv.id}`}
-                        className="font-mono text-sm font-medium text-[#111827] hover:underline"
-                      >
-                        {ref}
-                      </Link>
-                    </td>
-                    <td className="text-sm text-[#5b6472]">
-                      {fmtDate(inv.finalizedAt)}
-                    </td>
-                    <td className="text-sm text-[#5b6472]">
-                      {inv.periodStart && inv.periodEnd
-                        ? `${fmtDate(inv.periodStart)} to ${fmtDate(inv.periodEnd)}`
-                        : "-"}
-                    </td>
-                    <td className="text-right text-sm font-medium text-[#111827]">
-                      {inr(inv.totalPaise)}
-                    </td>
-                    <td>
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${s.cls}`}
-                      >
-                        {s.label}
-                      </span>
-                      {refund && (
-                        <p className="mt-1 text-xs text-[#5b6472]">{refund}</p>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </ResponsiveTable>
-        </div>
-      )}
-
-      {creditNotes.length > 0 && (
-        // ★ Only when there is one: an empty "Credit notes" table on a store
-        // that has never been refunded reads as something missing.
-        <section className="mt-8" aria-labelledby="credit-notes-heading">
-          <h2
-            id="credit-notes-heading"
-            className="mb-3 text-lg font-semibold text-[#111827]"
-          >
-            Credit notes
-          </h2>
+        {invoices.length === 0 ? (
+          // ★ Says WHY it is empty. "No invoices" on a store that has been paying
+          // reads as data loss; the real reason is almost always that they are on
+          // Free, or that an invoice has not been issued yet.
+          <div className="rounded-xl border border-[#e5e5e5] bg-white p-8 text-center">
+            <FileText
+              className="mx-auto mb-3 h-6 w-6 text-[#9aa1ab]"
+              strokeWidth={1.5}
+            />
+            <p className="text-sm font-medium text-[#111827]">
+              No invoices yet
+            </p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-[#6b7280]">
+              Your first invoice is issued when you pay for a plan.
+            </p>
+          </div>
+        ) : (
           <div className="dash-card overflow-hidden">
             <ResponsiveTable className="dash-table w-full">
               <thead>
                 <tr>
-                  <th>Credit note</th>
+                  <th>Invoice</th>
                   <th>Issued</th>
-                  <th>For invoice</th>
+                  <th>Period</th>
                   <th className="text-right">Amount</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {creditNotes.map((note) => (
-                  <tr key={note.id}>
-                    <td>
-                      <Link
-                        href={`/dashboard/plans/credit-notes/${note.id}`}
-                        className="font-mono text-sm font-medium text-[#111827] hover:underline"
-                      >
-                        {note.creditNoteRef}
-                      </Link>
-                    </td>
-                    <td className="text-sm text-[#5b6472]">
-                      {fmtDate(note.issuedAt)}
-                    </td>
-                    <td className="text-sm text-[#5b6472]">
-                      {note.invoiceRef ? (
+                {invoices.map((inv) => {
+                  const s = STATUS[inv.status] ?? {
+                    label: inv.status,
+                    cls: "bg-gray-100 text-gray-600",
+                  };
+                  const refund = refundLine(inv);
+                  const ref = inv.invoiceRef ?? inv.id.slice(0, 8);
+                  return (
+                    <tr key={inv.id}>
+                      <td>
+                        <span className="text-sm text-[#5b6472]">
+                          {documentWord(ref, inv.taxPaise)}
+                        </span>{" "}
                         <Link
-                          href={`/dashboard/plans/invoices/${note.invoiceId}`}
-                          className="font-mono hover:underline"
+                          href={`/dashboard/plans/invoices/${inv.id}`}
+                          className="font-mono text-sm font-medium text-[#111827] hover:underline"
                         >
-                          {note.invoiceRef}
+                          {ref}
                         </Link>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="text-right text-sm font-medium text-[#111827]">
-                      {inr(note.totalPaise)}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="text-sm text-[#5b6472]">
+                        {fmtDate(inv.finalizedAt)}
+                      </td>
+                      <td className="text-sm text-[#5b6472]">
+                        {inv.periodStart && inv.periodEnd
+                          ? `${fmtDate(inv.periodStart)} to ${fmtDate(inv.periodEnd)}`
+                          : "-"}
+                      </td>
+                      <td className="text-right text-sm font-medium text-[#111827]">
+                        {inr(inv.totalPaise)}
+                      </td>
+                      <td>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${s.cls}`}
+                        >
+                          {s.label}
+                        </span>
+                        {refund && (
+                          <p className="mt-1 text-xs text-[#5b6472]">
+                            {refund}
+                          </p>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </ResponsiveTable>
           </div>
-        </section>
-      )}
-    </div>
+        )}
+
+        {creditNotes.length > 0 && (
+          // ★ Only when there is one: an empty "Credit notes" table on a store
+          // that has never been refunded reads as something missing.
+          <section className="mt-8" aria-labelledby="credit-notes-heading">
+            <h2
+              id="credit-notes-heading"
+              className="mb-3 text-lg font-semibold text-[#111827]"
+            >
+              Credit notes
+            </h2>
+            <div className="dash-card overflow-hidden">
+              <ResponsiveTable className="dash-table w-full">
+                <thead>
+                  <tr>
+                    <th>Credit note</th>
+                    <th>Issued</th>
+                    <th>For invoice</th>
+                    <th className="text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {creditNotes.map((note) => (
+                    <tr key={note.id}>
+                      <td>
+                        <Link
+                          href={`/dashboard/plans/credit-notes/${note.id}`}
+                          className="font-mono text-sm font-medium text-[#111827] hover:underline"
+                        >
+                          {note.creditNoteRef}
+                        </Link>
+                      </td>
+                      <td className="text-sm text-[#5b6472]">
+                        {fmtDate(note.issuedAt)}
+                      </td>
+                      <td className="text-sm text-[#5b6472]">
+                        {note.invoiceRef ? (
+                          <Link
+                            href={`/dashboard/plans/invoices/${note.invoiceId}`}
+                            className="font-mono hover:underline"
+                          >
+                            {note.invoiceRef}
+                          </Link>
+                        ) : (
+                          "-"
+                        )}
+                      </td>
+                      <td className="text-right text-sm font-medium text-[#111827]">
+                        {inr(note.totalPaise)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </ResponsiveTable>
+            </div>
+          </section>
+        )}
+      </div>
+    </SettingsShell>
   );
 }

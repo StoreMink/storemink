@@ -1,19 +1,17 @@
 // @vitest-environment jsdom
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getViewerAccess } from "@/app/dashboard/lib/access";
-import { NOTICES } from "@/lib/moderation/copy";
 import SettingsPage from "./page";
 
 vi.mock("@/app/dashboard/lib/access", () => ({
   getViewerAccess: vi.fn(),
   getActingStoreId: vi.fn(async () => "store-1"),
 }));
-vi.mock("@/lib/analytics/settings", () => ({
-  getStoreAnalyticsTimeZone: vi.fn(async () => "Asia/Kolkata"),
-}));
-vi.mock("./business-time-zone-form", () => ({
-  BusinessTimeZoneForm: () => null,
+vi.mock("./general-settings", () => ({
+  GeneralSettings: ({ storeId }: { storeId: string }) => (
+    <div>General for {storeId}</div>
+  ),
 }));
 
 function access(allowed: Record<string, ("view" | "manage")[]>) {
@@ -24,34 +22,35 @@ function access(allowed: Record<string, ("view" | "manage")[]>) {
 }
 
 async function renderPage() {
-  return render(await SettingsPage());
+  const page = await SettingsPage();
+  return render(<>{page}</>);
 }
 
-describe("Settings landing page", () => {
+describe("Settings home", () => {
   beforeEach(() => {
     vi.mocked(getViewerAccess).mockResolvedValue(
       access({ settings: ["view"] }),
     );
   });
 
-  it("lists Notices from StoreMink with the Settings child's wording, link and a line", async () => {
+  it("shows General beside the settings menu", async () => {
     await renderPage();
-
-    const link = screen.getByRole("link", {
-      name: new RegExp(NOTICES.navLabel),
-    });
-    expect(link).toHaveAttribute("href", "/dashboard/settings/notices");
-    expect(within(link).getByText(NOTICES.navLabel)).toBeInTheDocument();
-    expect(within(link).getByText(NOTICES.intro)).toBeInTheDocument();
+    expect(screen.getByText("General for store-1")).toBeInTheDocument();
   });
 
-  it("does not list it for a role without Settings view", async () => {
+  it("points a role without Settings view at the menu instead", async () => {
     vi.mocked(getViewerAccess).mockResolvedValue(
       access({ notifications: ["view"] }),
     );
-
     await renderPage();
+    expect(screen.queryByText(/General for/)).toBeNull();
+    expect(
+      screen.getByText("Choose a page from the settings menu."),
+    ).toBeInTheDocument();
+  });
 
-    expect(screen.queryByText(NOTICES.navLabel)).not.toBeInTheDocument();
+  it("renders nothing without a profile (the layout explains that)", async () => {
+    vi.mocked(getViewerAccess).mockResolvedValue(null);
+    expect(await SettingsPage()).toBeNull();
   });
 });

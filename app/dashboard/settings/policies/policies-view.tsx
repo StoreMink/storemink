@@ -18,15 +18,13 @@ export function PoliciesView({
   prompts: Record<string, string[]>;
 }) {
   return (
-    <div className="dash-page">
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold">Policies</h1>
-        <p className="text-muted-foreground mt-1 max-w-2xl text-sm">
-          Each policy is a page on your storefront, linked in the footer.
-        </p>
+    <div className="dash-page-enter mx-auto w-full max-w-4xl">
+      <header className="dash-page-header">
+        <h1>Policies</h1>
+        <p>Each policy is a page on your storefront, linked in the footer.</p>
       </header>
 
-      <div className="flex flex-col gap-4">
+      <div className="mt-6 flex flex-col gap-4">
         {policies.map((policy) => (
           <PolicyCard
             key={policy.kind}

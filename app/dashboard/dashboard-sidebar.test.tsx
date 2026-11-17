@@ -319,3 +319,112 @@ describe("DashboardSidebar Notices badge", () => {
     ).toHaveTextContent(/^Notices from StoreMink$/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Settings pages carry their own settings menu (settings-frame.tsx), so the
+// merchant sidebar shows the main nav there, with the owning item highlighted.
+// The operator console never passes `settingsFrame`, and keeps its panels.
+// ---------------------------------------------------------------------------
+
+const FRAME_NAV = [
+  {
+    group: "Online store",
+    items: [
+      {
+        href: "/dashboard/storefront",
+        label: "Storefront",
+        icon: "themes" as const,
+        children: [
+          {
+            href: "/dashboard/branding",
+            label: "Branding",
+            icon: "colors" as const,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    group: "Settings",
+    items: [
+      {
+        href: "/dashboard/settings",
+        label: "Settings",
+        icon: "settings" as const,
+        children: [
+          {
+            href: "/dashboard/settings/account",
+            label: "Account",
+            icon: "settings" as const,
+          },
+          { href: "/dashboard/admins", label: "Staff", icon: "users" as const },
+        ],
+      },
+    ],
+  },
+];
+
+describe("DashboardSidebar on a settings page", () => {
+  it("shows the main nav, not a Settings panel, and highlights Settings", () => {
+    path.current = "/dashboard/admins";
+    render(<DashboardSidebar groups={FRAME_NAV} settingsFrame />);
+
+    expect(screen.queryByRole("link", { name: "Back" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Staff" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveClass(
+      "active",
+    );
+    expect(screen.getByRole("link", { name: "Storefront" })).not.toHaveClass(
+      "active",
+    );
+  });
+
+  it("highlights Storefront while Branding is open", () => {
+    path.current = "/dashboard/branding";
+    render(<DashboardSidebar groups={FRAME_NAV} settingsFrame />);
+
+    expect(screen.getByRole("link", { name: "Storefront" })).toHaveClass(
+      "active",
+    );
+    expect(screen.getByRole("link", { name: "Settings" })).not.toHaveClass(
+      "active",
+    );
+  });
+
+  it("keeps the Settings panel where the frame is not used (the operator console)", () => {
+    path.current = "/dashboard/admins";
+    render(<DashboardSidebar groups={FRAME_NAV} />);
+
+    expect(screen.getByRole("link", { name: "Back" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Staff" })).toBeInTheDocument();
+  });
+
+  it("leaves other sections' panels alone", () => {
+    path.current = "/dashboard/locations/fulfilment";
+    render(
+      <DashboardSidebar
+        groups={[
+          {
+            group: "Sell in person",
+            items: [
+              {
+                href: "/dashboard/locations",
+                label: "Locations",
+                icon: "location",
+                children: [
+                  {
+                    href: "/dashboard/locations/fulfilment",
+                    label: "Online fulfilment & pickup",
+                    icon: "shipping",
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+        settingsFrame
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Back" })).toBeInTheDocument();
+  });
+});

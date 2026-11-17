@@ -232,16 +232,18 @@ export function MerchantAnalyticsSettingsView({
   }
 
   return (
-    <div className="max-w-4xl space-y-5 p-6">
-      <header>
-        <h1 className="text-[22px] font-semibold text-slate-950">
-          Analytics tracking
-        </h1>
-        <p className="mt-1 max-w-2xl text-sm text-slate-600">
-          Connect your own Google Analytics and Meta accounts. Tracking loads
-          only after a visitor consents.
-        </p>
-      </header>
+    <div className="dash-page-enter mx-auto w-full max-w-4xl space-y-5">
+      {/* In a div, so the list spacing below applies: dashboard.css sets
+          the header's own bottom margin, which would win over it. */}
+      <div>
+        <header className="dash-page-header">
+          <h1>Analytics tracking</h1>
+          <p>
+            Connect your own Google Analytics and Meta accounts. Tracking loads
+            only after a visitor consents.
+          </p>
+        </header>
+      </div>
 
       <div className="flex items-start gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950">
         <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0" />

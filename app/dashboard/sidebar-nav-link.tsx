@@ -11,6 +11,7 @@ export function SidebarNavLink({
   badge,
   badgeTone = "accent",
   openInNewTab = false,
+  active,
 }: {
   href: string;
   label: string;
@@ -18,12 +19,16 @@ export function SidebarNavLink({
   badge?: string;
   badgeTone?: "accent" | "amber";
   openInNewTab?: boolean;
+  /** Overrides the address match: the sidebar keeps the item that owns a
+   *  settings page highlighted, though the page lives at another address. */
+  active?: boolean;
 }) {
   const pathname = usePathname();
   const isActive =
-    !openInNewTab &&
-    (pathname === href ||
-      (href !== "/dashboard" && pathname.startsWith(`${href}/`)));
+    active ??
+    (!openInNewTab &&
+      (pathname === href ||
+        (href !== "/dashboard" && pathname.startsWith(`${href}/`))));
   const Icon = navIcons[icon];
 
   return (
