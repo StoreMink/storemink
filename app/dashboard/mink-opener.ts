@@ -30,3 +30,12 @@ export function takeMinkOpener(): HTMLElement | null {
   if (element.closest("[hidden], [inert]")) return null;
   return element;
 }
+
+/**
+ * Drops the remembered opener. Called whenever the chat closes by any route
+ * (the face, the builder's button, a link tap on a phone), so a later close
+ * never sends focus back to a control from an earlier opening.
+ */
+export function forgetMinkOpener() {
+  opener = null;
+}

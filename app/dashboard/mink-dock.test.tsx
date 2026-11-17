@@ -389,6 +389,36 @@ describe("MinkDock", () => {
     expect(field()).toHaveFocus();
   });
 
+  it("a click on a bar the keyboard already opened is not swallowed when the pointer arrives", () => {
+    vi.useFakeTimers();
+    render(<MinkDock />);
+    act(() => tab().focus());
+    expect(dock()).toHaveAttribute("data-open", "true");
+    fireEvent.mouseEnter(dock());
+    act(() => vi.advanceTimersByTime(MINK_DOCK_OPEN_DELAY_MS));
+    act(() => vi.advanceTimersByTime(50));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ask: Pending orders" }),
+      { detail: 1 },
+    );
+    expect(startChat).toHaveBeenCalledWith("Which orders are waiting to ship?");
+  });
+
+  it("a press on the tab cancels the hover timer, so the bar never covers the tab mid-press", () => {
+    vi.useFakeTimers();
+    render(<MinkDock />);
+    fireEvent.mouseEnter(dock());
+    act(() => vi.advanceTimersByTime(MINK_DOCK_OPEN_DELAY_MS - 50));
+    fireEvent.mouseDown(tab());
+    act(() => vi.advanceTimersByTime(MINK_DOCK_OPEN_DELAY_MS));
+    expect(dock()).toHaveAttribute("data-open", "false");
+    fireEvent.mouseUp(tab());
+    fireEvent.click(tab());
+    act(() => vi.advanceTimersByTime(0));
+    expect(dock()).toHaveAttribute("data-open", "true");
+    expect(field()).toHaveFocus();
+  });
+
   it("pressing a bar button keeps focus in the field", () => {
     render(<MinkDock />);
     act(() => tab().focus());

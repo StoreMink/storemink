@@ -30,7 +30,17 @@ import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkStopResult } from "@/lib/mink/run-stop-types";
 import type { MinkSkill } from "@/lib/mink/skills";
 import type { MinkDockSuggestion } from "@/lib/mink/page-suggestions";
-import { rememberMinkOpener } from "./mink-opener";
+import { forgetMinkOpener, rememberMinkOpener } from "./mink-opener";
+
+/**
+ * True on a touch-first device, where moving focus into the composer raises
+ * the on-screen keyboard over half the chat. A question that was just sent
+ * leaves nothing to type, so there the composer is not focused.
+ */
+function touchFirst(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(pointer: coarse)").matches;
+}
 import type { MinkHighlight } from "@/lib/mink/guide-targets";
 import { MinkSpotlight } from "./mink-spotlight";
 import {
@@ -381,6 +391,14 @@ export function ChatProvider({
   }, []);
   const toggleExpand = useCallback(() => setIsExpanded((prev) => !prev), []);
 
+  // ★ Every close forgets the control that opened the chat. The Close button
+  // reads it synchronously before this runs; any other close (the face, the
+  // builder's button, a link tap on a phone) would otherwise leave it set, and
+  // a later Close would send focus back to a control from an earlier opening.
+  useEffect(() => {
+    if (!isChatOpen) forgetMinkOpener();
+  }, [isChatOpen]);
+
   // A page that knows a better question than the skills catalogue (the
   // go-live card's open task) offers it here; the top-bar bar and the panel's
   // empty state show it first.
@@ -447,7 +465,9 @@ export function ChatProvider({
       rememberMinkOpener();
       setIsChatOpen(true);
       setIsExpanded(expanded);
-      setFocusComposerOnOpen((n) => n + 1);
+      // On a phone or tablet this would raise the keyboard over the chat
+      // (Home's box, the Ask Mink buttons, Customise storefront).
+      if (!touchFirst()) setFocusComposerOnOpen((n) => n + 1);
       if (!text) {
         if (!now.isChatOpen) now.resumeOrStartFresh();
         return;
@@ -476,6 +496,9 @@ export function ChatProvider({
   const openChatFromAddress = useCallback(
     (conversationId: string | null) => {
       if (!minkEnabled) return;
+      // Replaces any opener left from before, so Close never returns focus
+      // to a control from an earlier opening.
+      rememberMinkOpener();
       setIsChatOpen(true);
       setIsExpanded(true);
       void openConversationFromAddress(conversationId);

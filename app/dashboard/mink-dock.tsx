@@ -84,6 +84,11 @@ export function MinkDock() {
   const open =
     !coarse &&
     ((hovered && !hoverDismissed) || (focusWithin && !focusDismissed));
+  // Read by the hover timer, which fires after the render that set it.
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  });
   const suggestion = useMemo(
     () => minkDockSuggestion(skills, pathname, pageSuggestion),
     [skills, pathname, pageSuggestion],
@@ -194,7 +199,10 @@ export function MinkDock() {
     if (hoverDismissed || hovered || openTimer.current !== null) return;
     openTimer.current = window.setTimeout(() => {
       openTimer.current = null;
-      hoverOpenedAt.current = Date.now();
+      // Only a hover that actually brings the bar out arms the click guard.
+      // A bar already out (opened by the keyboard or a click on the tab) has
+      // been seen, so a click on it is meant for it.
+      hoverOpenedAt.current = openRef.current ? 0 : Date.now();
       setHovered(true);
     }, MINK_DOCK_OPEN_DELAY_MS);
   };
@@ -254,8 +262,18 @@ export function MinkDock() {
       data-open={open ? "true" : "false"}
       onMouseEnter={onPointerEnter}
       onMouseLeave={onPointerLeave}
-      onMouseDown={() => {
+      onMouseDown={(event) => {
         pointerPress.current = true;
+        // A press on the tab is the merchant choosing it: the hover timer must
+        // not bring the bar out mid-press, or the release lands on the bar
+        // and the tab's click never runs.
+        if (
+          openTimer.current !== null &&
+          tabRef.current?.contains(event.target as Node)
+        ) {
+          window.clearTimeout(openTimer.current);
+          openTimer.current = null;
+        }
         window.setTimeout(() => {
           pointerPress.current = false;
         }, 0);

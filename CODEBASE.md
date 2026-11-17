@@ -109,7 +109,10 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > `visibility: hidden`, which would refuse focus), with the bar drawing its
 > focus ring. ★ The bar covers the tab, so a pointer click on one of its
 > buttons within `MINK_DOCK_CLICK_GUARD_MS` (400 ms) of the pointer opening it
-> only puts focus in the field: it never sends a question nobody chose. Its
+> only puts focus in the field: it never sends a question nobody chose. The
+> hover timer arms that guard only when it opens a closed bar (a bar the
+> keyboard already opened is clickable at once), and pressing the tab cancels
+> a pending hover open, so the bar never slides over the tab mid-press. Its
 > buttons `preventDefault` on mousedown, so the field keeps focus (Safari never
 > focuses a clicked button, and the blur would hide the bar under the click).
 > Escape closes it and returns focus to the tab; the pointer cannot reopen it
@@ -122,7 +125,9 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > chat; while a reply runs the question waits in the box AFTER any draft there;
 > otherwise a draft in the panel's box is put back once the question is sent;
 > an empty question just opens Mink on the current chat. It bumps
-> `focusComposerOnOpen`, and both chat surfaces mark a bump handled (the one
+> `focusComposerOnOpen` (never on a touch screen, `pointer: coarse`, so a
+> question from Home or an Ask Mink button does not raise the keyboard), and
+> both chat surfaces mark a bump handled (the one
 > not on screen too), so maximizing later never steals focus. The bar reads
 > `useMinkDock()` (`MinkDockContext`: enabled, isChatOpen, skills,
 > pageSuggestion, startChat, openChat), a small context whose value keeps its
@@ -138,8 +143,9 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > (`openChat({ focusComposer: false })`, so the keyboard does not rise). It
 > renders only when Mink is enabled and the chat is closed. Closing the chat
 > from its Close button returns focus to the control that opened it
-> (`app/dashboard/mink-opener.ts`: recorded at the click, used while it is
-> still on the page), else the builder's own Mink AI button while the Website
+> (`app/dashboard/mink-opener.ts`: recorded at the click or at an open from
+> the address, used while it is still on the page, and forgotten whenever the
+> chat closes by any route, so a stale control never receives focus), else the builder's own Mink AI button while the Website
 > Builder is mounted, else the face (`[data-mink-toggle]`). CSS hides the bar
 > below 768px, with the builder mounted, in analytics edit mode, and on pages
 > with a bar pinned to the top (save bar, offer, product editor and Invoices &

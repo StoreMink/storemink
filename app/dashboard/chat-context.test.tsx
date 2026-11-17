@@ -11,6 +11,7 @@ import {
 } from "./chat-context";
 import type { MinkVoiceModeInput } from "./mink-voice-mode";
 import { MinkPageSuggestion } from "./mink-page-suggestion";
+import { takeMinkOpener } from "./mink-opener";
 
 // The dashboard address (`?chat=<id>`, B20). Empty unless a test sets it,
 // so the provider behaves as it does on any other dashboard page.
@@ -420,6 +421,53 @@ describe("★★ ChatProvider: which chat a question goes into", () => {
     act(() => chat.current?.closeChat());
     act(() => chat.current?.openChat());
     expect(chat.current?.focusComposerOnOpen).toBe(before + 1);
+  });
+
+  it("★ on a touch screen a question from Home or an Ask Mink button does not raise the keyboard", async () => {
+    stub();
+    const original = window.matchMedia;
+    window.matchMedia = ((query: string) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    })) as unknown as typeof window.matchMedia;
+    try {
+      render(
+        <ChatProvider minkEnabled>
+          <Probe />
+        </ChatProvider>,
+      );
+      await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+      const before = chat.current?.focusComposerOnOpen ?? 0;
+      act(() => chat.current?.startExpandedChat("Stock?"));
+      expect(chat.current?.isChatOpen).toBe(true);
+      expect(chat.current?.focusComposerOnOpen).toBe(before);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("★ every close forgets the control that opened the chat", async () => {
+    stub();
+    render(
+      <ChatProvider minkEnabled>
+        <Probe />
+      </ChatProvider>,
+    );
+    await waitFor(() => expect(chat.current?.conversations).toHaveLength(1));
+    const button = document.createElement("button");
+    document.body.append(button);
+    try {
+      button.focus();
+      act(() => chat.current?.startChat(""));
+      // Closed by the face (toggle), not the chat's own Close button.
+      act(() => chat.current?.toggleChat());
+      expect(chat.current?.isChatOpen).toBe(false);
+      expect(takeMinkOpener()).toBeNull();
+    } finally {
+      button.remove();
+    }
   });
 
   it("★ the pop-out bar's context keeps its identity while a reply streams", async () => {
