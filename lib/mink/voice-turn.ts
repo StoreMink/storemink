@@ -7,6 +7,7 @@
  * conversation change or a panel/overlay swap.
  */
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   openMinkMicrophone,
   startMinkRecording,
@@ -58,7 +59,7 @@ export async function transcribeMinkRecording(
       method: "POST",
       headers: {
         "Content-Type": "audio/wav",
-        "X-Mink-Request-Key": crypto.randomUUID(),
+        "X-Mink-Request-Key": randomUuid(),
       },
       body: recording,
       cache: "no-store",

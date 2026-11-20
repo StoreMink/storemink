@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
   AudioLines,
@@ -399,7 +400,7 @@ export function MinkMultimodalInput({
             throw new Error("Choose a non-empty file up to 5 MiB.");
         }
         staged.push({
-          id: crypto.randomUUID(),
+          id: randomUuid(),
           file: next,
           preview: image ? URL.createObjectURL(next) : "",
           localText,
@@ -1268,7 +1269,7 @@ async function readMinkAttachment(
     body: JSON.stringify({
       name: source.name,
       data: btoa(binary),
-      requestKey: crypto.randomUUID(),
+      requestKey: randomUuid(),
       // Send is explicit permission to process this visible attachment. It
       // never counts as approval for a product/storefront mutation.
       confirmed: true,

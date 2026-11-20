@@ -1,10 +1,11 @@
 "use client";
+import { randomUuid } from "@/lib/random-uuid";
 import { useEffect, useState } from "react";
 import { InfoTip } from "@/components/ui/info-tip";
 import type { ApprovedMemory, MemoryKind } from "@/lib/mink/memory-policy";
 const blank = () => ({
-  id: crypto.randomUUID(),
-  requestKey: crypto.randomUUID(),
+  id: randomUuid(),
+  requestKey: randomUuid(),
   version: 0,
   title: "",
   content: "",
@@ -112,7 +113,7 @@ export function MinkMemoryManager() {
               onClick={() => {
                 setDraft({
                   id: m.id,
-                  requestKey: crypto.randomUUID(),
+                  requestKey: randomUuid(),
                   version: m.version,
                   title: m.title,
                   content: m.content,
@@ -168,7 +169,7 @@ export function MinkMemoryManager() {
                 setDraft({
                   ...draft,
                   title: e.target.value,
-                  requestKey: crypto.randomUUID(),
+                  requestKey: randomUuid(),
                 });
                 setConfirmed(false);
               }}
@@ -183,7 +184,7 @@ export function MinkMemoryManager() {
                 setDraft({
                   ...draft,
                   kind: e.target.value as MemoryKind,
-                  requestKey: crypto.randomUUID(),
+                  requestKey: randomUuid(),
                 });
                 setConfirmed(false);
               }}
@@ -205,7 +206,7 @@ export function MinkMemoryManager() {
                 setDraft({
                   ...draft,
                   content: e.target.value,
-                  requestKey: crypto.randomUUID(),
+                  requestKey: randomUuid(),
                 });
                 setConfirmed(false);
               }}
@@ -220,7 +221,7 @@ export function MinkMemoryManager() {
                 setDraft({
                   ...draft,
                   days: Number(e.target.value),
-                  requestKey: crypto.randomUUID(),
+                  requestKey: randomUuid(),
                 });
                 setConfirmed(false);
               }}

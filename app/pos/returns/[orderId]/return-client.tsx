@@ -4,6 +4,7 @@
 // the server decides what that is worth — this screen's total is a preview
 // computed with the same pure function, never the figure that gets refunded.
 
+import { randomUuid } from "@/lib/random-uuid";
 import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -36,16 +37,12 @@ const METHODS: { id: RefundMethod; label: string }[] = [
 ];
 
 /**
- * A fresh retry key for one return attempt. `crypto.randomUUID()` needs a
- * secure context (the till is always served over https), with a
- * getRandomValues fallback so an odd kiosk browser still sends a valid key —
- * 32 hex characters, which the server's 10–100 `[A-Za-z0-9_-]` rule accepts.
+ * A fresh retry key for one return attempt: a UUID (36 characters), which the
+ * server's 10 to 100 `[A-Za-z0-9_-]` rule accepts. randomUuid works on a
+ * plain-http page too, so an odd kiosk browser still sends a valid key.
  */
 function newAttemptKey(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return randomUuid();
 }
 
 export function ReturnClient({ sale }: { sale: ReturnableSale }) {

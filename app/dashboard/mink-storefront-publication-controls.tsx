@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   CheckCircle2,
   Clock3,
@@ -102,7 +103,7 @@ export function MinkStorefrontPublicationControls({
     setApproval(null);
     setBrowserValidation(null);
     setFrames({});
-    setValidationRun(crypto.randomUUID());
+    setValidationRun(randomUuid());
     setBusy("checks");
   }
 
@@ -119,7 +120,7 @@ export function MinkStorefrontPublicationControls({
       const response = await requestPublication(draftId, {
         action: "preview_publish",
         sourceApprovalId: savedAction.approval.id,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: randomUuid(),
         browserValidation,
       });
       setApproval(response.approval ?? null);
@@ -144,7 +145,7 @@ export function MinkStorefrontPublicationControls({
       const response = await requestPublication(draftId, {
         action: "preview_rollback",
         sourceApprovalId: publicationResult.approval.id,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey: randomUuid(),
       });
       setApproval(response.approval ?? null);
     } catch (requestError) {

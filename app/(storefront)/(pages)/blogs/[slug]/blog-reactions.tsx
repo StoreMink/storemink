@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import { useEffect, useRef, useState } from "react";
 import { MessageSquarePlus, SmilePlus } from "lucide-react";
 import { toggleBlogReaction } from "@/app/actions/blog-social";
@@ -34,10 +35,7 @@ const FAN = (() => {
 function getVisitorId(): string {
   let id = localStorage.getItem(VISITOR_KEY);
   if (!id) {
-    id =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    id = randomUuid();
     localStorage.setItem(VISITOR_KEY, id);
   }
   return id;

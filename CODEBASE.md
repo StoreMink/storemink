@@ -899,7 +899,8 @@ questions, skills, links and code never qualify. Sent as a
 exist and the sentence is not already kept; a failed read costs the offer,
 never the answer. One tap saves through the ordinary `/api/mink/memories`
 save command (90 days, explicit `confirmed`), so the Memories page's rules
-hold; `minkRandomUuid` falls back to `getRandomValues` on a plain-http host.
+hold; `randomUuid` (`lib/random-uuid.ts`) falls back to `getRandomValues` on a
+plain-http host.
 ★★ CATEGORIES ARE A GUARDED DOMAIN ACTION, the customer-group pattern:
 `get_category_for_draft` (name or slug, opaque snapshot),
 `propose_category_create` / `propose_category_update` (categories:manage;
@@ -6575,9 +6576,18 @@ copy icon stays visible and each copy line is 44px tall. Customer-group colour
 chips are 44px tall on touch screens. Every product thumbnail that can come from
 an old host passes `unoptimized={!canOptimizeImage(url)}`, because next/image
 throws on a host outside `remotePatterns` (a store with photos on an older external host
-took the Media Library's Product images tab down). ⚠ Found, not fixed: on
-`http://*.localtest.me` (not a secure context) `crypto.randomUUID` is undefined,
-so `/dashboard/mink-memories` crashes in local dev; production is HTTPS.
+took the Media Library's Product images tab down). ★ Fixed 2026-11-21: on
+`http://*.localtest.me` (not a secure context) `crypto.randomUUID` is
+undefined, so a direct call threw in local dev (the storefront's analytics
+tracker after a shopper accepted analytics, the Website Builder's add and
+duplicate section, Mink's proposal cards, memories and watches, the
+operator pricing editor). Browser code now calls `randomUuid()` from
+`lib/random-uuid.ts` (pure, client-safe), which falls back to
+`getRandomValues`; `lib/random-uuid-coverage.test.ts` fails on a direct
+`crypto.randomUUID()` in a "use client" module or any non-server file that
+touches `window`, `document`, `navigator` or storage. Server code may keep
+calling it: Node always has it. Production is HTTPS, so live pages were never
+affected.
 
 ### Simple Mink Website Builder application (2026-09-13)
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   CheckCircle2,
   ExternalLink,
@@ -78,7 +79,7 @@ export function MinkStorefrontDesignProposalCard({
         const previewResponse = await requestDesignAction(proposal.draftId, {
           action: "preview",
           expectedDraftVersion: 0,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: randomUuid(),
         });
         exactApproval = previewResponse.approval ?? null;
         if (!exactApproval)

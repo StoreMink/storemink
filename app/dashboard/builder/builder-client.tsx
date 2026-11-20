@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import type { SchemeDesign } from "@/lib/themes/schemes";
 import Link from "next/link";
 import {
@@ -530,7 +531,7 @@ export function BuilderClient({
     const src = selectedSection;
     if (!src) return;
     const copy: PageSectionItem = structuredClone(src);
-    copy.id = crypto.randomUUID();
+    copy.id = randomUuid();
     if (copy.style?.anchor) delete copy.style.anchor; // anchors must stay unique
     setSections((s) => {
       const i = s.findIndex((it) => it.id === src.id);
@@ -618,7 +619,7 @@ export function BuilderClient({
 
   const addSection = (type: HomepageSectionType) => {
     const item: PageSectionItem = {
-      id: crypto.randomUUID(),
+      id: randomUuid(),
       type,
       enabled: true,
       config: structuredClone(EMPTY_CONFIG[type]) as AnySectionConfig,

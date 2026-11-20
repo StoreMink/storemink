@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import { useState, useTransition } from "react";
 import { InfoTip } from "@/components/ui/info-tip";
 import {
@@ -411,7 +412,7 @@ function MinkCreditPacks({ packs }: { packs: CreditPack[] }) {
       {
         // A fresh id, never a name-derived one: the id lands on
         // ai_credit_purchases.pack_id and must stay stable across renames.
-        id: crypto.randomUUID(),
+        id: randomUuid(),
         name: "",
         credits: "",
         priceInr: "",

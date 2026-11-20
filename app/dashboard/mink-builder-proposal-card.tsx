@@ -1,4 +1,5 @@
 "use client";
+import { randomUuid } from "@/lib/random-uuid";
 import { useEffect, useRef, useState } from "react";
 import { CustomCodeFrame } from "@/app/(storefront)/components/sections/custom-code-frame";
 import {
@@ -126,7 +127,7 @@ export function MinkBuilderProposalCard({
     setBusy(true);
     setError(null);
     try {
-      idempotency.current ??= crypto.randomUUID();
+      idempotency.current ??= randomUuid();
       const response = await fetch(
         `/api/mink/drafts/${proposal.draftId}/builder-action`,
         {
@@ -378,7 +379,7 @@ function CodeChecks({
   digest: string;
   onChecked: (value: MinkStorefrontBrowserValidation) => void;
 }) {
-  const [token] = useState(() => crypto.randomUUID());
+  const [token] = useState(() => randomUuid());
   const frames = useRef<
     Partial<Record<"desktop" | "mobile", MinkStorefrontBrowserFrameResult>>
   >({});

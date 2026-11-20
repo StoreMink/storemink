@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   CheckCircle2,
   Code2,
@@ -99,7 +100,7 @@ export function MinkStorefrontCodeProposalCard({
           {
             action: "preview",
             expectedDraftVersion: preview.draftVersion,
-            idempotencyKey: crypto.randomUUID(),
+            idempotencyKey: randomUuid(),
           },
         );
         exactApproval = previewResponse.approval ?? null;

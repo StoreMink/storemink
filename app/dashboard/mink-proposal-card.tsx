@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   ArrowRight,
   CalendarClock,
@@ -335,7 +336,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
         {
           action: "preview",
           expectedDraftVersion: draft.currentVersion,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: randomUuid(),
           ...publicationTiming,
           ...campaignSelection,
         },
@@ -454,7 +455,7 @@ export function MinkProposalCard({ proposal }: { proposal: Proposal }) {
         {
           action: "preview_rollback",
           sourceApprovalId: actionResult.approval.id,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: randomUuid(),
         },
       );
       setApproval(next.approval ?? null);

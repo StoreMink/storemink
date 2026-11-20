@@ -1,7 +1,7 @@
+import { randomUuid } from "@/lib/random-uuid";
 import { toast } from "sonner";
 import type { ImageSpecKey } from "@/lib/media/image-specs";
 import { sendPageExitRequest } from "@/lib/http/page-exit-request";
-import { minkRandomUuid } from "@/lib/mink/memory-suggestion";
 import {
   readRefineStopAnswer,
   type RefineStopAnswer,
@@ -244,7 +244,7 @@ export function startImageRefine(input: {
   const view: RefineView = { status: "running" };
   const entry: Entry = {
     matchKey,
-    token: minkRandomUuid(),
+    token: randomUuid(),
     scope: input.scope,
     pathname: input.pathname,
     spec: input.spec,

@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   createContext,
   useCallback,
@@ -200,7 +201,7 @@ export function MerchantTracking({
       if (!firstPartyEnabled || !consent?.analytics) return;
       landing.current ??= readLandingAttribution();
       const payload = JSON.stringify({
-        eventId: crypto.randomUUID(),
+        eventId: randomUuid(),
         type,
         path: window.location.pathname,
         ...(details?.productId ? { productId: details.productId } : {}),

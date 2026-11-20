@@ -19,10 +19,10 @@ import {
   type MinkToolState,
 } from "@/lib/mink/tool-labels";
 import {
-  minkRandomUuid,
   readMinkMemorySuggestion,
   type MinkMemorySuggestion,
 } from "@/lib/mink/memory-suggestion";
+import { randomUuid } from "@/lib/random-uuid";
 import { readMinkScreen } from "./mink-screen";
 import { redactScreenPath } from "@/lib/mink/screen-redaction";
 import {
@@ -1729,9 +1729,9 @@ export function useMinkAi({ enabled }: { enabled: boolean }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             action: "save",
-            id: minkRandomUuid(),
+            id: randomUuid(),
             version: 0,
-            requestKey: minkRandomUuid(),
+            requestKey: randomUuid(),
             title: prompt.suggestion.title,
             content: prompt.suggestion.content,
             kind: prompt.suggestion.kind,

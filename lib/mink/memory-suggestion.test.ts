@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  minkRandomUuid,
   readMinkMemorySuggestion,
   suggestMinkMemory,
 } from "./memory-suggestion";
@@ -78,24 +77,5 @@ describe("suggestMinkMemory", () => {
       content: "Keep answers short.",
       kind: "preference",
     });
-  });
-
-  it("mints an id the memories API accepts even without randomUUID", () => {
-    const uuid =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-    expect(minkRandomUuid()).toMatch(uuid);
-    const original = globalThis.crypto.randomUUID;
-    Object.defineProperty(globalThis.crypto, "randomUUID", {
-      configurable: true,
-      value: undefined,
-    });
-    try {
-      expect(minkRandomUuid()).toMatch(uuid);
-    } finally {
-      Object.defineProperty(globalThis.crypto, "randomUUID", {
-        configurable: true,
-        value: original,
-      });
-    }
   });
 });
