@@ -389,14 +389,18 @@ export function DashboardTopbar({
 
       {/* Right */}
       <div className="flex items-center gap-0.5 sm:gap-3 shrink-0 justify-end">
-        <button
-          type="button"
-          onClick={() => window.open("/", "_blank")}
-          className="hidden sm:flex items-center gap-2 text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 h-[34px] px-3 rounded-lg text-[13px] font-medium transition-colors shrink-0"
-        >
-          <Store className="h-4 w-4" />
-          My Store
-        </button>
+        {/* Store-only, like the store name: the platform console passes no
+            storeName, and there "/" is the marketing site, not a store. */}
+        {storeName && (
+          <button
+            type="button"
+            onClick={() => window.open("/", "_blank")}
+            className="hidden sm:flex items-center gap-2 text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 h-[34px] px-3 rounded-lg text-[13px] font-medium transition-colors shrink-0"
+          >
+            <Store className="h-4 w-4" />
+            My Store
+          </button>
+        )}
 
         <button
           type="button"

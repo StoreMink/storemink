@@ -726,7 +726,10 @@ export interface MinkDockContextValue {
   openChat: ChatContextType["openChat"];
 }
 
-// Outside a provider (the platform console) the bar renders nothing.
+// Outside a provider (the platform console) the bar renders nothing. This is
+// only a second line of defence: the top bar does not mount the face or the
+// bar at all without a provider (useHasChat), and that gate is what keeps
+// the console clean.
 const MinkDockContext = createContext<MinkDockContextValue>({
   enabled: false,
   isChatOpen: false,

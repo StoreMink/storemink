@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -73,16 +74,26 @@ const SEARCH_GROUPS: DashboardSearchGroup[] = [
   },
 ];
 
-function renderTopbar(searchGroups = SEARCH_GROUPS) {
+function renderTopbar(
+  searchGroups = SEARCH_GROUPS,
+  storeName: string | null = "Echos",
+) {
   render(
     <DashboardTopbar
       email="owner@example.com"
       role="owner"
-      storeName="Echos"
+      storeName={storeName ?? undefined}
       searchGroups={searchGroups}
     />,
   );
 }
+
+// Every suite starts on a store with a chat mounted, whatever order the
+// test-order-independence job runs them in.
+beforeEach(() => {
+  chat.isChatOpen = false;
+  chat.mounted = true;
+});
 
 function desktopResults() {
   const list = document.getElementById("dashboard-search-results");
@@ -92,8 +103,6 @@ function desktopResults() {
 
 describe("DashboardTopbar Mink AI button", () => {
   beforeEach(() => {
-    chat.isChatOpen = false;
-    chat.mounted = true;
     chat.toggleChat.mockReset();
   });
 
@@ -104,6 +113,17 @@ describe("DashboardTopbar Mink AI button", () => {
     renderTopbar();
     expect(screen.queryByRole("button", { name: "Mink AI" })).toBeNull();
     expect(screen.queryByTestId("mink-dock")).toBeNull();
+  });
+
+  // The console passes no storeName; there "/" opens the marketing site.
+  it("shows My Store only on a store", () => {
+    renderTopbar(SEARCH_GROUPS, null);
+    expect(screen.queryByRole("button", { name: "My Store" })).toBeNull();
+    cleanup();
+    renderTopbar();
+    expect(
+      screen.getByRole("button", { name: "My Store" }),
+    ).toBeInTheDocument();
   });
 
   it("toggles the chat and reports whether the panel is open", () => {
