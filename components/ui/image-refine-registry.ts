@@ -1,4 +1,4 @@
-import { randomUuid } from "@/lib/random-uuid";
+import { randomUuidStrict } from "@/lib/random-uuid";
 import { toast } from "sonner";
 import type { ImageSpecKey } from "@/lib/media/image-specs";
 import { sendPageExitRequest } from "@/lib/http/page-exit-request";
@@ -244,7 +244,8 @@ export function startImageRefine(input: {
   const view: RefineView = { status: "running" };
   const entry: Entry = {
     matchKey,
-    token: randomUuid(),
+    // The stop token: never guessable, so never from Math.random.
+    token: randomUuidStrict(),
     scope: input.scope,
     pathname: input.pathname,
     spec: input.spec,

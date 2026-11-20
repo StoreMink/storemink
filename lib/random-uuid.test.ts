@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { randomUuid } from "./random-uuid";
+import { randomUuid, randomUuidStrict } from "./random-uuid";
 
 const V4 =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -19,6 +19,27 @@ function withoutRandomUuid<T>(run: () => T): T {
     });
   }
 }
+
+describe("randomUuidStrict", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns a v4 UUID, on plain http too", () => {
+    expect(randomUuidStrict()).toMatch(V4);
+    vi.stubGlobal("crypto", {
+      getRandomValues: globalThis.crypto.getRandomValues.bind(
+        globalThis.crypto,
+      ),
+    });
+    expect(randomUuidStrict()).toMatch(V4);
+  });
+
+  it("throws rather than fall back to Math.random", () => {
+    vi.stubGlobal("crypto", undefined);
+    expect(() => randomUuidStrict()).toThrow(/getRandomValues/);
+  });
+});
 
 describe("randomUuid", () => {
   afterEach(() => {

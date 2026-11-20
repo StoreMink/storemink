@@ -6584,8 +6584,12 @@ duplicate section, Mink's proposal cards, memories and watches, the
 operator pricing editor). Browser code now calls `randomUuid()` from
 `lib/random-uuid.ts` (pure, client-safe), which falls back to
 `getRandomValues`, and to `Math.random` when there is no `crypto` at all
-(ids only, never a secret); the four local copies (the redesign card, the Help
-chat ids, Theme Studio's keys, the site compiler's section ids) now call it.
+(ids only, never a secret; the Refine stop token and the custom-code frame's
+token use `randomUuidStrict()`, which throws instead); the local copies (the
+redesign card, the Help chat ids, Theme Studio's keys, the POS return page's
+attempt key, `minkRandomUuid` in `lib/mink/memory-suggestion.ts`) now call
+it, and the site compiler, which called `globalThis.crypto.randomUUID()`
+directly, does too.
 `lib/random-uuid-coverage.test.ts` is the guard (§5 convention 47). Production
 is HTTPS, so live pages were never affected.
 
@@ -28168,14 +28172,23 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       non-test `.ts`/`.tsx` file under `app`, `components`, `lib` and
       `hooks` with TypeScript and fails on any `randomUUID` identifier (the
       call, `const { randomUUID } = crypto`, `crypto.randomUUID?.()`), so
-      comments and strings never count and nothing can hide code from it.
+      comments and strings never count. ⚠ It cannot see script built as a
+      string and injected into a page or frame (`custom-code-frame.tsx`), or
+      third-party code in `node_modules`.
     - **★ Every file is browser code unless it proves otherwise**: a module is
       often client-only because client components import it, with no directive
-      of its own. Server code is a route handler, a file that starts with
-      "use server", or one importing `server-only` or a Node module (`node:*`
-      or `crypto`); there it may call `crypto.randomUUID` (Node always has it).
-    - Never use `randomUuid()` for a secret or a token that grants access: its
-      last fallback is not cryptographically strong.
+      of its own. Server code is a route handler under `app/`
+      (`route.ts`/`route.tsx`), a file that starts with "use server", or one
+      with a value import of `server-only` or a `node:*` module (an
+      `import type` is erased and proves nothing); there it may call
+      `crypto.randomUUID` (Node always has it). ★ A bare `crypto` import is
+      NOT server code: Next bundles it for the browser as
+      `crypto-browserify`, which has no `randomUUID`, so server files import
+      `node:crypto`.
+    - `randomUuid()` is for ids and idempotency keys: its last fallback is
+      `Math.random`. A value that must not be guessable (a stop token, a
+      token that authenticates a frame) uses `randomUuidStrict()`, which
+      throws instead.
 
 ## 6. Commands
 

@@ -1,5 +1,5 @@
 "use client";
-import { randomUuid } from "@/lib/random-uuid";
+import { randomUuid, randomUuidStrict } from "@/lib/random-uuid";
 import { useEffect, useRef, useState } from "react";
 import { CustomCodeFrame } from "@/app/(storefront)/components/sections/custom-code-frame";
 import {
@@ -379,7 +379,8 @@ function CodeChecks({
   digest: string;
   onChecked: (value: MinkStorefrontBrowserValidation) => void;
 }) {
-  const [token] = useState(() => randomUuid());
+  // Authenticates the frame's results: never from Math.random.
+  const [token] = useState(() => randomUuidStrict());
   const frames = useRef<
     Partial<Record<"desktop" | "mobile", MinkStorefrontBrowserFrameResult>>
   >({});

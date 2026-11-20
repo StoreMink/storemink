@@ -2,7 +2,12 @@
 
 import "server-only";
 import { cookies, headers } from "next/headers";
-import { createHmac, createHash, randomInt, timingSafeEqual } from "crypto";
+import {
+  createHmac,
+  createHash,
+  randomInt,
+  timingSafeEqual,
+} from "node:crypto";
 import { eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { platformAdmins } from "@/drizzle/schema";

@@ -14,15 +14,25 @@ import { describe, expect, it } from "vitest";
  * client-only because client components import it, with no directive of its
  * own (lib/mink/voice-turn.ts was one), so the guard cannot wait for a
  * "use client" line. A file counts as server code only when it starts with
- * "use server", imports `server-only`, imports a Node module (`node:*` or
- * `crypto`, which no browser bundle can load), or is a route handler.
+ * "use server", imports `server-only`, imports a `node:*` module (a value
+ * import: `import type` is erased at build time and proves nothing), or is a
+ * route handler under `app/` (`route.ts` or `route.tsx`).
+ *
+ * ★ A BARE `crypto` IMPORT IS NOT SERVER CODE. Next bundles it for the
+ * browser as `crypto-browserify`, which has no `randomUUID`, so such a call
+ * builds and then throws on every page, https included. Server files import
+ * `node:crypto`.
  *
  * ★ IT MATCHES THE NAME, NOT THE CALL. `const { randomUUID } = crypto`,
  * `window.crypto.randomUUID()` and `crypto.randomUUID?.()` all throw the same
  * way, so any `randomUUID` identifier in browser code fails. The file is
  * parsed with TypeScript itself, so a comment or a string that names it does
- * not count, and nothing (a `accept="image/*"` string, a template literal)
- * can hide code from the check.
+ * not count, and a string such as `accept="image/*"` or a template literal
+ * cannot hide code from the parse.
+ *
+ * ⚠ What it cannot see: script built as a string and injected into a page or
+ * frame (custom-code-frame.tsx does this), and third-party code in
+ * node_modules. It covers our own .ts and .tsx files only.
  */
 const ROOT = process.cwd();
 const DIRS = ["app", "components", "lib", "hooks"];
@@ -53,10 +63,12 @@ function parse(source: string, path: string): ts.SourceFile {
   );
 }
 
-const NODE_MODULE = /^(node:.+|crypto)$/;
+const NODE_MODULE = /^node:.+$/;
+const ROUTE_HANDLER = /^app\/.*\/route\.tsx?$/;
 
+/** `path` is relative to the repository root, with forward slashes. */
 function isServerCode(file: ts.SourceFile, path: string): boolean {
-  if (/[\\/]route\.ts$/.test(path)) return true;
+  if (ROUTE_HANDLER.test(path)) return true;
   const first = file.statements[0];
   if (
     first &&
@@ -68,6 +80,8 @@ function isServerCode(file: ts.SourceFile, path: string): boolean {
   }
   return file.statements.some((statement) => {
     if (!ts.isImportDeclaration(statement)) return false;
+    // Erased at build time, so the file can still reach the browser.
+    if (statement.importClause?.isTypeOnly) return false;
     const from = statement.moduleSpecifier;
     if (!ts.isStringLiteral(from)) return false;
     return from.text === "server-only" || NODE_MODULE.test(from.text);
@@ -91,6 +105,9 @@ function namesRandomUuid(file: ts.SourceFile): boolean {
 
 /** Whether the guard would refuse this source at this path. */
 function offends(source: string, path: string): boolean {
+  // Most files never mention it: skip the parse for them (the parse still
+  // decides for the rest, so a comment or a string never counts).
+  if (!source.includes("randomUUID")) return false;
   const file = parse(source, path);
   return !isServerCode(file, path) && namesRandomUuid(file);
 }
@@ -104,7 +121,7 @@ describe("browser code uses randomUuid, never crypto.randomUUID", () => {
     expect(files.length).toBeGreaterThan(500);
   });
 
-  it("finds no randomUUID in browser code", { timeout: 60_000 }, () => {
+  it("finds no randomUUID in browser code", { timeout: 30_000 }, () => {
     const offenders = files
       .filter((path) => path !== HELPER)
       .filter((path) => offends(readFileSync(join(ROOT, path), "utf8"), path));
@@ -169,5 +186,35 @@ describe("browser code uses randomUuid, never crypto.randomUUID", () => {
     expect(
       offends("const id = crypto.randomUUID();", "app/api/x/route.ts"),
     ).toBe(false);
+    expect(
+      offends("const id = crypto.randomUUID();", "app/api/og/route.tsx"),
+    ).toBe(false);
+  });
+
+  it("does not take a bare crypto import as server code (Next bundles it for the browser)", () => {
+    expect(
+      offends(
+        'import { randomUUID } from "crypto";\nrandomUUID();',
+        "lib/a.ts",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not take a type-only Node import as server code", () => {
+    expect(
+      offends(
+        'import type { Readable } from "node:stream";\ncrypto.randomUUID();',
+        "lib/a.ts",
+      ),
+    ).toBe(true);
+  });
+
+  it("exempts only route handlers under app/", () => {
+    expect(offends("const id = crypto.randomUUID();", "lib/x/route.ts")).toBe(
+      true,
+    );
+    expect(
+      offends("const id = crypto.randomUUID();", "components/x/route.tsx"),
+    ).toBe(true);
   });
 });

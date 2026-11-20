@@ -9,6 +9,7 @@ import {
 } from "@/app/actions/theme-studio-actions";
 import { useUnsavedChangesWarning } from "@/hooks/use-unsaved-changes-warning";
 import { InfoTip } from "@/components/ui/info-tip";
+import { randomUuid } from "@/lib/random-uuid";
 import {
   INDUSTRY_LABELS,
   type ThemeCatalogSize,
@@ -21,7 +22,6 @@ import {
   checkScreenshots,
   fileSizeWords,
   guessIndustry,
-  newIdempotencyKey,
   SCREENSHOT_ACCEPT,
   startRefusedKey,
   themeIdFromName,
@@ -407,7 +407,7 @@ export function NewProjectForm({
         expectedRevision: 0,
         body: brief.trim(),
         referenceAssetIds: added,
-        idempotencyKey: newIdempotencyKey(),
+        idempotencyKey: randomUuid(),
       }).catch(() => null);
       if (!queued) {
         refused =

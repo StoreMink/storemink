@@ -52,6 +52,9 @@ interface LandingAttribution {
  * Nothing is written to the browser, matching the "no identifier stored"
  * promise in the privacy policy.
  */
+/** Warned once per page load when an event cannot be built (track below). */
+let warnedUnbuildableEvent = false;
+
 function readLandingAttribution(): LandingAttribution {
   const params = new URLSearchParams(window.location.search);
   const utm: LandingAttribution["utm"] = {};
@@ -199,8 +202,10 @@ export function MerchantTracking({
   const track = useCallback<TrackStorefrontEvent>(
     (type, details) => {
       if (!firstPartyEnabled || !consent?.analytics) return;
-      // Building the event can fail too (an odd browser's crypto, a URL it
-      // cannot read), and collection must never interrupt a shopper action.
+      // Building the event can only fail on a bug in its fields (a value
+      // JSON cannot serialise); collection must never interrupt a shopper
+      // action, so the event is dropped, with one console line per page load
+      // so a tracker that stops counting leaves a trace.
       let payload: string;
       try {
         landing.current ??= readLandingAttribution();
@@ -213,7 +218,11 @@ export function MerchantTracking({
           // its first one.
           ...(type === "page_view" ? landing.current : {}),
         });
-      } catch {
+      } catch (error) {
+        if (!warnedUnbuildableEvent) {
+          warnedUnbuildableEvent = true;
+          console.warn("storefront analytics: event dropped", error);
+        }
         return;
       }
       try {

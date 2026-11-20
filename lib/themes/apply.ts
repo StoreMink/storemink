@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { randomUUID } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";

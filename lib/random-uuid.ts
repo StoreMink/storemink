@@ -9,9 +9,10 @@
  *
  * Where `crypto` is missing altogether (an old embedded WebView, a stubbed
  * test global) the bytes come from `Math.random`, so a caller never throws
- * over an id. That last case is not cryptographically strong: never use this
- * for a secret or a token that grants access. Every caller today wants an id
- * or an idempotency key, where uniqueness is enough.
+ * over an id. That last case is not cryptographically strong, so this is for
+ * ids and idempotency keys, where uniqueness is enough. A value that must not
+ * be guessable (a token that stops or authenticates something) uses
+ * randomUuidStrict(), which throws rather than fall back to `Math.random`.
  *
  * Browser code calls this, never `crypto.randomUUID` in any form
  * (random-uuid-coverage.test.ts). Server code may call either: Node always
@@ -20,6 +21,19 @@
  * Pure and client-safe: no imports.
  */
 export function randomUuid(): string {
+  return build(false);
+}
+
+/**
+ * The same v4 UUID, for a value that must not be guessable: it never falls
+ * back to `Math.random` and throws where `crypto.getRandomValues` is missing
+ * (no browser StoreMink supports lacks it, plain http included).
+ */
+export function randomUuidStrict(): string {
+  return build(true);
+}
+
+function build(strict: boolean): string {
   const c = (globalThis as { crypto?: Crypto }).crypto;
   if (c && typeof c.randomUUID === "function") {
     try {
@@ -31,6 +45,8 @@ export function randomUuid(): string {
   const bytes = new Uint8Array(16);
   if (c && typeof c.getRandomValues === "function") {
     c.getRandomValues(bytes);
+  } else if (strict) {
+    throw new Error("crypto.getRandomValues is unavailable");
   } else {
     for (let i = 0; i < bytes.length; i++) {
       bytes[i] = Math.floor(Math.random() * 256);

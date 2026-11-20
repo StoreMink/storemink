@@ -11,7 +11,7 @@ import "server-only";
 // address. Unsigned, anyone could suppress a store's entire customer list.
 // ---------------------------------------------------------------------------
 
-import crypto from "crypto";
+import crypto from "node:crypto";
 
 /** Reject anything older than this — a captured-and-replayed webhook is dead. */
 const TOLERANCE_SECONDS = 5 * 60;

@@ -69,7 +69,7 @@ import {
 } from "../studio-ui";
 import { clockWords, designLabel } from "../studio-words";
 import { useStudioProgress } from "../use-studio-progress";
-import { newIdempotencyKey } from "../new/new-theme-helpers";
+import { randomUuid } from "@/lib/random-uuid";
 import { ThemeConversation, type ComposerApi } from "./conversation";
 import { DeleteThemeDialog } from "./delete-theme-button";
 import { ProgressCard, type StudioPlan } from "./progress-card";
@@ -361,7 +361,7 @@ export function RetryRunButton({
                 runId,
                 // Not crypto.randomUUID: it exists only in a secure context,
                 // and a phone reaching the dev server over the network is not.
-                idempotencyKey: newIdempotencyKey(),
+                idempotencyKey: randomUuid(),
               });
               if (!result.ok) {
                 toast.error(plainText(result.error ?? "That didn't start."));

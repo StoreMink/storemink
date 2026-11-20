@@ -1,7 +1,12 @@
 "use server";
 
 import "server-only";
-import { createHash, createHmac, randomInt, timingSafeEqual } from "crypto";
+import {
+  createHash,
+  createHmac,
+  randomInt,
+  timingSafeEqual,
+} from "node:crypto";
 import { cookies, headers } from "next/headers";
 import { getServerUser } from "@/lib/auth/server-user";
 import { emailVerifiedNow } from "@/lib/auth/email-verified";

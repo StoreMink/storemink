@@ -5297,7 +5297,7 @@ interface BuildResult {
 }
 
 export interface RevampCompileOptions {
-  /** New section ids; `crypto.randomUUID()` by default. */
+  /** New section ids; `randomUuid()` by default. */
   newId?: () => string;
 }
 

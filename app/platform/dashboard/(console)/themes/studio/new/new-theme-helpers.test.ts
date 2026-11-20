@@ -7,7 +7,6 @@ import {
   checkScreenshots,
   fileSizeWords,
   guessIndustry,
-  newIdempotencyKey,
   nextThemeName,
   SCREENSHOT_ACCEPT,
   startRefusedKey,
@@ -209,14 +208,6 @@ describe("the industry is preselected from the brief", () => {
 describe("the chain's small pieces", () => {
   it("leaves a refused start under the key the theme page reads", () => {
     expect(startRefusedKey("p-1")).toBe("studio:start-refused:p-1");
-  });
-
-  // The plain-http case is lib/random-uuid.test.ts's.
-  it("makes an idempotency key the server accepts", () => {
-    const key = newIdempotencyKey();
-    expect(key).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
-    expect(key).toHaveLength(32);
-    expect(newIdempotencyKey()).not.toBe(key);
   });
 
   it("never writes a long dash", () => {

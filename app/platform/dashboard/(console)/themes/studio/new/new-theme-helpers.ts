@@ -1,4 +1,3 @@
-import { randomUuid } from "@/lib/random-uuid";
 import type { ThemeIndustry } from "@/lib/themes/meta";
 
 // ---------------------------------------------------------------------------
@@ -448,13 +447,4 @@ export function guessIndustry(
  */
 export function startRefusedKey(projectId: string): string {
   return `studio:start-refused:${projectId}`;
-}
-
-/**
- * A fresh idempotency key for one start: 32 hex characters, which
- * repository.ts accepts (`^[A-Za-z0-9_-]{16,80}$`). randomUuid() works on a
- * local `*.localtest.me` address over http too.
- */
-export function newIdempotencyKey(): string {
-  return randomUuid().replace(/-/g, "");
 }
