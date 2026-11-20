@@ -620,6 +620,17 @@ function MinkChatAddress({
   return null;
 }
 
+/**
+ * Whether a Mink AI chat is mounted here. The platform console renders the
+ * shared top bar with no ChatProvider (Mink AI works on one store's data), so
+ * the top bar hides its Mink AI button there instead of showing one that does
+ * nothing. A store whose Mink AI is switched off still has a provider (its
+ * button opens the "coming soon" answer), so this is not `enabled`.
+ */
+export function useHasChat(): boolean {
+  return useContext(ChatContext) !== undefined;
+}
+
 export function useChat() {
   const context = useContext(ChatContext);
   if (context === undefined) {

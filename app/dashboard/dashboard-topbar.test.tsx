@@ -18,10 +18,13 @@ vi.mock("next/navigation", () => ({
 const chat = vi.hoisted(() => ({
   isChatOpen: false,
   toggleChat: vi.fn(),
+  // False renders the top bar as the platform console does: no ChatProvider.
+  mounted: true,
 }));
 
 vi.mock("./chat-context", () => ({
   useChat: () => chat,
+  useHasChat: () => chat.mounted,
 }));
 
 // The pop-out bar has its own suite (mink-dock.test.tsx).
@@ -90,7 +93,17 @@ function desktopResults() {
 describe("DashboardTopbar Mink AI button", () => {
   beforeEach(() => {
     chat.isChatOpen = false;
+    chat.mounted = true;
     chat.toggleChat.mockReset();
+  });
+
+  // The platform console has no chat (Mink AI works on one store's data), so a
+  // button there would do nothing when pressed.
+  it("shows no Mink AI button where no chat is mounted", () => {
+    chat.mounted = false;
+    renderTopbar();
+    expect(screen.queryByRole("button", { name: "Mink AI" })).toBeNull();
+    expect(screen.queryByTestId("mink-dock")).toBeNull();
   });
 
   it("toggles the chat and reports whether the panel is open", () => {
