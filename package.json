@@ -12,6 +12,7 @@
     "dev:full": "node scripts/dev-server.mjs --heap-mb=0",
     "dev:reset": "node scripts/dev-server.mjs --reset-cache",
     "db:proxy": "cloud-sql-proxy --port 6543 --run-connection-test storemink-prod:asia-south1:storemink-prod-db",
+    "db:local:init": "./scripts/db-local-ctl.sh init",
     "db:local:start": "./scripts/db-local-ctl.sh start",
     "db:local:stop": "./scripts/db-local-ctl.sh stop",
     "db:local:status": "./scripts/db-local-ctl.sh status",

@@ -270,11 +270,12 @@ dump's ownership statements resolve to a real role.
 
 `npm run db:local:sync` dumps staging and restores it locally.
 
-★★ **The dump uses `--role=app_service`, and that flag is load-bearing.** The
+★★ **The dump runs as the `postgres` admin user, and that is load-bearing.** The
 `app` login has `rolbypassrls = false`, so a dump taken as `app` returns **zero
-rows** for every RLS-protected table — which is all the service-only ones
-(`mink_*`, `email_logs`, `data_jobs`, the billing tables) — with no error. The
-schema would look perfect and the data would be quietly missing.
+rows** for every RLS-protected table (all the service-only ones: `mink_*`,
+`email_logs`, `data_jobs`, the billing tables) with no error. The schema would
+look perfect and the data would be quietly missing. The admin password is read
+from Secret Manager with your ADC login; it is never printed.
 
 ★ **A dump, not replayed SQL, and that is deliberate.** The
 `drizzle/migrations/manifest.json` baseline is a _verification_ baseline: it
@@ -293,6 +294,52 @@ is down. Re-run it after a migration lands on staging, so local cannot silently
 drift; `npm run db:migrate:local status` then reports against the same
 checksummed ledger (`ENV_DATABASES.local` is `null`, so there is no name guard).
 
+### Setting it up on Windows (2026-11-20)
+
+The same scripts run on Windows from Git Bash (npm's script-shell), against the
+EDB **portable** PostgreSQL 17 binaries rather than an installer, so nothing is
+registered as a Windows service and nothing needs administrator rights.
+
+1. Unzip the PostgreSQL 17 "binaries" zip from EDB to `%USERPROFILE%\pgsql`
+   (so `%USERPROFILE%\pgsql\bin\postgres.exe` exists).
+2. pgvector: the EDB zip does not include it, and the dump needs it. Build it once
+   from the official source with Visual Studio 2022 Build Tools (C++ workload):
+   in an "x64 Native Tools Command Prompt", `set PGROOT=%USERPROFILE%\pgsql`, then
+   in the pgvector source folder `nmake /F Makefile.win` and
+   `nmake /F Makefile.win install`. Use the same pgvector version as staging
+   (0.8.5 on 2026-11-20).
+3. `npm run db:local:init` creates the cluster in `%USERPROFILE%\pgsql-data`:
+   superuser `postgres`, trust auth, listening on 127.0.0.1:5544 only, ICU
+   `en-US` (the sort order of the Cloud SQL instance).
+4. `npm run db:local:start` (the log goes to `%USERPROFILE%\pgsql-log`). The
+   cluster does not start with Windows: run this after every reboot.
+5. `gcloud auth application-default login`, start the proxy
+   (`npm run db:proxy`), then `npm run db:local:sync`. It creates the roles the
+   dump needs, copies staging, checks the copy and writes `.env.local`. Stop the
+   proxy afterwards.
+6. `npm run dev` and open `http://localtest.me:3000` (stores at
+   `{slug}.localtest.me:3000`; real phone codes do not work on `localhost`).
+
+Override any path with `PG_HOME` (binaries), `PG_DATA` (cluster) or `PG_LOG`.
+The sync script decodes the Secret Manager answer with `node`, so it needs no
+Python. Tested end to end on a brand-new cluster on 2026-11-20: 214 tables,
+285 ledger rows, no restore errors.
+
+★★ **`.gitattributes` pins the migrations and `*.sh` to LF.** Git for Windows
+defaults `core.autocrlf` to true, which checks text out with CRLF. The migration
+runner checksums each SQL file byte for byte and the ledger holds the LF
+checksums, so a CRLF checkout reports every applied migration as drifted and
+`db:migrate` refuses to run; and bash cannot run a script with CRLF line endings.
+A checkout made before the attribute existed keeps its CRLF files until they are
+checked out again: with no local changes there, delete the folder and run
+`git checkout -- drizzle/migrations` (the same for `scripts`).
+
+★ **The roles step stubs every staging role.** A dump carries policies and grants
+for roles that exist only on Cloud SQL. The script reads the staging role list and
+creates each missing one as a `NOLOGIN` stub before the restore, so those
+statements apply instead of failing (a policy whose role is missing is lost, not
+just warned about).
+
 ### Switching between local and staging
 
 `.env.local` holds the overrides and Next.js loads it above `.env`. Delete or
@@ -303,6 +350,7 @@ not match `.env.local`; `.env*.local` was added.
 
 | Command                    | Effect                                       |
 | -------------------------- | -------------------------------------------- |
+| `npm run db:local:init`    | create the cluster (Windows, once)           |
 | `npm run db:local:start`   | start the cluster (sets `LC_ALL`)            |
 | `npm run db:local:status`  | cluster state and local table count          |
 | `npm run db:local:sync`    | rebuild `storemink_local` from staging       |
@@ -328,7 +376,8 @@ staging Firebase project. Existing staging logins keep working locally. Do not
 restore a `storemink` (production) dump and sign in against the staging project.
 
 ⚠ **The local database holds a copy of staging data.** It is test data, but it is
-on disk unencrypted in `/opt/homebrew/var/postgresql@17`. Use
+on disk unencrypted in `/opt/homebrew/var/postgresql@17` (Mac) or
+`%USERPROFILE%\pgsql-data` (Windows). Use
 `npm run db:local:sync -- --schema-only` for a schema-only copy.
 
 These changes affect developer tooling only. No merchant or customer flow,

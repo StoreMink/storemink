@@ -20,6 +20,17 @@ SCHEMA_ONLY=0
 
 export LC_ALL=${LC_ALL:-en_US.UTF-8}
 cd "$(dirname "$0")/.."
+
+# Windows (Git Bash): the portable PostgreSQL 17 binaries live in
+# %USERPROFILE%\pgsql (see scripts/db-local-ctl.sh), and that cluster's
+# superuser is `postgres`, not the Windows user name. Every STAGING call below
+# passes -U explicitly, so PGUSER only affects the local cluster.
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    PATH="${PG_HOME:-$HOME/pgsql}/bin:$PATH"
+    export PGUSER=${PGUSER:-postgres}
+    ;;
+esac
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 die() { printf '\n\033[31mFAILED: %s\033[0m\n' "$1" >&2; exit 1; }
 
@@ -31,8 +42,8 @@ die() { printf '\n\033[31mFAILED: %s\033[0m\n' "$1" >&2; exit 1; }
 #   * every STAGING call sets PGPASSWORD="$ADMIN_PW" explicitly, from
 #     CLOUDSQL_PROD_POSTGRES_PW via Secret Manager (step 2 below);
 #   * every LOCAL call is `-w` (never prompt) against :5544, which is a
-#     trust-auth Homebrew cluster — it connects with the wrong password and
-#     with no password at all.
+#     trust-auth cluster (Homebrew, or the Windows one `db:local:init` makes)
+#     — it connects with the wrong password and with no password at all.
 #
 # So the gate could only ever refuse to run; it could not make anything work.
 
@@ -60,11 +71,8 @@ if [ -z "$ADMIN_PW" ]; then
   if [ -n "$TOKEN" ]; then
     ADMIN_PW=$(curl -s -H "Authorization: Bearer $TOKEN" \
       "https://secretmanager.googleapis.com/v1/projects/storemink-prod/secrets/CLOUDSQL_PROD_POSTGRES_PW/versions/latest:access" \
-      | python3 -c "import sys,json,base64
-try:
-    print(base64.b64decode(json.load(sys.stdin)['payload']['data']).decode())
-except Exception:
-    pass" || true)
+      | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{process.stdout.write(Buffer.from(JSON.parse(d).payload.data,'base64').toString())}catch(e){}})" \
+      || true)
   fi
 fi
 if [ -z "$ADMIN_PW" ]; then
@@ -85,7 +93,7 @@ SRV=$(PGPASSWORD="$ADMIN_PW" psql -w -h 127.0.0.1 -p "$PROXY_PORT" -U "$ADMIN_US
         -tAc "select current_setting('server_version_num')::int/10000")
 CLI=$(pg_dump --version | sed -E 's/.* ([0-9]+).*/\1/')
 echo "staging server major=$SRV, pg_dump client major=$CLI"
-[ "$CLI" -ge "$SRV" ] || die "pg_dump $CLI is older than the server $SRV; brew install postgresql@$SRV"
+[ "$CLI" -ge "$SRV" ] || die "pg_dump $CLI is older than the server $SRV; install PostgreSQL $SRV (Mac: brew install postgresql@$SRV)"
 
 # ★★ Cloud SQL's `postgres` is NOT a real superuser (rolsuper=false,
 # rolbypassrls=false). It owns every public table, and an owner IS exempt from
@@ -114,6 +122,37 @@ say "4/8 checking the local cluster on :$LOCAL_PORT"
 psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -tAc 'select 1' >/dev/null 2>&1 \
   || die "local cluster down. Start it: npm run db:local:start"
 echo "local cluster ok"
+
+# pg_dump does not dump roles, but the dump's GRANTs and policies name them, so
+# a fresh cluster (a new laptop, `db:local:init`) needs them first. The app's
+# own roles get their real attributes: app_service must have BYPASSRLS or
+# withService silently returns nothing. Every other role staging has (apart from
+# Postgres's and Cloud SQL's built-in ones) becomes an empty NOLOGIN stub, so a
+# policy or GRANT naming it restores instead of failing. All idempotent.
+STAGING_ROLES=$(PGPASSWORD="$ADMIN_PW" psql -w -h 127.0.0.1 -p "$PROXY_PORT" -U "$ADMIN_USER" -d "$STAGING_DB" -tAc \
+  "select coalesce(string_agg(quote_literal(rolname), ','), '''none''') from pg_roles
+    where rolname !~ '^(pg_|cloudsql)' and rolname <> 'postgres';")
+psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -q -v ON_ERROR_STOP=1 <<SQL
+DO \$\$
+DECLARE r text;
+BEGIN
+  FOREACH r IN ARRAY ARRAY['cloudsqlsuperuser','anon','authenticated','service_role','app_user','app_service','app'] LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+    END IF;
+  END LOOP;
+  FOR r IN SELECT unnest(ARRAY[$STAGING_ROLES]) LOOP
+    IF r <> 'none' AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+      EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+    END IF;
+  END LOOP;
+END \$\$;
+ALTER ROLE app_service BYPASSRLS;
+ALTER ROLE app LOGIN;
+GRANT anon, authenticated TO app_user;
+GRANT app_user, app_service, cloudsqlsuperuser TO app;
+SQL
+echo "roles ok"
 
 say "5/8 dumping staging (as $ADMIN_USER)"
 DUMP=$(mktemp -t storemink-staging-XXXX).dump
@@ -178,6 +217,11 @@ rm -f "$DUMP"
 if [ -f .env.local ]; then
   echo ".env.local already present, leaving it alone"
 else
+  # The local cluster is trust-auth, so the password is never checked. The
+  # default exists because DB_PASSWORD is no longer read from .env (see the top
+  # of this file), and under `set -u` the bare variable stopped the script here
+  # on any machine without it exported.
+  LOCAL_PW=${DB_PASSWORD:-local-dev-trust}
   cat > .env.local <<ENVEOF
 # Local Postgres override (StoreMink dev). Next.js loads .env.local ABOVE .env,
 # so these win while this file exists. Delete or rename it to go back to the
@@ -188,11 +232,11 @@ DB_HOST=127.0.0.1
 DB_PORT=$LOCAL_PORT
 DB_NAME=$LOCAL_DB
 DB_USER=app
-DB_PASSWORD=$DB_PASSWORD
+DB_PASSWORD=$LOCAL_PW
 
 # npm run db:migrate needs an admin login; it never falls back to the app login.
 DB_ADMIN_USER=postgres
-DB_ADMIN_PASSWORD=$DB_PASSWORD
+DB_ADMIN_PASSWORD=$LOCAL_PW
 ENVEOF
   chmod 600 .env.local
   echo "wrote .env.local (0600) -> app now uses the local database"
