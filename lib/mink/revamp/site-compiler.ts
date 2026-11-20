@@ -54,6 +54,7 @@ import {
   type StorefrontDesignOverrides,
 } from "@/lib/chrome/design";
 import { IMAGE_SPECS, specForRatio } from "@/lib/media/image-specs";
+import { randomUuid } from "@/lib/random-uuid";
 import {
   clampLimit,
   EMPTY_CONFIG,
@@ -1062,7 +1063,7 @@ function clone<T>(value: T): T {
 }
 
 function defaultNewId(): string {
-  return globalThis.crypto.randomUUID();
+  return randomUuid();
 }
 
 /** "#abc" → "#aabbcc", lowercase; null for anything that is not hex. */

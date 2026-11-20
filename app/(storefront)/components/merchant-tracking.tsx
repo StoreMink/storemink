@@ -199,16 +199,23 @@ export function MerchantTracking({
   const track = useCallback<TrackStorefrontEvent>(
     (type, details) => {
       if (!firstPartyEnabled || !consent?.analytics) return;
-      landing.current ??= readLandingAttribution();
-      const payload = JSON.stringify({
-        eventId: randomUuid(),
-        type,
-        path: window.location.pathname,
-        ...(details?.productId ? { productId: details.productId } : {}),
-        // Attribution rides on page views; the rollup credits a session by
-        // its first one.
-        ...(type === "page_view" ? landing.current : {}),
-      });
+      // Building the event can fail too (an odd browser's crypto, a URL it
+      // cannot read), and collection must never interrupt a shopper action.
+      let payload: string;
+      try {
+        landing.current ??= readLandingAttribution();
+        payload = JSON.stringify({
+          eventId: randomUuid(),
+          type,
+          path: window.location.pathname,
+          ...(details?.productId ? { productId: details.productId } : {}),
+          // Attribution rides on page views; the rollup credits a session by
+          // its first one.
+          ...(type === "page_view" ? landing.current : {}),
+        });
+      } catch {
+        return;
+      }
       try {
         if (navigator.sendBeacon) {
           navigator.sendBeacon(

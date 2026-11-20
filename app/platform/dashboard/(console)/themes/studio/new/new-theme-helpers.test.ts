@@ -211,19 +211,12 @@ describe("the chain's small pieces", () => {
     expect(startRefusedKey("p-1")).toBe("studio:start-refused:p-1");
   });
 
-  it("makes an idempotency key the server accepts, with or without randomUUID", () => {
-    const pattern = /^[A-Za-z0-9_-]{16,80}$/;
-    expect(newIdempotencyKey()).toMatch(pattern);
-    // An http page that is not a secure context: no randomUUID.
-    const insecure: Pick<Crypto, "getRandomValues"> = {
-      getRandomValues: globalThis.crypto.getRandomValues.bind(
-        globalThis.crypto,
-      ),
-    };
-    const key = newIdempotencyKey(insecure);
-    expect(key).toMatch(pattern);
+  // The plain-http case is lib/random-uuid.test.ts's.
+  it("makes an idempotency key the server accepts", () => {
+    const key = newIdempotencyKey();
+    expect(key).toMatch(/^[A-Za-z0-9_-]{16,80}$/);
     expect(key).toHaveLength(32);
-    expect(newIdempotencyKey(insecure)).not.toBe(key);
+    expect(newIdempotencyKey()).not.toBe(key);
   });
 
   it("never writes a long dash", () => {

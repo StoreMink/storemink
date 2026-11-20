@@ -6583,11 +6583,11 @@ tracker after a shopper accepted analytics, the Website Builder's add and
 duplicate section, Mink's proposal cards, memories and watches, the
 operator pricing editor). Browser code now calls `randomUuid()` from
 `lib/random-uuid.ts` (pure, client-safe), which falls back to
-`getRandomValues`; `lib/random-uuid-coverage.test.ts` fails on a direct
-`crypto.randomUUID()` in a "use client" module or any non-server file that
-touches `window`, `document`, `navigator` or storage. Server code may keep
-calling it: Node always has it. Production is HTTPS, so live pages were never
-affected.
+`getRandomValues`, and to `Math.random` when there is no `crypto` at all
+(ids only, never a secret); the four local copies (the redesign card, the Help
+chat ids, Theme Studio's keys, the site compiler's section ids) now call it.
+`lib/random-uuid-coverage.test.ts` is the guard (§5 convention 47). Production
+is HTTPS, so live pages were never affected.
 
 ### Simple Mink Website Builder application (2026-09-13)
 
@@ -10291,6 +10291,10 @@ wholesip/
 │   │                          # `cost` spends that many units in one call
 │   │                          # (check_rate_limit_cost, 0229); a key is counted
 │   │                          # or weighted, never both
+│   ├── random-uuid.ts         # ★ randomUuid(): a v4 UUID on any page, plain http
+│   │                          # included (getRandomValues, then Math.random).
+│   │                          # Browser code's only way to make one; guard:
+│   │                          # random-uuid-coverage.test.ts (§5 convention 47)
 │   ├── client-ip.ts           # ★ clientIp/clientIpOrNull: the address that connected
 │   │                          # to our load balancer, read from the RIGHT of
 │   │                          # X-Forwarded-For (the entry before the rightmost
@@ -28154,6 +28158,24 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       AI prompts. No merchant step changes, so no Help Centre update; button
       labels, headings and field labels were kept, because Mink AI's spotlight
       (`lib/mink/guide-targets.ts`), tests and Help guides name them.
+
+47. **Browser code makes a UUID with `randomUuid()`, never
+    `crypto.randomUUID` (2026-11-21).** `crypto.randomUUID` exists only in a
+    secure context, and local development serves stores on
+    `http://{slug}.localtest.me`, where a call throws and takes the page down.
+    `lib/random-uuid.ts` falls back to `getRandomValues`, then `Math.random`.
+    - **`lib/random-uuid-coverage.test.ts` is the guard.** It parses every
+      non-test `.ts`/`.tsx` file under `app`, `components`, `lib` and
+      `hooks` with TypeScript and fails on any `randomUUID` identifier (the
+      call, `const { randomUUID } = crypto`, `crypto.randomUUID?.()`), so
+      comments and strings never count and nothing can hide code from it.
+    - **★ Every file is browser code unless it proves otherwise**: a module is
+      often client-only because client components import it, with no directive
+      of its own. Server code is a route handler, a file that starts with
+      "use server", or one importing `server-only` or a Node module (`node:*`
+      or `crypto`); there it may call `crypto.randomUUID` (Node always has it).
+    - Never use `randomUuid()` for a secret or a token that grants access: its
+      last fallback is not cryptographically strong.
 
 ## 6. Commands
 

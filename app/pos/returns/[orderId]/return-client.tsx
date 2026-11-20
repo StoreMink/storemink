@@ -36,15 +36,6 @@ const METHODS: { id: RefundMethod; label: string }[] = [
   { id: "upi", label: "UPI" },
 ];
 
-/**
- * A fresh retry key for one return attempt: a UUID (36 characters), which the
- * server's 10 to 100 `[A-Za-z0-9_-]` rule accepts. randomUuid works on a
- * plain-http page too, so an odd kiosk browser still sends a valid key.
- */
-function newAttemptKey(): string {
-  return randomUuid();
-}
-
 export function ReturnClient({ sale }: { sale: ReturnableSale }) {
   const router = useRouter();
   const [qty, setQty] = useState<Record<string, number>>({});
@@ -126,7 +117,9 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
         reason: reason || null,
       });
       if (attempt.current?.fingerprint !== fingerprint) {
-        attempt.current = { fingerprint, key: newAttemptKey() };
+        // A UUID (36 characters) meets the server's 10 to 100
+        // `[A-Za-z0-9_-]` rule, on a plain-http kiosk page too.
+        attempt.current = { fingerprint, key: randomUuid() };
       }
       const res = await processReturn(
         sale.orderId,
