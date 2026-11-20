@@ -391,6 +391,66 @@ describe("DashboardSidebar on a settings page", () => {
     );
   });
 
+  it("★ highlights Branding itself for a role with Branding but not Storefront", () => {
+    // foldNestedSections leaves an orphan top-level when its parent was
+    // filtered out, so this role sees Branding as its own item. Forcing the
+    // Storefront href (not in this nav) would leave nothing highlighted.
+    path.current = "/dashboard/branding";
+    render(
+      <DashboardSidebar
+        groups={[
+          {
+            group: "Online store",
+            items: [
+              {
+                href: "/dashboard/branding",
+                label: "Branding",
+                icon: "colors",
+              },
+            ],
+          },
+          {
+            group: "Settings",
+            items: [
+              {
+                href: "/dashboard/settings",
+                label: "Settings",
+                icon: "settings",
+              },
+            ],
+          },
+        ]}
+        settingsFrame
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Branding" })).toHaveClass(
+      "active",
+    );
+    expect(screen.getByRole("link", { name: "Settings" })).not.toHaveClass(
+      "active",
+    );
+  });
+
+  it("★ highlights Staff itself for a role with Staff but not Settings", () => {
+    path.current = "/dashboard/admins";
+    render(
+      <DashboardSidebar
+        groups={[
+          {
+            group: "Settings",
+            items: [
+              { href: "/dashboard/admins", label: "Staff", icon: "users" },
+            ],
+          },
+        ]}
+        settingsFrame
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Staff" })).toHaveClass("active");
+  });
+
   it("keeps the Settings panel where the frame is not used (the operator console)", () => {
     path.current = "/dashboard/admins";
     render(<DashboardSidebar groups={FRAME_NAV} />);

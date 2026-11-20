@@ -21,7 +21,8 @@ import {
   unreadBadge,
   useUnreadCounts,
 } from "./components/unread-counts-context";
-import { settingsOwnerHref } from "./settings/settings-nav";
+import { settingsOwnerHref } from "./(settings)/settings/settings-nav";
+import { pathMatches } from "./nav-path";
 
 type Child = {
   label: string;
@@ -40,13 +41,6 @@ type Item = {
   openInNewTab?: boolean;
 };
 type Group = { group: string; items: Item[] };
-
-function matches(pathname: string, href: string): boolean {
-  return (
-    pathname === href ||
-    (href !== "/dashboard" && pathname.startsWith(`${href}/`))
-  );
-}
 
 /**
  * Which top-level section owns this path — i.e. whose sub-nav panel to show.
@@ -76,8 +70,10 @@ export function resolveActiveSection<
     // A DIRECT match wins first, and that order is load-bearing:
     // `/dashboard/users` must open the Customers panel rather than being claimed
     // by some parent that happens to list a child beneath that path.
-    items.find((it) => matches(pathname, it.href)) ??
-    items.find((it) => it.children?.some((c) => matches(pathname, c.href))) ??
+    items.find((it) => pathMatches(pathname, it.href)) ??
+    items.find((it) =>
+      it.children?.some((c) => pathMatches(pathname, c.href)),
+    ) ??
     items.find((it) => it.href === "/dashboard") ??
     items[0]
   );
@@ -137,7 +133,7 @@ export function DashboardSidebar({
    *  wrong one. */
   logsBasePath?: string;
   /** The merchant dashboard's Settings pages carry their own settings menu
-   *  (app/dashboard/settings/settings-frame.tsx), so the sidebar shows the
+   *  (app/dashboard/(settings)/settings/settings-frame.tsx), so the sidebar shows the
    *  main nav there instead of a second Settings panel. The operator console
    *  leaves this off: its paths overlap (/dashboard/billing, /dashboard/roles)
    *  but it has no settings menu. */
@@ -208,9 +204,13 @@ export function DashboardSidebar({
   // sits inside the page, so a Settings panel here would be a second list of
   // the same pages. The item that owns the page (Settings, or Storefront for
   // Branding and Website settings) stays highlighted, though the page's
-  // address is not its own.
-  const settingsOwner =
+  // address is not its own. Only when that owner IS in this viewer's nav: a
+  // role with Branding but not Storefront sees Branding as its own top-level
+  // item, and forcing the Storefront href would leave nothing highlighted.
+  const ownerHref =
     settingsFrame && !inLogs ? settingsOwnerHref(pathname) : null;
+  const settingsOwner =
+    ownerHref && allItems.some((i) => i.href === ownerHref) ? ownerHref : null;
 
   useEffect(() => {
     setOpen(false);
@@ -261,7 +261,7 @@ export function DashboardSidebar({
           ) : !settingsOwner && activeSection?.children?.length ? (
             (() => {
               const activeChildHref = activeSection
-                .children!.filter((c) => matches(pathname, c.href))
+                .children!.filter((c) => pathMatches(pathname, c.href))
                 .sort((a, b) => b.href.length - a.href.length)[0]?.href;
               return (
                 <div className="dash-nav-scroll px-3">

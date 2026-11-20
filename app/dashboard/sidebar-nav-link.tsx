@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { navIcons, type NavIconKey } from "./nav-icons";
 import { usePathname } from "next/navigation";
+import { pathMatches } from "./nav-path";
 
 export function SidebarNavLink({
   href,
@@ -24,11 +25,7 @@ export function SidebarNavLink({
   active?: boolean;
 }) {
   const pathname = usePathname();
-  const isActive =
-    active ??
-    (!openInNewTab &&
-      (pathname === href ||
-        (href !== "/dashboard" && pathname.startsWith(`${href}/`))));
+  const isActive = active ?? (!openInNewTab && pathMatches(pathname, href));
   const Icon = navIcons[icon];
 
   return (

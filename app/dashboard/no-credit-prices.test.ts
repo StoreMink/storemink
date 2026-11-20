@@ -36,6 +36,10 @@ const EXEMPT: { prefix: string; why: string }[] = [
     why: "Plans & Billing: buying and reviewing credits is the point",
   },
   {
+    prefix: "app/dashboard/(settings)/plans/",
+    why: "the Plans & Billing pages, in the settings route group",
+  },
+  {
     prefix: "app/actions/ai-credit-actions.ts",
     why: "the credit-pack purchase behind Plans & Billing",
   },

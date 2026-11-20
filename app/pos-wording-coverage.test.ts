@@ -461,7 +461,7 @@ describe("★★ POS, never register or till, in product text", () => {
       "StoreMink POS running across a desktop register, tablet, and phone with the real checkout interface",
     ],
     [
-      "app/dashboard/admins/users-management-view.tsx",
+      "app/dashboard/(settings)/admins/users-management-view.tsx",
       "Are you sure you want to remove this person? Their register sign-in will be deleted. This cannot be undone.",
     ],
     [

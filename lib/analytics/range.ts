@@ -91,6 +91,20 @@ export function normalizeAnalyticsTimeZone(value: unknown): string {
   return isValidTimeZone(value) ? value : DEFAULT_ANALYTICS_TIME_ZONE;
 }
 
+/** The store's business time zone from its `stores.settings` (the
+ *  `business.timeZone` key), defaulted the way every reader defaults it. */
+export function analyticsTimeZoneFromSettings(settings: unknown): string {
+  const business =
+    settings && typeof settings === "object"
+      ? (settings as Record<string, unknown>).business
+      : undefined;
+  return normalizeAnalyticsTimeZone(
+    business && typeof business === "object"
+      ? (business as Record<string, unknown>).timeZone
+      : undefined,
+  );
+}
+
 function partsAt(instant: Date, timeZone: string): LocalDateTime {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone,

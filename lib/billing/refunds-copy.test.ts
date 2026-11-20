@@ -69,9 +69,9 @@ const FILES = [
   "app/actions/subscribe-actions.ts",
   "app/api/cron/billing/route.ts",
   // Stage 8b: the merchant's Plans & Billing screens
-  "app/dashboard/plans/page.tsx",
-  "app/dashboard/plans/invoices/page.tsx",
-  "app/dashboard/plans/invoices/page.test.tsx",
+  "app/dashboard/(settings)/plans/page.tsx",
+  "app/dashboard/(settings)/plans/invoices/page.tsx",
+  "app/dashboard/(settings)/plans/invoices/page.test.tsx",
   "app/dashboard/plans/invoices/invoice-sheet.tsx",
   "app/dashboard/plans/refunds-notice.tsx",
   "app/dashboard/plans/refunds-notice.test.tsx",
