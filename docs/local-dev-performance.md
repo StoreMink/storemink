@@ -241,14 +241,14 @@ A native Homebrew `postgresql@17` cluster, **not** a container. Docker Desktop o
 Colima would add a Linux VM of roughly 2 GB on a machine already using 10.4 GB of
 12 GB swap, which costs more than the round trips it saves.
 
-| Item      | Value                                                                                                          |
-| --------- | -------------------------------------------------------------------------------------------------------------- |
-| Server    | PostgreSQL 17.10 (Homebrew), `vector 0.8.0` available                                                          |
-| Port      | **5544**                                                                                                       |
-| Database  | `storemink_local`, owner `postgres`                                                                            |
-| Login     | `app`, member of `app_user`, `app_service` and the legacy policy roles `anon`, `authenticated`, `service_role` |
-| Auth      | `trust` for local and 127.0.0.1 (the cluster's existing `pg_hba.conf`)                                         |
-| Footprint | ~16 MB idle                                                                                                    |
+| Item      | Value                                                                                                               |
+| --------- | ------------------------------------------------------------------------------------------------------------------- |
+| Server    | PostgreSQL 17.10 (Homebrew), `vector 0.8.0` available                                                               |
+| Port      | **5544**                                                                                                            |
+| Database  | `storemink_local`, owner `postgres`                                                                                 |
+| Login     | `app`, member of `app_user` and `app_service`; `app_user` is a member of `anon` and `authenticated` (as on staging) |
+| Auth      | `trust` for local and 127.0.0.1 (the cluster's existing `pg_hba.conf`)                                              |
+| Footprint | ~16 MB idle                                                                                                         |
 
 ★ **Port 5544, not 5432.** This Mac already runs EDB PostgreSQL 15, 16 and 17
 from `/Library/PostgreSQL/` on ports 5432–5434 as the system `postgres` user.
@@ -261,10 +261,16 @@ running.
 postmaster exits with `FATAL: postmaster became multithreaded during startup`.
 `scripts/db-local-ctl.sh` sets it; starting `pg_ctl` by hand without it fails.
 
-★ **The roles are created before any restore.** `pg_dump` does not dump roles,
-and the dump's `GRANT` statements reference them. `app_service` needs `BYPASSRLS`
-or `withService` silently returns nothing; `postgres` is created locally so the
-dump's ownership statements resolve to a real role.
+★ **The roles are copied from staging before any restore.** `pg_dump` does not
+dump roles, and the dump's `GRANT` statements and policies reference them. The
+sync reads every staging role with its `LOGIN` and `BYPASSRLS`, and the
+memberships between them, and makes local match: it creates what is missing,
+sets the attributes and revokes a membership staging does not have. So
+`app_service` has `BYPASSRLS` (or `withService` silently returns nothing), and
+`app_user` is in exactly the policy roles it is in on staging, so a `withUser`
+query sees locally what it sees on dev. `postgres` is created as a superuser
+when missing (Homebrew's `initdb` makes only your macOS user), because the
+database is created and restored as `postgres`.
 
 ### Rebuilding from staging
 
@@ -284,9 +290,12 @@ anything, so `db:migrate` cannot build a database from empty, and the schema
 before that baseline was applied by hand and survives only in git history. A
 dump is provably the schema that is actually deployed.
 
-★ **The restore tolerates errors on purpose.** A Cloud SQL dump carries `GRANT`s
-to roles that exist only there (`cloudsqladmin` and friends). Those lines failing
-is expected; the script filters them out and prints anything else.
+★ **The restore tolerates exactly one kind of error.** A Cloud SQL dump carries
+`GRANT`s to roles that exist only there (`cloudsqladmin` and friends), and those
+lines failing is expected. Any other error stops the run before `.env.local` is
+written, and every extension staging uses (pgvector, pg_trgm) is checked as
+installable before the local database is dropped, so a missing pgvector fails
+early instead of leaving a copy with no vector columns.
 
 The script refuses rather than guessing when ADC has expired, when the proxy is
 not answering, when `pg_dump` is older than the server, or when the local cluster
@@ -296,9 +305,15 @@ checksummed ledger (`ENV_DATABASES.local` is `null`, so there is no name guard).
 
 ### Setting it up on Windows (2026-11-20)
 
-The same scripts run on Windows from Git Bash (npm's script-shell), against the
-EDB **portable** PostgreSQL 17 binaries rather than an installer, so nothing is
-registered as a Windows service and nothing needs administrator rights.
+The same scripts run on Windows from Git Bash, against the EDB **portable**
+PostgreSQL 17 binaries rather than an installer, so nothing is registered as a
+Windows service and nothing needs administrator rights.
+
+0. Tell npm to run scripts with Git Bash. On Windows npm uses `cmd.exe` by
+   default, which cannot run `./scripts/*.sh` (`'.' is not recognized`), so every
+   `db:local:*` and `db:migrate:local` script fails without this:
+   `npm config set script-shell "C:\Program Files\Git\bin\bash.exe"` (in any
+   shell).
 
 1. Unzip the PostgreSQL 17 "binaries" zip from EDB to `%USERPROFILE%\pgsql`
    (so `%USERPROFILE%\pgsql\bin\postgres.exe` exists).
@@ -320,25 +335,23 @@ registered as a Windows service and nothing needs administrator rights.
 6. `npm run dev` and open `http://localtest.me:3000` (stores at
    `{slug}.localtest.me:3000`; real phone codes do not work on `localhost`).
 
-Override any path with `PG_HOME` (binaries), `PG_DATA` (cluster) or `PG_LOG`.
+Override any path with `PG_HOME` (binaries), `PG_DATA` (cluster) or `PG_LOG`,
+written either way (`C:\tools\pgsql` or `/c/tools/pgsql`). Both scripts read
+these from `scripts/db-local-env.sh`. `db:local:init` is Windows only; on a Mac,
+Homebrew creates the cluster.
 The sync script decodes the Secret Manager answer with `node`, so it needs no
 Python. Tested end to end on a brand-new cluster on 2026-11-20: 214 tables,
 285 ledger rows, no restore errors.
 
-★★ **`.gitattributes` pins the migrations and `*.sh` to LF.** Git for Windows
-defaults `core.autocrlf` to true, which checks text out with CRLF. The migration
-runner checksums each SQL file byte for byte and the ledger holds the LF
-checksums, so a CRLF checkout reports every applied migration as drifted and
-`db:migrate` refuses to run; and bash cannot run a script with CRLF line endings.
-A checkout made before the attribute existed keeps its CRLF files until they are
-checked out again: with no local changes there, delete the folder and run
-`git checkout -- drizzle/migrations` (the same for `scripts`).
-
-★ **The roles step stubs every staging role.** A dump carries policies and grants
-for roles that exist only on Cloud SQL. The script reads the staging role list and
-creates each missing one as a `NOLOGIN` stub before the restore, so those
-statements apply instead of failing (a policy whose role is missing is lost, not
-just warned about).
+★★ **`.gitattributes` checks every text file out with LF** (`* text=auto eol=lf`).
+Git for Windows defaults `core.autocrlf` to true, which checks text out with CRLF.
+The migration runner checksums each SQL file byte for byte and the ledger holds
+the LF checksums, so a CRLF checkout reports every applied migration as drifted
+and `db:migrate` refuses to run; bash cannot run a script with CRLF line endings;
+and Prettier's default is LF, so `npm run prettier` flags every CRLF file. A
+checkout made before the attribute existed keeps its CRLF files until they are
+checked out again; on a clean tree, `git rm --cached -r -q . && git reset --hard`
+rewrites them all with LF.
 
 ### Switching between local and staging
 

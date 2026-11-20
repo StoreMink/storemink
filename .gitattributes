@@ -1,11 +1,12 @@
-# Keep these files' line endings exactly as stored in Git, whatever a machine's
-# core.autocrlf says (Git for Windows defaults it to true).
+# Every text file is checked out with LF, whatever a machine's core.autocrlf says
+# (Git for Windows defaults it to true, which would give CRLF). Git still detects
+# binary files itself, so images and archives are untouched.
 #
-# Migrations are checksummed byte for byte (scripts/db-migrations-core.mjs), and
-# the ledger holds the LF checksums, so a CRLF checkout reports every applied
-# migration as drifted and `db:migrate` refuses to run.
-drizzle/migrations/** text eol=lf
-
-# Bash cannot run a script with CRLF line endings ("$'\r': command not found"),
-# and Git Bash is npm's script-shell on Windows.
-*.sh text eol=lf
+# Three things break on CRLF:
+# - migrations are checksummed byte for byte (scripts/db-migrations-core.mjs)
+#   and the ledger holds the LF checksums, so a CRLF checkout reports every
+#   applied migration as drifted and `db:migrate` refuses to run;
+# - bash cannot run a script with CRLF line endings ("$'\r': command not found");
+# - Prettier's default `endOfLine` is lf, so `npm run prettier` flags every
+#   CRLF file and `npm run format` rewrites it.
+* text=auto eol=lf

@@ -11419,8 +11419,15 @@ wholesip/
 │   │                          # (Git Bash): the EDB portable binaries in
 │   │                          # ~/pgsql, cluster ~/pgsql-data, and `init` makes it
 │   │                          # (superuser postgres, trust, 127.0.0.1:5544, ICU
-│   │                          # en-US); PG_HOME/PG_DATA/PG_LOG override. Setup:
-│   │                          # docs/local-dev-performance.md "on Windows".
+│   │                          # en-US; Windows only, refused elsewhere).
+│   │                          # npm must use Git Bash as its script-shell there.
+│   │                          # Setup: docs/local-dev-performance.md "on Windows".
+│   ├── db-local-env.sh        # sourced by db-local-ctl.sh and db-local-sync.sh:
+│   │                          # port 5544, the binaries/data/log paths per platform
+│   │                          # (PG_HOME/PG_DATA/PG_LOG override, Windows-style paths
+│   │                          # converted with cygpath) and the local superuser
+│   │                          # (PGUSER=postgres on Windows). One copy, so the two
+│   │                          # scripts cannot talk to different binaries or users.
 │   ├── billing-verify.sql     # ★ §34 adversarial check of the APPLIED billing schema
 │   │                          # (26 checks; moved from the pre-ledger SQL folder).
 │   │                          # Mutations run in a plpgsql SUBTRANSACTION that is
@@ -11442,13 +11449,18 @@ wholesip/
 │                              # applied by hand and survives only in git history.
 │                              # Refuses on expired
 │                              # ADC, a dead proxy, or pg_dump older than the server.
-│                              # Before the restore it creates the core roles and a
-│                              # NOLOGIN stub for every staging role, so the dump's
-│                              # policies and grants apply. Runs on Windows too
-│                              # (decodes the secret with node, no python). The
-│                              # root .gitattributes pins drizzle/migrations/** and
-│                              # *.sh to LF: a CRLF checkout breaks the migration
-│                              # checksums and bash.
+│                              # Before dropping anything it checks every staging
+│                              # extension is installable here (pgvector on Windows
+│                              # is built by hand). Before the restore it copies
+│                              # staging's roles, LOGIN/BYPASSRLS and the memberships
+│                              # between them (revoking any staging lacks), and
+│                              # creates `postgres` when missing (a Homebrew cluster
+│                              # has only the macOS user). Any restore error other
+│                              # than Cloud SQL's own roles stops the run before
+│                              # .env.local. Runs on Windows too (decodes the secret
+│                              # with node, no python). The root .gitattributes is
+│                              # `* text=auto eol=lf`: a CRLF checkout breaks the
+│                              # migration checksums, bash and Prettier's check.
 │   └── help-content-migrations.test.mjs # static contract for the 0019–0024 public Help
 │                              # baseline: exact file/order/article counts, unique slugs,
 │                              # complete metadata/substantial bodies, valid internal links,

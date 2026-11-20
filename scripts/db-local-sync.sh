@@ -11,7 +11,12 @@
 #         npm run db:local:sync -- --schema-only
 set -euo pipefail
 
-LOCAL_PORT=5544
+# Binaries, port and the local superuser: shared with db-local-ctl.sh. Every
+# STAGING call below passes -U explicitly, so PGUSER only affects the local
+# cluster.
+# shellcheck source=scripts/db-local-env.sh
+. "$(dirname "$0")/db-local-env.sh"
+LOCAL_PORT=$LOCAL_PG_PORT
 LOCAL_DB=storemink_local
 PROXY_PORT=6543
 STAGING_DB=storemink_staging
@@ -20,17 +25,6 @@ SCHEMA_ONLY=0
 
 export LC_ALL=${LC_ALL:-en_US.UTF-8}
 cd "$(dirname "$0")/.."
-
-# Windows (Git Bash): the portable PostgreSQL 17 binaries live in
-# %USERPROFILE%\pgsql (see scripts/db-local-ctl.sh), and that cluster's
-# superuser is `postgres`, not the Windows user name. Every STAGING call below
-# passes -U explicitly, so PGUSER only affects the local cluster.
-case "$(uname -s)" in
-  MINGW* | MSYS* | CYGWIN*)
-    PATH="${PG_HOME:-$HOME/pgsql}/bin:$PATH"
-    export PGUSER=${PGUSER:-postgres}
-    ;;
-esac
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 die() { printf '\n\033[31mFAILED: %s\033[0m\n' "$1" >&2; exit 1; }
 
@@ -123,34 +117,100 @@ psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -tAc 'select 1' >/dev/null 2>&
   || die "local cluster down. Start it: npm run db:local:start"
 echo "local cluster ok"
 
+# Every extension staging uses must be installable here, checked BEFORE the
+# local database is dropped. Without it the restore's CREATE EXTENSION fails,
+# every column and index of that type fails after it, and the copy is unusable
+# (pgvector is the one to watch on Windows: it is built by hand).
+STAGING_EXTS=$(PGPASSWORD="$ADMIN_PW" psql -w -h 127.0.0.1 -p "$PROXY_PORT" -U "$ADMIN_USER" -d "$STAGING_DB" -tAc \
+  "select coalesce(string_agg(extname, ' ' order by extname), '') from pg_extension where extname <> 'plpgsql';")
+MISSING_EXTS=""
+for ext in $STAGING_EXTS; do
+  psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -tAc \
+    "select 1 from pg_available_extensions where name = '$ext'" | grep -q 1 \
+    || MISSING_EXTS="$MISSING_EXTS $ext"
+done
+[ -z "$MISSING_EXTS" ] || die "this cluster cannot install:$MISSING_EXTS (staging uses them).
+  pgvector on Windows: step 2 of \"Setting it up on Windows\" in docs/local-dev-performance.md
+  (build it with PGROOT set to this cluster's folder, $PG_HOME).
+  pgvector on a Mac: brew install pgvector
+  Your local database was not touched."
+echo "extensions available: ${STAGING_EXTS:-none}"
+
 # pg_dump does not dump roles, but the dump's GRANTs and policies name them, so
-# a fresh cluster (a new laptop, `db:local:init`) needs them first. The app's
-# own roles get their real attributes: app_service must have BYPASSRLS or
-# withService silently returns nothing. Every other role staging has (apart from
-# Postgres's and Cloud SQL's built-in ones) becomes an empty NOLOGIN stub, so a
-# policy or GRANT naming it restores instead of failing. All idempotent.
-STAGING_ROLES=$(PGPASSWORD="$ADMIN_PW" psql -w -h 127.0.0.1 -p "$PROXY_PORT" -U "$ADMIN_USER" -d "$STAGING_DB" -tAc \
-  "select coalesce(string_agg(quote_literal(rolname), ','), '''none''') from pg_roles
-    where rolname !~ '^(pg_|cloudsql)' and rolname <> 'postgres';")
+# a fresh cluster (a new laptop, `db:local:init`) needs them first. Every role
+# staging has (apart from Postgres's and Cloud SQL's built-in ones, keeping
+# cloudsqlsuperuser) is copied with staging's LOGIN and BYPASSRLS and staging's
+# memberships between them, read here rather than written down, so local can
+# never drift from what dev and production run. app_service must have BYPASSRLS
+# or withService silently returns nothing; app_user's memberships decide which
+# `TO authenticated` policies apply under withUser. A membership local has and
+# staging does not is revoked. cloudsqlsuperuser matters too: pg_restore runs
+# the schema's three GRANTs as ONE command, so a missing cloudsqlsuperuser also
+# skipped USAGE for app_user and app_service. All idempotent.
+ROLE_DATA=$(PGPASSWORD="$ADMIN_PW" psql -w -h 127.0.0.1 -p "$PROXY_PORT" -U "$ADMIN_USER" -d "$STAGING_DB" \
+  -tA -v ON_ERROR_STOP=1 <<'SQL'
+with managed as (
+  select oid, rolname, rolcanlogin, rolbypassrls from pg_roles
+   where (rolname !~ '^(pg_|cloudsql)' or rolname = 'cloudsqlsuperuser')
+     and rolname <> 'postgres'
+)
+select format('INSERT INTO managed VALUES (%L, %L, %L);', rolname, rolcanlogin, rolbypassrls)
+  from managed
+union all
+select format('INSERT INTO wanted VALUES (%L, %L);', g.rolname, m.rolname)
+  from pg_auth_members a
+  join managed g on g.oid = a.roleid
+  join managed m on m.oid = a.member;
+SQL
+)
+for core in app app_user app_service anon authenticated service_role cloudsqlsuperuser; do
+  grep -q "INSERT INTO managed VALUES ('$core'," <<<"$ROLE_DATA" \
+    || die "staging has no role $core; refusing to guess its rights"
+done
 psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -q -v ON_ERROR_STOP=1 <<SQL
+-- Homebrew's initdb makes the macOS user the only superuser; the database is
+-- created OWNER postgres and restored as postgres below.
+DO \$\$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+    CREATE ROLE postgres SUPERUSER LOGIN;
+  END IF;
+END \$\$;
+CREATE TEMP TABLE managed (name text, login boolean, bypass boolean);
+CREATE TEMP TABLE wanted (role text, member text);
+$ROLE_DATA
 DO \$\$
-DECLARE r text;
+DECLARE x record;
 BEGIN
-  FOREACH r IN ARRAY ARRAY['cloudsqlsuperuser','anon','authenticated','service_role','app_user','app_service','app'] LOOP
-    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-      EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+  FOR x IN SELECT * FROM managed LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = x.name) THEN
+      EXECUTE format('CREATE ROLE %I NOLOGIN', x.name);
     END IF;
+    EXECUTE format('ALTER ROLE %I %s %s', x.name,
+      CASE WHEN x.login THEN 'LOGIN' ELSE 'NOLOGIN' END,
+      CASE WHEN x.bypass THEN 'BYPASSRLS' ELSE 'NOBYPASSRLS' END);
   END LOOP;
-  FOR r IN SELECT unnest(ARRAY[$STAGING_ROLES]) LOOP
-    IF r <> 'none' AND NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-      EXECUTE format('CREATE ROLE %I NOLOGIN', r);
+  FOR x IN
+    SELECT g.rolname AS role, m.rolname AS member, gr.rolname AS grantor
+      FROM pg_auth_members a
+      JOIN pg_roles g ON g.oid = a.roleid
+      JOIN pg_roles m ON m.oid = a.member
+      JOIN pg_roles gr ON gr.oid = a.grantor
+     WHERE g.rolname IN (SELECT name FROM managed)
+       AND m.rolname IN (SELECT name FROM managed)
+       AND NOT EXISTS (SELECT 1 FROM wanted w
+                        WHERE w.role = g.rolname AND w.member = m.rolname)
+  LOOP
+    EXECUTE format('REVOKE %I FROM %I GRANTED BY %I', x.role, x.member, x.grantor);
+  END LOOP;
+  FOR x IN SELECT * FROM wanted LOOP
+    IF NOT EXISTS (SELECT 1 FROM pg_auth_members a
+                     JOIN pg_roles g ON g.oid = a.roleid
+                     JOIN pg_roles m ON m.oid = a.member
+                    WHERE g.rolname = x.role AND m.rolname = x.member) THEN
+      EXECUTE format('GRANT %I TO %I', x.role, x.member);
     END IF;
   END LOOP;
 END \$\$;
-ALTER ROLE app_service BYPASSRLS;
-ALTER ROLE app LOGIN;
-GRANT anon, authenticated TO app_user;
-GRANT app_user, app_service, cloudsqlsuperuser TO app;
 SQL
 echo "roles ok"
 
@@ -163,13 +223,6 @@ PGPASSWORD="$ADMIN_PW" pg_dump -h 127.0.0.1 -p "$PROXY_PORT" -U "$ADMIN_USER" -d
   -f "$DUMP"
 echo "dumped $(du -h "$DUMP" | cut -f1) -> $DUMP"
 
-# Cloud SQL dumps GRANT to `cloudsqlsuperuser`, which exists only there. Create a
-# stub so the restore's grant block succeeds — pg_restore runs those three GRANTs
-# as ONE command, so failing the first also skipped USAGE for app_user/app_service.
-psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -tAc \
-  "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cloudsqlsuperuser')
-     THEN CREATE ROLE cloudsqlsuperuser NOLOGIN; END IF; END \$\$;" >/dev/null
-
 say "6/8 recreating $LOCAL_DB"
 psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d postgres -v ON_ERROR_STOP=1 <<SQL
 SELECT pg_terminate_backend(pid) FROM pg_stat_activity
@@ -180,14 +233,21 @@ SQL
 echo "recreated"
 
 say "7/8 restoring"
-# Not ON_ERROR_STOP: a Cloud SQL dump carries GRANTs to roles that only exist
-# there (cloudsqladmin & co). Those lines failing is expected and harmless;
-# anything else is reported below.
+# Not ON_ERROR_STOP: a Cloud SQL dump carries GRANTs to roles that exist only
+# there (cloudsqladmin & co, which are deliberately not stubbed). Those lines
+# failing is expected and harmless. Every other role is created above, so any
+# other error is real (a missing extension type, a failed index) and stops the
+# run before .env.local points the app at a broken copy.
 pg_restore -h 127.0.0.1 -p "$LOCAL_PORT" -U postgres -d "$LOCAL_DB" \
   --no-owner --role=postgres --jobs=2 "$DUMP" 2>"$DUMP.err" || true
-REAL_ERRS=$(grep -c "^pg_restore: error" "$DUMP.err" 2>/dev/null || echo 0)
-echo "restore finished; $REAL_ERRS error lines (see $DUMP.err)"
-grep "^pg_restore: error" "$DUMP.err" 2>/dev/null | grep -viE "role \"cloudsql|does not exist" | head -10 || true
+ALL_ERRS=$(grep -c "^pg_restore: error" "$DUMP.err" 2>/dev/null || true)
+OTHER_ERRS=$(grep "^pg_restore: error" "$DUMP.err" 2>/dev/null | grep -v 'role "cloudsql' || true)
+echo "restore finished; ${ALL_ERRS:-0} error lines (see $DUMP.err)"
+if [ -n "$OTHER_ERRS" ]; then
+  printf '%s\n' "$OTHER_ERRS" | head -20
+  die "the restore failed on more than Cloud SQL's own roles (above; full log $DUMP.err).
+  .env.local was not written or changed."
+fi
 
 say "8/8 verifying"
 psql -w -h 127.0.0.1 -p "$LOCAL_PORT" -d "$LOCAL_DB" -x -tA <<'SQL'

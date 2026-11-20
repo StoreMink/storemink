@@ -1,42 +1,28 @@
 #!/usr/bin/env bash
 # Start/stop/status the local dev Postgres cluster.
 #
-#   macOS:   Homebrew postgresql@17, cluster in /opt/homebrew/var/postgresql@17.
-#   Windows: the PostgreSQL 17 portable binaries unpacked to %USERPROFILE%\pgsql,
-#            cluster in %USERPROFILE%\pgsql-data. Runs from Git Bash (npm's
-#            script-shell). `init` creates that cluster once.
-#
-# Override any path with PG_HOME (binaries), PG_DATA (cluster) or PG_LOG.
-#
-# Runs on port 5544, NOT 5432: the first Mac this was set up on already had EDB
-# PostgreSQL 15/16/17 servers on 5432-5434 as the system `postgres` user. A
-# dedicated port means the dev database can never collide with those or need
-# their password.
+# Paths, port and superuser come from scripts/db-local-env.sh (macOS Homebrew
+# postgresql@17, or the Windows portable binaries in %USERPROFILE%\pgsql).
+# `init` creates the Windows cluster once; Homebrew creates the Mac one.
 #
 # LC_ALL is load-bearing on macOS: without a valid locale the postmaster dies
 # with "postmaster became multithreaded during startup".
 set -euo pipefail
 export LC_ALL=${LC_ALL:-en_US.UTF-8} LANG=${LANG:-en_US.UTF-8}
-PORT=5544
-
-case "$(uname -s)" in
-  MINGW* | MSYS* | CYGWIN*)
-    PG_HOME=${PG_HOME:-$HOME/pgsql}
-    DATA=${PG_DATA:-$HOME/pgsql-data}
-    LOG=${PG_LOG:-$HOME/pgsql-log/postgres.log}
-    PATH="$PG_HOME/bin:$PATH"
-    # `init` below names the superuser `postgres`; the Windows user name is not
-    # a role in this cluster.
-    export PGUSER=${PGUSER:-postgres}
-    ;;
-  *)
-    DATA=${PG_DATA:-/opt/homebrew/var/postgresql@17}
-    LOG=${PG_LOG:-/opt/homebrew/var/log/postgresql@17.log}
-    ;;
-esac
+# shellcheck source=scripts/db-local-env.sh
+. "$(dirname "$0")/db-local-env.sh"
+PORT=$LOCAL_PG_PORT
+DATA=$PG_DATA
+LOG=$PG_LOG
 
 case "${1:-status}" in
   init)
+    if [ "$LOCAL_PG_PLATFORM" != windows ]; then
+      echo "init is for Windows. On a Mac, Homebrew creates the cluster:"
+      echo "  brew install postgresql@17 pgvector"
+      echo "then add 'port = $PORT' to $DATA/postgresql.conf and run: npm run db:local:start"
+      exit 1
+    fi
     if [ -f "$DATA/PG_VERSION" ]; then
       echo "cluster already exists at $DATA"
       exit 0
