@@ -153,7 +153,9 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > `.dashboard-frame:has([data-dash-pinned-top])`. `mink-dock-css.test.ts`
 > fails when an element using a class some stylesheet pins flush to the top (a
 > negative `--dash-pad-t` top inset) lacks the marker; a bar pinned only with
-> Tailwind classes or a CSS module is not detected. Screen reading and the
+> Tailwind classes or a CSS module is not detected. The Settings menu is
+> exempt by name (`LEFT_COLUMN_PINS`): it is pinned in a left column the bar
+> never reaches, and a stale entry fails. Screen reading and the
 > spotlight skip it through `[data-mink-dock]`. No first-visit auto-out, no
 > keyboard shortcut, no microphone. Help: `20261110_0277_mink_rail_help`; the
 > review fixes change no merchant step, so no Help Centre update.
