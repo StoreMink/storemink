@@ -96,6 +96,68 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > ordinary Echos merchant requests, separate tester expectations, clarification
 > conversations and a distinct technical security appendix.
 
+> **Mink AI top-bar pop-out (2026-11-10; review fixes 2026-11-17):** the
+> Mink AI pop-out bar (`app/dashboard/mink-dock.tsx`) hangs under the top-bar
+> Mink face, inside its `.dash-mink-dock` wrapper in `dashboard-topbar.tsx`.
+> At rest it is a dark "Ask Mink AI" tab in the top bar's colour
+> (`--dash-topbar-bg`); hover (after 150 ms) or KEYBOARD focus slides it out
+> into a bar with a field and one suggestion. A mouse press on the tab does not
+> open it by focus (the press would land its release on the bar and the tab's
+> click would be lost); the click opens it into the field. Focus stays on the
+> tab (the next Tab reaches the field; a click, Enter or Space moves into it),
+> and while the bar is out the tab is only see-through under it (never
+> `visibility: hidden`, which would refuse focus), with the bar drawing its
+> focus ring. ★ The bar covers the tab, so a pointer click on one of its
+> buttons within `MINK_DOCK_CLICK_GUARD_MS` (400 ms) of the pointer opening it
+> only puts focus in the field: it never sends a question nobody chose. The
+> hover timer arms that guard only when it opens a closed bar (a bar the
+> keyboard already opened is clickable at once), and pressing the tab cancels
+> a pending hover open, so the bar never slides over the tab mid-press. Its
+> buttons `preventDefault` on mousedown, so the field keeps focus (Safari never
+> focuses a clicked button, and the blur would hide the bar under the click).
+> Escape closes it and returns focus to the tab; the pointer cannot reopen it
+> until it has left the dock, and focus until focus has left the dock (two
+> separate flags). `aria-controls` names the bar, and the face names
+> `#mink-chat-panel`, only while that element is on screen.
+> ★ Asking goes through `ChatContextType.startChat(message, { expanded })`,
+> the one starter for the bar (side panel) and Home's box and the "Ask Mink"
+> buttons (`startExpandedChat` is `startChat(..., { expanded: true })`): a new
+> chat; while a reply runs the question waits in the box AFTER any draft there;
+> otherwise a draft in the panel's box is put back once the question is sent;
+> an empty question just opens Mink on the current chat. It bumps
+> `focusComposerOnOpen` (never on a touch screen, `pointer: coarse`, so a
+> question from Home or an Ask Mink button does not raise the keyboard), and
+> both chat surfaces mark a bump handled (the one
+> not on screen too), so maximizing later never steals focus. The bar reads
+> `useMinkDock()` (`MinkDockContext`: enabled, isChatOpen, skills,
+> pageSuggestion, startChat, openChat), a small context whose value keeps its
+> identity across streamed tokens (`startChat`/`openChat` read the newest
+> values through a ref), so the bar does not re-render with every token. The
+> suggestion is the page's own when one is set with both words to show and to
+> send (`MinkPageSuggestion` in `mink-page-suggestion.tsx` sets
+> `pageSuggestion`; the go-live card offers its open unfinished task's question
+> through `goLiveTaskQuestion`), else the first starter skill for the path;
+> `minkSuggestedPrompts` (`lib/mink/page-suggestions.ts`) is the one list the
+> bar (its first) and the panel's empty-state chips (up to four) both use. On
+> touch screens (`pointer: coarse`) a tap opens the panel straight away
+> (`openChat({ focusComposer: false })`, so the keyboard does not rise). It
+> renders only when Mink is enabled and the chat is closed. Closing the chat
+> from its Close button returns focus to the control that opened it
+> (`app/dashboard/mink-opener.ts`: recorded at the click or at an open from
+> the address, used while it is still on the page, and forgotten whenever the
+> chat closes by any route, so a stale control never receives focus), else the builder's own Mink AI button while the Website
+> Builder is mounted, else the face (`[data-mink-toggle]`). CSS hides the bar
+> below 768px, with the builder mounted, in analytics edit mode, and on pages
+> with a bar pinned to the top (save bar, offer, product editor and Invoices &
+> Billing headers), each marked `data-dash-pinned-top`:
+> `.dashboard-frame:has([data-dash-pinned-top])`. `mink-dock-css.test.ts`
+> fails when an element using a class some stylesheet pins flush to the top (a
+> negative `--dash-pad-t` top inset) lacks the marker; a bar pinned only with
+> Tailwind classes or a CSS module is not detected. Screen reading and the
+> spotlight skip it through `[data-mink-dock]`. No first-visit auto-out, no
+> keyboard shortcut, no microphone. Help: `20261110_0277_mink_rail_help`; the
+> review fixes change no merchant step, so no Help Centre update.
+
 > **★★ The builder's top bar was hidden for two months (fixed 2026-10-25):**
 > the builder is a fixed overlay mounted inside `.dash-content`, which is
 > `relative z-10` (a stacking context), and the dashboard topbar has been

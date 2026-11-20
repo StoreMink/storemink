@@ -36,6 +36,8 @@ import {
   regenerateStorefrontPassword,
 } from "@/app/actions/launch-actions";
 import type { LaunchChecklistItem } from "@/lib/store/launch-checklist-rules";
+import { goLiveTaskQuestion } from "@/lib/mink/page-suggestions";
+import { MinkPageSuggestion } from "./mink-page-suggestion";
 import styles from "./setup-guide.module.css";
 
 // The phone library and Firebase's phone sign-in load only when somebody opens
@@ -243,11 +245,23 @@ export function SetupGuide({
   const [open, setOpen] = useState<string | null>(firstOpen);
   const [showRecommended, setShowRecommended] = useState(false);
   const pct = Math.round((requiredDone / Math.max(requiredTotal, 1)) * 100);
+  // The top-bar "Ask Mink AI" bar offers a question about the task the
+  // merchant has open (when it is unfinished), else the first unfinished one.
+  const openUnfinished = required.some((i) => i.key === open && !i.done)
+    ? open
+    : firstOpen;
+  const taskQuestion = goLiveTaskQuestion(openUnfinished);
 
   return (
     <section
       className={`dash-card @container overflow-hidden! p-0 ${CARD_DEPTH}`}
     >
+      {taskQuestion ? (
+        <MinkPageSuggestion
+          label={taskQuestion.label}
+          prompt={taskQuestion.prompt}
+        />
+      ) : null}
       {/* ★ The aurora hero: the password strip, Go live and the progress
           share one band over a soft wash, so the card's head reads as one
           piece and the list below sits on clean white. */}
