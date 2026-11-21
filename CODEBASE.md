@@ -673,8 +673,8 @@ Vertex allows 2 image requests a minute per project per base model, a limit
 that cannot be raised, so a storefront redesign's 11 or so photographs queue
 31 to 45 seconds apart and several redesigns at once queue behind each other.
 An operator switch on the console's **Mink AI runs** page
-(`/dashboard/mink`, `image-provider-switch.tsx`, superadmin to change) picks
-who draws them: **Google Vertex AI** (the default, unchanged) or
+(`/dashboard/mink`, `image-provider-switch.tsx`, "Image generation",
+superadmin to change) picks who draws every picture: **Google Vertex AI** (the default, unchanged) or
 **ElevenLabs**, with an ElevenLabs image model (`ELEVENLABS_IMAGE_MODELS` in
 `lib/mink/image-provider-settings.ts`: Nano Banana 2 the default, Nano Banana
 Pro, Nano Banana 2 Lite, GPT Image 2, 2.5 Flare, 2.5 Sunburst, Seedream 5
@@ -684,11 +684,17 @@ no endpoint lists them). Stored in service-only `mink_image_settings`
 columns) and written by `setRevampImageSettings`
 (`app/actions/mink-operator-actions.ts`), which refuses ElevenLabs on a
 server with no `ELEVENLABS_API_KEY`.
-★ WHAT IT COVERS. The redesign's shoot (`photos.ts` `defaultImageClient`,
-now async) and its product studio photos (`products.ts`, `elevenLabsGenerate`
-over `lib/mink/media-generation-elevenlabs.ts`). NOT covered, still Vertex:
-photo checks (gemini-3.8-flash), Theme Studio image runs, chat images,
-Refine, Change background, storefront personalisation.
+★ WHAT IT COVERS: EVERY PICTURE. The redesign's shoot (`photos.ts`
+`defaultImageClient`) and product studio photos (`products.ts`
+`elevenLabsGenerate`), Theme Studio's photo runs (`worker.ts`
+`executeImages`), and every caller of `requestMinkImage` (chat images,
+Refine, storefront personalisation), which hands its Gemini-shaped request
+to `requestMinkImageWithElevenLabs`: text parts become the prompt, image
+parts (inline, or `gs://` in StoreMink's own bucket) the references, the
+answer comes back Gemini-shaped, so no caller changed. NOT covered, because
+ElevenLabs has no text or vision model: photo checks, Mink chat, Theme
+Studio's design writing, AI copy, the redesign planner, and BiRefNet's
+Change background (no Vertex in it at all).
 ★★ NO VERTEX PACING ON THIS PATH. `lib/theme-studio/image-elevenlabs.ts`
 (`createElevenLabsImageClient`, `requestElevenLabsImage`) never touches
 `sharedProviderCapacity`: one per-process gate (6 at once,
