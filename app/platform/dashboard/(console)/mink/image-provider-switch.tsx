@@ -49,13 +49,11 @@ export function ImageProviderSwitch({
       });
       if (result.error || !result.success || !result.settings) {
         setSettings(previous);
-        toast.error(
-          result.error || "Could not change who draws redesign photos.",
-        );
+        toast.error(result.error || "Could not change who draws pictures.");
         return;
       }
       setSettings(result.settings);
-      toast.success("Redesign photos updated.");
+      toast.success("Image generation updated.");
     });
   }
 
@@ -64,17 +62,17 @@ export function ImageProviderSwitch({
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h2 className="text-sm font-semibold text-slate-950">
-            Storefront redesign photos
+            Image generation
           </h2>
           <p className="mt-1 text-sm text-slate-500">
             {eleven
-              ? `ElevenLabs draws them with ${model.label}, with no 2-a-minute limit.`
-              : "Google Vertex AI draws them, at most 2 a minute."}
+              ? `ElevenLabs draws every picture with ${model.label}.`
+              : "Google Vertex AI draws every picture, at most 2 a minute."}
           </p>
         </div>
         <div className="ml-auto">
           <SegmentedChoice<RevampImageProvider>
-            label="Who draws storefront redesign photos"
+            label="Who draws pictures"
             value={settings.provider}
             options={[
               { value: "vertex", label: REVAMP_IMAGE_PROVIDER_LABELS.vertex },

@@ -15,6 +15,7 @@ import { isUnbilledImageFailure } from "./media-generation";
 import {
   generateMinkMediaImageWithElevenLabs,
   MinkElevenLabsTimeoutError,
+  requestMinkImageWithElevenLabs,
   storeBucketPath,
 } from "./media-generation-elevenlabs";
 import { MinkImageRateLimitedError, MinkToolInputError } from "./errors";
@@ -145,5 +146,94 @@ describe("storeBucketPath", () => {
     expect(storeBucketPath("gs://other/stores/a.webp", "sm-media")).toBeNull();
     expect(storeBucketPath("gs://sm-media/../x", "sm-media")).toBeNull();
     expect(storeBucketPath("gs://sm-media/a.webp", null)).toBeNull();
+  });
+});
+
+describe("requestMinkImageWithElevenLabs (the swap inside requestMinkImage)", () => {
+  const geminiRequest = {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { text: "Retouch this photo." },
+          { inlineData: { mimeType: "image/jpeg", data: "AAAA" } },
+          {
+            fileData: {
+              fileUri: "gs://sm-media/stores/s1/p.webp",
+              mimeType: "image/webp",
+            },
+          },
+        ],
+      },
+    ],
+    config: { imageConfig: { aspectRatio: "3:4" } },
+  };
+
+  it("sends the text as the prompt, every image as a reference, and answers like Gemini", async () => {
+    const send = vi.fn(async () => ({
+      kind: "ok" as const,
+      bytes: new Uint8Array([1, 2, 3]),
+      mediaType: "image/png",
+    }));
+    const download = vi.fn(async () => new Uint8Array([9]));
+    const response = await requestMinkImageWithElevenLabs(
+      target,
+      geminiRequest,
+      {
+        request: send as never,
+        download: download as never,
+      },
+    );
+    const [input] = send.mock.calls[0] as unknown as [
+      {
+        prompt: string;
+        aspectRatio: string;
+        images: { mediaType: string; base64: string }[];
+      },
+    ];
+    expect(input.prompt).toBe("Retouch this photo.");
+    expect(input.aspectRatio).toBe("3:4");
+    expect(input.images).toEqual([
+      { mediaType: "image/jpeg", base64: "AAAA" },
+      { mediaType: "image/webp", base64: "CQ==" },
+    ]);
+    expect(download).toHaveBeenCalledWith(
+      "stores/s1/p.webp",
+      expect.any(Number),
+    );
+    const part = response.candidates?.[0]?.content?.parts?.[0];
+    expect(part?.inlineData).toEqual({ mimeType: "image/png", data: "AQID" });
+  });
+
+  it("turns a refusal into an answer with no picture and the reason", async () => {
+    const send = vi.fn(async () => ({
+      kind: "refused" as const,
+      reason: "Blocked",
+    }));
+    const response = await requestMinkImageWithElevenLabs(
+      target,
+      geminiRequest,
+      {
+        request: send as never,
+        download: vi.fn(async () => new Uint8Array([9])) as never,
+      },
+    );
+    expect(response.candidates?.[0]?.content?.parts).toEqual([]);
+    expect(response.candidates?.[0]?.finishMessage).toBe("Blocked");
+  });
+
+  it("keeps a busy service unbilled", async () => {
+    const send = vi.fn(async () => ({
+      kind: "error" as const,
+      code: "rate_limited",
+      message: "busy",
+      timing: { providerAttempts: 3 },
+    }));
+    const error = await requestMinkImageWithElevenLabs(target, geminiRequest, {
+      request: send as never,
+      download: vi.fn(async () => new Uint8Array([9])) as never,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(MinkImageRateLimitedError);
+    expect(isUnbilledImageFailure(error)).toBe(true);
   });
 });

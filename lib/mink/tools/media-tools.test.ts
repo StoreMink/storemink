@@ -49,6 +49,10 @@ vi.mock("@google/genai", () => ({
     HIGH: "HIGH",
   },
 }));
+// Draws with Vertex here: the switch's read is not this suite's subject.
+vi.mock("@/lib/mink/image-provider-store", () => ({
+  resolveRevampImageTarget: async () => ({ kind: "vertex" }),
+}));
 vi.mock("@/lib/db/client", () => {
   const db = {
     // The store's image-generation switch.

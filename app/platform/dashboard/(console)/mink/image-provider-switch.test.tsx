@@ -34,7 +34,7 @@ beforeEach(() => {
   }));
 });
 
-describe("storefront redesign photo switch", () => {
+describe("image generation switch", () => {
   it("starts on Vertex with the model select locked", () => {
     render(<ImageProviderSwitch initial={vertex} canManage keyConfigured />);
     expect(
@@ -65,7 +65,7 @@ describe("storefront redesign photo switch", () => {
       }),
     );
     expect(
-      screen.getByText(/ElevenLabs draws them with GPT Image 2/),
+      screen.getByText(/ElevenLabs draws every picture with GPT Image 2/),
     ).toBeInTheDocument();
   });
 

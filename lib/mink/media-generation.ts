@@ -470,6 +470,15 @@ export async function requestMinkImage(
     logLabel?: string;
   } = {},
 ): Promise<GenerateContentResponse> {
+  // ★★ The operator's switch (Mink AI runs page): ElevenLabs draws every
+  //   Mink picture instead of Vertex, with no 2-a-minute limit.
+  const { resolveRevampImageTarget } = await import("./image-provider-store");
+  const swap = await resolveRevampImageTarget();
+  if (swap.kind === "elevenlabs") {
+    const { requestMinkImageWithElevenLabs } =
+      await import("./media-generation-elevenlabs");
+    return requestMinkImageWithElevenLabs(swap, request, options);
+  }
   const ai = minkVertexClient(target.projectId, target.imageLocation);
   const label = options.logLabel ?? "mink image generation";
   const where = { model: target.imageModel, location: target.imageLocation };

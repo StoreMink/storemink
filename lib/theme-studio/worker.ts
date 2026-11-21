@@ -62,6 +62,7 @@ import {
 import { describeSlots } from "./slot-images-core";
 import { MAX_AUTOMATIC_QA_REPAIRS } from "./automatic-qa-policy";
 import type { ThemeStudioImageClient } from "./image-provider";
+import { createElevenLabsImageClient } from "./image-elevenlabs";
 import { createVertexImageClient } from "./image-vertex";
 import {
   THEME_STUDIO_MODELS,
@@ -1107,10 +1108,18 @@ async function executeImages(
     return { kind: "failed", errorCode: "images_nothing_to_draw" };
   }
   // ★ Only the photos the homepage opens with are drawn at 4K.
-  const client = imageClientFor(
-    run.provider,
-    homepageOpeningPhotoIds(input.package),
-  );
+  // ★★ The operator's switch (Mink AI runs page): ElevenLabs draws Theme
+  //   Studio's photos too, with no 2-a-minute limit.
+  const swap =
+    run.provider === "vertex-gemini"
+      ? await (
+          await import("@/lib/mink/image-provider-store")
+        ).resolveRevampImageTarget()
+      : ({ kind: "vertex" } as const);
+  const client =
+    swap.kind === "elevenlabs"
+      ? createElevenLabsImageClient({ apiKey: swap.apiKey, model: swap.model })
+      : imageClientFor(run.provider, homepageOpeningPhotoIds(input.package));
   if (!client) return { kind: "failed", errorCode: "provider_unavailable" };
   // Filling new slots beside finished artwork must keep the original style.
   // A wholly new art set may establish a fresh anchor.

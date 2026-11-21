@@ -1,5 +1,7 @@
 import "server-only";
 
+import type { GenerateContentResponse } from "@google/genai";
+
 import type { ElevenLabsImageModel } from "@/lib/mink/image-provider-settings";
 import { logWarn } from "@/lib/observability/logger";
 import { gcsDownloadObject, GCS_BUCKET_NAME } from "@/lib/storage/gcs";
@@ -197,4 +199,166 @@ export async function generateMinkMediaImageWithElevenLabs(
         503,
       );
   }
+}
+
+// ---------------------------------------------------------------------------
+// ★★ THE ONE SWAP FOR EVERY MINK IMAGE CALL. `requestMinkImage` (chat images,
+//   Refine, storefront personalisation, product photos) hands its Gemini
+//   request here when the operator switch says ElevenLabs. The text parts
+//   become the prompt, the image parts the references, the aspect ratio
+//   carries over, and the answer comes back shaped like Gemini's, so no
+//   caller changes. A refusal comes back as an answer with no picture and a
+//   finish message, exactly as Gemini reports one.
+// ---------------------------------------------------------------------------
+
+type GeminiPart = {
+  text?: string;
+  inlineData?: { mimeType?: string; data?: string };
+  fileData?: { fileUri?: string; mimeType?: string };
+};
+
+function geminiParts(contents: unknown): GeminiPart[] {
+  if (typeof contents === "string") return [{ text: contents }];
+  const list = Array.isArray(contents) ? contents : [contents];
+  return list.flatMap((item): GeminiPart[] => {
+    if (typeof item === "string") return [{ text: item }];
+    if (item && typeof item === "object" && "parts" in item) {
+      return ((item as { parts?: GeminiPart[] }).parts ?? []) as GeminiPart[];
+    }
+    return item && typeof item === "object" ? [item as GeminiPart] : [];
+  });
+}
+
+export interface MinkElevenLabsRequestOptions {
+  abortSignal?: AbortSignal;
+  deadlineAt?: number;
+  logLabel?: string;
+  /** For tests. */
+  request?: typeof requestElevenLabsImage;
+  download?: typeof gcsDownloadObject;
+}
+
+export async function requestMinkImageWithElevenLabs(
+  target: MinkElevenLabsTarget,
+  request: {
+    contents: unknown;
+    config: { imageConfig?: { aspectRatio?: string } };
+  },
+  options: MinkElevenLabsRequestOptions = {},
+): Promise<GenerateContentResponse> {
+  const parts = geminiParts(request.contents);
+  const prompt = parts
+    .map((part) => part.text?.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  let images: { mediaType: string; base64: string }[];
+  try {
+    images = await referenceBytes(
+      parts
+        .filter((part) => part.inlineData?.data || part.fileData?.fileUri)
+        .map((part) => ({
+          mimeType:
+            part.inlineData?.mimeType ??
+            part.fileData?.mimeType ??
+            "image/jpeg",
+          inlineData: part.inlineData?.data
+            ? {
+                data: part.inlineData.data,
+                mimeType: part.inlineData.mimeType,
+              }
+            : undefined,
+          fileUri: part.fileData?.fileUri,
+        })) as unknown as MinkMediaReferenceImage[],
+      options.download ?? gcsDownloadObject,
+    );
+  } catch (error) {
+    logWarn("mink.image: an ElevenLabs reference could not be read", {
+      model: target.model,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new MinkImageNotSentError(
+      "image_provider_unavailable",
+      "A reference photo could not be read. Nothing was created; try again shortly.",
+      503,
+    );
+  }
+
+  const stops: AbortSignal[] = [];
+  if (options.abortSignal) stops.push(options.abortSignal);
+  if (options.deadlineAt !== undefined && Number.isFinite(options.deadlineAt)) {
+    stops.push(
+      AbortSignal.timeout(Math.max(1, options.deadlineAt - Date.now())),
+    );
+  }
+  const signal =
+    stops.length > 0 ? AbortSignal.any(stops) : new AbortController().signal;
+
+  const result = await (options.request ?? requestElevenLabsImage)(
+    {
+      prompt,
+      aspectRatio: request.config.imageConfig?.aspectRatio ?? "1:1",
+      images,
+    },
+    signal,
+    { apiKey: target.apiKey, model: target.model, markStoppedInFlight: true },
+  );
+
+  if (result.kind === "ok") {
+    return {
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [
+              {
+                inlineData: {
+                  mimeType: result.mediaType,
+                  data: Buffer.from(result.bytes).toString("base64"),
+                },
+              },
+            ],
+          },
+          finishReason: "STOP",
+        },
+      ],
+    } as unknown as GenerateContentResponse;
+  }
+  if (result.kind === "refused") {
+    return {
+      candidates: [
+        {
+          content: { role: "model", parts: [] },
+          finishReason: "SAFETY",
+          finishMessage: result.reason ?? undefined,
+        },
+      ],
+    } as unknown as GenerateContentResponse;
+  }
+  logWarn(`${options.logLabel ?? "mink image"}: ElevenLabs failed`, {
+    model: target.model,
+    code: result.code,
+  });
+  const created = (result.timing?.providerAttempts ?? 0) > 0;
+  if (result.code === "rate_limited") {
+    throw new MinkImageRateLimitedError(
+      "The image service is busy. Nothing was created; try again shortly.",
+    );
+  }
+  if (
+    result.code === "cancelled" &&
+    (!created || !result.timing?.stoppedInFlight)
+  ) {
+    throw new MinkImageNotSentError(
+      "image_provider_unavailable",
+      "The image request stopped before it was sent. Nothing was created.",
+      503,
+    );
+  }
+  if (result.code === "provider_timeout")
+    throw new MinkElevenLabsTimeoutError();
+  throw new MinkRequestError(
+    "image_provider_unavailable",
+    "The image service did not respond. Nothing was created; try again shortly.",
+    503,
+  );
 }
