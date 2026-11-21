@@ -667,6 +667,64 @@ added, no flow change), so no Help Centre update: the published Refine
 wording ("taken only when a refined photo comes back") still holds, and is
 now also true in production when the merchant leaves.
 
+### Redesign photos: Vertex or ElevenLabs (2026-11-21)
+
+Vertex allows 2 image requests a minute per project per base model, a limit
+that cannot be raised, so a storefront redesign's 11 or so photographs queue
+31 to 45 seconds apart and several redesigns at once queue behind each other.
+An operator switch on the console's **Mink AI runs** page
+(`/dashboard/mink`, `image-provider-switch.tsx`, superadmin to change) picks
+who draws them: **Google Vertex AI** (the default, unchanged) or
+**ElevenLabs**, with an ElevenLabs image model (`ELEVENLABS_IMAGE_MODELS` in
+`lib/mink/image-provider-settings.ts`: Nano Banana 2 the default, Nano Banana
+Pro, Nano Banana 2 Lite, GPT Image 2, 2.5 Flare, 2.5 Sunburst, Seedream 5
+Lite and Pro; only `model_id` values ElevenLabs' create schema names, since
+no endpoint lists them). Stored in service-only `mink_image_settings`
+(migration `20261121_0278_mink_image_provider`, one row, CHECKs on both
+columns) and written by `setRevampImageSettings`
+(`app/actions/mink-operator-actions.ts`), which refuses ElevenLabs on a
+server with no `ELEVENLABS_API_KEY`.
+★ WHAT IT COVERS. The redesign's shoot (`photos.ts` `defaultImageClient`,
+now async) and its product studio photos (`products.ts`, `elevenLabsGenerate`
+over `lib/mink/media-generation-elevenlabs.ts`). NOT covered, still Vertex:
+photo checks (gemini-3.8-flash), Theme Studio image runs, chat images,
+Refine, Change background, storefront personalisation.
+★★ NO VERTEX PACING ON THIS PATH. `lib/theme-studio/image-elevenlabs.ts`
+(`createElevenLabsImageClient`, `requestElevenLabsImage`) never touches
+`sharedProviderCapacity`: one per-process gate (6 at once,
+`ELEVENLABS_DEFAULT_CONCURRENCY`, on `globalThis`) and up to 8 jittered waits
+(3 to 15 s) on a 429. A job is created with
+`POST https://api.elevenlabs.io/v1/flows/image` (references as
+`inline_base64`, `resolution` per model, the nearest ratio the model takes),
+polled every 2 s, and its signed `content_url` downloaded WITHOUT the key
+(https only, 40 MB cap, type sniffed). It never throws: every outcome is a
+`ThemeImageResult` (moderated → refused; 401/403 → provider*auth; 5xx →
+provider_unavailable; other 4xx such as 402 → provider_rejected; its own
+3-minute clock → provider_timeout). The drain and the run's stop are honoured
+as on Vertex: nothing is created once the drain fired, and a job the stop cut
+off after it was created is marked `stoppedInFlight` (D3). Logs are
+content-free (`theme_studio.elevenlabs*<event>`).
+★ THE SAME BRIEF AND THE SAME ERRORS for studio photos:
+`minkImageInstruction` (media-generation.ts) is now the one builder of the
+words Vertex and ElevenLabs both get; a store reference is read from
+StoreMink's own bucket only (`storeBucketPath`, 7 MB) and sent as bytes; a
+refusal is a `MinkToolInputError`, all-429 a `MinkImageRateLimitedError`, a
+job never created a `MinkImageNotSentError`, a 3-minute cut a
+`MinkElevenLabsTimeoutError`(counted as a timeout, like`ProductDrawTimeout`).
+★ VERTEX WHEN IN DOUBT. `resolveRevampImageTarget`falls back to Vertex on a
+failed read, a missing table, or ElevenLabs chosen without a key (logged as
+an error). The redesign's usage counts are filed as`elevenlabs:<model>`.
+⚠ ElevenLabs returns no token usage, so a redesign drawn there records an
+estimated provider cost of 0; the merchant's credits are unaffected (they
+come from itemised charges). ⚠ The privacy policy names Google as the image
+provider; merchant photos reaching ElevenLabs needs a lawyer-approved policy
+version before production use. ⚠ Not yet run end to end against the live
+ElevenLabs API from a redesign (a standalone probe on 2026-11-21 drew Nano
+Banana 2 at 2K in 26 s and Pro in 33 s). Tests: `image-elevenlabs`,
+`image-provider-settings`, `media-generation-elevenlabs`,
+`mink-operator-actions`, `image-provider-switch`, and the photos/products
+suites (one ElevenLabs case each). Operator-only: no Help Centre update.
+
 ### Mink stop handshake: a Stop the server decides (2026-10-25)
 
 ★★ BEHIND THE PRODUCTION LOAD BALANCER AN ABORTED BROWSER FETCH NEVER
@@ -9677,6 +9735,14 @@ wholesip/
 │   │                          # request.ts, lifecycle-types.ts, provider.ts. The
 │   │                          # Storefront page's Customise storefront form:
 │   │                          # customise-form.ts (pure).
+│   ├── mink/image-provider-settings.ts # pure, client-safe: Vertex or ElevenLabs
+│   │                          # for redesign photos, the ElevenLabs model list,
+│   │                          # nearest-ratio mapping (§ "Redesign photos")
+│   ├── mink/image-provider-store.ts # server-only: the switch's row, the key
+│   │                          # (ELEVENLABS_API_KEY), resolveRevampImageTarget
+│   ├── mink/media-generation-elevenlabs.ts # server-only: a Mink picture (the
+│   │                          # redesign's product studio photos) drawn by
+│   │                          # ElevenLabs, with the Vertex call's errors
 │   ├── mink/                  # ★ Dashboard agent foundation (docs/mink-ai-dashboard-plan.md):
 │   │                          # default-on global + fail-closed invited-store access;
 │   │                          # system-prompt.ts, image-prompt.ts and whatsapp-prompt.ts
@@ -10901,15 +10967,21 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0277 (0260 = redesign recovery fence,
+│                              # 0278 adds service-only mink_image_settings (who
+│                              # draws a storefront redesign's photos: Vertex or
+│                              # ElevenLabs, and the ElevenLabs model; one row,
+│                              # default vertex; § "Redesign photos: Vertex or
+│                              # ElevenLabs").
+│                              # Next free: 0279 (0260 = redesign recovery fence,
 │                              # 0261 = voice controls Help edit, 0262 and 0263 =
 │                              # private chat attachments, 0264 and 0265 = refunds
 │                              # and credit notes, 0266 to 0268 = GST, 0269 and
 │                              # 0270 = content takedown, 0271 = Help voice, 0272
 │                              # and 0273 = Help ratings and languages, 0274 =
 │                              # Help chat menu, 0275 = no theme samples Help,
-│                              # 0276 = theme chosen once Help).
-│                              # Previously: 0276.
+│                              # 0276 = theme chosen once Help, 0277 = Mink rail
+│                              # Help, 0278 = redesign photo provider switch).
+│                              # Previously: 0277.
 │                              # `db-migrations-core.test.mjs`
 │                              # freezes the nine pairs, so a new entry reusing any
 │                              # existing number fails CI (it either adds a tenth
@@ -28536,6 +28608,12 @@ model refused`, logError); the fallback is final, so the worst case is about
   Sarvam Saaras v4 requires server-only **`SARVAM_API_KEY`**. The Cloud Run
   service account holds least-privilege **`roles/speech.client`** to call
   Speech-to-Text. Neither credential is exposed to the dashboard.
+  A storefront redesign's photos are drawn by ElevenLabs instead of Vertex
+  when the operator switch on `/dashboard/mink` says so (§ "Redesign photos:
+  Vertex or ElevenLabs"); that needs server-only **`ELEVENLABS_API_KEY`**,
+  passed like Sarvam's as the plain `_ELEVENLABS_API_KEY` Cloud Build
+  substitution (empty by default, so the switch refuses ElevenLabs and every
+  redesign stays on Vertex). It is never sent to the browser or logged.
   Theme Studio reads **`THEME_STUDIO_PROVIDER`** (code default `fake`, the offline
   test provider; `vertex-gemini` sends new runs to the allowlisted models
   and must not be set until the dedicated worker job exists — §4

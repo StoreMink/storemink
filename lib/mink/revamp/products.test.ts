@@ -105,6 +105,16 @@ const h = vi.hoisted(() => ({
   realCapacity: null as ProviderCapacity | null,
 }));
 
+// The operator switch (mink_image_settings) reads the database: Vertex here.
+const imageTarget = vi.hoisted(() => ({
+  current: { kind: "vertex" } as
+    | { kind: "vertex" }
+    | { kind: "elevenlabs"; model: string; apiKey: string },
+}));
+vi.mock("../image-provider-store", () => ({
+  resolveRevampImageTarget: async () => imageTarget.current,
+}));
+
 vi.mock("./image-store", () => ({
   revampImageStoreConfigured: () => h.configured,
   storeRevampImage: async (input: StoreRevampImageInput) => {
@@ -176,6 +186,16 @@ vi.mock("../media-reference-images", async () => {
     },
   };
 });
+const elevenDraws = vi.hoisted(() => ({
+  calls: [] as unknown[][],
+}));
+vi.mock("../media-generation-elevenlabs", () => ({
+  MinkElevenLabsTimeoutError: class extends Error {},
+  generateMinkMediaImageWithElevenLabs: async (...args: unknown[]) => {
+    elevenDraws.calls.push(args);
+    return { bytes: Buffer.from("eleven"), mimeType: "image/png" };
+  },
+}));
 vi.mock("../media-generation", async (importOriginal) => {
   // ★ The real B3 rule and the error it reads (D3); only the call is faked.
   const real = await importOriginal<typeof import("../media-generation")>();
@@ -3095,5 +3115,43 @@ describe("★★ every paid call is reported the moment it returns (L2-F)", () =
     );
     expect(reports).toEqual([]);
     expect(run.usage).toEqual(ZERO_REVAMP_USAGE);
+  });
+});
+
+describe("★★ the operator switch: ElevenLabs draws the studio photos", () => {
+  beforeEach(() => {
+    h.owned.set(url("p1"), "media");
+    vi.stubEnv("GCP_PROJECT_ID", "storemink-test");
+    elevenDraws.calls = [];
+    imageTarget.current = {
+      kind: "elevenlabs",
+      model: "gpt-image-2",
+      apiKey: "k",
+    };
+  });
+  afterEach(() => {
+    imageTarget.current = { kind: "vertex" };
+    vi.unstubAllEnvs();
+  });
+
+  it("draws with ElevenLabs, never queues on Vertex's capacity, and counts the ElevenLabs model", async () => {
+    h.mediaGenerate = async () => {
+      throw new Error("Vertex must not be called");
+    };
+    const run = await makeRevampProductPhotos(
+      { ...makeCtx().ctx, deadline: Date.now() + 15 * 60_000 },
+      { request: request([product("p1")]), stored: [], only: null },
+      { provider: "vertex", prepare },
+    );
+    expect(elevenDraws.calls).toHaveLength(1);
+    expect(elevenDraws.calls[0][0]).toEqual({
+      kind: "elevenlabs",
+      model: "gpt-image-2",
+      apiKey: "k",
+    });
+    expect(h.capacityRuns).toEqual([]);
+    expect(h.mediaGenerateCalls).toEqual([]);
+    expect(run.failed).toEqual([]);
+    expect(run.images.map((image) => image.slotId)).toEqual(["p1"]);
   });
 });

@@ -2,8 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { getPlatformViewer } from "@/app/actions/platform";
-import { minkVoiceSettings } from "@/drizzle/schema";
+import { minkImageSettings, minkVoiceSettings } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
+import {
+  isElevenLabsImageModel,
+  isRevampImageProvider,
+  type RevampImageSettings,
+} from "@/lib/mink/image-provider-settings";
+import { elevenLabsConfigured } from "@/lib/mink/image-provider-store";
 import { logError, logInfo } from "@/lib/observability/logger";
 import {
   isMinkSpeechProvider,
@@ -102,5 +108,71 @@ export async function setMinkSpeechSettings(input: {
   } catch (error) {
     logError("mink.speech.settings.change_failed", error, settings);
     return { error: "Could not change the read-aloud voice. Try again." };
+  }
+}
+
+/**
+ * Which service draws a storefront redesign's pictures (mink_image_settings).
+ * ★ ElevenLabs is refused on a server with no ELEVENLABS_API_KEY: the read
+ *   side would fall back to Vertex anyway, and a switch that says ElevenLabs
+ *   while Vertex draws is worse than one that refuses.
+ */
+export async function setRevampImageSettings(input: {
+  provider: unknown;
+  model: unknown;
+}): Promise<{
+  success?: true;
+  settings?: RevampImageSettings;
+  error?: string;
+}> {
+  const viewer = await getPlatformViewer();
+  if (viewer?.role !== "superadmin")
+    return {
+      error: "Only a platform superadmin can change who draws redesign photos.",
+    };
+  if (!isRevampImageProvider(input?.provider))
+    return { error: "Choose Google Vertex AI or ElevenLabs." };
+  if (!isElevenLabsImageModel(input.model))
+    return { error: "Choose an ElevenLabs image model." };
+  if (input.provider === "elevenlabs" && !elevenLabsConfigured())
+    return {
+      error:
+        "ElevenLabs needs ELEVENLABS_API_KEY on this server. Add it, then switch.",
+    };
+  const settings: RevampImageSettings = {
+    provider: input.provider,
+    elevenLabsModel: input.model,
+  };
+  try {
+    const now = new Date().toISOString();
+    await withService((db) =>
+      db
+        .insert(minkImageSettings)
+        .values({
+          id: true,
+          revampProvider: settings.provider,
+          elevenlabsModel: settings.elevenLabsModel,
+          updatedAt: now,
+          updatedBy: viewer.email,
+        })
+        .onConflictDoUpdate({
+          target: minkImageSettings.id,
+          set: {
+            revampProvider: settings.provider,
+            elevenlabsModel: settings.elevenLabsModel,
+            updatedAt: now,
+            updatedBy: viewer.email,
+          },
+        }),
+    );
+    revalidatePath("/platform/dashboard/(console)/mink", "page");
+    logInfo("mink.image_provider.changed", {
+      ...settings,
+      operator: viewer.email,
+    });
+    return { success: true, settings };
+  } catch (error) {
+    logError("mink.image_provider.change_failed", error, { ...settings });
+    return { error: "Could not change who draws redesign photos. Try again." };
   }
 }

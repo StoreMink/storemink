@@ -140,6 +140,16 @@ const h = vi.hoisted(() => {
   };
 });
 
+// The operator switch (mink_image_settings) reads the database: Vertex here.
+const imageTarget = vi.hoisted(() => ({
+  current: { kind: "vertex" } as
+    | { kind: "vertex" }
+    | { kind: "elevenlabs"; model: string; apiKey: string },
+}));
+vi.mock("@/lib/mink/image-provider-store", () => ({
+  resolveRevampImageTarget: async () => imageTarget.current,
+}));
+
 vi.mock("./image-store", async () => {
   // ★ The store's own digest, a real SHA-256 like the crop's, so a picture
   //   the real crop prepared is recognised as the one stored.
@@ -266,6 +276,24 @@ vi.mock("@/lib/theme-studio/image-models", async (importOriginal) => ({
   getThemeStudioImageConfig: () => {
     if (h.imageConfig instanceof Error) throw h.imageConfig;
     return h.imageConfig;
+  },
+}));
+// ElevenLabs must never be reached from a test either: the client records
+// its options and answers as an outage.
+const elevenOptions = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("@/lib/theme-studio/image-elevenlabs", () => ({
+  createElevenLabsImageClient: (options: Record<string, unknown>) => {
+    elevenOptions.calls.push(options);
+    return {
+      provider: "elevenlabs",
+      generateImage: async () => ({
+        kind: "error",
+        code: "provider_unavailable",
+        usage: { inputTokens: 0, outputTokens: 0 },
+      }),
+    };
   },
 }));
 // Vertex must never be reached from a test. Both clients record the options
@@ -1980,6 +2008,35 @@ describe("drawRevampPhotos", () => {
         expect(revampDrainingCapacity(held.capacity, undefined)).toBe(
           held.capacity,
         );
+      });
+
+      it("★★ the operator switch: ElevenLabs draws the shoot, never Vertex's paced client", async () => {
+        vi.stubEnv("MINK_REVAMP_PROVIDER", "vertex");
+        h.imageConfig = imageConfig;
+        h.vertexConfig = { projectId: "project", region: "global" };
+        elevenOptions.calls.length = 0;
+        imageTarget.current = {
+          kind: "elevenlabs",
+          model: "gemini-3-pro-image",
+          apiKey: "k",
+        };
+        try {
+          const drain = new AbortController();
+          const { ctx } = makeCtx();
+          await drawRevampPhotos({ ...ctx, draining: drain.signal }, input(), {
+            prepare,
+          }).catch(() => undefined);
+          expect(h.vertexImageOptions).toHaveLength(0);
+          expect(elevenOptions.calls).toHaveLength(1);
+          expect(elevenOptions.calls[0]).toMatchObject({
+            apiKey: "k",
+            model: "gemini-3-pro-image",
+            draining: drain.signal,
+            markStoppedInFlight: true,
+          });
+        } finally {
+          imageTarget.current = { kind: "vertex" };
+        }
       });
 
       it("★ the photos step builds both Vertex clients on the draining capacity and 429 wait", async () => {

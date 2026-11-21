@@ -8,7 +8,12 @@ import {
   getMinkSpeechSettings,
   getMinkVoiceProvider,
 } from "@/lib/mink/voice-settings";
+import {
+  elevenLabsConfigured,
+  getRevampImageSettings,
+} from "@/lib/mink/image-provider-store";
 import { canManage, requireOperator } from "../require-operator";
+import { ImageProviderSwitch } from "./image-provider-switch";
 import { SpeechProviderSwitch } from "./speech-provider-switch";
 import { VoiceProviderSwitch } from "./voice-provider-switch";
 
@@ -29,11 +34,13 @@ export default async function PlatformMinkRunsPage({
   // read at the page boundary before querying any merchant's telemetry.
   const viewer = await requireOperator();
   const filters = normalizeMinkRunFilters(await searchParams);
-  const [data, voiceProvider, speechSettings] = await Promise.all([
-    getPlatformMinkRuns(filters),
-    getMinkVoiceProvider(),
-    getMinkSpeechSettings(),
-  ]);
+  const [data, voiceProvider, speechSettings, imageSettings] =
+    await Promise.all([
+      getPlatformMinkRuns(filters),
+      getMinkVoiceProvider(),
+      getMinkSpeechSettings(),
+      getRevampImageSettings(),
+    ]);
 
   return (
     <div className="w-full max-w-[96rem] space-y-6">
@@ -54,6 +61,11 @@ export default async function PlatformMinkRunsPage({
       <SpeechProviderSwitch
         initial={speechSettings}
         canManage={canManage(viewer)}
+      />
+      <ImageProviderSwitch
+        initial={imageSettings}
+        canManage={canManage(viewer)}
+        keyConfigured={elevenLabsConfigured()}
       />
 
       <form className="grid gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2 xl:grid-cols-[1fr_14rem_12rem_10rem_auto]">

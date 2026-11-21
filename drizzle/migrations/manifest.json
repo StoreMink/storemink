@@ -10772,6 +10772,38 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261121_0278_mink_image_provider",
+      "description": "One platform row, mink_image_settings, choosing which service draws a storefront redesign's pictures (Google Vertex AI or ElevenLabs) and the ElevenLabs model. Starts on Vertex. Service-only.",
+      "file": "sql/20261121_0278_mink_image_provider.sql",
+      "transaction": true,
+      "requires": ["20261110_0277_mink_rail_help"],
+      "verify": {
+        "tables": ["mink_image_settings"],
+        "columns": [
+          "mink_image_settings.id",
+          "mink_image_settings.revamp_provider",
+          "mink_image_settings.elevenlabs_model",
+          "mink_image_settings.updated_at",
+          "mink_image_settings.updated_by"
+        ],
+        "constraints": [
+          "mink_image_settings_id_check",
+          "mink_image_settings_revamp_provider_check",
+          "mink_image_settings_elevenlabs_model_check"
+        ],
+        "rlsTables": ["mink_image_settings"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "redesign pictures start on Vertex, so nothing changes until an operator switches",
+            "sql": "select revamp_provider from mink_image_settings where id=true",
+            "equals": "vertex"
+          }
+        ]
+      }
     }
   ]
 }

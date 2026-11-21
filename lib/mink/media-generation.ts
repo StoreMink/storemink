@@ -303,6 +303,34 @@ export interface MinkImageAllowance {
   giveBack(): Promise<void>;
 }
 
+/**
+ * The words sent with a Mink picture: the executable prompt document, the
+ * request's scene, the destination's composition and what each reference is.
+ * Shared by the Vertex call below and the ElevenLabs one
+ * (media-generation-elevenlabs.ts), so both draw from the same brief.
+ * ★ An unusable prompt document is an operator problem, never a merchant
+ *   mistake, and nothing was sent, so nothing was billed.
+ */
+export function minkImageInstruction(
+  request: MinkMediaGenerationRequest,
+  references: readonly MinkMediaReferenceImage[],
+  logContext: Record<string, unknown>,
+): string {
+  try {
+    return renderMinkImagePrompt(
+      `${request.prompt}\n\nDESTINATION COMPOSITION\n${compositionGuidance(request.purpose, request.slotAspectRatio)}`,
+      referenceGuidance(references, request.purpose),
+    );
+  } catch (error) {
+    logError("mink image generation failed", error, logContext);
+    throw new MinkImageNotSentError(
+      "image_provider_unavailable",
+      NOT_DRAWN,
+      503,
+    );
+  }
+}
+
 export async function generateMinkMediaImage(
   config: MinkConfig,
   request: MinkMediaGenerationRequest,
@@ -323,25 +351,10 @@ export async function generateMinkMediaImage(
     imageLocation: config.imageLocation,
   };
 
-  let instruction: string;
-  try {
-    instruction = renderMinkImagePrompt(
-      `${request.prompt}\n\nDESTINATION COMPOSITION\n${compositionGuidance(request.purpose, request.slotAspectRatio)}`,
-      referenceGuidance(references, request.purpose),
-    );
-  } catch (error) {
-    // ★ An unusable prompt document is an operator problem, never a merchant
-    //   mistake, and nothing was sent, so nothing was billed.
-    logError("mink image generation failed", error, {
-      model: config.imageModel,
-      location: config.imageLocation,
-    });
-    throw new MinkImageNotSentError(
-      "image_provider_unavailable",
-      NOT_DRAWN,
-      503,
-    );
-  }
+  const instruction = minkImageInstruction(request, references, {
+    model: config.imageModel,
+    location: config.imageLocation,
+  });
 
   const response = await requestMinkImage(
     target,

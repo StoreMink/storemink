@@ -37,6 +37,8 @@ import {
   type GeneratableSlot,
 } from "@/lib/theme-studio/image-generation-core";
 import { ImageCheckpointError } from "@/lib/theme-studio/image-recovery";
+import { createElevenLabsImageClient } from "@/lib/theme-studio/image-elevenlabs";
+import { resolveRevampImageTarget } from "@/lib/mink/image-provider-store";
 import { ImageRequestPool } from "@/lib/theme-studio/image-request-pool";
 import {
   THEME_STUDIO_IMAGE_MODEL_KEY,
@@ -1832,8 +1834,18 @@ export async function drawRevampPhotos(
     try {
       // ★ Picked inside the try: a misconfigured image model throws, and the
       //   photos claimed above must go back when it does.
-      const provided =
-        options.imageClient ?? defaultImageClient(provider, drawsDrain);
+      const picked = options.imageClient
+        ? { client: options.imageClient, model: THEME_STUDIO_IMAGE_MODEL_KEY }
+        : await defaultImageClient(provider, drawsDrain);
+      const provided = picked.client;
+      // ★ A 429 or a clock is counted against the model that met it (P0).
+      const drawModel = picked.model;
+      if (provided.provider === "elevenlabs") {
+        logInfo("mink.revamp: photos drawn with ElevenLabs", {
+          revampId: ctx.revampId,
+          model: drawModel,
+        });
+      }
       /** Draws asked per brief in this invocation: which attempt a refusal was. */
       const drawAttempts = new Map<string, number>(
         [...checks].map(([key, state]) => [
@@ -1900,10 +1912,7 @@ export async function drawRevampPhotos(
           charge(
             mergeUsage(
               drawCallUsage(answer),
-              revampCallUsage(
-                THEME_STUDIO_IMAGE_MODEL_KEY,
-                drawCallCounts(answer),
-              ),
+              revampCallUsage(drawModel, drawCallCounts(answer)),
             ),
           );
           if (
@@ -2948,21 +2957,44 @@ function shapeOf(card: unknown): ThemeImageDirection["shape"] {
 // ── Clients ─────────────────────────────────────────────────────────────────
 
 /**
- * The image client: Vertex with the shared provider capacity, or the fake.
+ * The image client: ElevenLabs when the operator switch says so
+ * (mink_image_settings; lib/mink/image-provider-store.ts), else Vertex with
+ * the shared provider capacity, or the fake offline.
+ * ★★ ElevenLabs never queues on Vertex's start pacing (2 image requests a
+ *   minute per project and model): the reason it exists. It honours the same
+ *   drain (no create once it fires) and the run's stop.
  * `draining` is the shoot's drain (jobs-4; D2, `revampAdmissionDrain`, 95 s
  * before the runner's): the Vertex client then sends no attempt that gets its
  * permit, or its 429 retry, after it began.
  * ★★ Owner, 25 Oct 2026: Nano Banana 2.1 (image-models.ts) draws a
  * redesign's photos at "2K" with MEDIUM thinking.
  */
-function defaultImageClient(
+async function defaultImageClient(
   provider: RevampProvider,
   draining?: AbortSignal,
-): ThemeStudioImageClient {
+): Promise<{ client: ThemeStudioImageClient; model: string }> {
   // ★ The model's own output sizes offline: the phone crop is cut from the
   //   stored wide photo, and Theme Studio's 2048px fake made every offline
   //   hero too small for one (702px against the 800px floor).
-  if (provider === "fake") return createFakeImageClient({ size: "model" });
+  if (provider === "fake") {
+    return {
+      client: createFakeImageClient({ size: "model" }),
+      model: THEME_STUDIO_IMAGE_MODEL_KEY,
+    };
+  }
+  const target = await resolveRevampImageTarget();
+  if (target.kind === "elevenlabs") {
+    return {
+      client: createElevenLabsImageClient({
+        apiKey: target.apiKey,
+        model: target.model,
+        draining,
+        // ★★ A job the run's stop cuts off after it was created says so (D3).
+        markStoppedInFlight: true,
+      }),
+      model: `elevenlabs:${target.model}`,
+    };
+  }
   // ★ An image model StoreMink did not set up is its own fault, not a busy
   //   photo service (`anchorFailureError`): `internal`, for good.
   let config;
@@ -2982,7 +3014,7 @@ function defaultImageClient(
       false,
     );
   }
-  return createVertexImageClient(config, {
+  const client = createVertexImageClient(config, {
     imageSize: "2K",
     thinkingLevel: ThinkingLevel.MEDIUM,
     // ★★ A draw the run's stop cuts off on the wire says so (D3).
@@ -2997,6 +3029,7 @@ function defaultImageClient(
     ),
     ...revampDrainingSleep(draining),
   });
+  return { client, model: THEME_STUDIO_IMAGE_MODEL_KEY };
 }
 
 /**

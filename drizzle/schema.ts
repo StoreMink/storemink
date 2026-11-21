@@ -3366,6 +3366,33 @@ export const minkVoiceSettings = pgTable(
   ],
 );
 
+/** Which service draws a storefront redesign's pictures (migration 0278). */
+export const minkImageSettings = pgTable(
+  "mink_image_settings",
+  {
+    id: boolean().default(true).primaryKey().notNull(),
+    revampProvider: text("revamp_provider").default("vertex").notNull(),
+    elevenlabsModel: text("elevenlabs_model")
+      .default("gemini-3.1-flash-image")
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedBy: text("updated_by"),
+  },
+  () => [
+    check("mink_image_settings_id_check", sql`id`),
+    check(
+      "mink_image_settings_revamp_provider_check",
+      sql`revamp_provider = ANY (ARRAY['vertex'::text, 'elevenlabs'::text])`,
+    ),
+    check(
+      "mink_image_settings_elevenlabs_model_check",
+      sql`elevenlabs_model = ANY (ARRAY['gemini-3.1-flash-image'::text, 'gemini-3-pro-image'::text, 'gemini-3.1-flash-lite-image'::text, 'gpt-image-2'::text, 'gpt-image-2.5-flare'::text, 'gpt-image-2.5-sunburst'::text, 'bytedance-seedream-5-lite'::text, 'bytedance-seedream-5-pro'::text])`,
+    ),
+  ],
+);
+
 export const productReviews = pgTable(
   "product_reviews",
   {

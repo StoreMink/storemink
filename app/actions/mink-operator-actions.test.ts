@@ -20,8 +20,9 @@ vi.mock("@/lib/observability/logger", () => ({
 import {
   setMinkSpeechSettings,
   setMinkVoiceProvider,
+  setRevampImageSettings,
 } from "./mink-operator-actions";
-import { minkVoiceSettings } from "@/drizzle/schema";
+import { minkImageSettings, minkVoiceSettings } from "@/drizzle/schema";
 const storeId = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => {
   vi.resetAllMocks();
@@ -116,5 +117,77 @@ describe("global read-aloud switch", () => {
       ).error,
     ).toMatch(/Choose whether/);
     expect(h.service).not.toHaveBeenCalled();
+  });
+});
+
+describe("storefront redesign photo switch", () => {
+  it("stores ElevenLabs and its model when the key is set", async () => {
+    vi.stubEnv("ELEVENLABS_API_KEY", "set");
+    expect(
+      await setRevampImageSettings({
+        provider: "elevenlabs",
+        model: "gpt-image-2",
+      }),
+    ).toEqual({
+      success: true,
+      settings: { provider: "elevenlabs", elevenLabsModel: "gpt-image-2" },
+    });
+    expect(h.insert).toHaveBeenCalledWith(minkImageSettings);
+    expect(h.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: true,
+        revampProvider: "elevenlabs",
+        elevenlabsModel: "gpt-image-2",
+        updatedBy: "operator@example.test",
+      }),
+    );
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses ElevenLabs on a server with no key, and allows Vertex", async () => {
+    vi.stubEnv("ELEVENLABS_API_KEY", "");
+    expect(
+      (
+        await setRevampImageSettings({
+          provider: "elevenlabs",
+          model: "gemini-3.1-flash-image",
+        })
+      ).error,
+    ).toMatch(/ELEVENLABS_API_KEY/);
+    expect(h.insert).not.toHaveBeenCalled();
+    expect(
+      (
+        await setRevampImageSettings({
+          provider: "vertex",
+          model: "gemini-3.1-flash-image",
+        })
+      ).success,
+    ).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  it("refuses staff, unknown providers and unknown models", async () => {
+    h.viewer.mockResolvedValueOnce({ role: "member" });
+    expect(
+      (
+        await setRevampImageSettings({
+          provider: "vertex",
+          model: "gpt-image-2",
+        })
+      ).error,
+    ).toMatch(/superadmin/);
+    expect(
+      (
+        await setRevampImageSettings({
+          provider: "other",
+          model: "gpt-image-2",
+        })
+      ).error,
+    ).toMatch(/Vertex AI or ElevenLabs/);
+    expect(
+      (await setRevampImageSettings({ provider: "vertex", model: "dall-e" }))
+        .error,
+    ).toMatch(/image model/);
+    expect(h.insert).not.toHaveBeenCalled();
   });
 });

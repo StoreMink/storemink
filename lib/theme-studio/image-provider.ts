@@ -110,7 +110,9 @@ export type ThemeImageResult = (
 };
 
 export interface ThemeStudioImageClient {
-  readonly provider: "fake" | "vertex-gemini";
+  /** "elevenlabs" draws only a storefront redesign's photos, when the
+   *  operator switch says so (lib/mink/image-provider-store.ts). */
+  readonly provider: "fake" | "vertex-gemini" | "elevenlabs";
   generateImage(
     request: ThemeImageRequest,
     signal: AbortSignal,

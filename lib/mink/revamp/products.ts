@@ -44,6 +44,11 @@ import {
 import { prepareSlotImage } from "@/lib/theme-studio/slot-images";
 import { THEME_IMAGE_RULES } from "@/lib/themes/validation";
 import { getMinkConfig } from "../config";
+import { resolveRevampImageTarget } from "../image-provider-store";
+import {
+  generateMinkMediaImageWithElevenLabs,
+  MinkElevenLabsTimeoutError,
+} from "../media-generation-elevenlabs";
 import {
   MinkImageRateLimitedError,
   MinkRequestError,
@@ -504,11 +509,24 @@ export async function makeRevampProductPhotos(
 
   const provider = options.provider ?? revampProvider();
   const prepare = options.prepare ?? prepareSlotImage;
-  const generate = options.generate ?? defaultGenerate;
+  // ★ The operator switch (mink_image_settings): ElevenLabs draws the studio
+  //   photos with no Vertex start pacing, else Vertex as before.
+  const target =
+    options.generate || provider === "fake"
+      ? null
+      : await resolveRevampImageTarget();
+  const generate =
+    options.generate ??
+    (target?.kind === "elevenlabs"
+      ? elevenLabsGenerate(target)
+      : defaultGenerate);
   const wait = options.wait ?? sleepUnlessAborted;
   const now = options.now ?? Date.now;
   /** The model the draws' 429s and timeouts are counted against (P0). */
-  const imageModel = getMinkConfig().imageModel;
+  const imageModel =
+    target?.kind === "elevenlabs"
+      ? `elevenlabs:${target.model}`
+      : getMinkConfig().imageModel;
   /** Why each product's studio photo was drawn again, by product key (P0). */
   const redraws = new Map<string, RevampRedraw[]>();
   const results = new Map<string, ProductResult>();
@@ -801,7 +819,8 @@ export async function makeRevampProductPhotos(
           spent = true;
           // ★ A try its own 75 s clock cut off is counted as a timeout (P0).
           bill(
-            error instanceof ProductDrawTimeout
+            error instanceof ProductDrawTimeout ||
+              error instanceof MinkElevenLabsTimeoutError
               ? mergeUsage(
                   { ...DRAW_USAGE },
                   revampCallUsage(imageModel, { timeouts: 1 }),
@@ -1731,6 +1750,29 @@ async function defaultGenerate(
       `Not sent: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+/**
+ * The studio photo drawn by ElevenLabs (the operator switch). ★ No Vertex
+ * capacity and no start pacing: the reason the switch exists. ★ A draw
+ * whose turn comes after the deadline's drain began is not sent, the
+ * Vertex path's rule, and ElevenLabs' own clock (3 minutes) bounds a try.
+ */
+function elevenLabsGenerate(target: {
+  apiKey: string;
+  model: Parameters<typeof generateMinkMediaImageWithElevenLabs>[0]["model"];
+}): NonNullable<MakeRevampProductPhotosOptions["generate"]> {
+  return async (request, references, signal, draining) => {
+    if (draining?.aborted) {
+      throw new ProductDrawNotSent(
+        "Not sent: the redesign stopped starting paid calls at its deadline.",
+      );
+    }
+    return generateMinkMediaImageWithElevenLabs(target, request, references, {
+      signal,
+      draining,
+    });
+  };
 }
 
 // ── The check of a studio photo (L2-H) ───────────────────────────────────────
