@@ -24409,13 +24409,21 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       (docs/autopay-verification.md) registered a mandate through the real
       test Checkout with everything working as built, and then Razorpay
       REFUSED the renewal debit: `POST /payments/create/recurring` answers
-      HTTP 400 "The requested URL was not found on the server.", its message
-      for a feature the account does not have. The Recurring Payments API is
-      on request from Razorpay support, for the test and the live account.
-      Until it is enabled every automatic renewal is refused, and the retry
-      rule above turns that into three tries and a pay-by-hand email.
-      `scripts/autopay-test-debit.mjs` (test keys only) repeats the debit in
-      one command. (A credit pack paid in a tab that then closed is settled by
+      HTTP 400 "The requested URL was not found on the server." ★★ THE CAUSE
+      IS STOREMINK'S OWN FLOW, not a feature Razorpay has to enable (the first
+      reading, corrected the same day): Razorpay's subsequent-payment pages
+      require the renewal's ORDER to carry `payment_capture` and a
+      `notification` object (the pre-debit notice), and allow the debit only
+      36 hours after that notice for a card (24 for UPI). With the order
+      built that way the same endpoint answers with those rules.
+      `chargeMandateViaRazorpay` creates a plain order and debits it at once.
+      Until the renewal is rebuilt as two steps (notify, then debit after the
+      notice period) every automatic renewal is refused, and the retry rule
+      above turns that into three tries and a pay-by-hand email. Not yet
+      proven: that the debit succeeds once the 36 hours have passed (a
+      notified test order may be debited from 23 Nov 2026 11:23 IST).
+      `scripts/autopay-test-debit.mjs` (test keys only) runs either step.
+      (A credit pack paid in a tab that then closed is settled by
       the webhook and the hourly job: `lib/ai/credit-purchase.ts`.)
 
     - **★★ THE AMOUNT PICKS THE MANDATE RAIL, AND SOMETIMES THERE ISN'T ONE**

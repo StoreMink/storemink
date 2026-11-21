@@ -123,9 +123,9 @@ store and confirm:
 - [x] Standard Checkout receives the same `customer_id` and explicit
       `recurring: true` for a mandate order (pinned by client regression test).
 - [ ] `POST /payments/create/recurring` against a confirmed token returns
-      `razorpay_payment_id`. **★★ BLOCKED, 21 Nov 2026: Razorpay answers HTTP
-      400 `BAD_REQUEST_ERROR`, "The requested URL was not found on the
-      server." See the run below.**
+      `razorpay_payment_id`. **★★ NOT YET, 21 Nov 2026: StoreMink's order
+      lacks the pre-debit `notification` Razorpay requires, and a debit is
+      allowed only 36 hours after it. See the run below.**
 - [ ] Note the exact `status` values you see. If any is outside
       `mapGatewayStatus`'s list, add it there — an unrecognised status resolves
       to `unknown`, which is safe but leaves the invoice for reconciliation.
@@ -155,43 +155,77 @@ Checkout. No real money moved.
   The token read back as `recurring: true`,
   `recurring_details.status: confirmed`, `max_amount: 500000`.
 
-**★★ What did not: the renewal debit.** `POST /payments/create/recurring`
-(the call `chargeMandateViaRazorpay` makes at every renewal) was refused with
-HTTP 400, `BAD_REQUEST_ERROR`, "The requested URL was not found on the
-server.", and no payment was created on the order. The path and the request
-body match Razorpay's published reference. Razorpay labels its Recurring
-Payments API "an on-demand feature. Please raise a request with our Support
-team to get this feature activated on your Razorpay account", and it documents
-this same message for a feature that is not enabled. So **the account can
-register a mandate but is not allowed to debit one.**
+**★★ What did not: the renewal debit, and why (corrected the same day).**
+`POST /payments/create/recurring`, sent the way `chargeMandateViaRazorpay`
+sends it at every renewal, was refused with HTTP 400, `BAD_REQUEST_ERROR`,
+"The requested URL was not found on the server.", and no payment was created.
 
-**What that means today.** A merchant can subscribe and authorise autopay, and
+The first reading was that Razorpay had not enabled the Recurring Payments API
+on the account. **That was wrong, or at least not the whole story.** Razorpay's
+"create subsequent payments" pages (cards and UPI) describe a step StoreMink
+does not take: the ORDER for a subsequent payment carries `payment_capture`
+and a `notification` object (`token_id`, optionally `payment_after`), which is
+the pre-debit notification Razorpay sends the customer. Re-run with the order
+built that way, the same endpoint answered with real business rules:
+
+| Order sent                                             | What the debit call answered                                                   |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------ |
+| As StoreMink sends it (no `notification`)              | 400 "The requested URL was not found on the server."                           |
+| With `payment_capture: true` only                      | the same                                                                       |
+| With `payment_capture` and `notification`              | 400 `pre_debit_notification_failed` (the notice was not delivered yet)         |
+| The same order a minute later (notification delivered) | 400 "Debit can be attempted 36 hours after sending the pre-debit notification" |
+| An order asking for a debit two minutes ahead          | refused at ORDER creation with that same 36-hour rule                          |
+
+So the endpoint is live on this account. **What is missing is in StoreMink's
+own flow:** a renewal has to be two steps at least 36 hours apart for a card
+(the UPI page says 24 hours), not one:
+
+1. Create the order with its `notification` (Razorpay sends the pre-debit
+   notice). `payment_after` defaulted to 36 hours 5 minutes ahead.
+2. At or after `payment_after`, call `POST /payments/create/recurring` on that
+   order.
+
+`chargeMandateViaRazorpay` creates a plain order and debits it in the same
+breath, which is the path Razorpay answers with "URL not found".
+
+**Not yet proven:** that the debit then SUCCEEDS once the 36 hours have
+passed. The order `order_U2tkdTXDXc6hig` was created with its notification on
+21 Nov 2026 (delivered 16:54 UTC) and may be debited from
+**23 Nov 2026, 05:53 UTC (11:23 IST)**:
+
+```bash
+node scripts/autopay-test-debit.mjs \
+  --customer cust_U2tCpF6i2o1LPF --token token_U2tEUgvp4hWNEV \
+  --order order_U2tkdTXDXc6hig
+```
+
+The script refuses anything but an `rzp_test_` key. `--notify true` creates a
+fresh notified order when that one has been used.
+
+**What this means today.** A merchant can subscribe and authorise autopay, and
 the first payment is taken. At renewal every automatic debit is refused before
-it reaches a bank. With the retry rule that is three refused tries (four,
-three and two days before the cycle turns) and then the "Automatic payment
-didn't go through" email asking them to pay the invoice by hand, which works.
-Nobody is charged twice and nobody loses a plan they pay for, but **autopay
-does not collect anything until Razorpay enables the feature**, on the LIVE
-account as well as the test one (the live account has not been checked).
+it reaches a bank. With the retry rule that is three refused tries and then
+the "Automatic payment didn't go through" email asking them to pay the invoice
+by hand, which works. Nobody is charged twice and nobody loses a plan they pay
+for, but **autopay collects nothing until the renewal is rebuilt as the two
+documented steps.**
 
-**To do, in order:**
+**What the rebuild has to decide** (not built; needs the owner):
 
-1. Ask Razorpay support to enable the **Recurring Payments API** (subsequent
-   payments, `POST /v1/payments/create/recurring`, for cards and UPI Autopay)
-   on both the test and the live account.
-2. Re-run the debit in test mode. The mandate from this run is still
-   registered, so it is one command and needs no browser:
-
-   ```bash
-   node scripts/autopay-test-debit.mjs \
-     --customer cust_U2tCpF6i2o1LPF --token token_U2tEUgvp4hWNEV
-   ```
-
-   The script refuses anything but an `rzp_test_` key. Then force a decline by
-   asking for more than the mandate's ₹5,000 ceiling (`--amount 600000`) and
-   note the status and error it returns.
-
-3. Only then tick the remaining boxes below.
+- The renewal pass already starts four days before the cycle turns, which is
+  room for one notice and one debit. A retry needs a NEW notification and
+  another 36 hours (Razorpay's cards page: no retry of a failed debit when the
+  notification object is used), so "three tries, 24 hours apart" cannot hold
+  for cards as written.
+- Razorpay's UPI page says NPCI allows one successful debit on a token per
+  billing cycle, and StoreMink's 30-day cycle drifts against a monthly
+  mandate. Whether two renewals can ever fall in one of the mandate's cycles
+  has to be checked, or the mandate registered with a frequency that allows
+  it.
+- Whether the support request to Razorpay is still needed. It asked for the
+  Recurring Payments API to be enabled; the endpoint already answers, so the
+  useful question for them is why an order with no `notification` is answered
+  with "URL not found".
 
 **Seen and not yet explained (check again once debits work):**
 
@@ -203,8 +237,8 @@ account as well as the test one (the live account has not been checked).
   number and asked for one. A real merchant's number is not affected, but a
   placeholder number in a test will stop at that screen.
 
-Not exercised, because the debit call is refused before it does anything: a
-real decline, a debit over the mandate ceiling, and a timeout.
+Not exercised, because no debit has been allowed through yet: a real decline,
+a debit over the mandate ceiling, and a timeout.
 
 ### 2. The outcomes that matter more than the happy path
 
