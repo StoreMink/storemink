@@ -26,7 +26,17 @@ import "server-only";
  * would expire before the gateway call it was meant to protect. See `claimDue`.
  */
 
-import { and, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  lte,
+  ne,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { withService, type Db } from "@/lib/db/client";
 import {
   billingInvoices,
@@ -44,6 +54,8 @@ import {
   type Plan,
 } from "@/lib/plans";
 import {
+  AUTO_COLLECT_MAX_ATTEMPTS,
+  autoCollectDecision,
   collectionCutoff,
   collectionRoute,
   cycleFrom,
@@ -51,17 +63,24 @@ import {
   type MandateStatus,
 } from "./cycle";
 import { closeUnreachedInvoices } from "./close-cycle";
-import { collectInvoice, type ChargeFn, type CollectResult } from "./collect";
+import {
+  automaticAttemptsOn,
+  collectInvoice,
+  type ChargeFn,
+  type CollectResult,
+} from "./collect";
 import {
   amountDueForInvoice,
   ensureRenewalInvoice,
   finalizeInvoiceClaimed,
   getCycleInvoice,
+  getInvoice,
   loadTaxSnapshot,
   type InvoiceRow,
 } from "./invoice-store";
 import type { TaxSnapshot } from "./tax-snapshot";
 import {
+  notifyAutopayStopped,
   notifyDowngraded,
   notifyGraceStarted,
   notifyInvoiceIssued,
@@ -76,6 +95,37 @@ export const RENEWAL_BATCH = 50;
 
 type BillingPeriod = "monthly" | "yearly";
 
+/**
+ * Where one page of a pass stopped, so the next page starts after it.
+ *
+ * ★★ WHY THE PASSES PAGE (21 Nov 2026). Each pass took the first 50 rows the
+ * database happened to return, with no ORDER BY, and most of those rows are
+ * still there on the next run (a renewal already invoiced stays inside the
+ * lead window for four days; a turned cycle whose payment is still in flight
+ * stays `active`). So past a few hundred subscribers the same 50 could be
+ * returned every hour and the rest never invoiced, never advanced and never
+ * downgraded. Every pass now reads in a fixed order, oldest first, and the
+ * cron keeps asking for the next page until a pass returns a short one.
+ *
+ * `at` is the row's sort time exactly as the database returned it (it is
+ * passed straight back and cast, so no precision is lost); `storeId` breaks
+ * ties.
+ */
+export interface PassCursor {
+  at: string;
+  storeId: string;
+}
+
+/** The rows strictly after `after` in (time, store) order. */
+function afterCursor(
+  time: unknown,
+  storeId: unknown,
+  after: PassCursor | null | undefined,
+): SQL | undefined {
+  if (!after) return undefined;
+  return sql`(${time}, ${storeId}) > (${after.at}::timestamptz, ${after.storeId}::uuid)`;
+}
+
 export interface RenewalSummary {
   considered: number;
   collected: number;
@@ -83,6 +133,8 @@ export interface RenewalSummary {
   pendingReconcile: number;
   manualRequired: number;
   errors: number;
+  /** Set when this page was full: pass it back as `after` for the next. */
+  next: PassCursor | null;
 }
 
 interface DueRow {
@@ -108,6 +160,8 @@ interface DueRow {
 export async function collectDueRenewals(input: {
   now?: Date;
   limit?: number;
+  /** Start after this row: the `next` an earlier page returned. */
+  after?: PassCursor | null;
   /**
    * ★★ NULL = ISSUE THE INVOICE, DO NOT CHARGE. Issuing is not charging: it
    * writes a document saying what is owed, which the merchant settles by hand on
@@ -135,17 +189,24 @@ export async function collectDueRenewals(input: {
     pendingReconcile: 0,
     manualRequired: 0,
     errors: 0,
+    next: null,
   };
 
+  const limit = input.limit ?? RENEWAL_BATCH;
   let due: DueRow[];
   try {
     due = await withService(async (db) =>
-      claimDue(db, now, input.limit ?? RENEWAL_BATCH),
+      claimDue(db, now, limit, input.after),
     );
   } catch (err) {
     logError("billing.renewal.claim", err);
     summary.errors += 1;
     return summary;
+  }
+  // A full page means there may be more behind it.
+  const last = due.at(-1);
+  if (due.length >= limit && last?.currentPeriodEnd) {
+    summary.next = { at: last.currentPeriodEnd, storeId: last.storeId };
   }
 
   for (const row of due) {
@@ -187,51 +248,79 @@ export async function collectDueRenewals(input: {
  * enough to matter, the fix is a real lease column (the `data_jobs` pattern),
  * not a lock that expires before the work does.
  */
-async function claimDue(db: Db, now: Date, limit: number): Promise<DueRow[]> {
-  return db
-    .select({
-      storeId: billingSubscriptions.storeId,
-      plan: billingSubscriptions.plan,
-      period: billingSubscriptions.period,
-      currentCycleSeq: billingSubscriptions.currentCycleSeq,
-      currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
-      billedLocations: billingSubscriptions.billedLocations,
-      scheduledPlan: billingSubscriptions.scheduledPlan,
-      scheduledPeriod: billingSubscriptions.scheduledPeriod,
-      scheduledLocations: billingSubscriptions.scheduledLocations,
-      cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
-      mandateId: billingSubscriptions.mandateId,
-    })
-    .from(billingSubscriptions)
-    .where(
-      and(
-        inArray(billingSubscriptions.state, ["active", "past_due", "grace"]),
-        // ★★ THERE IS NO COMP EXEMPTION HERE ANY MORE, and its absence is
-        // deliberate — see docs/comped-plans-spec.md §7 and migration 0078.
-        // A comped plan is an entitlement OVERLAY resolved at read time; holding
-        // a free upgrade never means the merchant stopped paying for the plan
-        // underneath, so skipping collection would turn a gift into a silent
-        // payment holiday. The predicate was also a latent trap:
-        // `billing_subscriptions.plan_source` DEFAULTS to 'comp' and only
-        // becomes 'paid' at activation, so a half-enrolled row was permanently
-        // uninvoiceable and undowngradeable with nothing reporting it. The
-        // matching predicate inside `billing_claim_downgrade()` went with it —
-        // removing only the TypeScript ones would invoice and chase a
-        // subscription that the atomic claim then silently refuses to downgrade.
-        // ★★ A CANCELLED SUBSCRIPTION IS NOT INVOICED. It ends at the period end,
-        // so raising a document for the cycle after it would bill a merchant who
-        // explicitly stopped — and, because grace and downgrade follow an unpaid
-        // invoice, would then chase them for it.
-        eq(billingSubscriptions.cancelAtPeriodEnd, false),
-        isNotNull(billingSubscriptions.currentPeriodEnd),
-        // A cycle beginning at or before the cutoff is inside the lead window.
-        lte(
-          billingSubscriptions.currentPeriodEnd,
-          collectionCutoff(now).toISOString(),
+async function claimDue(
+  db: Db,
+  now: Date,
+  limit: number,
+  after?: PassCursor | null,
+): Promise<DueRow[]> {
+  return (
+    db
+      .select({
+        storeId: billingSubscriptions.storeId,
+        plan: billingSubscriptions.plan,
+        period: billingSubscriptions.period,
+        currentCycleSeq: billingSubscriptions.currentCycleSeq,
+        currentPeriodEnd: billingSubscriptions.currentPeriodEnd,
+        billedLocations: billingSubscriptions.billedLocations,
+        scheduledPlan: billingSubscriptions.scheduledPlan,
+        scheduledPeriod: billingSubscriptions.scheduledPeriod,
+        scheduledLocations: billingSubscriptions.scheduledLocations,
+        cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
+        mandateId: billingSubscriptions.mandateId,
+      })
+      .from(billingSubscriptions)
+      .where(
+        and(
+          inArray(billingSubscriptions.state, ["active", "past_due", "grace"]),
+          // ★★ THERE IS NO COMP EXEMPTION HERE ANY MORE, and its absence is
+          // deliberate — see docs/comped-plans-spec.md §7 and migration 0078.
+          // A comped plan is an entitlement OVERLAY resolved at read time; holding
+          // a free upgrade never means the merchant stopped paying for the plan
+          // underneath, so skipping collection would turn a gift into a silent
+          // payment holiday. The predicate was also a latent trap:
+          // `billing_subscriptions.plan_source` DEFAULTS to 'comp' and only
+          // becomes 'paid' at activation, so a half-enrolled row was permanently
+          // uninvoiceable and undowngradeable with nothing reporting it. The
+          // matching predicate inside `billing_claim_downgrade()` went with it —
+          // removing only the TypeScript ones would invoice and chase a
+          // subscription that the atomic claim then silently refuses to downgrade.
+          // ★★ A CANCELLED SUBSCRIPTION IS NOT INVOICED. It ends at the period end,
+          // so raising a document for the cycle after it would bill a merchant who
+          // explicitly stopped — and, because grace and downgrade follow an unpaid
+          // invoice, would then chase them for it.
+          eq(billingSubscriptions.cancelAtPeriodEnd, false),
+          isNotNull(billingSubscriptions.currentPeriodEnd),
+          // A cycle beginning at or before the cutoff is inside the lead window.
+          lte(
+            billingSubscriptions.currentPeriodEnd,
+            collectionCutoff(now).toISOString(),
+          ),
+          // ★ A RENEWAL ALREADY PAID HAS NOTHING LEFT TO COLLECT. It stays
+          // inside the lead window until its cycle turns, so without this every
+          // hourly run re-read it (and counted it as collected again) for four
+          // days, and those rows filled the page ahead of ones still owed.
+          sql`not exists (
+          select 1 from billing_invoices paid_next
+           where paid_next.store_id = ${billingSubscriptions.storeId}
+             and paid_next.kind = 'subscription'
+             and paid_next.cycle_seq = ${billingSubscriptions.currentCycleSeq} + 1
+             and paid_next.status = 'paid')`,
+          afterCursor(
+            billingSubscriptions.currentPeriodEnd,
+            billingSubscriptions.storeId,
+            after,
+          ),
         ),
-      ),
-    )
-    .limit(limit);
+      )
+      // ★ SOONEST CYCLE FIRST, in a fixed order, so pages do not overlap and
+      // the renewal closest to its cycle turn is never the one left behind.
+      .orderBy(
+        asc(billingSubscriptions.currentPeriodEnd),
+        asc(billingSubscriptions.storeId),
+      )
+      .limit(limit)
+  );
 }
 
 async function collectOne(
@@ -321,6 +410,18 @@ async function collectOne(
 
   // Already settled by an earlier run — nothing to do.
   if (invoice.status === "paid") return "paid";
+
+  // ★★ A PAYMENT ON THIS INVOICE IS STILL UNRESOLVED: NEVER START ANOTHER
+  // (Rule 1, found 21 Nov 2026). `processing` is derived from the attempts
+  // and includes an `unknown` outcome: a timeout or a 5xx on the debit, where
+  // the money may well have moved. The one-in-flight index covers `created`,
+  // `processing` and `authorized` but NOT `unknown`, so the next hourly run
+  // opened a second attempt and debited the mandate again while the first was
+  // still waiting for reconciliation (which runs AFTER this pass). Stop here
+  // instead: reconciliation settles the attempt (captured, or failed after its
+  // 72 hours), the invoice leaves `processing`, and only then is it collected
+  // again.
+  if (invoice.status === "processing") return "pending";
 
   // ★ Finalize BEFORE charging. The document number is what the merchant is
   // being asked to pay against, and the pre-debit notification quotes it.
@@ -430,6 +531,31 @@ async function collectOne(
   // so every attempt would sit in reconciliation forever.
   if (!input.charge) return "manual";
 
+  // ★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY HAND
+  // (owner decision, 21 Nov 2026; the rule is `autoCollectDecision`). This
+  // pass re-reads the same subscription every hour from T-4d until its cycle
+  // turns or its grace ends, and a declined debit leaves the invoice `open`,
+  // so without this every run debited the mandate again: about 140 times.
+  // Asked only when the debit would really be sent; an invoice that cannot be
+  // collected automatically is answered by `collectInvoice` as before.
+  // ★ A count that could not be read is "leave it this run", never "no tries
+  // yet".
+  let triesBefore = 0;
+  if (route.auto) {
+    const history = await automaticAttemptsOn(invoice.id);
+    if (!history) return "pending";
+    const decision = autoCollectDecision({
+      attempts: history.count,
+      lastAttemptAt: history.lastAt,
+      now,
+    });
+    // Out of tries: the invoice stays open on Plans & Billing, and the cycle
+    // turn opens grace on it as for any unpaid renewal.
+    if (decision === "exhausted") return "manual";
+    if (decision === "wait") return "pending";
+    triesBefore = history.count;
+  }
+
   const outcome = await collectInvoice({
     invoiceId: invoice.id,
     storeId: row.storeId,
@@ -440,7 +566,86 @@ async function collectOne(
     now,
   });
 
+  // ★ The last try has just failed: say so once, now, while there is still
+  // time to pay before the cycle turns. A try that fails later at the bank is
+  // announced by reconciliation, which is what records that failure.
+  if (
+    outcome.status === "failed" &&
+    triesBefore + 1 >= AUTO_COLLECT_MAX_ATTEMPTS
+  ) {
+    await announceAutopayStopped({
+      storeId: row.storeId,
+      invoiceId: invoice.id,
+      now,
+    });
+  }
+
   return classify(outcome);
+}
+
+/**
+ * Tell the merchant automatic collection has given up on a renewal, and that
+ * they must pay it by hand.
+ *
+ * ★ CALLED ONLY WHERE AN AUTOMATIC ATTEMPT IS RECORDED FAILED (this pass, for
+ * a debit the gateway refused at once; reconciliation, for one that failed
+ * later), so it is said once: each attempt fails exactly once. It re-reads
+ * the facts itself and says nothing unless this store's subscription invoice
+ * is still `open` (not paid meanwhile, no payment in flight, not closed) and
+ * every automatic try is used.
+ *
+ * Best-effort, like every notice: it never throws, and a failure to send
+ * changes nothing about the invoice, which stays payable on Plans & Billing.
+ */
+export async function announceAutopayStopped(input: {
+  storeId: string;
+  invoiceId: string;
+  now?: Date;
+}): Promise<boolean> {
+  const now = input.now ?? new Date();
+  try {
+    const invoice = await getInvoice(input.invoiceId);
+    if (!invoice || invoice.storeId !== input.storeId) return false;
+    if (invoice.kind !== "subscription" || invoice.status !== "open") {
+      return false;
+    }
+
+    const history = await automaticAttemptsOn(input.invoiceId);
+    if (!history || history.count < AUTO_COLLECT_MAX_ATTEMPTS) return false;
+
+    const [sub] = await withService((db) =>
+      db
+        .select({
+          plan: billingSubscriptions.plan,
+          scheduledPlan: billingSubscriptions.scheduledPlan,
+        })
+        .from(billingSubscriptions)
+        .where(eq(billingSubscriptions.storeId, input.storeId))
+        .limit(1),
+    );
+    if (!sub) return false;
+
+    await notifyAutopayStopped({
+      storeId: input.storeId,
+      // The plan the unpaid invoice is for: a change booked for the cycle end
+      // is what the next cycle was priced as.
+      plan: sub.scheduledPlan ?? sub.plan,
+      amountPaise: invoice.totalPaise,
+      tax: taxColumnsOf(invoice),
+      // The cycle this invoice opens; null on a row with no period.
+      dueAt: invoice.periodStart ? new Date(invoice.periodStart) : null,
+      invoiceRef: invoice.invoiceRef,
+      attempts: history.count,
+      now,
+    });
+    return true;
+  } catch (err) {
+    logError("billing.autopay_stopped", err, {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+    });
+    return false;
+  }
 }
 
 /** An invoice's three tax columns, as the billing emails read them. */
@@ -555,6 +760,8 @@ export interface EvaluateSummary {
   /** Subscriptions that reached the end of a cancelled cycle. */
   ended: number;
   errors: number;
+  /** Set when this page was full: pass it back as `after` for the next. */
+  next: PassCursor | null;
 }
 
 /**
@@ -583,16 +790,21 @@ export async function evaluateCycleTurns(
      * injected).
      */
     autopayConfigured?: boolean;
+    /** Start after this row: the `next` an earlier page returned. */
+    after?: PassCursor | null;
   } = {},
 ): Promise<EvaluateSummary> {
   const now = input.now ?? new Date();
+  const limit = input.limit ?? RENEWAL_BATCH;
   const summary: EvaluateSummary = {
     advanced: 0,
     graced: 0,
     waiting: 0,
     ended: 0,
     errors: 0,
+    next: null,
   };
+  let pageEnd: PassCursor | null = null;
 
   // ⚠ Collected INSIDE the transaction, mailed AFTER it commits. An email is a
   // network call; sending it inside would hold a pooled connection open for the
@@ -625,10 +837,27 @@ export async function evaluateCycleTurns(
             eq(billingSubscriptions.state, "active"),
             isNotNull(billingSubscriptions.currentPeriodEnd),
             lte(billingSubscriptions.currentPeriodEnd, now.toISOString()),
+            afterCursor(
+              billingSubscriptions.currentPeriodEnd,
+              billingSubscriptions.storeId,
+              input.after,
+            ),
           ),
         )
-        .limit(input.limit ?? RENEWAL_BATCH)
+        // ★ Longest overdue first, in a fixed order (see PassCursor): a cycle
+        // waiting on a payment still in flight stays in this set, and with no
+        // order those rows could fill every page ahead of ones ready to turn.
+        .orderBy(
+          asc(billingSubscriptions.currentPeriodEnd),
+          asc(billingSubscriptions.storeId),
+        )
+        .limit(limit)
         .for("update", { skipLocked: true });
+
+      const last = rows.at(-1);
+      if (rows.length >= limit && last?.currentPeriodEnd) {
+        pageEnd = { at: last.currentPeriodEnd, storeId: last.storeId };
+      }
 
       for (const row of rows) {
         // ★★ A CANCELLED SUBSCRIPTION ENDS HERE, and there is no invoice to wait
@@ -725,6 +954,8 @@ export async function evaluateCycleTurns(
     logError("billing.renewal.evaluate", err);
     summary.errors += 1;
   }
+  // Only a page that committed leads to the next one.
+  if (committed) summary.next = pageEnd;
   if (committed) await auditPlanChanges(audit);
 
   // ★ A cancellation reaching its end IS a downgrade from the merchant's point of
@@ -1195,6 +1426,8 @@ export interface DowngradeSummary {
    *  safety net instead of being left in grace. */
   advancedAfterGrace: number;
   errors: number;
+  /** Set when this page was full: pass it back as `after` for the next. */
+  next: PassCursor | null;
 }
 
 /**
@@ -1225,15 +1458,19 @@ export async function downgradeExpired(
   input: {
     now?: Date;
     limit?: number;
+    /** Start after this row: the `next` an earlier page returned. */
+    after?: PassCursor | null;
   } = {},
 ): Promise<DowngradeSummary> {
   const now = input.now ?? new Date();
+  const limit = input.limit ?? RENEWAL_BATCH;
   const summary: DowngradeSummary = {
     downgraded: 0,
     shiftsClosed: 0,
     ended: 0,
     advancedAfterGrace: 0,
     errors: 0,
+    next: null,
   };
 
   // ★ The PLAN is read here, before the claim — `billing_claim_downgrade()`
@@ -1246,6 +1483,7 @@ export async function downgradeExpired(
     plan: string;
     cancelAtPeriodEnd: boolean;
     currentCycleSeq: number;
+    graceEndsAt: string | null;
   }[] = [];
   try {
     candidates = await withService(async (db) => {
@@ -1255,6 +1493,7 @@ export async function downgradeExpired(
           plan: billingSubscriptions.plan,
           cancelAtPeriodEnd: billingSubscriptions.cancelAtPeriodEnd,
           currentCycleSeq: billingSubscriptions.currentCycleSeq,
+          graceEndsAt: billingSubscriptions.graceEndsAt,
         })
         .from(billingSubscriptions)
         .where(
@@ -1262,11 +1501,27 @@ export async function downgradeExpired(
             inArray(billingSubscriptions.state, ["past_due", "grace"]),
             isNotNull(billingSubscriptions.graceEndsAt),
             lte(billingSubscriptions.graceEndsAt, now.toISOString()),
+            afterCursor(
+              billingSubscriptions.graceEndsAt,
+              billingSubscriptions.storeId,
+              input.after,
+            ),
           ),
         )
-        .limit(input.limit ?? RENEWAL_BATCH);
+        // ★ Longest expired first, in a fixed order (see PassCursor): a
+        // subscription whose payment is still in flight is refused by the
+        // claim and stays in this set.
+        .orderBy(
+          asc(billingSubscriptions.graceEndsAt),
+          asc(billingSubscriptions.storeId),
+        )
+        .limit(limit);
       return rows;
     });
+    const last = candidates.at(-1);
+    if (candidates.length >= limit && last?.graceEndsAt) {
+      summary.next = { at: last.graceEndsAt, storeId: last.storeId };
+    }
   } catch (err) {
     logError("billing.renewal.downgrade_scan", err);
     summary.errors += 1;

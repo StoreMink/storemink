@@ -601,6 +601,82 @@ export async function collectInvoice(
   return { status: "pending_reconcile", attemptId: begun.attemptId };
 }
 
+/**
+ * How many automatic debits this invoice has had, and when the newest was
+ * opened: the two facts `autoCollectDecision` (cycle.ts) needs.
+ *
+ * Every automatic attempt counts, whatever became of it. ★ NULL WHEN THE READ
+ * FAILED, never zero: "we could not count" must not read as "never tried", or
+ * a database hiccup is one more debit.
+ */
+export async function automaticAttemptsOn(
+  invoiceId: string,
+): Promise<{ count: number; lastAt: Date | null } | null> {
+  try {
+    return await withService(async (db) => {
+      const [row] = await db
+        .select({
+          count: sql<number>`count(*)::int`,
+          lastAt: sql<string | null>`max(${billingPaymentAttempts.createdAt})`,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, invoiceId),
+            eq(billingPaymentAttempts.mode, "automatic"),
+          ),
+        );
+      const lastAt = row?.lastAt ? new Date(row.lastAt) : null;
+      return {
+        count: Number(row?.count ?? 0),
+        lastAt: lastAt && Number.isFinite(lastAt.getTime()) ? lastAt : null,
+      };
+    });
+  } catch (err) {
+    logError("billing.automatic_attempts", err, { invoiceId });
+    return null;
+  }
+}
+
+/**
+ * Is a payment on this invoice still waiting for its RESULT (state `unknown`)?
+ *
+ * ★★ THE ONE-IN-FLIGHT INDEX DOES NOT COVER `unknown`, so `beginAttempt`
+ * succeeds beside one. An automatic debit whose answer never arrived may well
+ * have taken the money; a merchant who then pressed Pay now paid the same
+ * renewal a second time, and the duplicate had to be refunded. Callers that
+ * open a NEW payment for an existing invoice ask this first.
+ *
+ * Reconciliation resolves an `unknown` attempt: captured or failed as soon as
+ * the gateway says so, an automatic one with no payment on its order after a
+ * few hours, and one that never got a gateway order after 15 minutes. So this
+ * never blocks for long.
+ *
+ * ★ NULL WHEN THE READ FAILED: the caller must not read that as "no".
+ */
+export async function hasUnknownAttempt(
+  invoiceId: string,
+): Promise<boolean | null> {
+  try {
+    return await withService(async (db) => {
+      const rows = await db
+        .select({ id: billingPaymentAttempts.id })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, invoiceId),
+            eq(billingPaymentAttempts.state, "unknown"),
+          ),
+        )
+        .limit(1);
+      return rows.length > 0;
+    });
+  } catch (err) {
+    logError("billing.has_unknown_attempt", err, { invoiceId });
+    return null;
+  }
+}
+
 /** The most recent attempt for an invoice, for reconciliation and display. */
 export async function latestAttempt(invoiceId: string) {
   try {

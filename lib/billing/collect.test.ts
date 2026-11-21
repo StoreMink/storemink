@@ -47,6 +47,8 @@ vi.mock("@/lib/payments/razorpay", async (importOriginal) => ({
 
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import {
+  automaticAttemptsOn,
+  hasUnknownAttempt,
   beginAttempt,
   capturedAttemptForInvoice,
   capturedDraftPurchases,
@@ -1234,5 +1236,57 @@ describe("★★ recovered purchases (RC-F1b)", () => {
       expect(await fileRecoveredPurchase(input)).toBe(false);
       expect(logWarn).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("automaticAttemptsOn: what the retry rule counts", () => {
+  it("returns the count and when the newest automatic try was opened", async () => {
+    seed({
+      selects: [[{ count: 2, lastAt: "2026-11-20 10:20:03.123456+00" }]],
+    });
+    expect(await automaticAttemptsOn(INVOICE)).toEqual({
+      count: 2,
+      lastAt: new Date("2026-11-20T10:20:03.123Z"),
+    });
+    // Scoped to this invoice's AUTOMATIC attempts: a manual checkout the
+    // merchant opened is not one of the three tries.
+    const where = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.where[0] as never,
+    );
+    expect(where.sql).toContain('"invoice_id" = $1');
+    expect(where.sql).toContain('"mode" = $2');
+    expect(where.params).toEqual([INVOICE, "automatic"]);
+  });
+
+  it("no tries yet is a count of zero with no time", async () => {
+    seed({ selects: [[{ count: 0, lastAt: null }]] });
+    expect(await automaticAttemptsOn(INVOICE)).toEqual({
+      count: 0,
+      lastAt: null,
+    });
+  });
+
+  it("★★ a failed read is NULL, never zero: 'could not count' is not 'never tried'", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+    expect(await automaticAttemptsOn(INVOICE)).toBeNull();
+  });
+});
+
+describe("hasUnknownAttempt: a payment still waiting for its result", () => {
+  it("true when the invoice has an attempt in `unknown`, false when it has none", async () => {
+    seed({ selects: [[{ id: ATTEMPT }]] });
+    expect(await hasUnknownAttempt(INVOICE)).toBe(true);
+    const where = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.where[0] as never,
+    );
+    expect(where.params).toEqual([INVOICE, "unknown"]);
+
+    seed({ selects: [[]] });
+    expect(await hasUnknownAttempt(INVOICE)).toBe(false);
+  });
+
+  it("★★ a failed read is NULL, never false", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+    expect(await hasUnknownAttempt(INVOICE)).toBeNull();
   });
 });

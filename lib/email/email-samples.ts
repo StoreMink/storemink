@@ -25,6 +25,7 @@ import {
 } from "./notification-emails";
 import type { EmailOrderSummary } from "./line-items";
 import {
+  autopayStoppedTemplate,
   paymentFailedTemplate,
   paymentReceiptTemplate,
   planActivatedTemplate,
@@ -645,6 +646,19 @@ function billingSamples(): EmailSample[] {
       }),
     },
     ...gstSamples(group, manageUrl),
+    {
+      id: "billing-autopay-stopped",
+      group,
+      label: "Automatic payment stopped, pay by hand",
+      ...autopayStoppedTemplate({
+        ...base,
+        amountPaise: 240000,
+        tax: null,
+        payBy: "2026-11-07T06:30:00.000Z",
+        invoiceRef: "SM/2026-27/00042",
+        attempts: 3,
+      }),
+    },
     {
       id: "billing-renewal-overdue",
       group,

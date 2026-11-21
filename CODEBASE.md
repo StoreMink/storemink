@@ -8521,10 +8521,20 @@ wholesip/
 │       │                      # routeStart + 52 s)), run even when an email queue
 │       │                      # throws (re-thrown after); `moderation` in the answer
 │       ├── cron/plan-expiry/  # ★ Daily: flips expired timed plans → free (§15)
+│       ├── cron/confirm-payments/ # ★ Every 5 minutes (21 Nov 2026): asks Razorpay
+│       │                      # about online orders waiting 2 to 45 minutes and marks
+│       │                      # the paid ones paid (confirmYoungPendingOrders,
+│       │                      # lib/orders/pending-payments.ts). NEVER cancels. Needs
+│       │                      # its own Cloud Scheduler job (docs/cron-jobs.md); until
+│       │                      # then the same pass runs at the top of the hourly reaper
 │       ├── cron/expire-pending-payments/ # ★ Hourly reaper for unpaid razorpay
-│       │                      # orders: mark paid if captured (capturing an authorized
-│       │                      # payment of the exact amount), skip if the gateway can't
-│       │                      # be READ, else cancel through releaseCancelledOrder; then
+│       │                      # orders, on lib/orders/pending-payments.ts since 21 Nov
+│       │                      # 2026: first confirm young paid orders, then mark paid if
+│       │                      # captured (capturing an authorized payment of the exact
+│       │                      # amount), skip if the gateway can't be READ or refuses
+│       │                      # the keys (for at most a week), else cancel through
+│       │                      # expireUnpaidOrder (releaseCancelledOrder, the coupon
+│       │                      # use and the OFFER uses); then
 │       │                      # records payments that landed after expiry (§18).
 │       │                      # ★ standingSweeps() (late payments, pickup expiry +
 │       │                      # reminders, WhatsApp COD follow-up, refunds, holds)
@@ -10839,7 +10849,14 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0277 (0260 = redesign recovery fence,
+│                              # Next free: 0281 (0277 = Mink AI pop-out Help, on
+│                              # `dev` only until the branches merge; 0278 = Mink
+│                              # credits refresh on the store's own date: usage
+│                              # carry and Help sentence; 0279 = payment
+│                              # robustness: store_payment_providers
+│                              # .webhook_last_event_at and five Help sentences;
+│                              # 0280 = orders.razorpay_key_id).
+│                              # Before that: 0277 (0260 = redesign recovery fence,
 │                              # 0261 = voice controls Help edit, 0262 and 0263 =
 │                              # private chat attachments, 0264 and 0265 = refunds
 │                              # and credit notes, 0266 to 0268 = GST, 0269 and
@@ -17317,8 +17334,31 @@ running subscription is how you get chargebacks.
     transient errors). Paid stores use consecutive 30-day windows anchored to
     `billing_subscriptions.current_period_start`, matching StoreMink's billing
     duration instead of calendar-month arithmetic (yearly plans receive the
-    same 30-day included-credit windows inside the paid year); a store without
-    that paid-cycle anchor retains the UTC calendar-month fallback.
+    same 30-day included-credit windows inside the paid year).
+    ★★ EVERY STORE REFRESHES ON ITS OWN DATE (owner, 21 Nov 2026). A store
+    with no paid plan cycle (Free, or a plan StoreMink granted) used to be
+    metered by UTC calendar month, so all of them refreshed together on the
+    1st whatever day they joined. `minkCreditCycleAt` now takes the store's
+    creation date as a third argument and counts those stores' 30-day windows
+    from `stores.created_at`, with the same `cycle:<window start>` key;
+    `getMinkCreditCycle` reads both dates in one query from `stores` left
+    joined to `billing_subscriptions`. The paid cycle start wins whenever it
+    is readable and not in the future. The calendar month is left only for a
+    store whose row cannot be read. Moving from Free to a paid plan (or back)
+    changes the key, so the window starts again from that date.
+    Migration `20261121_0278` carries the current month's usage to the new
+    key by 0114's rule below (checked in a rolled-back local transaction: the
+    SQL key equals the JavaScript key to the millisecond) and corrects the
+    credits guide's reset sentence in place. The operator console follows:
+    `listAllStores` passes each store's creation date, and
+    `lib/platform/store-detail.ts` reads usage under the key
+    `getMinkCreditCycle` returns (it asked for the calendar month, so it
+    showed 0 used for every store on a paid cycle). Tests:
+    `lib/ai/quota-cycle.test.ts`, `lib/ai/quota.test.ts`.
+    ⚠ A store downgraded for non-payment keeps its last paid cycle start in
+    `billing_subscriptions` and goes on counting from it; one that cancelled
+    has it cleared and counts from its creation date. Both are the store's
+    own date.
     ★★ THE 0114 BACKFILL CARRIES THE OLD CALENDAR COUNTER ONLY WHEN THE
     CURRENT WINDOW ALREADY COVERED THE WHOLE RECORDED MONTH. `ai_usage.used` is
     an aggregate and cannot be split across two windows, so a store whose
@@ -17410,8 +17450,23 @@ running subscription is how you get chargebacks.
       Free, Basic and Pro) → Razorpay modal on the **PLATFORM's own account**
       (env `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`; totally separate from a
       store's BYO gateway) → `confirmCreditPurchase` (HMAC verify → paid →
-      `add_ai_credits`); dropped callbacks self-heal via reconcile-on-read on
-      page load (no webhook in v1). The linked accounting invoice is finalized
+      `add_ai_credits`). A dropped callback (the tab closed before the
+      confirm) is settled three ways since 21 Nov 2026, all through
+      `lib/ai/credit-purchase.ts`, which now holds the settle
+      (`settleCreditPurchase`, one conditional pending → paid claim, so
+      exactly one caller grants the credits and tells the merchant):
+      StoreMink's Razorpay webhook (`settleCreditPurchaseByOrder`, reached
+      when a captured payment matches no billing attempt), the hourly billing
+      job (`reconcilePendingCreditPurchases` with no store: purchases 3
+      minutes to 3 days old, 100 a run, newest first), and the page-load pass
+      as before. Every gateway-reported settle checks the captured amount and
+      currency against what the order was created for (`creditPurchasePaise`)
+      and grants nothing on a difference
+      (`billing.credit_pack_amount_mismatch`); the page-load pass used to
+      grant on any captured payment. Before this a merchant who paid and
+      closed the tab got the credits only when they next opened Plans &
+      Billing. Tests: `lib/ai/credit-purchase.test.ts`. The linked
+      accounting invoice is finalized
       directly as `paid` after capture: it is a receipt for the same one-time
       checkout, never a collectible subscription invoice. The Plans debt query
       filters `kind = 'subscription'`, and the payment starter repeats that
@@ -24128,6 +24183,179 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       second charge. ⚠ Only a `processing` attempt is resumable: the index also
       covers `created` (no order exists yet) and `authorized` (money already
       authorized — re-opening checkout would invite a second authorization).
+    - **★★ STOREFRONT PAYMENTS: THREE GAPS CLOSED IN ONE MODULE (21 Nov
+      2026, `lib/orders/pending-payments.ts`).** Everything that marks an
+      online order paid still goes through `markOrderPaid`; everything that
+      cancels an unpaid one now goes through `expireUnpaidOrder` (the
+      pending → failed claim, then `releaseCancelledOrder`, the coupon use
+      and the offer uses), and `settlePendingOrder(order, creds, { expire })`
+      is the one "ask Razorpay, then act" both use.
+      1. **A paid order whose tab closed.** The merchant's webhook is
+         optional and pasted in by hand; without it the order waited for the
+         hourly reaper (45 to 105 minutes) and the shopper came back to a
+         full cart. Now (a) `resumeMyUnfinishedPayment` (checkout-actions)
+         runs when the checkout page opens: the shopper's own waiting orders
+         are settled with Razorpay, a paid one for this cart shows its
+         confirmation and empties the cart, a paid one for a changed cart is
+         announced and the cart kept (`orderHoldsCart`: exact lines and
+         quantities, free gift lines ignored), and one still waiting for this
+         cart restores "Retry Payment" for the SAME Razorpay order, which a
+         reload used to lose; (b) `placeOrder` makes the same check before any
+         read or reservation and refuses with `paidOrder` instead of placing
+         a second order (a failed check never blocks a sale; with nothing
+         waiting no gateway is read); (c) `/api/cron/confirm-payments`
+         confirms young paid orders every 5 minutes and never cancels;
+         (d) the Razorpay panel says "receiving events" only once a verified
+         delivery has arrived (`webhook_last_event_at`, 0279, stamped by the
+         webhook route at most hourly, cleared when a new secret is
+         generated), else "not confirmed yet".
+      2. **Offer limits leaked.** An unpaid order's `offer_redemptions` rows
+         stayed, and `reserve_offer_use` counts them whatever became of the
+         order. `releaseOrderOfferUses` (`lib/offers/cart.ts`) deletes the
+         order's rows with `DELETE ... RETURNING` (the claim) and releases
+         each use and amount; it runs on expiry and in `placeOrder`'s
+         Razorpay rollback BEFORE the order row is deleted (deleting only
+         blanked the rows' order id). A shopper's own abandoned attempt past
+         the window is also cancelled when they return to checkout.
+      3. **Changing the Razorpay account mid-payment.** `disconnectRazorpay`
+         and `saveRazorpayCredentials` call `settleBeforeGatewayChange` with
+         the keys on file (the gateway is paused while it checks and put back
+         on a refusal): paid orders are confirmed, dead ones cancelled, and an
+         order still inside its window blocks the change with the time to try
+         again. New keys that can read the waiting orders are the same
+         account and pass; keys Razorpay already refuses never block their own
+         replacement; an unreachable Razorpay fails closed. The reaper also
+         stops waiting for ever on keys Razorpay refuses (a week, like an
+         unreadable connection).
+
+      Tests: `lib/orders/pending-payments.test.ts`, `lib/offers/cart.test.ts`,
+      `lib/payments/store-webhook.test.ts`, `lib/payments/capture.test.ts`,
+      the two cron route tests, `payment-provider-actions.test.ts`,
+      `checkout-actions.test.ts`, `store-webhook-route.test.ts`. ⚠ Not run in
+      a browser or against live Razorpay.
+      ★ Three follow-ups the same day: (a) `markOrderPaid(..., { strict })`
+      throws `MarkPaidWriteError` when the WRITE fails, where "unchanged"
+      used to mean both a replay and a database error: the store's webhook
+      now answers 503 for a payment it could not record (it acknowledged it
+      and Razorpay never retried), `confirmOnlinePayment` no longer answers
+      `paid: true` for it, and `settlePendingOrder` reports `unknown`;
+      (b) a PAUSED gateway's webhook is honoured (`loadPaymentWebhookSecret`
+      no longer requires `enabled`): pausing stops new checkouts, not the
+      payment of an order already placed, and a 503 for every delivery makes
+      Razorpay disable the webhook; (c) `orders.razorpay_key_id` (0280)
+      records the public key id an order was created with, pinned beside the
+      gateway order id (the order id alone when the column is not there yet),
+      and `refusedReadReason` uses it in the reaper's log to tell "the keys
+      changed since this order" from "the same keys are refused". A failed
+      `rzpCreateOrder` at checkout is a `logError`
+      (`checkout.razorpay_order_create`) with the key id, not a console line.
+
+    - **★★ THE RENEWAL PASS NEVER CHARGES AN INVOICE THAT IS `processing`
+      (21 Nov 2026).** The index above does NOT cover `unknown`, the state a
+      timed-out or 5xx debit is left in, while the invoice derived from it
+      reads `processing`. `collectOne` (`renewal-worker.ts`) went on to
+      `collectInvoice`, whose `beginAttempt` then succeeded, so the hourly run
+      after an unknown outcome debited the mandate a second time, an hour
+      before reconciliation (which runs after the collect pass) could have
+      found the first payment captured. Confirmed on the local database in a
+      rolled-back transaction: a `created` attempt is accepted beside an
+      `unknown` one on the same invoice. `collectOne` now returns `pending`
+      for a `processing` invoice, so reconciliation settles the attempt
+      (captured, or failed after `FAIL_AFTER_HOURS`) before anything is
+      collected again; test in `renewal-worker.test.ts`, mutation-checked. No
+      merchant step changes, so no Help Centre update.
+    - **★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY
+      HAND (owner decision, 21 Nov 2026).** A declined debit leaves the
+      invoice `open`, and the hourly pass re-reads every subscription inside
+      the collection window, so it used to open a new attempt and debit the
+      mandate on every run: about 140 debits from T-4d to the end of grace.
+      The rule is pure: `autoCollectDecision` in `cycle.ts`
+      (`AUTO_COLLECT_MAX_ATTEMPTS` 3, `AUTO_COLLECT_RETRY_HOURS` 24), fed by
+      `automaticAttemptsOn` in `collect.ts` (every `mode = 'automatic'`
+      attempt on the invoice counts, whatever became of it; a count that
+      cannot be read is "not this run", never "no tries yet"). `collectOne`
+      asks it only when the debit would really be sent (`route.auto`):
+      `wait` is `pending`, `exhausted` is `manual`, and the invoice stays
+      open on Plans & Billing for the cycle turn to open grace on.
+      ★ THE ASKING: when the last try is recorded failed,
+      `announceAutopayStopped` (`renewal-worker.ts`) emails
+      `autopayStoppedTemplate` ("Automatic payment didn't go through", the
+      amount, the invoice, how many tries, and the day to pay by while it is
+      still ahead) and records `subscription.invoice_due` in-app. It is
+      called only where an attempt becomes `failed` (the collect pass for a
+      debit refused at once, reconciliation for one that failed later), so it
+      is said once, and it re-reads the invoice (still `open`, this store's,
+      a subscription invoice) and the count itself.
+      ★ A DEBIT THE GATEWAY REPORTS FAILED IS FAILED AT ONCE:
+      reconciliation (`reconcile.ts`) used to read only "not captured" and
+      wait `FAIL_AFTER_HOURS` (72), which held the next try and the grace
+      clock back three days. For a `mode = 'automatic'` attempt whose order
+      has payments and every one reads `failed`, it now settles `failed`
+      (`gateway_failed`) on that pass. Never for a manual checkout: its order
+      stays payable and a failed try in the window is routinely followed by
+      one that works. Tests: `cycle.test.ts`, `collect.test.ts`,
+      `renewal-worker.test.ts`, `reconcile.test.ts`, `dunning.test.ts`,
+      `billing-emails.test.ts`. Help: 0279 adds one sentence to the invoices
+      guide.
+    - **★★ THE REST OF THE AUDIT'S OPEN BILLING ITEMS, CLOSED (21 Nov
+      2026).**
+      1. **The passes page.** `collectDueRenewals`, `evaluateCycleTurns` and
+         `downgradeExpired` each read "the first 50 rows" with no ORDER BY,
+         and most of those rows were still there an hour later, so past a few
+         hundred subscribers the same 50 could come back every run. Each now
+         sorts oldest first by (time, store), takes `after: PassCursor`, and
+         returns `next` when its page was full; the collect query also skips a
+         subscription whose next invoice is already `paid`. The cron's
+         `drain` keeps asking for the next page until a short one, an error,
+         40 pages or 180 seconds, adds the counts up, and reports `more` only
+         when a pass stopped with a cursor left.
+      2. **An attempt that never got a gateway order** (starting a payment
+         timed out, or the request died between opening the attempt and
+         creating the order) was skipped by reconcile for ever, because it
+         asks by order id: the invoice read `processing` indefinitely, the
+         cycle turn waited on it, and the store kept a plan nobody paid for.
+         `closeOrderlessAttempts` settles such attempts `failed`
+         (`no_gateway_order`) once they are 15 minutes old: no order id ever
+         reached a browser or a debit, so no money can move on them.
+      3. **An automatic debit whose order never got a payment** is failed
+         after `AUTO_NO_PAYMENT_FAIL_AFTER_HOURS` (6), not 72: the renewal
+         pass records the order before it sends the debit and nothing else
+         can pay a recurring order.
+      4. **A manual payment is refused while an earlier one is `unknown`**
+         (`hasUnknownAttempt` in `collect.ts`, asked by `startInvoicePayment`
+         before it opens an attempt; `PAYMENT_BEING_CONFIRMED_MESSAGE`). The
+         in-flight index does not cover `unknown`, so a merchant could pay by
+         hand over an automatic debit still going through. Items 2 and 3 are
+         what keep that refusal short.
+      5. **StoreMink's own Razorpay webhook acts on `payment.captured` and
+         `payment.failed`** (`applyBillingPaymentEvent`,
+         `lib/billing/webhook.ts`): the attempt is found by its gateway order
+         and settled through `settleAttempt`, the plan advanced, and a failed
+         automatic debit that was the last try asks the merchant to pay. It
+         leaves alone a payment on an UNISSUED invoice (an on-session
+         purchase still inside its own checkout), a failed try in a manual
+         checkout, and an amount or currency that differs from the attempt's.
+         Always 200; the hourly reconcile stays the source of truth.
+         Both events are ticked on the live webhook for
+         `https://storemink.com/api/webhooks/razorpay` (owner, 21 Nov 2026).
+
+      Tests: `renewal-worker.test.ts`, `reconcile.test.ts`,
+      `manual-pay.test.ts`, `collect.test.ts`, `webhook.test.ts`, the billing
+      cron route test and `app/api/webhooks/razorpay/route.test.ts`. No
+      merchant step changes, so no Help Centre update.
+      ⚠ STILL OPEN, AND IT BLOCKS AUTOPAY: the 21 Nov 2026 test-mode run
+      (docs/autopay-verification.md) registered a mandate through the real
+      test Checkout with everything working as built, and then Razorpay
+      REFUSED the renewal debit: `POST /payments/create/recurring` answers
+      HTTP 400 "The requested URL was not found on the server.", its message
+      for a feature the account does not have. The Recurring Payments API is
+      on request from Razorpay support, for the test and the live account.
+      Until it is enabled every automatic renewal is refused, and the retry
+      rule above turns that into three tries and a pay-by-hand email.
+      `scripts/autopay-test-debit.mjs` (test keys only) repeats the debit in
+      one command. (A credit pack paid in a tab that then closed is settled by
+      the webhook and the hourly job: `lib/ai/credit-purchase.ts`.)
+
     - **★★ THE AMOUNT PICKS THE MANDATE RAIL, AND SOMETIMES THERE ISN'T ONE**
       (`autopayRailFor`, `lib/billing/mandate-types.ts`). RBI's AFA-exempt limit
       is **₹15,000 on cards and UPI ALIKE** — the intuition that a card is more

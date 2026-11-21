@@ -2472,6 +2472,11 @@ export const orders = pgTable(
     taxInclusive: boolean("tax_inclusive").default(false).notNull(),
     razorpayOrderId: text("razorpay_order_id"),
     razorpayPaymentId: text("razorpay_payment_id"),
+    // The public Razorpay key id the order was created with (0280). Null on
+    // orders placed before it existed. Never a secret: it says which
+    // connected account an order waiting for payment belongs to, so a refused
+    // read can be told apart as "the keys changed since" rather than guessed.
+    razorpayKeyId: text("razorpay_key_id"),
     // POS Phase 2. In-person sales share this table,
     // tagged sales_channel='pos'. shippingAddress stays null for POS;
     // customerId remains nullable in storage for legacy rows and other channels.
@@ -5421,6 +5426,14 @@ export const storePaymentProviders = pgTable(
     // Razorpay HMACs the request body, so this must be reversible (encrypted)
     // rather than hashed like the logistics webhook token.
     webhookSecretEnc: text("webhook_secret_enc"),
+    // When Razorpay last delivered an event signed with that secret (0279).
+    // Null until the first one arrives, and again after a new secret is
+    // generated: it is what lets the dashboard say "receiving events" only
+    // once Razorpay really has the address and the secret.
+    webhookLastEventAt: timestamp("webhook_last_event_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     enabled: boolean().default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()

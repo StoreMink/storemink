@@ -115,17 +115,96 @@ Use a **test-mode** account (`rzp_test_…`) and a store you do not mind billing
 With test-mode platform credentials configured, subscribe a disposable staging
 store and confirm:
 
-- [ ] `POST /customers` returns a `cust_…` id, and calling it twice with the
-      same email returns the **same** id rather than an error.
-- [ ] `POST /orders` with a `token` block returns an order (not a 400 about
-      unexpected fields).
+- [x] `POST /customers` returns a `cust_…` id, and calling it twice with the
+      same email returns the **same** id rather than an error. (21 Nov 2026,
+      test mode.)
+- [x] `POST /orders` with a `token` block returns an order (not a 400 about
+      unexpected fields). (21 Nov 2026, test mode, card rail.)
 - [x] Standard Checkout receives the same `customer_id` and explicit
       `recurring: true` for a mandate order (pinned by client regression test).
 - [ ] `POST /payments/create/recurring` against a confirmed token returns
-      `razorpay_payment_id`.
+      `razorpay_payment_id`. **★★ BLOCKED, 21 Nov 2026: Razorpay answers HTTP
+      400 `BAD_REQUEST_ERROR`, "The requested URL was not found on the
+      server." See the run below.**
 - [ ] Note the exact `status` values you see. If any is outside
       `mapGatewayStatus`'s list, add it there — an unrecognised status resolves
       to `unknown`, which is safe but leaves the invoice for reconciliation.
+
+### The 21 Nov 2026 test-mode run: what was seen
+
+Run against the test account in `.env` (`rzp_test_…`), through StoreMink's own
+gateway functions (`lib/payments/razorpay.ts`) and Razorpay's real test
+Checkout. No real money moved.
+
+**What worked, exactly as built:**
+
+- `rzpCreateCustomer` created a customer and returned the same id when called
+  again with the same contact.
+- `rzpCreateAuthorizationOrder` (card rail, ₹100 now, ceiling ₹5,000,
+  monthly, five-year expiry) was accepted.
+- Checkout opened with the options `openRazorpayModal` passes (`customer_id`
+  with `recurring: true`) and showed the mandate terms correctly: "a payment
+  of ₹100 will be charged now. StoreMink may then charge up to ₹5,000 per
+  month until 20 Nov 2031". It offered cards only, as the order's rail said.
+- The test card authorised, the success handler returned a payment id, an
+  order id and a signature, and `verifyCheckoutSignature` accepted it.
+- `verifyCapturedCheckoutPayment` passed (order, amount, currency, captured,
+  read from the gateway).
+- `GET /payments/:id` returned `status: captured`, `method: card`, a
+  `token_id` and the `customer_id`: everything `readMandateFromPayment` needs.
+  The token read back as `recurring: true`,
+  `recurring_details.status: confirmed`, `max_amount: 500000`.
+
+**★★ What did not: the renewal debit.** `POST /payments/create/recurring`
+(the call `chargeMandateViaRazorpay` makes at every renewal) was refused with
+HTTP 400, `BAD_REQUEST_ERROR`, "The requested URL was not found on the
+server.", and no payment was created on the order. The path and the request
+body match Razorpay's published reference. Razorpay labels its Recurring
+Payments API "an on-demand feature. Please raise a request with our Support
+team to get this feature activated on your Razorpay account", and it documents
+this same message for a feature that is not enabled. So **the account can
+register a mandate but is not allowed to debit one.**
+
+**What that means today.** A merchant can subscribe and authorise autopay, and
+the first payment is taken. At renewal every automatic debit is refused before
+it reaches a bank. With the retry rule that is three refused tries (four,
+three and two days before the cycle turns) and then the "Automatic payment
+didn't go through" email asking them to pay the invoice by hand, which works.
+Nobody is charged twice and nobody loses a plan they pay for, but **autopay
+does not collect anything until Razorpay enables the feature**, on the LIVE
+account as well as the test one (the live account has not been checked).
+
+**To do, in order:**
+
+1. Ask Razorpay support to enable the **Recurring Payments API** (subsequent
+   payments, `POST /v1/payments/create/recurring`, for cards and UPI Autopay)
+   on both the test and the live account.
+2. Re-run the debit in test mode. The mandate from this run is still
+   registered, so it is one command and needs no browser:
+
+   ```bash
+   node scripts/autopay-test-debit.mjs \
+     --customer cust_U2tCpF6i2o1LPF --token token_U2tEUgvp4hWNEV
+   ```
+
+   The script refuses anything but an `rzp_test_` key. Then force a decline by
+   asking for more than the mandate's ₹5,000 ceiling (`--amount 600000`) and
+   note the status and error it returns.
+
+3. Only then tick the remaining boxes below.
+
+**Seen and not yet explained (check again once debits work):**
+
+- The token's own top-level `status` read `failed` although
+  `recurring_details.status` was `confirmed`, and its `expired_at` was the end
+  of the current month, not the five years asked for. Both may be artefacts of
+  test mode.
+- Checkout refused the prefilled contact `9876543210` as an invalid mobile
+  number and asked for one. A real merchant's number is not affected, but a
+  placeholder number in a test will stop at that screen.
+
+Not exercised, because the debit call is refused before it does anything: a
+real decline, a debit over the mandate ceiling, and a timeout.
 
 ### 2. The outcomes that matter more than the happy path
 

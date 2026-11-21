@@ -39,6 +39,7 @@ import {
   loadOffersForStorefront,
   recordOfferRedemptions,
   releaseOfferUses,
+  releaseOrderOfferUses,
   reserveOfferUses,
   resolveOffersForCart,
   type ReservedOffer,
@@ -65,6 +66,7 @@ import {
 } from "@/lib/payments/capture";
 import { emitEvent } from "@/lib/notifications/record";
 import { logError } from "@/lib/observability/logger";
+import { isSchemaNotReady } from "@/lib/db/errors";
 import { reportStockChanges } from "@/lib/inventory/alerts";
 import { resolveFulfilmentLocation } from "@/lib/fulfilment/resolve";
 import { isPaymentMethodAllowed } from "@/lib/fulfilment/payment-policy";
@@ -97,6 +99,13 @@ import type { WhatsAppConsentInput } from "@/lib/whatsapp/consent-copy";
 import { summariseItems } from "@/lib/notifications/format";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import type { OrderPlacedEvent } from "@/lib/orders/mark-paid";
+import {
+  expectedGatewayPaise,
+  listShopperPendingOrders,
+  orderHoldsCart,
+  settleShopperPendingOrders,
+  type PendingOnlineOrder,
+} from "@/lib/orders/pending-payments";
 import { formatIndianMobile, textablePhone } from "@/lib/phone";
 import {
   rowToBillingSettings,
@@ -207,7 +216,16 @@ export type CheckoutResult =
        *  Razorpay Standard Checkout. The amount is the SERVER-computed total. */
       payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
     }
-  | { error: string };
+  | {
+      error: string;
+      /**
+       * Set when the order was NOT placed because an earlier payment of this
+       * shopper's turned out to have gone through: that order is confirmed
+       * now. `sameCart` says the confirmed order holds exactly this cart, so
+       * the page can show its confirmation and empty the cart.
+       */
+      paidOrder?: { orderId: string; orderRef: string; sameCart: boolean };
+    };
 
 // Normalize a coupon code the same way coupon-actions does (stored uppercased,
 // no whitespace) so the usage-increment lookup matches the stored row.
@@ -1008,6 +1026,25 @@ export async function placeOrder(
   // The order belongs to the store the shopper is actually on (the host),
   // never a store inferred from client-supplied cart contents.
   const storeId = await getCurrentStoreId();
+
+  // ★★ AN EARLIER PAYMENT THAT WENT THROUGH IS CONFIRMED, NEVER PAID FOR
+  // AGAIN (21 Nov 2026). A shopper who paid and whose tab closed before the
+  // confirmation came back to a full cart and could place, and pay for, a
+  // second order. Their own waiting orders are settled with Razorpay first:
+  // BEFORE the rate reads, the coupon, the offers and the stock reserve, so a
+  // refusal here leaves nothing half-written. It also cancels their own
+  // abandoned attempts that are past the payment window, which frees the
+  // stock and offer uses those were holding against this very order.
+  // Costs nothing for a shopper with no waiting order (one indexed read).
+  const earlier = await settleEarlierPayment(storeId, user.id, items);
+  if (earlier.paid) {
+    return {
+      error: earlier.paid.sameCart
+        ? `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. You have not been charged again.`
+        : `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. Check your cart before you place another order.`,
+      paidOrder: earlier.paid,
+    };
+  }
 
   // Orders/order_items are written with a service-role (RLS-bypassing) scope:
   // there is no customer INSERT RLS policy on those tables by design, and all
@@ -2476,6 +2513,16 @@ export async function placeOrder(
     const rollback = async () => {
       await releaseHolds();
       await releaseStock();
+      // ★ BEFORE the order row goes. `recordOfferRedemptions` has already
+      // written this order's redemptions, and deleting the order only blanks
+      // their order id: the rows stayed, so a "one per customer" offer was
+      // used up by a checkout that failed to start. This gives those uses
+      // back from the ledger and forgets them; `releaseDiscounts` then gives
+      // back only what the ledger did not hold.
+      const released = await releaseOrderOfferUses(storeId, order.id);
+      reservedOffers = reservedOffers.filter(
+        (r) => !released.some((x) => x.offerId === r.offerId),
+      );
       await deleteOrder();
       await releaseDiscounts();
       await releaseCredit();
@@ -2487,7 +2534,15 @@ export async function placeOrder(
       notes: { order_id: order.id, store_id: storeId },
     });
     if (!rzpRes.ok) {
-      console.error("placeOrder (razorpay create):", rzpRes.error);
+      // ★ logError, not console.error: a store whose keys Razorpay now
+      // refuses fails EVERY online checkout here, and until this reached
+      // error reporting nobody but its shoppers could see it.
+      logError("checkout.razorpay_order_create", new Error(rzpRes.error), {
+        storeId,
+        orderId: order.id,
+        keyId: gatewayCreds.keyId,
+        refused: rzpRes.outcome === "rejected",
+      });
       await rollback();
       return {
         error:
@@ -2495,14 +2550,27 @@ export async function placeOrder(
       };
     }
 
+    // ★ The order records WHICH connected account it was created on (the
+    // public key id, 0280), beside the gateway order id. Before this nothing
+    // said, so when a read was refused later there was no telling a revoked
+    // key from an order made on an account connected before the current one.
+    const pin = (values: { razorpayOrderId: string; razorpayKeyId?: string }) =>
+      withService((db) =>
+        db.update(orders).set(values).where(eq(orders.id, order.id)),
+      );
     let pinFailed = false;
     try {
-      await withService((db) =>
-        db
-          .update(orders)
-          .set({ razorpayOrderId: rzpRes.data.id })
-          .where(eq(orders.id, order.id)),
-      );
+      try {
+        await pin({
+          razorpayOrderId: rzpRes.data.id,
+          razorpayKeyId: gatewayCreds.keyId,
+        });
+      } catch (err) {
+        // The column's migration has not run here yet: pin the order id alone
+        // rather than fail every online checkout over a diagnostic field.
+        if (!isSchemaNotReady(err)) throw err;
+        await pin({ razorpayOrderId: rzpRes.data.id });
+      }
     } catch (err) {
       console.error("placeOrder (razorpay pin):", errMsg(err));
       pinFailed = true;
@@ -2535,6 +2603,147 @@ export async function placeOrder(
 }
 
 // ---- Payment confirmation & reconciliation ---------------------------------
+
+/** A shopper's unfinished online payment, as checkout shows it. */
+export interface UnfinishedPayment {
+  /**
+   * `paid`: an earlier order's payment went through and it is confirmed now.
+   * `waiting`: an order is still inside its payment window.
+   * `none`: nothing is waiting (or it could not be checked).
+   */
+  state: "none" | "paid" | "waiting";
+  orderId?: string;
+  orderRef?: string;
+  /** The order holds exactly the cart the shopper is looking at. */
+  sameCart?: boolean;
+  /** For `waiting` on the same cart: what reopens the SAME Razorpay order. */
+  payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
+}
+
+/**
+ * Settle the signed-in shopper's own waiting orders against Razorpay.
+ *
+ * The one implementation behind both callers: checkout's own check when the
+ * page opens (`resumeMyUnfinishedPayment`) and `placeOrder`'s guard. Never
+ * throws; anything it cannot check reads as "nothing waiting".
+ */
+async function settleEarlierPayment(
+  storeId: string,
+  userId: string,
+  items: readonly CartItem[],
+): Promise<{
+  paid: { orderId: string; orderRef: string; sameCart: boolean } | null;
+  waiting: {
+    order: PendingOnlineOrder;
+    sameCart: boolean;
+    keyId: string;
+    enabled: boolean;
+  } | null;
+}> {
+  const nothing = { paid: null, waiting: null };
+  try {
+    // Cheap first: most shoppers have nothing waiting, and then no gateway
+    // credentials are read and Razorpay is never called.
+    const pending = await listShopperPendingOrders(storeId, userId);
+    if (pending.length === 0) return nothing;
+
+    // ★ NOT the "live" gateway: a store that has since paused online payments
+    // can still confirm an order placed while they were on.
+    const gateway = await getStoreGateway(storeId);
+    if (!gateway) return nothing;
+
+    const settled = await settleShopperPendingOrders(
+      storeId,
+      userId,
+      gateway.creds,
+    );
+    const cart = Array.isArray(items)
+      ? items.map((item) => ({
+          productId: item?.productId,
+          variantId: item?.variantId ?? null,
+          quantity: item?.quantity,
+        }))
+      : [];
+    if (settled.paid) {
+      return {
+        paid: {
+          orderId: settled.paid.id,
+          orderRef: settled.paid.order_ref ?? "",
+          sameCart: await orderHoldsCart(settled.paid.id, cart),
+        },
+        waiting: null,
+      };
+    }
+    if (settled.waiting) {
+      return {
+        paid: null,
+        waiting: {
+          order: settled.waiting,
+          sameCart: await orderHoldsCart(settled.waiting.id, cart),
+          keyId: gateway.creds.keyId,
+          enabled: gateway.enabled,
+        },
+      };
+    }
+    return nothing;
+  } catch (err) {
+    logError("checkout.settle_earlier_payment", err, { storeId });
+    return nothing;
+  }
+}
+
+/**
+ * Called by the checkout page when it opens: does this shopper have an online
+ * payment that was never confirmed?
+ *
+ * ★★ WHY (21 Nov 2026). The page only learned a payment had succeeded from
+ * Razorpay's success handler in the SAME tab. A tab that closed during
+ * payment (switching to a UPI app on a phone) left the order waiting for the
+ * hourly reaper, and the shopper returned to a full cart and no confirmation.
+ * Now the page asks, and:
+ *   • a payment that went through confirms its order at once (`paid`);
+ *   • an order still inside its payment window, for this same cart, comes
+ *     back with what "Retry payment" needs to reopen the SAME Razorpay order,
+ *     so a reload no longer leads to a duplicate order (`waiting`).
+ *
+ * Signed-in shoppers only, their own orders only, rate limited.
+ */
+export async function resumeMyUnfinishedPayment(
+  items: CartItem[],
+): Promise<UnfinishedPayment> {
+  const user = await getServerUser();
+  if (!user) return { state: "none" };
+
+  const rl = await rateLimit(`resume-payment:${user.id}`, {
+    max: 10,
+    windowSeconds: 60,
+  });
+  if (!rl.allowed) return { state: "none" };
+
+  const storeId = await getCurrentStoreId();
+  const earlier = await settleEarlierPayment(storeId, user.id, items);
+  if (earlier.paid) return { state: "paid", ...earlier.paid };
+  if (earlier.waiting) {
+    const { order, sameCart, keyId, enabled } = earlier.waiting;
+    return {
+      state: "waiting",
+      orderId: order.id,
+      orderRef: order.order_ref ?? "",
+      sameCart,
+      // Only for the same cart (the Razorpay order is for THAT order's
+      // amount), and only while the store still takes online payments.
+      payment:
+        sameCart && enabled && order.razorpay_order_id
+          ? {
+              rzpOrderId: order.razorpay_order_id,
+              keyId,
+              amountPaise: expectedGatewayPaise(order),
+            }
+          : undefined,
+    };
+  }
+  return { state: "none" };
+}
 
 export interface ConfirmPaymentResult {
   success?: boolean;
@@ -2703,7 +2912,19 @@ export async function confirmOnlinePayment(
     );
   }
 
-  const outcome = await markOrderPaid(orderId, rzpPaymentId);
+  // ★ `strict`: a write that FAILED must not be reported as paid. It used to
+  // come back as "unchanged" and this answered `paid: true` for an order
+  // still pending. The payment itself is verified and safe: the confirmation
+  // page reconciles it, and so does the scheduled pass.
+  let outcome: Awaited<ReturnType<typeof markOrderPaid>>;
+  try {
+    outcome = await markOrderPaid(orderId, rzpPaymentId, { strict: true });
+  } catch {
+    return {
+      error:
+        "Your payment was received and is still being confirmed. Don't pay again; this order updates as soon as it's through.",
+    };
+  }
   if (outcome === "late") {
     return {
       error:

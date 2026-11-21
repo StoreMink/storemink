@@ -29,8 +29,16 @@ export type OrderPaymentState =
   | { kind: "captured"; paymentId: string; amountPaise: number | null }
   /** Nothing captured (or capturable) yet. */
   | { kind: "none" }
-  /** We could not read the gateway; decide nothing. */
-  | { kind: "unknown" };
+  /**
+   * We could not read the gateway; decide nothing.
+   *
+   * `refused` is true when Razorpay ANSWERED and refused the read (a 4xx: the
+   * key was revoked, or the order belongs to another Razorpay account), as
+   * against a timeout or a 5xx. Both leave the order undecided; the difference
+   * matters only to callers asking "can these credentials read this order at
+   * all?" (changing the connected account, and how long the reaper waits).
+   */
+  | { kind: "unknown"; refused?: boolean };
 
 /**
  * The captured payment on a Razorpay order, capturing an authorized one of
@@ -48,7 +56,7 @@ export async function settleOrderPayment(
   opts: { capture: boolean },
 ): Promise<OrderPaymentState> {
   const res = await rzpFetchOrderPayments(creds, rzpOrderId);
-  if (!res.ok) return { kind: "unknown" };
+  if (!res.ok) return { kind: "unknown", refused: res.outcome === "rejected" };
 
   const captured = capturedPayment(res.data);
   if (captured) {

@@ -17,7 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import "server-only";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { isSchemaNotReady, loggableError } from "@/lib/db/errors";
 import { logError, logWarn } from "@/lib/observability/logger";
@@ -306,6 +306,63 @@ export async function releaseOfferUses(
       }
     });
   }
+}
+
+/**
+ * Give back every offer use ONE ORDER claimed, read from the redemption
+ * ledger, and forget the redemptions.
+ *
+ * ★★ WHY IT EXISTS (21 Nov 2026). An online order claims its offers before
+ * the shopper pays. When that payment never arrived, the reaper gave back the
+ * stock, the store credit and the coupon use, but never the offers: the
+ * `offer_redemptions` row stayed, and `reserve_offer_use` counts those rows
+ * whatever became of the order. One dismissed payment window used up a
+ * "one per customer" offer for good, and abandoned payments ate "first 100
+ * orders" and budget caps.
+ *
+ * ★ THE DELETE IS THE CLAIM. `DELETE ... RETURNING` hands each redemption to
+ * exactly one caller, so two passes over the same order cannot give one use
+ * back twice. Only for an order that was never paid: an order that sold keeps
+ * its redemptions.
+ *
+ * Returns what it gave back. Best-effort and never throws: a failed release
+ * overstates an offer's spend, which is safe in the direction that matters.
+ */
+export async function releaseOrderOfferUses(
+  storeId: string,
+  orderId: string,
+): Promise<ReservedOffer[]> {
+  let claimed: ReservedOffer[];
+  try {
+    const rows = await withService((db) =>
+      db
+        .delete(offerRedemptions)
+        .where(
+          and(
+            eq(offerRedemptions.storeId, storeId),
+            eq(offerRedemptions.orderId, orderId),
+          ),
+        )
+        .returning({
+          offerId: offerRedemptions.offerId,
+          amountPaise: offerRedemptions.amountPaise,
+        }),
+    );
+    claimed = rows.map((row) => ({
+      offerId: row.offerId,
+      amountPaise: Number(row.amountPaise),
+    }));
+  } catch (err) {
+    if (!isSchemaNotReady(err)) {
+      logError("release order offer uses failed", loggableError(err), {
+        storeId,
+        orderId,
+      });
+    }
+    return [];
+  }
+  await releaseOfferUses(storeId, claimed);
+  return claimed;
 }
 
 export interface RecordOffersInput {

@@ -50,6 +50,8 @@ const collect = vi.hoisted(() => ({
   settleAttempt: vi.fn(),
   // RC-F1b: no captured attempt on the invoice unless a test says so.
   capturedAttemptForInvoice: vi.fn(async (): Promise<unknown> => null),
+  // No earlier payment waiting on its result unless a test says so.
+  hasUnknownAttempt: vi.fn(async (): Promise<boolean | null> => false),
 }));
 vi.mock("./collect", () => collect);
 
@@ -58,6 +60,7 @@ vi.mock("./renewal-worker", () => worker);
 
 import {
   ALREADY_CAPTURED_INVOICE_MESSAGE,
+  PAYMENT_BEING_CONFIRMED_MESSAGE,
   CANCELLING_INVOICE_MESSAGE,
   CLOSED_INVOICE_MESSAGE,
   CLOSED_ON_ARRIVAL_MESSAGE,
@@ -210,6 +213,44 @@ describe("startInvoicePayment", () => {
     const res = await startInvoicePayment(args);
     expect(res.ok).toBe(false);
     expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  // 21 Nov 2026: the in-flight index does not cover `unknown`, so a merchant
+  // could pay by hand over an automatic debit that was still going through.
+  describe("★★ an earlier payment whose result is not known yet", () => {
+    it("is never paid over: no attempt is opened and no order is created", async () => {
+      collect.hasUnknownAttempt.mockResolvedValueOnce(true);
+      const res = await startInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: PAYMENT_BEING_CONFIRMED_MESSAGE,
+      });
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+      expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    });
+
+    it("★ a check that could not be read refuses too, and says to try again", async () => {
+      collect.hasUnknownAttempt.mockResolvedValueOnce(null);
+      const res = await startInvoicePayment(args);
+      expect(res.ok).toBe(false);
+      expect(!res.ok && res.error).toContain("try again");
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
+
+    it("the message tells the merchant their plan is safe and not to pay again", () => {
+      expect(PAYMENT_BEING_CONFIRMED_MESSAGE).toContain(
+        "Your plan stays active",
+      );
+      expect(PAYMENT_BEING_CONFIRMED_MESSAGE).not.toContain("\u2014");
+    });
+
+    it("asks about this invoice, before it opens an attempt", async () => {
+      await startInvoicePayment(args);
+      expect(collect.hasUnknownAttempt).toHaveBeenCalledTimes(1);
+      expect(
+        collect.hasUnknownAttempt.mock.invocationCallOrder[0],
+      ).toBeLessThan(collect.beginAttempt.mock.invocationCallOrder[0]);
+    });
   });
 
   it("finalizes an unissued invoice before charging for it", async () => {

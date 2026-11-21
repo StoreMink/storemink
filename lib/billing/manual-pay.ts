@@ -45,6 +45,7 @@ import {
 import {
   beginAttempt,
   capturedAttemptForInvoice,
+  hasUnknownAttempt,
   settleAttempt,
 } from "./collect";
 import type { PayableInvoice } from "./invoice-types";
@@ -103,6 +104,13 @@ export const CLOSED_ON_ARRIVAL_MESSAGE =
  */
 export const ALREADY_CAPTURED_INVOICE_MESSAGE =
   "A payment for this invoice has already gone through, so please don't pay it again. It will show as paid shortly. If it still shows as unpaid after a day, write to support@storemink.com.";
+
+/**
+ * An earlier payment for this invoice has no known result yet (an automatic
+ * debit whose answer never arrived). Paying again now could pay it twice.
+ */
+export const PAYMENT_BEING_CONFIRMED_MESSAGE =
+  "We're still confirming an earlier payment for this invoice with the bank, so it can't be paid again just yet. Your plan stays active meanwhile. Please check back in a few hours.";
 
 /** Refused: an invoice with no issue date after the finalize step. */
 export const UNISSUED_INVOICE_MESSAGE =
@@ -302,6 +310,24 @@ export async function startInvoicePayment(input: {
   }
   if (amountDue <= 0) {
     return { ok: false, error: "Nothing is due on that invoice." };
+  }
+
+  // ★★ NEVER PAY OVER A PAYMENT WHOSE RESULT IS NOT KNOWN YET (21 Nov 2026).
+  // An automatic debit that timed out is left `unknown`, which the in-flight
+  // index below does not cover: the merchant could press Pay now and pay the
+  // same renewal a second time while the first debit was still going through.
+  // Reconciliation settles it within the hour when the gateway knows the
+  // answer, and within a few hours when the debit never reached it, and the
+  // plan is safe meanwhile (an unresolved payment starts no grace clock).
+  const unresolved = await hasUnknownAttempt(invoice.id);
+  if (unresolved === null) {
+    return {
+      ok: false,
+      error: "We couldn't check this invoice just now. Please try again.",
+    };
+  }
+  if (unresolved) {
+    return { ok: false, error: PAYMENT_BEING_CONFIRMED_MESSAGE };
   }
 
   const attempt = await beginAttempt({

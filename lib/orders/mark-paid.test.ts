@@ -25,7 +25,8 @@ vi.mock("@/lib/db/client", () => ({
   withService: vi.fn((fn: any) => Promise.resolve(fn(dbHolder.current.db))),
 }));
 
-import { markOrderPaid } from "./mark-paid";
+import { markOrderPaid, MarkPaidWriteError } from "./mark-paid";
+import { orders } from "@/drizzle/schema";
 import { emitEvent } from "@/lib/notifications/record";
 import { syncOrderRefundState } from "@/lib/payments/refund-reconcile";
 
@@ -155,5 +156,42 @@ describe("markOrderPaid — a payment after the order expired", () => {
     );
     expect(emitEvent).not.toHaveBeenCalled();
     expect(syncOrderRefundState).not.toHaveBeenCalled();
+  });
+});
+
+// 21 Nov 2026: "unchanged" used to mean both "this order is not waiting on
+// this payment" and "the database could not be written", so the store's
+// webhook acknowledged a delivery it had failed to record.
+describe("markOrderPaid: a write that FAILED is not a replay", () => {
+  const failingWrite = () =>
+    (dbHolder.current = makeDbMock({ failUpdateFor: [orders] }));
+
+  it("by default it still answers unchanged, for callers that run again anyway", async () => {
+    failingWrite();
+    await expect(markOrderPaid("order-1", "pay_abc")).resolves.toBe(
+      "unchanged",
+    );
+  });
+
+  it("★★ with `strict` it throws, so the caller can ask again", async () => {
+    failingWrite();
+    await expect(
+      markOrderPaid("order-1", "pay_abc", { strict: true }),
+    ).rejects.toBeInstanceOf(MarkPaidWriteError);
+    expect(emitEvent).not.toHaveBeenCalled();
+  });
+
+  it("★ `strict` changes nothing for a real replay: no row to claim is still unchanged", async () => {
+    dbHolder.current = makeDbMock({ returningQueue: [[], []] });
+    await expect(
+      markOrderPaid("order-1", "pay_abc", { strict: true }),
+    ).resolves.toBe("unchanged");
+  });
+
+  it("and a claim that lands is paid, as before", async () => {
+    seed();
+    await expect(
+      markOrderPaid("order-1", "pay_abc", { strict: true }),
+    ).resolves.toBe("paid");
   });
 });

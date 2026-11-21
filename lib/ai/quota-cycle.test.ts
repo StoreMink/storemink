@@ -4,11 +4,67 @@ import { describe, expect, it } from "vitest";
 import { minkCreditCycleAt } from "./quota";
 
 describe("minkCreditCycleAt", () => {
-  it("keeps calendar months when the store has no paid-plan start", () => {
+  it("falls back to the calendar month only when the store has no date at all", () => {
     expect(minkCreditCycleAt(new Date("2026-09-16T04:00:00.000Z"))).toEqual({
       period: "2026-09",
       resetsAt: "2026-10-01T00:00:00.000Z",
     });
+  });
+
+  // Owner, 21 Nov 2026: credits must refresh on the merchant's own date, never
+  // on the 1st of the month for everyone.
+  it("★★ a store with no paid cycle counts 30 days from the day it was created, not from the 1st", () => {
+    const cycle = minkCreditCycleAt(
+      new Date("2026-11-21T10:00:00.000Z"),
+      null,
+      "2026-10-18T09:15:30.000Z",
+    );
+    expect(cycle).toEqual({
+      period: "cycle:2026-11-17T09:15:30.000Z",
+      resetsAt: "2026-12-17T09:15:30.000Z",
+    });
+    expect(cycle.resetsAt).not.toBe("2026-12-01T00:00:00.000Z");
+  });
+
+  it("★ reads the store's creation date as Postgres returns it (microseconds, an offset)", () => {
+    expect(
+      minkCreditCycleAt(
+        new Date("2026-08-10T00:00:00.000Z"),
+        undefined,
+        "2026-07-28 13:15:02.153904+05:30",
+      ),
+    ).toEqual({
+      period: "cycle:2026-07-28T07:45:02.153Z",
+      resetsAt: "2026-08-27T07:45:02.153Z",
+    });
+  });
+
+  it("★ the paid plan cycle wins over the store's creation date", () => {
+    expect(
+      minkCreditCycleAt(
+        new Date("2026-11-02T10:00:00.000Z"),
+        "2026-09-15T06:30:00.000Z",
+        "2026-01-03T00:00:00.000Z",
+      ).period,
+    ).toBe("cycle:2026-10-15T06:30:00.000Z");
+  });
+
+  it("a paid start that is unreadable or still ahead falls back to the creation date", () => {
+    const now = new Date("2026-11-21T10:00:00.000Z");
+    const created = "2026-11-01T00:00:00.000Z";
+    for (const start of ["not a date", "2026-12-25T00:00:00.000Z"]) {
+      expect(minkCreditCycleAt(now, start, created).period).toBe(
+        "cycle:2026-11-01T00:00:00.000Z",
+      );
+    }
+  });
+
+  it("two stores created on different days refresh on different days", () => {
+    const now = new Date("2026-11-21T10:00:00.000Z");
+    const first = minkCreditCycleAt(now, null, "2026-11-03T00:00:00.000Z");
+    const second = minkCreditCycleAt(now, null, "2026-11-12T00:00:00.000Z");
+    expect(first.resetsAt).toBe("2026-12-03T00:00:00.000Z");
+    expect(second.resetsAt).toBe("2026-12-12T00:00:00.000Z");
   });
 
   it("refreshes every 30 days from the paid plan-cycle start", () => {
@@ -74,8 +130,15 @@ describe("the period key the draft credit ledger will accept", () => {
 
   it("★★ accepts every key minkCreditCycleAt can emit", () => {
     const keys = [
-      // No paid cycle: the calendar key a free store keeps.
+      // No date at all: the calendar key.
       minkCreditCycleAt(new Date("2026-09-16T04:00:00.000Z")).period,
+      // No paid cycle: 30 days from the day the store was created, as Postgres
+      // returns that date.
+      minkCreditCycleAt(
+        new Date("2026-09-16T04:00:00.000Z"),
+        null,
+        "2026-07-28 13:15:02.153904+05:30",
+      ).period,
       // Anchored to a paid cycle — the shape that was being rejected.
       minkCreditCycleAt(
         new Date("2026-11-02T10:00:00.000Z"),

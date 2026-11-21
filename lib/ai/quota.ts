@@ -54,13 +54,16 @@ function allowanceFor(
   return aiAllowanceFor(plan, getMinkConfig().chargeCredits, allowances);
 }
 
-/** Legacy UTC calendar bucket used when no paid-plan anchor exists. */
+/**
+ * UTC calendar bucket. Used only when a store has no date of its own to count
+ * from: its row could not be read, or neither date below is usable.
+ */
 export function currentPeriod(now: Date = new Date()): string {
   return now.toISOString().slice(0, 7);
 }
 
 export interface MinkCreditCycle {
-  /** Ledger key. Legacy/free stores retain the YYYY-MM calendar key. */
+  /** Ledger key: `cycle:<window start>`, or YYYY-MM for the calendar bucket. */
   period: string;
   /** Exact instant at which the included allowance refreshes. */
   resetsAt: string;
@@ -68,29 +71,43 @@ export interface MinkCreditCycle {
 
 const MINK_CREDIT_CYCLE_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** A stored instant the window can be counted from: readable, and not after `now`. */
+function usableAnchor(
+  value: string | null | undefined,
+  now: Date,
+): Date | null {
+  if (!value) return null;
+  const anchor = new Date(value);
+  const time = anchor.getTime();
+  return Number.isFinite(time) && time <= now.getTime() ? anchor : null;
+}
+
 /**
- * One 30-day allowance window, anchored to the current paid plan cycle. This
- * matches StoreMink billing's deliberate 30-day month instead of silently
- * switching the credit meter to calendar arithmetic. Yearly subscriptions use
- * consecutive 30-day credit windows inside their paid year. Stores without a
- * paid-cycle anchor keep the UTC calendar-month behaviour they already had.
+ * One 30-day allowance window, counted from the store's OWN date (owner,
+ * 21 Nov 2026: credits must never refresh on the 1st of the month for
+ * everyone).
+ *
+ *   1. `planStartedAt`: the start of the current paid plan cycle. This matches
+ *      StoreMink billing's deliberate 30-day month. Yearly subscriptions use
+ *      consecutive 30-day credit windows inside their paid year.
+ *   2. `storeCreatedAt`: a store with no paid cycle (Free, or a plan StoreMink
+ *      granted) counts from the day it was created.
+ *
+ * The UTC calendar month is left only for a store with neither date readable.
+ * Both anchored keys share the `cycle:` shape the draft credit ledger's CHECK
+ * accepts (migration 0117, pinned by quota-cycle.test.ts).
  */
 export function minkCreditCycleAt(
   now: Date = new Date(),
   planStartedAt?: string | null,
+  storeCreatedAt?: string | null,
 ): MinkCreditCycle {
-  const fallbackReset = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
-  );
-  if (!planStartedAt) {
-    return {
-      period: currentPeriod(now),
-      resetsAt: fallbackReset.toISOString(),
-    };
-  }
-
-  const anchor = new Date(planStartedAt);
-  if (!Number.isFinite(anchor.getTime()) || anchor.getTime() > now.getTime()) {
+  const anchor =
+    usableAnchor(planStartedAt, now) ?? usableAnchor(storeCreatedAt, now);
+  if (!anchor) {
+    const fallbackReset = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1),
+    );
     return {
       period: currentPeriod(now),
       resetsAt: fallbackReset.toISOString(),
@@ -113,14 +130,23 @@ export async function getMinkCreditCycle(
   now: Date = new Date(),
 ): Promise<MinkCreditCycle> {
   try {
+    // One read from the store outwards: a Free store has no subscription row,
+    // and its own creation date is what its window is counted from.
     const [row] = await withService((db) =>
       db
-        .select({ startedAt: billingSubscriptions.currentPeriodStart })
-        .from(billingSubscriptions)
-        .where(eq(billingSubscriptions.storeId, storeId))
+        .select({
+          startedAt: billingSubscriptions.currentPeriodStart,
+          createdAt: stores.createdAt,
+        })
+        .from(stores)
+        .leftJoin(
+          billingSubscriptions,
+          eq(billingSubscriptions.storeId, stores.id),
+        )
+        .where(eq(stores.id, storeId))
         .limit(1),
     );
-    return minkCreditCycleAt(now, row?.startedAt);
+    return minkCreditCycleAt(now, row?.startedAt, row?.createdAt);
   } catch (error) {
     console.error(
       "getMinkCreditCycle (using calendar fallback):",

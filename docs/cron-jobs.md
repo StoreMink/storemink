@@ -118,6 +118,7 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 | `storemink-send-emails`             | `* * * * *`    | `https://storemink.com/api/cron/send-emails`             |
 | `storemink-plan-expiry`             | `15 0 * * *`   | `https://storemink.com/api/cron/plan-expiry`             |
 | `storemink-expire-pending-payments` | `30 * * * *`   | `https://storemink.com/api/cron/expire-pending-payments` |
+| `storemink-confirm-payments`        | `*/5 * * * *`  | `https://storemink.com/api/cron/confirm-payments`        |
 | `storemink-seo-refresh`             | `0 2 * * *`    | `https://storemink.com/api/cron/seo-refresh`             |
 | `storemink-search-metrics`          | `30 2 * * *`   | `https://storemink.com/api/cron/search-metrics`          |
 | `storemink-domain-reconcile`        | `10 * * * *`   | `https://storemink.com/api/cron/domain-reconcile`        |
@@ -816,6 +817,39 @@ It answers **200 even when an import failed** — a failed import is a recorded
 outcome on the job that the merchant reads in the log, not an outage, and a 5xx
 would make Scheduler retry a job that has already given up.
 
+### `confirm-payments`: paid orders confirmed within minutes
+
+**Created in production on 21 Nov 2026** (`storemink-confirm-payments`,
+`*/5 * * * *`, enabled; checked with `gcloud scheduler jobs list` the same
+day). ⚠ Until the release that adds this route is deployed, each attempt is
+answered 404 and the job's last status reads `5` (not found); that is expected
+and raises no alert. Nothing breaks meanwhile: the same pass runs at the top of
+the hourly `expire-pending-payments` job, so a paid order whose shopper closed
+the tab is confirmed within the hour instead of within minutes. The command it
+was created with:
+
+```bash
+CRON_SECRET_VALUE=$(gcloud secrets versions access latest \
+  --secret=CRON_SECRET --project=storemink-prod)
+gcloud scheduler jobs create http storemink-confirm-payments \
+  --project=storemink-prod --location=asia-south1 \
+  --schedule="*/5 * * * *" --time-zone="Etc/UTC" \
+  --uri="https://storemink.com/api/cron/confirm-payments" \
+  --http-method=GET --headers="Authorization=Bearer ${CRON_SECRET_VALUE}" \
+  --attempt-deadline=300s --max-retry-attempts=1
+unset CRON_SECRET_VALUE
+```
+
+It asks Razorpay about every online order that has been waiting between 2 and
+45 minutes and marks the paid ones paid (`confirmYoungPendingOrders`,
+`lib/orders/pending-payments.ts`): at most 100 orders a run, newest first, one
+gateway lookup per store. **It never cancels anything**; cancelling stays with
+`expire-pending-payments` and its 45-minute rule. It answers
+`{ ok, considered, paid, errors }`, and 503 when a read failed so the next run
+is not waited for. A store that has set up its Razorpay webhook rarely needs
+it; it exists for the stores that have not, and for a webhook delivery that
+was missed. Do not create it on dev (no schedulers there).
+
 ### `billing` — the subscription heartbeat
 
 ```bash
@@ -827,6 +861,12 @@ gcloud scheduler jobs create http storemink-billing \
   --attempt-deadline=300s --max-retry-attempts=3
 unset CRON_SECRET_VALUE
 ```
+
+Since 21 Nov 2026 the collect, evaluate and downgrade steps read **every
+page**, not the first 50 rows: each sorts oldest first and the route keeps
+asking for the next page until a short one (at most 40 pages a step, inside the
+first 180 seconds of the request). The response's `more` is true only when a
+step stopped with pages still ahead; run the job again if it stays true.
 
 Runs seven steps **in one request, in order**: promote a GST change that has
 started (`promoteDueTaxChange`), collect at T-4d, reconcile (payments we never

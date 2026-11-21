@@ -220,6 +220,59 @@ export function collectionRoute(c: CollectionCheck): CollectionRoute {
 }
 
 // ---------------------------------------------------------------------------
+// Automatic retries
+// ---------------------------------------------------------------------------
+
+/**
+ * How many times one invoice may be debited automatically (owner decision,
+ * 21 Nov 2026: three tries, 24 hours apart, then the merchant is asked to pay
+ * by hand).
+ *
+ * ★★ WHY A LIMIT EXISTS AT ALL. A declined debit leaves the invoice open, and
+ * the hourly renewal pass re-reads every subscription inside the collection
+ * window. With no limit it opened a new attempt on every run: about 140 debits
+ * against one mandate between T-4d and the end of grace, each one a decline
+ * message on the merchant's phone and a strike against StoreMink's account at
+ * the gateway and the card networks.
+ */
+export const AUTO_COLLECT_MAX_ATTEMPTS = 3;
+
+/** The least time between two automatic debits of one invoice. */
+export const AUTO_COLLECT_RETRY_HOURS = 24;
+
+export type AutoCollectDecision =
+  /** Debit the mandate now. */
+  | "attempt"
+  /** The last try was under 24 hours ago: leave it for a later run. */
+  | "wait"
+  /** Every automatic try is used: only the merchant can pay this invoice. */
+  | "exhausted";
+
+/**
+ * May this invoice be debited automatically right now?
+ *
+ * `attempts` counts every automatic attempt ever opened on the invoice,
+ * whatever became of it; `lastAttemptAt` is when the newest one was opened.
+ * Exactly 24 hours after the last try counts as due, so a run on the boundary
+ * does the work.
+ */
+export function autoCollectDecision(input: {
+  attempts: number;
+  lastAttemptAt: Date | null;
+  now: Date;
+}): AutoCollectDecision {
+  if (input.attempts >= AUTO_COLLECT_MAX_ATTEMPTS) return "exhausted";
+  if (
+    input.lastAttemptAt &&
+    input.now.getTime() - input.lastAttemptAt.getTime() <
+      AUTO_COLLECT_RETRY_HOURS * 60 * 60 * 1000
+  ) {
+    return "wait";
+  }
+  return "attempt";
+}
+
+// ---------------------------------------------------------------------------
 // Mandate sizing
 // ---------------------------------------------------------------------------
 

@@ -873,6 +873,43 @@ collectionStartsAt(cycleStart))`). A scheduled GST start that falls inside
   `billing.renewal_place_of_supply_fallback` or `billing.renewal_outside_india`
   (WARNING): each is a store to contact.
 
+- **★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY HAND**
+  (owner decision, 21 Nov 2026). The collect pass re-reads every subscription
+  inside the lead window each hour, and a declined debit leaves its invoice
+  `open`, so with no rule it debited the mandate on every run. Now
+  `autoCollectDecision` (`cycle.ts`) allows at most
+  `AUTO_COLLECT_MAX_ATTEMPTS` (3) automatic attempts on one invoice, at least
+  `AUTO_COLLECT_RETRY_HOURS` (24) apart, counted from the attempts table
+  (`automaticAttemptsOn`). So the timeline for a mandate that declines is:
+  T-4d first try, T-3d second, T-2d third, then the "Automatic payment didn't
+  go through" email (`announceAutopayStopped`) asking the merchant to pay the
+  invoice on Plans & Billing; at T0 the unpaid invoice opens the ordinary
+  48-hour grace. A try whose outcome is unknown blocks the next one until
+  reconciliation settles it (the pass never charges a `processing` invoice),
+  and a debit the gateway itself reports failed is settled failed on the next
+  reconcile pass, not after 72 hours.
+
+- **★★ THE PASSES PAGE THROUGH EVERY SUBSCRIPTION** (21 Nov 2026). Collect,
+  evaluate and downgrade each sort oldest first and hand back a cursor when a
+  page of 50 is full; the cron's `drain` keeps reading pages (up to 40, inside
+  180 seconds) and reports `more` only when it stopped with pages still ahead.
+  Collect skips a subscription whose next invoice is already paid.
+- **★★ THE WEBHOOK SETTLES A PAYMENT RESULT AT ONCE** (21 Nov 2026).
+  `POST /api/webhooks/razorpay` hands `payment.captured` and `payment.failed`
+  to `applyBillingPaymentEvent` (`lib/billing/webhook.ts`), which settles the
+  attempt made on that gateway order through the same conditional claim
+  reconcile uses. It skips a payment on an unissued invoice (an on-session
+  purchase finishing in its own checkout), a failed try in a manual checkout
+  and an amount that differs from the attempt's. The hourly reconcile remains
+  the source of truth: a missed delivery costs latency, never correctness.
+  Both events are ticked on the live webhook in StoreMink's Razorpay dashboard
+  (owner, 21 Nov 2026).
+- **An attempt with no gateway order, or an automatic debit whose order never
+  got a payment, no longer waits for ever or for 72 hours** (reconcile:
+  `closeOrderlessAttempts` after 15 minutes, and
+  `AUTO_NO_PAYMENT_FAIL_AFTER_HOURS`, 6). A manual payment is refused while an
+  earlier payment on the invoice is `unknown` (`hasUnknownAttempt`).
+
 ### Issuing an invoice: the GST in force at issue
 
 Every issue goes through `issueInvoice` (`lib/billing/invoice-store.ts`;
@@ -1205,9 +1242,14 @@ continue`). A merchant who paid in that window can never be credited by any
    purchase is `paid` with no credits, and reconcile filters on
    `status='pending'` so nothing ever retries it. Fix: one transaction, or a
    `credit_granted_at` column that reconciliation targets.
-3. **No `payment.captured` webhook.** Everything rests on the merchant's browser
-   returning plus a reconcile-on-page-load. Adding the webhook removes both the
-   window and the dependence on a page nobody may visit.
+3. **No `payment.captured` webhook.** Everything rested on the merchant's
+   browser returning plus a reconcile-on-page-load. **Closed 21 Nov 2026:**
+   the settle moved to `lib/ai/credit-purchase.ts` and is reached by the
+   webhook (`settleCreditPurchaseByOrder`, for a captured payment no billing
+   attempt owns), by the hourly billing job
+   (`reconcilePendingCreditPurchases`, purchases 3 minutes to 3 days old) and
+   by the page-load pass. One conditional claim, so one grant and one notice;
+   a captured amount that differs from the order's grants nothing.
 
 ---
 

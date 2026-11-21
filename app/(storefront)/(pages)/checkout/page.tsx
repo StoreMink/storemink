@@ -46,6 +46,7 @@ import {
   getPickupOptions,
   type PickupOptions,
   confirmOnlinePayment,
+  resumeMyUnfinishedPayment,
   CheckoutFormData,
   type CheckoutConfig,
   type PaymentMethod,
@@ -716,6 +717,60 @@ export default function CheckoutPage() {
     [payConfig, customer, finishOrder],
   );
 
+  // ── An online payment that was never confirmed ───────────────────────────
+  // ★★ ASKED ONCE, WHEN CHECKOUT OPENS (21 Nov 2026). The page only learned a
+  // payment had succeeded from Razorpay's success handler in the same tab, so
+  // a tab that closed during payment (switching to a UPI app on a phone)
+  // brought the shopper back to a full cart and no confirmation, and the
+  // natural next step was to pay again. The server now checks the shopper's
+  // own waiting orders against Razorpay:
+  //   • paid, for this cart: show its confirmation and empty the cart;
+  //   • paid, but the cart has changed: say so and leave the cart alone;
+  //   • still waiting, for this cart: bring back "Retry Payment" for the SAME
+  //     Razorpay order, which a reload used to lose (a second order followed).
+  // The `cartKey` kept is the one the server compared against: if the cart
+  // changes before the answer lands, the retry simply does not apply.
+  const resumeChecked = useRef(false);
+  useEffect(() => {
+    if (resumeChecked.current) return;
+    if (authLoading || !customer || !cart.hydrated) return;
+    if (cart.items.length === 0) return;
+    resumeChecked.current = true;
+    const askedCartKey = cartKey;
+    resumeMyUnfinishedPayment(cart.items)
+      .then((found) => {
+        if (orderPlaced.current || !found.orderId) return;
+        const ref = found.orderRef ?? "";
+        if (found.state === "paid") {
+          if (found.sameCart) {
+            toast.success(
+              `Your payment went through. Order ${ref} is confirmed.`,
+            );
+            finishOrder(found.orderId, ref, true);
+          } else {
+            toast.success(
+              `Your earlier payment went through, so order ${ref} is confirmed. Check your cart before you order again.`,
+            );
+          }
+          return;
+        }
+        if (found.state === "waiting" && found.payment) {
+          setPendingPayment({
+            orderId: found.orderId,
+            orderRef: ref,
+            ...found.payment,
+            cartKey: askedCartKey,
+          });
+          toast.info(
+            `You have an unfinished payment of ${formatPrice(found.payment.amountPaise / 100)} for order ${ref}. Tap Retry Payment to finish it. If money has already left your account, wait a minute and reload instead of paying again.`,
+          );
+        }
+      })
+      // Never in the shopper's way: a failed check leaves checkout as it was,
+      // and placeOrder makes the same check on the server before any order.
+      .catch(() => {});
+  }, [authLoading, customer, cart.hydrated, cart.items, cartKey, finishOrder]);
+
   const handlePlaceOrder = async () => {
     if (!selected) {
       toast.error("Please select a delivery address.");
@@ -766,8 +821,23 @@ export default function CheckoutPage() {
     );
 
     if ("error" in result) {
-      toast.error(result.error);
       setPlacing(false);
+      // ★ Not a failure: an earlier payment of this shopper's went through, so
+      // no second order was placed. For the same cart, show that order's
+      // confirmation; for a changed cart, say so and leave the cart alone.
+      if (result.paidOrder) {
+        toast.success(result.error);
+        if (result.paidOrder.sameCart) {
+          setPendingPayment(null);
+          finishOrder(
+            result.paidOrder.orderId,
+            result.paidOrder.orderRef,
+            true,
+          );
+        }
+        return;
+      }
+      toast.error(result.error);
       return;
     }
 

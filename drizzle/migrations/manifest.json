@@ -10740,6 +10740,80 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261121_0278_mink_credits_store_cycle",
+      "description": "Included Mink credits refresh on the store's own date: a store with no paid plan cycle counts its 30-day window from the day it was created instead of the UTC calendar month. Carries this month's recorded usage to the new window key where that window already covered the whole month (0114's rule), and corrects one sentence of the credits Help guide in place. Data and content only.",
+      "file": "sql/20261121_0278_mink_credits_store_cycle.sql",
+      "transaction": true,
+      "requires": ["20261031_0276_theme_chosen_once_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the credits guide says which date each store's 30 days are counted from",
+            "sql": "select count(*)::text from help_articles where slug='understand-ai-usage-and-credits' and status='published' and body like '%A store with no paid plan cycle counts them from the day the store was created.%' and body not like '%counted from the paid plan cycle start.%'",
+            "equals": "1"
+          },
+          {
+            "name": "no carried usage is filed under a key the meter cannot build",
+            "sql": "select count(*)::text from ai_usage where period like 'cycle:%' and period !~ '^cycle:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261121_0279_payment_robustness",
+      "description": "Adds store_payment_providers.webhook_last_event_at, the time Razorpay last delivered a verified event to a store's payment webhook, so the dashboard says a webhook is receiving events only when it is. Help Centre: five sentences corrected in place (webhook status, no disconnect or account change while a payment is in progress, offer use released with an unpaid order, a returning customer's unfinished payment is checked first, three automatic renewal tries then pay by hand).",
+      "file": "sql/20261121_0279_payment_robustness.sql",
+      "transaction": true,
+      "requires": ["20261121_0278_mink_credits_store_cycle"],
+      "verify": {
+        "columns": ["store_payment_providers.webhook_last_event_at"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the Razorpay guide says what the webhook status means",
+            "sql": "select count(*)::text from help_articles where slug='connect-razorpay-and-accept-online-payments' and status='published' and body like '%until Razorpay delivers its first event, usually your next online payment%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Razorpay guide says an account cannot be changed while a payment is in progress",
+            "sql": "select count(*)::text from help_articles where slug='connect-razorpay-and-accept-online-payments' and status='published' and body like '%while a customer''s online payment is still in progress: pause online payments first%'",
+            "equals": "1"
+          },
+          {
+            "name": "the pending payments guide says offer use is released",
+            "sql": "select count(*)::text from help_articles where slug='understand-pending-and-failed-online-payments' and status='published' and body like '%Reserved stock, coupon use and offer use are released through the order workflow.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the pending payments guide says a returning customer's unfinished payment is checked first",
+            "sql": "select count(*)::text from help_articles where slug='understand-pending-and-failed-online-payments' and status='published' and body like '%a payment that went through confirms the order, and no second order is started.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says three automatic tries, then pay by hand",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%StoreMink tries up to three times, a day apart, then emails you to pay that invoice here yourself.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261121_0280_orders_razorpay_key_id",
+      "description": "Adds orders.razorpay_key_id: the public Razorpay key id an online order was created with, so a refused gateway read can be told apart as keys changed since the order was placed or the same keys being refused. Nullable, no backfill. Schema only.",
+      "file": "sql/20261121_0280_orders_razorpay_key_id.sql",
+      "transaction": true,
+      "requires": ["20261121_0279_payment_robustness"],
+      "verify": {
+        "columns": ["orders.razorpay_key_id"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
     }
   ]
 }

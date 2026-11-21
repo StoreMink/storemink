@@ -43,16 +43,21 @@ const repo = vi.hoisted(() => ({
   ensureRenewalInvoice: vi.fn(),
   finalizeInvoiceClaimed: vi.fn(),
   getCycleInvoice: vi.fn(),
+  getInvoice: vi.fn(),
   amountDueForInvoice: vi.fn(),
 }));
 vi.mock("./invoice-store", () => repo);
 
-const collector = vi.hoisted(() => ({ collectInvoice: vi.fn() }));
+const collector = vi.hoisted(() => ({
+  collectInvoice: vi.fn(),
+  automaticAttemptsOn: vi.fn(),
+}));
 vi.mock("./collect", () => collector);
 
 // Telling the merchant is best-effort and proved by its own suite; here it is a
 // seam, so a test can assert WHO was told and WHEN without sending mail.
 const dunning = vi.hoisted(() => ({
+  notifyAutopayStopped: vi.fn(),
   notifyInvoiceIssued: vi.fn(),
   notifyGraceStarted: vi.fn(),
   notifyDowngraded: vi.fn(),
@@ -61,6 +66,7 @@ vi.mock("./dunning", () => dunning);
 
 import {
   advanceAfterPayment,
+  announceAutopayStopped,
   classify,
   collectDueRenewals,
   downgradeExpired,
@@ -191,6 +197,8 @@ beforeEach(() => {
   repo.amountDueForInvoice.mockResolvedValue(7_000_00);
   // No previous cycle by default, so the reprice line stays out of the notice.
   repo.getCycleInvoice.mockResolvedValue(null);
+  // No automatic try made yet, so the retry rule lets the first one through.
+  collector.automaticAttemptsOn.mockResolvedValue({ count: 0, lastAt: null });
   collector.collectInvoice.mockResolvedValue({
     status: "paid",
     attemptId: "att-1",
@@ -720,6 +728,221 @@ describe("collectDueRenewals", () => {
     const s = await collectDueRenewals({ now: NOW, charge, priceFor });
     expect(collector.collectInvoice).not.toHaveBeenCalled();
     expect(s.collected).toBe(1);
+  });
+
+  it("★★ never charges again while a payment on the invoice is unresolved (an unknown outcome)", async () => {
+    // The first debit timed out, so its attempt is `unknown` and the invoice
+    // reads `processing`. The one-in-flight index does not cover `unknown`,
+    // so this pass is what stops a second debit an hour later.
+    repo.ensureRenewalInvoice.mockResolvedValue({
+      id: "inv-1",
+      status: "processing",
+      finalizedAt: "2026-08-28T00:00:00.000Z",
+    });
+    seed([[DUE_ROW]]);
+    const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+    expect(collector.collectInvoice).not.toHaveBeenCalled();
+    expect(charge).not.toHaveBeenCalled();
+    expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+    expect(s).toMatchObject({ pendingReconcile: 1, collected: 0, failed: 0 });
+  });
+
+  // Owner decision, 21 Nov 2026: three automatic tries, 24 hours apart, then
+  // the merchant is asked to pay by hand. The rule itself is pinned in
+  // cycle.test.ts; this is the pass obeying it.
+  describe("★★ the retry rule: three tries, 24 hours apart", () => {
+    const LIVE_MANDATE = {
+      id: "man-1",
+      status: "active",
+      maxAmountPaise: 10_000_00,
+      providerTokenId: "tok_1",
+      providerCustomerId: "cust_1",
+    };
+    const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+
+    /** An issued, unpaid renewal on a mandate that can carry it. */
+    function openRenewal() {
+      repo.ensureRenewalInvoice.mockResolvedValue({
+        id: "inv-1",
+        status: "open",
+        finalizedAt: "2026-08-28T00:00:00.000Z",
+      });
+      seed([[DUE_ROW], [LIVE_MANDATE]]);
+    }
+
+    it("reads the invoice's automatic tries before it debits", async () => {
+      openRenewal();
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.automaticAttemptsOn).toHaveBeenCalledWith("inv-1");
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("★★ the hourly run after a declined debit does NOT debit again", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 1,
+        lastAt: hoursAgo(1),
+      });
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s).toMatchObject({ pendingReconcile: 1, failed: 0 });
+    });
+
+    it("tries again once 24 hours have passed", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 1,
+        lastAt: hoursAgo(24),
+      });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("★★ after three tries it never debits again: the invoice is the merchant's to pay", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 3,
+        lastAt: hoursAgo(72),
+      });
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s.manualRequired).toBe(1);
+      // Said once, when the third try failed; never by the hourly re-runs.
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("★ a count that cannot be read is 'not this run', never 'no tries yet'", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue(null);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s.pendingReconcile).toBe(1);
+    });
+
+    it("★★ the THIRD failed try asks the merchant to pay by hand, once", async () => {
+      openRenewal();
+      // Two tries before this run; after it, three. The announcement re-reads
+      // both the invoice and the count.
+      collector.automaticAttemptsOn
+        .mockResolvedValueOnce({ count: 2, lastAt: hoursAgo(25) })
+        .mockResolvedValue({ count: 3, lastAt: NOW });
+      collector.collectInvoice.mockResolvedValue({
+        status: "failed",
+        attemptId: "att-3",
+        code: "declined",
+      });
+      repo.getInvoice.mockResolvedValue({
+        ...ISSUED,
+        storeId: STORE,
+        kind: "subscription",
+        periodStart: "2026-09-03T00:00:00.000Z",
+      });
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [DUE_ROW],
+          [LIVE_MANDATE],
+          [{ plan: "pro", scheduledPlan: null }],
+        ],
+      });
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(s.failed).toBe(1);
+      expect(dunning.notifyAutopayStopped).toHaveBeenCalledTimes(1);
+      expect(dunning.notifyAutopayStopped).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storeId: STORE,
+          plan: "pro",
+          amountPaise: 7_000_00,
+          invoiceRef: "SM/2026-27/00004",
+          attempts: 3,
+          dueAt: new Date("2026-09-03T00:00:00.000Z"),
+        }),
+      );
+    });
+
+    it("a first or second failed try says nothing: there is another try to come", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 1,
+        lastAt: hoursAgo(30),
+      });
+      collector.collectInvoice.mockResolvedValue({
+        status: "failed",
+        attemptId: "att-2",
+        code: "declined",
+      });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(repo.getInvoice).not.toHaveBeenCalled();
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("an invoice that cannot be collected automatically is not counted against the rule", async () => {
+      // No mandate: `collectInvoice` answers not_collectable, as before.
+      repo.ensureRenewalInvoice.mockResolvedValue({
+        id: "inv-1",
+        status: "open",
+        finalizedAt: "2026-08-28T00:00:00.000Z",
+      });
+      seed([[{ ...DUE_ROW, mandateId: null }]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.automaticAttemptsOn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("announceAutopayStopped: said only when it is true", () => {
+    const openInvoice = {
+      ...ISSUED,
+      storeId: STORE,
+      kind: "subscription",
+      periodStart: "2026-09-03T00:00:00.000Z",
+    };
+
+    function facts(invoice: unknown, count: number) {
+      repo.getInvoice.mockResolvedValue(invoice);
+      collector.automaticAttemptsOn.mockResolvedValue({ count, lastAt: NOW });
+      seed([[{ plan: "basic", scheduledPlan: "pro" }]]);
+    }
+    const run = () =>
+      announceAutopayStopped({ storeId: STORE, invoiceId: "inv-1", now: NOW });
+
+    it("names the plan the unpaid cycle was priced as (a booked change)", async () => {
+      facts(openInvoice, 3);
+      expect(await run()).toBe(true);
+      expect(dunning.notifyAutopayStopped).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: "pro" }),
+      );
+    });
+
+    it.each(["paid", "processing", "void", "uncollectible", "draft"])(
+      "★ says nothing for an invoice that is %s",
+      async (status) => {
+        facts({ ...openInvoice, status }, 3);
+        expect(await run()).toBe(false);
+        expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+      },
+    );
+
+    it("★ says nothing while a try is still left", async () => {
+      facts(openInvoice, 2);
+      expect(await run()).toBe(false);
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("says nothing for another store's invoice, a pack invoice or a missing one", async () => {
+      for (const invoice of [
+        { ...openInvoice, storeId: "store-2" },
+        { ...openInvoice, kind: "ai_credits" },
+        null,
+      ]) {
+        facts(invoice, 3);
+        expect(await run()).toBe(false);
+      }
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("never throws", async () => {
+      repo.getInvoice.mockRejectedValue(new Error("db down"));
+      expect(await run()).toBe(false);
+    });
   });
 
   it("★ never guesses an amount — a null due figure stops the charge", async () => {
@@ -1551,6 +1774,7 @@ describe("downgradeExpired", () => {
           ended: 1,
           advancedAfterGrace: 0,
           errors: 0,
+          next: null,
         });
         // ★★ The downgrade claim is never asked.
         expect(executed("billing_claim_downgrade")).toHaveLength(0);
@@ -1727,6 +1951,171 @@ describe("downgradeExpired", () => {
         "billing.renewal.advanced_after_grace",
         expect.anything(),
       );
+    });
+  });
+});
+
+// 21 Nov 2026: every pass took "the first 50 rows" with no ORDER BY, and most
+// of those rows are still there on the next run, so past a few hundred
+// subscribers the same 50 could come back every hour and the rest never be
+// reached. Each pass now pages in a fixed order.
+describe("★★ the passes page through every subscription", () => {
+  const CURSOR = {
+    at: "2026-09-03 00:00:00.123456+00",
+    storeId: "a0000000-0000-4000-8000-000000000009",
+  };
+  /** Every WHERE the pass ran, as Postgres would receive it. */
+  const wheres = () =>
+    dbHolder.current.calls.where.map((w: unknown) => render(w));
+  const page = (n: number, make: (i: number) => Record<string, unknown>) =>
+    Array.from({ length: n }, (_, i) => make(i));
+  const storeId = (i: number) =>
+    `a0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+
+  describe("collectDueRenewals", () => {
+    const due = (i: number) => ({
+      ...DUE_ROW,
+      storeId: storeId(i),
+      mandateId: null,
+      currentPeriodEnd: `2026-09-03 00:00:0${i % 10}+00`,
+    });
+
+    it("a FULL page hands back where it stopped; a short page does not", async () => {
+      seed([page(3, due)]);
+      const full = await collectDueRenewals({
+        now: NOW,
+        limit: 3,
+        charge: null,
+        priceFor,
+      });
+      expect(full.next).toEqual({
+        at: "2026-09-03 00:00:02+00",
+        storeId: storeId(2),
+      });
+
+      seed([page(2, due)]);
+      const short = await collectDueRenewals({
+        now: NOW,
+        limit: 3,
+        charge: null,
+        priceFor,
+      });
+      expect(short.next).toBeNull();
+    });
+
+    it("★★ the next page starts strictly AFTER the cursor, by (cycle end, store)", async () => {
+      seed([[]]);
+      await collectDueRenewals({
+        now: NOW,
+        charge: null,
+        priceFor,
+        after: CURSOR,
+      });
+      const claim = wheres()[0];
+      expect(claim.sql).toContain(
+        '("billing_subscriptions"."current_period_end", "billing_subscriptions"."store_id") > (',
+      );
+      // The cursor's own time string goes back unchanged, so no precision is
+      // lost between pages.
+      expect(claim.params).toContain(CURSOR.at);
+      expect(claim.params).toContain(CURSOR.storeId);
+    });
+
+    it("the first page has no cursor at all", async () => {
+      seed([[]]);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      expect(wheres()[0].sql).not.toContain(") > (");
+    });
+
+    it("★★ a renewal already PAID is not read again every hour until its cycle turns", async () => {
+      seed([[]]);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      const claim = wheres()[0].sql;
+      expect(claim).toContain("not exists");
+      expect(claim).toContain("paid_next.status = 'paid'");
+      expect(claim).toContain(
+        'paid_next.cycle_seq = "billing_subscriptions"."current_cycle_seq" + 1',
+      );
+    });
+
+    it("a failed read leads nowhere", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+      const s = await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      expect(s).toMatchObject({ errors: 1, next: null });
+    });
+  });
+
+  describe("evaluateCycleTurns", () => {
+    const turned = (i: number) => ({
+      storeId: storeId(i),
+      plan: "pro",
+      period: "monthly",
+      billedLocations: 0,
+      scheduledPlan: null,
+      scheduledPeriod: null,
+      scheduledLocations: null,
+      cancelAtPeriodEnd: false,
+      currentCycleSeq: 3,
+      currentPeriodEnd: `2026-08-30 00:00:0${i}+00`,
+    });
+
+    it("★ a full page of cycles still WAITING on a payment does not hide the ones behind it", async () => {
+      // No invoice rows are seeded, so every row is "waiting": exactly the
+      // rows that stay in the set and used to fill every page.
+      seed([page(2, turned)]);
+      const s = await evaluateCycleTurns({ now: NOW, limit: 2 });
+      expect(s.waiting).toBe(2);
+      expect(s.next).toEqual({
+        at: "2026-08-30 00:00:01+00",
+        storeId: storeId(1),
+      });
+    });
+
+    it("the next page starts after the cursor; a short page ends the pass", async () => {
+      seed([page(1, turned)]);
+      const s = await evaluateCycleTurns({ now: NOW, limit: 2, after: CURSOR });
+      expect(s.next).toBeNull();
+      expect(wheres()[0].sql).toContain(
+        '("billing_subscriptions"."current_period_end", "billing_subscriptions"."store_id") > (',
+      );
+      expect(wheres()[0].params).toContain(CURSOR.at);
+    });
+
+    it("a page that failed leads nowhere", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+      const s = await evaluateCycleTurns({ now: NOW, limit: 1 });
+      expect(s).toMatchObject({ errors: 1, next: null });
+    });
+  });
+
+  describe("downgradeExpired", () => {
+    const lapsed = (i: number) => ({
+      storeId: storeId(i),
+      plan: "pro",
+      cancelAtPeriodEnd: false,
+      currentCycleSeq: 3,
+      graceEndsAt: `2026-08-29 00:00:0${i}+00`,
+    });
+
+    it("a full page hands back where it stopped, by (grace end, store)", async () => {
+      seed([page(2, lapsed)]);
+      // The claim refuses both (a payment is in flight): they stay in the set.
+      dbHolder.current.db.execute = vi.fn(async () => ({ rows: [] }));
+      const s = await downgradeExpired({ now: NOW, limit: 2 });
+      expect(s.next).toEqual({
+        at: "2026-08-29 00:00:01+00",
+        storeId: storeId(1),
+      });
+    });
+
+    it("the next page starts after the cursor; a short page ends the pass", async () => {
+      seed([[]]);
+      const s = await downgradeExpired({ now: NOW, limit: 2, after: CURSOR });
+      expect(s.next).toBeNull();
+      expect(wheres()[0].sql).toContain(
+        '("billing_subscriptions"."grace_ends_at", "billing_subscriptions"."store_id") > (',
+      );
+      expect(wheres()[0].params).toContain(CURSOR.storeId);
     });
   });
 });

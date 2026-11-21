@@ -184,9 +184,40 @@ async function emitOrderPlacedForPaidOrder(orderId: string): Promise<void> {
  */
 export type MarkPaidOutcome = "paid" | "late" | "unchanged";
 
+/**
+ * The write that records a payment FAILED (the database, not the order's
+ * state). Thrown only for a caller that asked with `strict`.
+ */
+export class MarkPaidWriteError extends Error {
+  constructor(
+    readonly orderId: string,
+    cause: unknown,
+  ) {
+    super("The payment could not be recorded on its order", { cause });
+    this.name = "MarkPaidWriteError";
+  }
+}
+
+export interface MarkPaidOptions {
+  /**
+   * Throw `MarkPaidWriteError` when the write itself fails, instead of
+   * answering `unchanged`.
+   *
+   * ★★ WHY (21 Nov 2026). `unchanged` means two different things: "this order
+   * is no longer waiting on this payment" (a replay, already paid), and "the
+   * database could not be written". A caller that can ASK AGAIN must tell
+   * them apart: the store's webhook acknowledged a delivery it had failed to
+   * record, so Razorpay never retried it, and the shopper's callback said
+   * "paid" for an order still pending. Callers with nothing to retry (they
+   * run again on a schedule anyway) keep the old answer.
+   */
+  strict?: boolean;
+}
+
 export async function markOrderPaid(
   orderId: string,
   rzpPaymentId: string,
+  opts: MarkPaidOptions = {},
 ): Promise<MarkPaidOutcome> {
   // The single choke point for "this order is now paid" — reached from the
   // client callback, reconcile-on-read, and the cron reaper alike. The UPDATE
@@ -209,6 +240,7 @@ export async function markOrderPaid(
       }),
   ).catch((err) => {
     logError("checkout.mark_order_paid", err, { orderId });
+    if (opts.strict) throw new MarkPaidWriteError(orderId, err);
     return [] as {
       storeId: string;
       orderRef: string;
@@ -219,7 +251,7 @@ export async function markOrderPaid(
   });
 
   const row = claimed[0];
-  if (!row) return recordLatePayment(orderId, rzpPaymentId);
+  if (!row) return recordLatePayment(orderId, rzpPaymentId, opts);
 
   await recordStorefrontPurchase(orderId);
 
@@ -264,6 +296,7 @@ export async function markOrderPaid(
 async function recordLatePayment(
   orderId: string,
   rzpPaymentId: string,
+  opts: MarkPaidOptions = {},
 ): Promise<MarkPaidOutcome> {
   const late = await withService((db) =>
     db
@@ -287,6 +320,7 @@ async function recordLatePayment(
       }),
   ).catch((err) => {
     logError("checkout.late_payment_claim", err, { orderId });
+    if (opts.strict) throw new MarkPaidWriteError(orderId, err);
     return [] as {
       storeId: string;
       orderRef: string;
