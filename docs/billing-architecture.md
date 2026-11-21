@@ -254,7 +254,7 @@ window.
 **★★ As built since 21 Nov 2026, the debit is a second step, a day or more
 after the notice.** Razorpay accepts a renewal debit only on an order created
 with its pre-debit `notification`, and only once the notice period has passed
-since the customer was sent it (36 hours 5 minutes for a card, 24 hours for
+since the customer was sent it (36 hours 5 minutes for a card, 25 hours for
 UPI). So the timeline above is, for a card:
 
 ```

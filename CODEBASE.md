@@ -24435,7 +24435,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       on the server." The cause was StoreMink's own flow: Razorpay requires
       the renewal's ORDER to carry `payment_capture` and a `notification`
       object (the pre-debit notice), and allows the debit only 36 hours 5
-      minutes after that notice is delivered for a card (24 hours for UPI).
+      minutes after that notice is delivered for a card (25 hours for UPI).
       The old code created a plain order and debited it at once, so every
       automatic renewal was refused. Rebuilt:
       1. **Step 1, the collect pass.** `collectOne` first asks the gateway
@@ -24536,8 +24536,40 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       ⚠ A mandate authorised earlier keeps its frequency (nothing can change
       it, and the token read does not report it); a renewal refused for
       falling in the same month is retried about a day and a half later.
-      ⚠ Not run: a full Checkout authorisation and a debit on an
-      `as_presented` mandate.
+      ★★ AUTHORISED END TO END ON BOTH RAILS, TEST MODE, 22 Nov 2026
+      (docs/autopay-verification.md): Checkout, the signature and capture
+      checks, the token read (`confirmed`), `checkMandate`, the renewal's
+      notified order and its notice, on a card and on UPI Autopay (the default
+      rail, never authorised through this code before). Two defects it found,
+      fixed the same day in `lib/billing/gateway.ts`:
+      1. **UPI needs 25 hours' notice, not the 24 Razorpay's page states.**
+         The API refused 24 h 25 min ("Debit can be attempted 25 hours after
+         sending the pre-debit notification") and exactly 25 h, and accepted
+         25 h 01 min. With 24 in `NOTICE_PERIOD_MS` every UPI renewal was
+         refused at its first step. Now 25 h 5 min.
+      2. **A card token's `expired_at` is not its mandate's expiry**: on a
+         five-year mandate it read the last second of the CURRENT MONTH with
+         the status `confirmed`. `checkMandate` ended any confirmed token past
+         that date, so every card mandate would have been marked expired on
+         the 1st, for good. A card mandate is now ended only by its status
+         (a token past the date is logged,
+         `billing.mandate_token_past_expiry`); a UPI token's `expired_at` is
+         its real five-year expiry and still ends it.
+
+      ⚠ Still not run: the DEBIT itself, on any mandate, which Razorpay
+      allows only after the notice period (four notified test orders are
+      waiting; the first from 22 Nov 2026 20:35 UTC).
+      ★ THE WHOLE RENEWAL RUNS HOUR BY HOUR IN A LOCAL TEST
+      (`lib/billing/renewal-scenarios.local.test.ts`, run with
+      `npm run billing:scenarios:local`; opt-in, so plain `vitest` reports it
+      as skipped): twenty-five scenarios on dummy stores whose subscriptions
+      began months ago, from a Free store subscribing to a downgrade, the hourly job's passes run once per
+      simulated hour against local Postgres, with only Razorpay's HTTP API
+      simulated (holding the rules seen in test mode, and failing the run on
+      an early or a second debit). Rollback-only. The scenario table is in
+      docs/autopay-verification.md. `lib/ai/quota.local.test.ts`
+      (`AI_QUOTA_LOCAL_TEST=1`) covers the Mink credit window on stores
+      created in previous months.
       Help: `0281` rewrites the invoices guide's autopay sentence; `0282` adds
       Pay now instead and Continue payment to it; `0283` adds the upper limit
       paragraph to the plan guide.

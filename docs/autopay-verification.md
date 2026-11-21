@@ -181,7 +181,8 @@ built that way, the same endpoint answered with real business rules:
 
 So the endpoint is live on this account. **What is missing is in StoreMink's
 own flow:** a renewal has to be two steps at least 36 hours apart for a card
-(the UPI page says 24 hours), not one:
+(the UPI page says 24 hours; the API enforces 25, see the 22 Nov run below),
+not one:
 
 1. Create the order with its `notification` (Razorpay sends the pre-debit
    notice). `payment_after` defaulted to 36 hours 5 minutes ahead.
@@ -234,7 +235,7 @@ same hourly job comes back once `debit_after` has passed and, in this order:
    only a `confirmed` token may be debited);
 4. reads the order's `notification` back: delivered, and the notice period
    passed by the gateway's own clock (36 hours 5 minutes after delivery for a
-   card, 24 hours for UPI, plus a 5 minute margin);
+   card, 25 hours for UPI, plus a 5 minute margin);
 5. claims the debit (one conditional write of `debit_sent_at`) and only then
    calls `POST /payments/create/recurring`.
 
@@ -333,13 +334,160 @@ the expiry, RBI's ₹15,000 limit and the bank's notice before every debit.
   charged "anytime" where it said "per month". The review step before payment
   and the plan guide (Help `0283`) say in StoreMink's own words that it is a
   ceiling and that only the renewal amount is charged, once in each cycle.
-- ⚠ Not run: a full Checkout authorisation and a later debit on an
-  `as_presented` mandate. The mandate registered on 21 Nov is `monthly`.
+- A full Checkout authorisation on an `as_presented` mandate was run on
+  both rails on 22 Nov 2026 (next section). ⚠ Still not run: the debit on
+  one, which Razorpay allows only after the notice period.
 - ⚠ A mandate authorised before this keeps its frequency: nothing can change
   it, and the token read does not report it, so old and new cannot be told
   apart from the gateway. A renewal of an old one refused for falling in the
   same month is tried again about a day and a half later, by which time the
   month has usually turned.
+
+### 22 Nov 2026: a full authorisation on an `as_presented` mandate, both rails
+
+Run in test mode through StoreMink's own functions and Razorpay's real test
+Checkout, opened with the options `openRazorpayModal` passes. No real money
+moved.
+
+| Step                                            | Card                                                     | UPI Autopay                                    |
+| ----------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------- |
+| `rzpCreateAuthorizationOrder`, `as_presented`   | accepted                                                 | accepted                                       |
+| Checkout's own wording                          | "may then charge up to ₹5,000 anytime until 21 Nov 2031" | the same sentence                              |
+| Authorised in Checkout                          | test card, saved under RBI rules, OTP                    | UPI QR (test mode confirms it by itself)       |
+| `verifyCheckoutSignature`                       | valid                                                    | valid                                          |
+| `verifyCapturedCheckoutPayment`                 | ok, read from the gateway                                | ok, read from the gateway                      |
+| `rzpFetchPayment`                               | captured, `token_id` and `customer_id` present           | captured, `token_id` and `customer_id` present |
+| `rzpFetchToken`                                 | `confirmed`, `max_amount` 500000                         | `confirmed`, `max_amount` 500000               |
+| The order read back                             | `paid`, `token.frequency: as_presented`                  | `paid`                                         |
+| `checkMandate`                                  | `chargeable`                                             | `chargeable`                                   |
+| `notify` (the renewal's order, with its notice) | accepted, debit 36 h 30 min ahead                        | **refused at first, see below**                |
+| `readNotice` after 75 seconds                   | `wait`, delivered                                        | `wait`, delivered                              |
+
+This was the first time UPI Autopay, the default rail, was authorised through
+this code at all.
+
+**★★ Two defects it found, both fixed the same day:**
+
+1. **UPI needs 25 hours' notice, not 24.** Razorpay's UPI page says "a minimum
+   of 24 hours". The API refused an order asking for its debit 24 h 25 min
+   ahead: "Debit can be attempted 25 hours after sending the pre-debit
+   notification". Exactly 25 h 00 min was refused too, 25 h 01 min accepted,
+   and an order that names no time is given 25 hours. With 24 hours in
+   `NOTICE_PERIOD_MS`, every UPI renewal would have been refused at its first
+   step and counted as a failed try. It is 25 h 5 min now (asked for as
+   25 h 30 min). For UPI Razorpay also rewrites `payment_after` to exactly 25
+   hours after the notice was DELIVERED, whatever was asked for; the debit
+   pass waits for the later of the two.
+2. **A card token's `expired_at` is not the mandate's expiry.** On mandates
+   registered for five years, the UPI token's `expired_at` is that five-year
+   date, but the card token's is the last second of the CURRENT MONTH while
+   its status reads `confirmed` (seen on 21 and on 22 Nov, with a card entered
+   as expiring in 2030). `checkMandate` ended any confirmed token past its
+   `expired_at`, so on the 1st of the month every card mandate would have been
+   marked expired, for good, and each merchant told autopay was no longer
+   active. Now a card mandate is ended only by its status; a card token past
+   that date is logged (`billing.mandate_token_past_expiry`) so the first real
+   month end shows what the date means. A UPI mandate is still ended at its
+   `expired_at`.
+
+**Notified test orders waiting for their debit** (the last unproven step):
+
+| Mandate                  | Token                  | Order                  | May be debited from                      |
+| ------------------------ | ---------------------- | ---------------------- | ---------------------------------------- |
+| card, `monthly` (21 Nov) | `token_U2tEUgvp4hWNEV` | `order_U2tkdTXDXc6hig` | 23 Nov 2026 05:58 UTC (11:28 IST)        |
+| card, `monthly` (21 Nov) | `token_U2tEUgvp4hWNEV` | `order_U2uKXBRjzCck0D` | 23 Nov 2026 06:02 UTC (11:32 IST)        |
+| UPI, `as_presented`      | `token_U2vvhDK2JmkPt7` | `order_U2vyy6oJmMhMzf` | 22 Nov 2026 20:35 UTC (23 Nov 02:05 IST) |
+| card, `as_presented`     | `token_U2vsZK5pU21Z6F` | `order_U2vtkpoYDhuGbw` | 23 Nov 2026 07:35 UTC (13:05 IST)        |
+
+All four belong to customer `cust_U2tCpF6i2o1LPF`; pass the token and order to
+`scripts/autopay-test-debit.mjs` as in the command above.
+
+### 22 Nov 2026: twenty-five scenarios, hour by hour, on dummy subscriptions
+
+`lib/billing/renewal-scenarios.local.test.ts`, run with
+`npm run billing:scenarios:local` against local Postgres. ⚠ The suite is
+opt-in: run through plain `vitest` without `BILLING_RENEWAL_LOCAL_TEST=1` it
+reports every check as skipped, which is not a pass. Each scenario seeds a dummy store that has been a
+paying customer for three months (created a hundred days ago, three 30-day
+cycles paid, the fourth ending in four days) and then runs the hourly job's
+own passes, in the job's order, once for every simulated hour.
+
+Real: every billing module, its SQL, the schema's constraints and triggers,
+and `lib/billing/gateway.ts`. Simulated: Razorpay's HTTP API only, holding the
+rules it was seen to enforce in test mode (a notice delivered a minute after
+its order; 36 hours for a card and 25 for UPI; an early debit refused; a debit
+answered with a payment id alone; only a `confirmed` token debited; a card
+token's `expired_at` at the month's end). The simulator fails the run on a
+debit before its notice period or a second debit on one order. Everything
+happens in one transaction that is rolled back: an issued invoice can never be
+deleted, so dummy invoices are never committed.
+
+| #   | Scenario                                         | What the run shows                                                                                                                                              |
+| --- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Card renewal that works                          | notice at once, nothing debited for 36 runs, one debit at hour 37, paid, cycle turns, nothing more in a further week                                            |
+| 2   | UPI Autopay renewal                              | order accepted (25 h 30 min ahead), one debit at hour 26, paid                                                                                                  |
+| 3   | Card declines every time                         | three debits at least 36 h apart, no grace while the third is under way, one "pay by hand" email, 48 h grace, Free plan                                         |
+| 4   | Fails at the bank, then succeeds                 | second try with a new notice pays it before the cycle turns; no dunning                                                                                         |
+| 5   | Debit timed out, money moved                     | never read as a failure; found on its order; one debit                                                                                                          |
+| 6   | Debit timed out, nothing happened                | nothing else starts while unknown (by the job or by hand); failed after 6 h; second try pays                                                                    |
+| 7   | Merchant cancels during the notice period        | scheduled debit withdrawn at once, "won't be charged" is true, nothing debited, plan ends on its day                                                            |
+| 8   | Cancelled, but the clean-up did not happen       | the debit pass refuses it by itself                                                                                                                             |
+| 9   | Mandate cancelled at the bank before the renewal | invoice issued to pay by hand, no order, no debit, mandate `revoked`                                                                                            |
+| 10  | Mandate cancelled between notice and debit       | no debit, one email, no further tries                                                                                                                           |
+| 11  | Mandate paused                                   | set aside (`unknown`), renewal to pay by hand                                                                                                                   |
+| 12  | Razorpay unreachable when the renewal falls due  | nothing issued for a day, then issued to pay by hand; autopay collects once Razorpay answers                                                                    |
+| 13  | Razorpay silent between notice and debit         | waits, then the try fails after 24 h; mandate untouched                                                                                                         |
+| 14  | Notice never delivered                           | no debit on it; try fails 12 h past its time; the next is delivered and paid                                                                                    |
+| 15  | Pay now instead                                  | scheduled debit withdrawn, merchant pays, mandate never debited                                                                                                 |
+| 16  | Pay now instead, window closed, Continue payment | same order reopened; not while a payment waits for approval; not once paid at the gateway                                                                       |
+| 17  | Two runs of the job at the same moment           | one debit between them                                                                                                                                          |
+| 18  | Card token past `expired_at`, still `confirmed`  | not ended, renewed normally; a UPI mandate past its expiry is ended                                                                                             |
+| 19  | Yearly plan above ₹15,000                        | invoiced to pay by hand, no order                                                                                                                               |
+| 20  | Two renewals in a row, two months of hourly runs | each store debited exactly twice, thirty days apart                                                                                                             |
+| 21  | A Free store subscribes, then renews twice       | the first order asks for an `as_presented` UPI mandate; once approved the plan is on and the mandate read from the payment; two debits over the next two months |
+| 22  | Cancel, then Keep my plan                        | the mandate stays withdrawn, the renewal is paid by hand, the plan carries on                                                                                   |
+| 23  | Three failed tries, then paid by hand in grace   | the plan is restored at once and the store never moves to Free                                                                                                  |
+| 24  | Paused mandate resumed before the next renewal   | this renewal paid by hand, the next one collected automatically again                                                                                           |
+| 25  | The billing job was down for three days          | it catches up: the debit lands after the cycle turned, no grace, one debit, the new cycle starts on its own day                                                 |
+
+Eighty-five checks, all passing. **Every scenario from 1 to 20 was also
+checked the other way round**: the defect it exists to catch was put back, one
+at a time, and the suite run again. All 22 were caught by the scenario they
+belong to (and often by its neighbours):
+
+| Defect put back                                         | Scenarios that failed |
+| ------------------------------------------------------- | --------------------- |
+| A card debit asked for 30 hours after its notice        | 1 and fourteen others |
+| UPI notice back to 24 hours                             | 2, 14, 20             |
+| No cap on automatic tries                               | 3, 23                 |
+| Grace opens on a payment still in flight                | 3, 25                 |
+| A debit the bank failed is not read back at once        | 4                     |
+| A timed-out debit recorded as failed                    | 5, 6                  |
+| An unsent debit waits 72 hours, not 6                   | 6                     |
+| A new try starts while one is unresolved                | 6, 10                 |
+| Cancelling leaves the scheduled debit in place          | 7                     |
+| The debit pass ignores a cancelled plan                 | 8                     |
+| The mandate is not checked before the invoice is issued | 9, 11, 12, 24         |
+| The mandate is not checked before the debit             | 10                    |
+| A paused mandate treated as chargeable                  | 11, 24                |
+| An unanswered mandate check does not hold the invoice   | 12                    |
+| A silent gateway waited on for ever                     | 13                    |
+| An undelivered notice waited on for ever                | 14                    |
+| Pay now instead does not withdraw the scheduled debit   | 15, 16                |
+| An unfinished checkout is not reopened                  | 16                    |
+| A debit claim that always wins                          | 17                    |
+| A card mandate ended on `expired_at`                    | 18                    |
+| The ₹15,000 limit ignored                               | 19                    |
+| A monthly cycle of 31 days                              | 1, 20, 21             |
+
+`lib/ai/quota.local.test.ts` (`AI_QUOTA_LOCAL_TEST=1`) does the same for
+included Mink credits on stores created 40, 75 and 100 days ago: a store with
+no paid plan counts 30-day windows from its own creation date, a paying store
+from its current plan cycle, a window's end is the next one's start, and usage
+in an earlier window or in the calendar month does not count against this one.
+
+⚠ What a simulation cannot show: what the real bank does at the debit. That
+is still the four notified test orders above.
 
 **Left open:**
 

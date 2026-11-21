@@ -102,7 +102,8 @@ const MANDATE_YEARS = 5;
  * renewal of one that is refused for falling in the same month is tried again
  * about a day and a half later, by which time the month has usually turned.
  *
- * Accepted on both rails in Razorpay test mode (docs/autopay-verification.md).
+ * Authorised end to end on both rails in Razorpay's test Checkout on 22 Nov
+ * 2026 (docs/autopay-verification.md).
  */
 export const MANDATE_FREQUENCY = "as_presented" as const;
 import { RECURRING_CHARGE_VERIFIED } from "./gateway";

@@ -12,7 +12,7 @@
 //   node scripts/autopay-test-debit.mjs --customer cust_... --token token_... --amount 600000
 //
 // The two steps Razorpay's "create subsequent payments" pages describe, which
-// have to be at least 36 hours apart for a card (24 for UPI):
+// have to be at least 36 hours apart for a card (25 for UPI):
 //   --notify true     only create the order WITH its pre-debit notification and
 //                     print the order id and when the debit may be sent
 //   --order order_... debit that existing order instead of creating a new one

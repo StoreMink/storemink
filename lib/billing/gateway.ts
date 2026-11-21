@@ -34,6 +34,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { admins } from "@/drizzle/schema";
+import { logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
   rzpChargeMandate,
@@ -63,16 +64,24 @@ const MINUTE_MS = 60 * 1000;
 
 /**
  * How long after its pre-debit notice is DELIVERED a debit may be sent, per
- * rail, exactly as Razorpay's reference states it.
+ * rail.
  *
- * ★ Card: "36 hours and 5 minutes after the notification is delivered".
- *   UPI: "a minimum of 24 hours has passed since the PDN was sent".
+ * ★ Card: "36 hours and 5 minutes after the notification is delivered"
+ *   (Razorpay's reference, and what the API enforces).
+ * ★★ UPI: 25 HOURS, NOT THE 24 THE REFERENCE STATES ("a minimum of 24 hours
+ *   has passed since the PDN was sent"). Measured on a UPI Autopay mandate in
+ *   test mode, 22 Nov 2026: an order asking for its debit 24 h 25 min ahead
+ *   was refused with "Debit can be attempted 25 hours after sending the
+ *   pre-debit notification"; exactly 25 h 00 min was refused too, 25 h 01 min
+ *   was accepted, and an order that names no time is given 25 hours. With 24
+ *   here, EVERY UPI renewal was refused at its first step, and UPI Autopay is
+ *   the default rail. Five minutes are added, as the card's own rule has.
  * A rail this code does not know is given the longer period: waiting too long
  * costs hours, debiting too early is refused and costs one of three tries.
  */
 export const NOTICE_PERIOD_MS: Record<MandateRail, number> = {
   card: 36 * HOUR_MS + 5 * MINUTE_MS,
-  upi: 24 * HOUR_MS,
+  upi: 25 * HOUR_MS + 5 * MINUTE_MS,
   emandate: 36 * HOUR_MS + 5 * MINUTE_MS,
   nach: 36 * HOUR_MS + 5 * MINUTE_MS,
   unknown: 36 * HOUR_MS + 5 * MINUTE_MS,
@@ -116,6 +125,18 @@ export function chargeUnavailableReason(): string | null {
  * approved) is read as paused: not chargeable now, not gone for good. A state
  * this code does not know, or a read that failed, decides NOTHING: a mandate
  * is never ended on a guess.
+ *
+ * ★★ THE TOKEN'S `expired_at` ENDS A UPI MANDATE ONLY. Measured in test mode
+ * on 21 and 22 Nov 2026, on mandates registered for five years: a UPI token's
+ * `expired_at` is that five-year date, but a CARD token's was the last second
+ * of the CURRENT MONTH, while its status read `confirmed`. Had a card mandate
+ * been ended on that date, every card mandate would have been marked expired
+ * on the 1st of the next month, for good (an ended mandate is never asked
+ * about again), and each merchant told autopay was no longer active. So for a
+ * card the gateway's status is the only word taken; if a card token really
+ * has lapsed, its debit is refused, which costs a try and ends nothing. A
+ * card token past that date is logged, so the first real month end shows
+ * what the date means.
  */
 async function checkMandate(input: {
   providerCustomerId: string;
@@ -135,10 +156,18 @@ async function checkMandate(input: {
   const detail = reason ? `${status}: ${reason}` : status;
   switch (status) {
     case "confirmed": {
-      // "The token expiry date timestamp": a mandate past it cannot be used.
       const expiredAt = res.data.expired_at;
-      if (typeof expiredAt === "number" && expiredAt * 1000 <= Date.now()) {
+      const pastExpiry =
+        typeof expiredAt === "number" && expiredAt * 1000 <= Date.now();
+      if (pastExpiry && (res.data.method ?? "").toLowerCase() === "upi") {
         return { state: "ended", detail: "expired" };
+      }
+      if (pastExpiry) {
+        logWarn("billing.mandate_token_past_expiry", {
+          tokenId: input.providerTokenId,
+          method: res.data.method ?? null,
+          expiredAt: new Date((expiredAt as number) * 1000).toISOString(),
+        });
       }
       return { state: "chargeable" };
     }

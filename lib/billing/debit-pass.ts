@@ -7,7 +7,7 @@ import "server-only";
  * ★★ WHY THIS IS ITS OWN PASS (21 Nov 2026). Razorpay accepts a renewal debit
  * only for an order created with a pre-debit notification, and only once the
  * notice period has passed since the customer was sent it (36 hours 5 minutes
- * for a card, 24 hours for UPI). The collect pass creates that order
+ * for a card, 25 hours for UPI). The collect pass creates that order
  * (`collectInvoice`, step 1) and records `debit_after` on the attempt; this
  * pass, run by the same hourly job, comes back for it.
  *

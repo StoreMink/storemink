@@ -33,6 +33,7 @@
     "typecheck": "next typegen && node --max-old-space-size=4096 node_modules/typescript/bin/tsc --project tsconfig.typecheck.json --noEmit",
     "test": "vitest run --coverage",
     "test:watch": "vitest",
+    "billing:scenarios:local": "BILLING_RENEWAL_LOCAL_TEST=1 AI_QUOTA_LOCAL_TEST=1 vitest run --reporter=verbose lib/billing/renewal-scenarios.local.test.ts lib/ai/quota.local.test.ts",
     "test:shuffle": "vitest run --coverage=false --sequence.shuffle --sequence.seed=20260813",
     "mink:eval": "node scripts/mink-eval.mjs",
     "mink:whatsapp-eval": "tsx --tsconfig tsconfig.scripts.json scripts/mink-whatsapp-eval.ts",

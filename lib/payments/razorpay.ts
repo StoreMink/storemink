@@ -313,7 +313,7 @@ export interface RzpRecurringPayment {
  * `POST /payments/create/recurring` takes an `order_id`, and Razorpay accepts
  * the debit only for an order created with a `notification` object, and only
  * once the notice period has passed since that notice was delivered (36 hours
- * 5 minutes for a card, 24 hours for UPI). So a renewal is TWO calls a day or
+ * 5 minutes for a card, 25 hours for UPI). So a renewal is TWO calls a day or
  * more apart: `rzpCreateOrder` with `notification`, then this. The caller
  * (lib/billing/gateway.ts) owns both steps.
  *

@@ -12,6 +12,13 @@
 // rejection ends a try and an unknown must never be retried.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { logWarn } from "@/lib/observability/logger";
+
+vi.mock("@/lib/observability/logger", () => ({
+  logError: vi.fn(),
+  logInfo: vi.fn(),
+  logWarn: vi.fn(),
+}));
 
 vi.mock("@/lib/payments/provider", () => ({
   getPlatformRazorpayCreds: vi.fn(),
@@ -80,10 +87,25 @@ describe("the release gate", () => {
   });
 });
 
-describe("the notice periods are Razorpay's own", () => {
-  it("a card waits 36 hours 5 minutes, UPI 24 hours", () => {
+describe("the notice periods are what Razorpay enforces", () => {
+  it("a card waits 36 hours 5 minutes", () => {
     expect(NOTICE_PERIOD_MS.card).toBe(36 * HOUR + 5 * MIN);
-    expect(NOTICE_PERIOD_MS.upi).toBe(24 * HOUR);
+  });
+
+  // Razorpay's reference says 24 hours for UPI. Its API, asked on a UPI
+  // Autopay mandate in test mode on 22 Nov 2026, refused 24 h 25 min and
+  // exactly 25 h ("Debit can be attempted 25 hours after sending the
+  // pre-debit notification") and accepted 25 h 01 min. With 24 here every UPI
+  // renewal was refused at its first step.
+  it("★★ UPI waits MORE than 25 hours, not the 24 the reference states", () => {
+    expect(NOTICE_PERIOD_MS.upi).toBe(25 * HOUR + 5 * MIN);
+    expect(NOTICE_PERIOD_MS.upi).toBeGreaterThan(25 * HOUR);
+  });
+
+  it("★★ what a UPI order asks for clears the 25 hours even before delivery is counted", () => {
+    expect(
+      NOTICE_PERIOD_MS.upi + NOTICE_REQUEST_MARGIN_MS,
+    ).toBeGreaterThanOrEqual(25 * HOUR + 30 * MIN);
   });
 
   it("★ a rail this code does not know gets the LONGER period, never the shorter", () => {
@@ -132,14 +154,56 @@ describe("checkMandate: only a confirmed token may be debited", () => {
     });
   });
 
-  it("a confirmed token past its expiry is ended", async () => {
+  it("a confirmed UPI mandate past its expiry is ended", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    token(
+      { status: "confirmed" },
+      { method: "upi", expired_at: secs(NOW) - 60 },
+    );
+    expect(await ask()).toEqual({ state: "ended", detail: "expired" });
+    token(
+      { status: "confirmed" },
+      { method: "upi", expired_at: secs(NOW) + 86_400 },
+    );
+    expect(await ask()).toEqual({ state: "chargeable" });
+    vi.useRealTimers();
+  });
+
+  // Measured in test mode, 21 and 22 Nov 2026: a card token registered for
+  // five years reads `expired_at` = the last second of the CURRENT MONTH while
+  // its status is `confirmed`. Ending a mandate on that date would mark every
+  // card mandate expired on the 1st of the next month, for good.
+  it("★★ a confirmed CARD token is never ended on its expired_at: the status is the only word taken", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    token(
+      { status: "confirmed" },
+      { method: "card", expired_at: secs(NOW) - 60 },
+    );
+    expect(await ask()).toEqual({ state: "chargeable" });
+    // Logged, so the first real month end shows what the date means.
+    expect(logWarn).toHaveBeenCalledWith(
+      "billing.mandate_token_past_expiry",
+      expect.objectContaining({ tokenId: "token_1", method: "card" }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("★ nor one whose rail the token does not name", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     token({ status: "confirmed" }, { expired_at: secs(NOW) - 60 });
-    expect(await ask()).toEqual({ state: "ended", detail: "expired" });
-    token({ status: "confirmed" }, { expired_at: secs(NOW) + 86_400 });
     expect(await ask()).toEqual({ state: "chargeable" });
     vi.useRealTimers();
+  });
+
+  it("★ a card token whose status says it is gone is still gone", async () => {
+    token(
+      { status: "cancelled" },
+      { method: "card", expired_at: secs(NOW) + 86_400 },
+    );
+    expect((await ask()).state).toBe("ended");
   });
 
   it("★★ a read that failed, or a state it does not know, decides NOTHING", async () => {
@@ -209,12 +273,14 @@ describe("notify: the order with its pre-debit notice (no money moves)", () => {
     expect(rzpChargeMandate).not.toHaveBeenCalled();
   });
 
-  it("asks for the rail's own notice period: UPI a day, a card a day and a half", async () => {
+  it("asks for the rail's own notice period: UPI just over 25 hours, a card a day and a half", async () => {
     orderWith({ payment_after: 1 });
     await gateway.notify({ ...INPUT, rail: "upi" });
     const upi = vi.mocked(rzpCreateOrder).mock.calls[0][1].notification!;
     expect(upi.paymentAfterUnix).toBe(secs(requested("upi")));
-    expect(requested("card") - requested("upi")).toBe(12 * HOUR + 5 * MIN);
+    expect(requested("card") - requested("upi")).toBe(11 * HOUR);
+    // 25 h 30 min ahead: inside what the API accepts (more than 25 h).
+    expect(requested("upi") - NOW.getTime()).toBe(25 * HOUR + 30 * MIN);
   });
 
   it("★★ keeps the GATEWAY's debit time when it is later, and never an earlier one", async () => {
@@ -296,10 +362,15 @@ describe("readNotice: has the period passed, by the gateway's own record?", () =
     ).toEqual({ state: "ready" });
   });
 
-  it("UPI is ready a day after delivery", async () => {
+  it("UPI is ready 25 hours 5 minutes after delivery, and not at 24", async () => {
     notice({
       status: "delivered",
       delivered_at: secs(NOW.getTime() - 24 * HOUR - 6 * MIN),
+    });
+    expect((await read("upi")).state).toBe("wait");
+    notice({
+      status: "delivered",
+      delivered_at: secs(NOW.getTime() - 25 * HOUR - 11 * MIN),
     });
     expect(await read("upi")).toEqual({ state: "ready" });
     expect((await read("card")).state).toBe("wait");
