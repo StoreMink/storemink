@@ -59,6 +59,12 @@ export interface PayableInvoice {
    * day or more the notice period lasts. Null otherwise.
    */
   autopayAt: string | null;
+  /**
+   * True while the invoice holds a checkout the merchant opened and did not
+   * finish (a manual attempt still `processing` with its gateway order). The
+   * panel then offers "Continue payment", which reopens that same order.
+   */
+  resumable: boolean;
 }
 
 /**

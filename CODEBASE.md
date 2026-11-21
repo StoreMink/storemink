@@ -10221,6 +10221,10 @@ wholesip/
 │   │                          # the gateway whether a mandate is still chargeable
 │   │                          # and brings the record in line; loadMandateRecord,
 │   │                          # isVerifiable.
+│   │                          # ★ order-state.ts (server-only): orderIsUntouched, the
+│   │                          # ONE rule for "nobody has paid this gateway order",
+│   │                          # used to free an unfinished checkout (enrol.ts) and
+│   │                          # to reopen one (manual-pay.ts, Continue payment).
 │   │                          # ★★ close-cycle.ts (server-only):
 │   │                          # closeUnreachedInvoices, ONE locking statement
 │   │                          # voiding every subscription invoice above the
@@ -10922,7 +10926,9 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0282 (0281 = two-step automatic
+│                              # Next free: 0283 (0282 = Help: Pay now instead
+│                              # and Continue payment in the invoices guide;
+│                              # 0281 = two-step automatic
 │                              # renewal: billing_payment_attempts.debit_after
 │                              # and debit_sent_at, their partial index and one
 │                              # Help sentence; 0277 = Mink AI pop-out Help;
@@ -24484,21 +24490,38 @@ way — an entry there is a deliberate act, not a way to silence the guard.
          on or after" the date (`PayableInvoice.autopayAt`) where it said
          "Payment in progress"; the renewal email says the bank or card
          issuer sends a notice first.
+      10. **"Pay now instead" (22 Nov 2026, owner's request).** The scheduled
+          row has a button; after a confirmation naming the amount and what is
+          cancelled, `startPayInvoice(invoiceId, true)` reaches
+          `startInvoicePayment` with `insteadOfAutopay`, which withdraws the
+          scheduled debit (`withdrawUnsentDebits`, the guarded write of item
+          4, so a debit already sent is never replaced) and opens an ordinary
+          checkout. Only the literal `true` asks for it, and every refusal
+          that applies to any invoice is checked before the withdrawal.
+      11. **"Continue payment".** A payment window opened and closed without
+          paying left its invoice reading "Payment in progress" for 72 hours.
+          Now the row offers Continue payment (`PayableInvoice.resumable`) and
+          the start reopens the SAME gateway order after reading it: never one
+          that is paid, one with a payment waiting for approval, or one that
+          could not be read (`orderIsUntouched`, `lib/billing/order-state.ts`,
+          moved out of `enrol.ts` so both use one rule). A merchant who never
+          comes back is covered as before: reconciliation gives the attempt up
+          after 72 hours and the next automatic try starts with a new notice.
 
       Tests: `debit-pass.test.ts`, `mandate-check.test.ts`, `gateway.test.ts`,
       `collect.test.ts`, `renewal-worker.test.ts`, `reconcile.test.ts`,
       `cancel.test.ts`, the billing cron route test,
-      `lib/payments/razorpay.test.ts`, `open-invoices.test.tsx` and the email
-      tests. Step 1 was run in Razorpay test mode through the real gateway
+      `lib/payments/razorpay.test.ts`, `open-invoices.test.tsx`,
+      `manual-pay.test.ts`, `order-state.test.ts` and the email tests. Step 1 was run in Razorpay test mode through the real gateway
       functions on 21 Nov 2026 (mandate read, notified order, notice read).
       ⚠ NOT YET PROVEN: that the debit succeeds once the notice period has
       passed; two notified test orders may be debited from 23 Nov 2026 11:28
       IST with `scripts/autopay-test-debit.mjs` (test keys only).
-      ⚠ OWNER DECISIONS LEFT: mandates are registered `monthly` or `yearly`
+      ⚠ OWNER DECISION LEFT: mandates are registered `monthly` or `yearly`
       against a 30-day cycle (NPCI allows one successful UPI debit per mandate
       cycle; `as_presented` would lift that but changes the Checkout wording
-      to "anytime"), and an invoice cannot be paid by hand while its debit is
-      scheduled. Help: `0281` rewrites the invoices guide's autopay sentence.
+      to "anytime"). Help: `0281` rewrites the invoices guide's autopay
+      sentence; `0282` adds Pay now instead and Continue payment to it.
       (A credit pack paid in a tab that then closed is settled by
       the webhook and the hourly job: `lib/ai/credit-purchase.ts`.)
 

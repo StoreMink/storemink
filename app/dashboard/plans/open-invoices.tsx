@@ -66,10 +66,32 @@ export function OpenInvoices({
 
   if (invoices.length === 0) return null;
 
-  async function pay(inv: PayableInvoice) {
+  /**
+   * "Pay now instead", for an invoice whose automatic payment is scheduled.
+   * ★ Asked first, in plain words: pressing it cancels the scheduled payment
+   * whether or not the merchant then finishes paying.
+   */
+  function payInstead(inv: PayableInvoice) {
+    const when = inv.autopayAt ? istShortDate(inv.autopayAt) : null;
+    const ok = window.confirm(
+      `Pay ${formatRupees(inv.totalPaise)} now? ${
+        when
+          ? `The automatic payment scheduled for on or after ${when} will be cancelled`
+          : "The scheduled automatic payment will be cancelled"
+      }, so you are not charged twice.`,
+    );
+    if (ok) void pay(inv, { insteadOfAutopay: true });
+  }
+
+  async function pay(
+    inv: PayableInvoice,
+    opts: { insteadOfAutopay?: boolean } = {},
+  ) {
     const invoiceId = inv.id;
     setPaying(invoiceId);
-    const start = await startPayInvoice(invoiceId);
+    const start = opts.insteadOfAutopay
+      ? await startPayInvoice(invoiceId, true)
+      : await startPayInvoice(invoiceId);
     if (!start.ok) {
       // ★ The server's sentence, word for word (renewal-cancel design 8.4).
       // It knows WHY: a cancelled plan's next invoice ("You've cancelled your
@@ -129,6 +151,9 @@ export function OpenInvoices({
       onDismiss: () => {
         setPaying(null);
         toast.error("Payment wasn't completed.");
+        // The row now reads as a payment the merchant can continue (and, after
+        // "Pay now instead", no longer as a scheduled automatic one).
+        router.refresh();
       },
     });
     if (!opened) {
@@ -181,7 +206,7 @@ export function OpenInvoices({
             }
           >
             {allScheduled
-              ? "Your saved payment method will be charged automatically. There is nothing you need to do."
+              ? "Your saved payment method will be charged automatically. There is nothing you need to do. If you would rather pay it yourself, choose Pay now instead."
               : "Unpaid by the due date, your store moves to the Free plan."}
           </p>
 
@@ -232,9 +257,55 @@ export function OpenInvoices({
                     )}
                   </div>
                   {scheduled && inv.autopayAt ? (
-                    <span className="text-xs font-medium text-[#374151]">
-                      Autopay on or after {istShortDate(inv.autopayAt)}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-xs font-medium text-[#374151]">
+                        Autopay on or after {istShortDate(inv.autopayAt)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => payInstead(inv)}
+                        disabled={!canManage || paying !== null}
+                        className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[#d1d5db] bg-white px-3 py-1.5 text-sm font-semibold text-[#111827] transition hover:bg-[#f9fafb] disabled:opacity-50"
+                        title={
+                          canManage
+                            ? undefined
+                            : "Only an admin who can manage billing may pay this"
+                        }
+                      >
+                        {paying === inv.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Opening…
+                          </>
+                        ) : (
+                          "Pay now instead"
+                        )}
+                      </button>
+                    </div>
+                  ) : inFlight && inv.resumable ? (
+                    // A checkout the merchant opened and did not finish: the
+                    // server reopens the SAME gateway order, so continuing
+                    // can never pay the invoice twice.
+                    <button
+                      type="button"
+                      onClick={() => pay(inv)}
+                      disabled={!canManage || paying !== null}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#111827] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-50"
+                      title={
+                        canManage
+                          ? undefined
+                          : "Only an admin who can manage billing may pay this"
+                      }
+                    >
+                      {paying === inv.id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        "Continue payment"
+                      )}
+                    </button>
                   ) : inFlight ? (
                     <span className="text-xs font-medium text-amber-700">
                       Payment in progress…

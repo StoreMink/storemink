@@ -263,6 +263,25 @@ where it used to say "Payment in progress". The renewal email says the bank or
 card issuer will send a notice first. A mandate cancelled at the bank gets the
 "Autopay is no longer active" email once.
 
+**Paying a scheduled renewal by hand (22 Nov 2026, owner's request).** The
+scheduled row carries **Pay now instead**. After a confirmation that names the
+amount and says the scheduled automatic payment will be cancelled,
+`startInvoicePayment` (called with `insteadOfAutopay`) withdraws the scheduled
+debit (`withdrawUnsentDebits`, the same guarded write a cancellation uses, so
+a debit already sent to the bank is never replaced and the start is refused)
+and opens an ordinary checkout. Every refusal that applies to any invoice is
+checked before the withdrawal, so nothing is withdrawn for a payment that
+would be refused anyway.
+
+A payment window that is opened and closed without paying is no longer a dead
+end. The row shows **Continue payment**, and the start reopens the SAME
+gateway order after reading it: never an order that is paid, never one with a
+payment still waiting for approval (`orderIsUntouched`,
+`lib/billing/order-state.ts`), never one that could not be read. Before, such
+an invoice read "Payment in progress" until reconciliation gave the attempt up
+72 hours later. If the merchant never comes back, that still happens, and the
+next automatic try then starts by itself with a new notice.
+
 **Checked in test mode on 21 Nov 2026, through the real gateway functions:**
 
 - `checkMandate` on the confirmed test token: `chargeable`.
@@ -305,10 +324,6 @@ status `mapGatewayStatus` does not list, add it there.
   tells the merchant "StoreMink may charge up to ₹5,000 anytime" where it now
   says "per month". Not changed. Existing mandates keep the frequency they
   were registered with either way.
-- **Paying by hand while a debit is scheduled.** The invoice cannot be paid by
-  hand during the notice period (it is `processing`). A "pay now instead"
-  button that withdraws the scheduled debit first is possible with the guarded
-  write already built; not built.
 - **The Razorpay support ticket** is no longer needed for enabling anything.
   The one useful question left for them is why an order with no `notification`
   is answered "URL not found" where a plain validation error would do.

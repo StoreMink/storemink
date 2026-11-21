@@ -396,8 +396,17 @@ export async function getPayableInvoices(): Promise<PayableInvoice[]> {
   return listPayableInvoices(storeId);
 }
 
+/**
+ * Open the payment for an invoice the store owes.
+ *
+ * `insteadOfAutopay` is "Pay now instead": the merchant confirmed they want to
+ * pay an invoice whose automatic payment is scheduled, so that scheduled
+ * payment is withdrawn first. ★ Only the literal `true` counts; anything else
+ * a caller sends leaves a scheduled payment exactly as it is.
+ */
 export async function startPayInvoice(
   invoiceId: unknown,
+  insteadOfAutopay?: unknown,
 ): Promise<PayInvoiceStart> {
   const userId = await getManagerUserId("ai");
   if (!userId)
@@ -410,7 +419,11 @@ export async function startPayInvoice(
   // then refuses any invoice that does not belong to it, so an invoice id from
   // another tenant finds nothing rather than becoming payable.
   const storeId = await getActingStoreId();
-  const started = await startInvoicePayment({ storeId, invoiceId });
+  const started = await startInvoicePayment({
+    storeId,
+    invoiceId,
+    insteadOfAutopay: insteadOfAutopay === true,
+  });
   if (!started.ok) return { ok: false, error: started.error };
   return { ok: true, ...started.data };
 }

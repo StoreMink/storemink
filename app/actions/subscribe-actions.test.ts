@@ -301,7 +301,25 @@ describe("manual payment actions", () => {
     expect(manual.startInvoicePayment).toHaveBeenCalledWith({
       storeId: STORE,
       invoiceId: "inv-9",
+      insteadOfAutopay: false,
     });
+  });
+
+  // "Pay now instead" withdraws a scheduled automatic payment, so the flag
+  // that asks for it is taken only as the literal `true`.
+  it("★★ Pay now instead is asked for by `true` and by nothing else", async () => {
+    await startPayInvoice("inv-9", true);
+    expect(manual.startInvoicePayment).toHaveBeenLastCalledWith({
+      storeId: STORE,
+      invoiceId: "inv-9",
+      insteadOfAutopay: true,
+    });
+    for (const other of ["true", 1, {}, [], null, undefined, false]) {
+      await startPayInvoice("inv-9", other);
+      expect(manual.startInvoicePayment).toHaveBeenLastCalledWith(
+        expect.objectContaining({ insteadOfAutopay: false }),
+      );
+    }
   });
 
   it("returns what the modal needs", async () => {

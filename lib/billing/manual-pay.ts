@@ -28,7 +28,7 @@ import "server-only";
  * invoice; `listPayableInvoices` applies the same three conditions in SQL.
  */
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import {
   billingInvoices,
@@ -39,6 +39,7 @@ import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
   rzpCreateOrder,
+  rzpFetchOrder,
   verifyCapturedCheckoutPayment,
   verifyCheckoutSignature,
 } from "@/lib/payments/razorpay";
@@ -47,8 +48,10 @@ import {
   capturedAttemptForInvoice,
   hasUnknownAttempt,
   settleAttempt,
+  withdrawUnsentDebits,
 } from "./collect";
 import type { PayableInvoice } from "./invoice-types";
+import { orderIsUntouched } from "./order-state";
 import {
   amountDueForInvoice,
   finalizeInvoice,
@@ -112,6 +115,14 @@ export const ALREADY_CAPTURED_INVOICE_MESSAGE =
 export const PAYMENT_BEING_CONFIRMED_MESSAGE =
   "We're still confirming an earlier payment for this invoice with the bank, so it can't be paid again just yet. Your plan stays active meanwhile. Please check back in a few hours.";
 
+/**
+ * Refused: a payment on this invoice is under way and is not one this press
+ * may reopen or replace (an automatic debit already sent to the bank, or a
+ * checkout payment waiting for approval in the payer's app).
+ */
+export const PAYMENT_IN_PROGRESS_MESSAGE =
+  "A payment is already being processed. Give it a moment.";
+
 /** Refused: an invoice with no issue date after the finalize step. */
 export const UNISSUED_INVOICE_MESSAGE =
   "That invoice hasn't been issued, so it can't be paid. Please try again, or write to support@storemink.com if this keeps happening.";
@@ -162,6 +173,14 @@ export function cycleRefusal(
 export async function startInvoicePayment(input: {
   storeId: string;
   invoiceId: string;
+  /**
+   * "Pay now instead": the merchant chose to pay an invoice whose automatic
+   * debit is SCHEDULED (its bank notice out, its debit not yet sent). The
+   * scheduled debit is withdrawn first, by the same guarded write a
+   * cancellation uses, so the two can never both be taken. Without this flag
+   * a scheduled debit is left exactly as it is and the start is refused.
+   */
+  insteadOfAutopay?: boolean;
   now?: Date;
 }): Promise<PayResult<PaymentStart>> {
   const now = input.now ?? new Date();
@@ -229,13 +248,19 @@ export async function startInvoicePayment(input: {
     return { ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE };
   }
 
-  if (invoice.status === "processing") {
-    return {
-      ok: false,
-      error: "A payment is already being processed. Give it a moment.",
-    };
-  }
-  if (!PAYABLE.includes(invoice.status as (typeof PAYABLE)[number])) {
+  // ★★ A `processing` INVOICE IS NOT ALWAYS A PAYMENT THAT IS MOVING
+  // (22 Nov 2026). It also covers two states the merchant can act on, both
+  // decided further down, after every refusal that applies to any invoice:
+  //   • an automatic debit that is only SCHEDULED, which "Pay now instead"
+  //     may replace;
+  //   • a checkout this merchant opened and closed without paying, which is
+  //     reopened on the SAME gateway order. Before this it was a dead end:
+  //     the invoice read "Payment in progress" for 72 hours.
+  const inFlight = invoice.status === "processing";
+  if (
+    !inFlight &&
+    !PAYABLE.includes(invoice.status as (typeof PAYABLE)[number])
+  ) {
     return { ok: false, error: "That invoice can't be paid." };
   }
 
@@ -330,6 +355,62 @@ export async function startInvoicePayment(input: {
     return { ok: false, error: PAYMENT_BEING_CONFIRMED_MESSAGE };
   }
 
+  if (inFlight) {
+    // ── "Pay now instead": withdraw the scheduled automatic debit ───────────
+    // ★ Only when asked, and only a debit that has NOT been sent: each
+    // withdrawal is one conditional write on `debit_sent_at` being null, the
+    // same one the debit pass's claim is, so exactly one of them wins. A debit
+    // already on its way to the bank is left alone and this start is refused
+    // below.
+    if (input.insteadOfAutopay) {
+      const withdrawn = await withdrawUnsentDebits({
+        invoiceId: invoice.id,
+        code: "paid_by_hand",
+        reason: "the merchant chose to pay this invoice by hand",
+        now,
+      });
+      if (withdrawn === null) {
+        return {
+          ok: false,
+          error: "We couldn't check this invoice just now. Please try again.",
+        };
+      }
+      if (withdrawn > 0) {
+        logInfo("billing.manual_pay_replaced_autopay", {
+          storeId: input.storeId,
+          invoiceId: invoice.id,
+          withdrawn,
+        });
+      }
+    }
+
+    // ── A checkout opened earlier and never finished: the SAME order ────────
+    const open = await openManualCheckout(invoice.id, input.storeId);
+    if (open === undefined) {
+      return {
+        ok: false,
+        error: "We couldn't check this invoice just now. Please try again.",
+      };
+    }
+    if (open) {
+      return resumeCheckout(creds, {
+        storeId: input.storeId,
+        invoiceId: invoice.id,
+        invoiceRef: invoice.invoiceRef,
+        amountDue,
+        open,
+      });
+    }
+
+    // Nothing to reopen. The invoice is payable only if it is `open` now
+    // (the withdrawal above re-derived it); anything else is a payment that
+    // is really moving.
+    const after = await getInvoice(invoice.id);
+    if (!after || after.status !== "open") {
+      return { ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE };
+    }
+  }
+
   const attempt = await beginAttempt({
     invoiceId: invoice.id,
     storeId: input.storeId,
@@ -381,6 +462,121 @@ export async function startInvoicePayment(input: {
       keyId: creds.keyId,
       amountPaise: amountDue,
       invoiceRef: invoice.invoiceRef,
+    },
+  };
+}
+
+/** A checkout this store opened for an invoice and has not finished. */
+interface OpenCheckout {
+  attemptId: string;
+  providerOrderId: string;
+  amountPaise: number;
+}
+
+/**
+ * The invoice's unfinished MANUAL checkout, if it has one: an attempt still
+ * `processing` that already holds a gateway order. Null when there is none;
+ * ★ undefined when the read failed, which the caller must not read as "none".
+ *
+ * Scoped by store as well as invoice: an invoice id alone must never reopen
+ * another merchant's payment. Never an automatic attempt: its order belongs to
+ * a mandate debit, not to a checkout.
+ */
+async function openManualCheckout(
+  invoiceId: string,
+  storeId: string,
+): Promise<OpenCheckout | null | undefined> {
+  try {
+    return await withService(async (db) => {
+      const [row] = await db
+        .select({
+          id: billingPaymentAttempts.id,
+          providerOrderId: billingPaymentAttempts.providerOrderId,
+          amountPaise: billingPaymentAttempts.amountPaise,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, invoiceId),
+            eq(billingPaymentAttempts.storeId, storeId),
+            eq(billingPaymentAttempts.mode, "manual"),
+            eq(billingPaymentAttempts.state, "processing"),
+            isNotNull(billingPaymentAttempts.providerOrderId),
+          ),
+        )
+        .orderBy(desc(billingPaymentAttempts.createdAt))
+        .limit(1);
+      if (!row?.providerOrderId) return null;
+      return {
+        attemptId: row.id,
+        providerOrderId: row.providerOrderId,
+        amountPaise: Number(row.amountPaise),
+      };
+    });
+  } catch (err) {
+    logError("billing.manual_pay_open_checkout", err, { invoiceId, storeId });
+    return undefined;
+  }
+}
+
+/**
+ * Reopen an unfinished checkout on the order it already has.
+ *
+ * ★★ THE SAME ORDER, NEVER A NEW ONE. One gateway order takes one payment, so
+ * reopening it cannot charge the merchant twice, where a second order beside
+ * it could. And the gateway is asked first, because our own record may be
+ * behind it:
+ *   • already paid (a tab closed after paying): never reopened; the webhook
+ *     or the hourly check records it within the hour;
+ *   • a payment still waiting for approval in the payer's app: not reopened
+ *     until it resolves;
+ *   • nobody has paid it, or every try on it failed: reopened.
+ * A read that fails refuses: "we could not check" is not "nobody paid".
+ */
+async function resumeCheckout(
+  creds: NonNullable<ReturnType<typeof getPlatformRazorpayCreds>>,
+  input: {
+    storeId: string;
+    invoiceId: string;
+    invoiceRef: string | null;
+    amountDue: number;
+    open: OpenCheckout;
+  },
+): Promise<PayResult<PaymentStart>> {
+  // An order made for another amount is never reopened at this one.
+  if (input.open.amountPaise !== input.amountDue) {
+    return { ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE };
+  }
+  const order = await rzpFetchOrder(creds, input.open.providerOrderId);
+  if (!order.ok) {
+    return {
+      ok: false,
+      error:
+        "We couldn't check this invoice's payments just now. Please try again.",
+    };
+  }
+  if (
+    order.data.status === "paid" ||
+    (order.data.amount_paid ?? 0) >= input.amountDue
+  ) {
+    logWarn("billing.manual_pay_resume_already_paid", {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+      attemptId: input.open.attemptId,
+    });
+    return { ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE };
+  }
+  if (!(await orderIsUntouched(creds, order))) {
+    return { ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE };
+  }
+  return {
+    ok: true,
+    data: {
+      invoiceId: input.invoiceId,
+      providerOrderId: input.open.providerOrderId,
+      keyId: creds.keyId,
+      amountPaise: input.amountDue,
+      invoiceRef: input.invoiceRef,
     },
   };
 }
@@ -526,7 +722,8 @@ export async function confirmInvoicePayment(input: {
  *
  * ★ `autopayAt` marks an invoice whose automatic debit is scheduled (its bank
  * notice sent, its debit not yet): the panel says so instead of asking for a
- * payment.
+ * payment, and offers "Pay now instead". `resumable` marks one whose checkout
+ * was opened and not finished: the panel offers "Continue payment".
  */
 export async function listPayableInvoices(
   storeId: string,
@@ -561,6 +758,14 @@ export async function listPayableInvoices(
                and a.state = 'processing'
                and a.debit_after is not null
                and a.debit_sent_at is null)`,
+          // ★ A checkout the merchant opened and did not finish: the panel
+          // offers "Continue payment", which reopens the same gateway order.
+          resumable: sql<boolean>`exists (
+            select 1 from public.billing_payment_attempts a
+             where a.invoice_id = "billing_invoices"."id"
+               and a.mode = 'manual'
+               and a.state = 'processing'
+               and a.provider_order_id is not null)`,
         })
         .from(billingInvoices)
         .leftJoin(

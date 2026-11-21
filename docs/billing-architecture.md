@@ -955,6 +955,16 @@ collectionStartsAt(cycleStart))`). A scheduled GST start that falls inside
   - **Reconcile leaves a waiting attempt alone** (`debit_after` set,
     `debit_sent_at` null) and runs its 6-hour and 72-hour clocks from
     `debit_sent_at`.
+  - **The merchant may pay a scheduled renewal by hand** ("Pay now
+    instead", 22 Nov 2026). `startInvoicePayment` with `insteadOfAutopay`
+    withdraws the scheduled debit through the same guarded write
+    (`withdrawUnsentDebits`), after every refusal that applies to any
+    invoice, then opens an ordinary checkout; a debit already sent is never
+    replaced. A checkout opened and closed without paying is reopened on its
+    SAME gateway order ("Continue payment"; `PayableInvoice.resumable`) once
+    the gateway's record shows nobody has paid it and no payment is waiting
+    for approval (`orderIsUntouched`, `lib/billing/order-state.ts`, the rule
+    enrolment already used).
   - **Plans & Billing** lists such an invoice as "Your renewal is scheduled",
     "Autopay on or after <date>" (`PayableInvoice.autopayAt`), and the cancel
     wording reads it as an unpaid invoice that won't be charged

@@ -102,6 +102,7 @@ import {
   verifyRecoveredCapture,
   type PurchaseCompletion,
 } from "./collect";
+import { orderIsUntouched } from "./order-state";
 import { notifyPlanActivated } from "./receipts";
 
 type BillingPeriod = "monthly" | "yearly";
@@ -1002,38 +1003,6 @@ async function inspectResumable(
     method: existing.ok && existing.data.method === "upi" ? "upi" : "card",
     untouched: await orderIsUntouched(creds, existing),
   };
-}
-
-/**
- * Has any payment ever succeeded, or could one still, against this order?
- *
- * ★ The cheap proof is `created` with zero attempts: nothing has been presented
- * at all, so no extra call is needed and the ordinary path pays nothing.
- *
- * ★★ BUT A TRIED ORDER IS NOT NECESSARILY A PAID ONE. A merchant who scans a
- * UPI QR and never approves it leaves the order `attempted` with three FAILED
- * payments and `amount_paid: 0` — measured on production 2026-09-06. Treating
- * that as untouchable strands them behind their own abandoned attempt until
- * reconciliation gives up 72 hours later. A `failed` payment is terminal and
- * can never be captured, so an order whose payments have ALL failed is as safe
- * to abandon as one nobody ever opened.
- *
- * ★ Anything else is refused: money already paid, a payment still `created` or
- * `authorized` (the shopper is mid-approval in their UPI app), or a read we
- * could not make. "We could not check" is never "nobody paid".
- */
-async function orderIsUntouched(
-  creds: Parameters<typeof rzpFetchOrder>[0],
-  order: Awaited<ReturnType<typeof rzpFetchOrder>>,
-): Promise<boolean> {
-  if (!order.ok) return false;
-  if (order.data.amount_paid) return false;
-  if (order.data.status === "created" && (order.data.attempts ?? 0) === 0) {
-    return true;
-  }
-  const payments = await rzpFetchOrderPayments(creds, order.data.id);
-  if (!payments.ok) return false;
-  return payments.data.every((payment) => payment.status === "failed");
 }
 
 async function resumableAttempt(

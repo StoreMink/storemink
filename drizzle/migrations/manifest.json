@@ -10875,6 +10875,28 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261122_0282_pay_now_instead_help",
+      "description": "Help Centre: the invoices guide's three sentences about a scheduled automatic renewal and a Processing invoice corrected in place (Pay now instead while a renewal is scheduled; Continue payment for a payment window that was closed without paying).",
+      "file": "sql/20261122_0282_pay_now_instead_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0281_autopay_two_step_debit"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the invoices guide says a scheduled renewal can be paid by hand",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%you can choose <strong>Pay now instead</strong> to pay it yourself%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says an unfinished payment can be continued",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%the invoice shows <strong>Continue payment</strong>, which reopens that same payment%' and body like '%or choose <strong>Continue payment</strong> when it is offered%' and body not like '%StoreMink does not offer a second Pay button%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

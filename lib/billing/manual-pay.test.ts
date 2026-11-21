@@ -33,6 +33,7 @@ vi.mock("@/lib/payments/provider", () => provider);
 
 const rzp = vi.hoisted(() => ({
   rzpCreateOrder: vi.fn(),
+  rzpFetchOrder: vi.fn(),
   verifyCapturedCheckoutPayment: vi.fn(),
   verifyCheckoutSignature: vi.fn(),
 }));
@@ -52,8 +53,17 @@ const collect = vi.hoisted(() => ({
   capturedAttemptForInvoice: vi.fn(async (): Promise<unknown> => null),
   // No earlier payment waiting on its result unless a test says so.
   hasUnknownAttempt: vi.fn(async (): Promise<boolean | null> => false),
+  // "Pay now instead": how many scheduled debits were withdrawn.
+  withdrawUnsentDebits: vi.fn(async (): Promise<number | null> => 0),
 }));
 vi.mock("./collect", () => collect);
+
+// The one rule for "nobody has paid this order" (./order-state), proved by
+// enrolment's suite; here a test says what the gateway's record shows.
+const orderState = vi.hoisted(() => ({
+  orderIsUntouched: vi.fn(async () => true),
+}));
+vi.mock("./order-state", () => orderState);
 
 const worker = vi.hoisted(() => ({ advanceAfterPayment: vi.fn() }));
 vi.mock("./renewal-worker", () => worker);
@@ -61,6 +71,7 @@ vi.mock("./renewal-worker", () => worker);
 import {
   ALREADY_CAPTURED_INVOICE_MESSAGE,
   PAYMENT_BEING_CONFIRMED_MESSAGE,
+  PAYMENT_IN_PROGRESS_MESSAGE,
   CANCELLING_INVOICE_MESSAGE,
   CLOSED_INVOICE_MESSAGE,
   CLOSED_ON_ARRIVAL_MESSAGE,
@@ -204,8 +215,18 @@ describe("startInvoicePayment", () => {
       openInvoice({ status: "processing" }),
     );
     const res = await startInvoicePayment(args);
-    expect(res.ok).toBe(false);
+    expect(res).toEqual({ ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
     expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★★ without being asked, a SCHEDULED automatic payment is never withdrawn", async () => {
+    invStore.getInvoice.mockResolvedValue(
+      openInvoice({ status: "processing" }),
+    );
+    await startInvoicePayment(args);
+    await startInvoicePayment({ ...args, insteadOfAutopay: false });
+    expect(collect.withdrawUnsentDebits).not.toHaveBeenCalled();
   });
 
   it("★ refuses when an attempt is already in flight", async () => {
@@ -307,6 +328,251 @@ describe("startInvoicePayment", () => {
       "failed",
       expect.anything(),
     );
+  });
+});
+
+// 22 Nov 2026. An automatic renewal waits a day or more between its bank
+// notice and its debit. A merchant who would rather pay it themselves may:
+// the scheduled debit is withdrawn first, by a write that only lands while
+// the debit has not been sent, so the two can never both be taken.
+describe("★★ Pay now instead: replacing a scheduled automatic payment", () => {
+  const args = {
+    storeId: STORE,
+    invoiceId: INVOICE,
+    insteadOfAutopay: true,
+    now: NOW,
+  };
+
+  /** The invoice is `processing` at the start, and `after` once withdrawn. */
+  function scheduled(after: string) {
+    invStore.getInvoice
+      .mockResolvedValueOnce(openInvoice({ status: "processing" }))
+      .mockResolvedValue(openInvoice({ status: after }));
+  }
+
+  it("withdraws the scheduled debit, then opens an ordinary payment", async () => {
+    scheduled("open");
+    collect.withdrawUnsentDebits.mockResolvedValue(1);
+    const res = await startInvoicePayment(args);
+    expect(collect.withdrawUnsentDebits).toHaveBeenCalledWith({
+      invoiceId: INVOICE,
+      code: "paid_by_hand",
+      reason: "the merchant chose to pay this invoice by hand",
+      now: NOW,
+    });
+    expect(collect.beginAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: INVOICE, mode: "manual" }),
+    );
+    expect(res).toMatchObject({
+      ok: true,
+      data: { providerOrderId: "order_1", amountPaise: 5_000_00 },
+    });
+  });
+
+  it("★★ the withdrawal comes BEFORE the new payment is opened", async () => {
+    scheduled("open");
+    collect.withdrawUnsentDebits.mockResolvedValue(1);
+    await startInvoicePayment(args);
+    expect(
+      collect.withdrawUnsentDebits.mock.invocationCallOrder[0],
+    ).toBeLessThan(collect.beginAttempt.mock.invocationCallOrder[0]);
+  });
+
+  it("★★ a debit ALREADY SENT to the bank is not replaced: no second payment", async () => {
+    // The guarded write moved nothing, and the invoice is still in flight.
+    scheduled("processing");
+    collect.withdrawUnsentDebits.mockResolvedValue(0);
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({ ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ a withdrawal that could not be read refuses: nothing is opened on a guess", async () => {
+    scheduled("open");
+    collect.withdrawUnsentDebits.mockResolvedValue(null);
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(false);
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+
+  it("an invoice that is simply open needs no withdrawal", async () => {
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(true);
+    expect(collect.withdrawUnsentDebits).not.toHaveBeenCalled();
+  });
+
+  describe("★★ nothing is withdrawn for a payment that will be refused anyway", () => {
+    it("a cancelling plan's invoice", async () => {
+      scheduled("open");
+      seedSubscription(subscription({ cancelAtPeriodEnd: true }));
+      const res = await startInvoicePayment(args);
+      expect(res).toEqual({ ok: false, error: CANCELLING_INVOICE_MESSAGE });
+      expect(collect.withdrawUnsentDebits).not.toHaveBeenCalled();
+    });
+
+    it("an earlier payment whose result is not known", async () => {
+      scheduled("open");
+      collect.hasUnknownAttempt.mockResolvedValue(true);
+      const res = await startInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: PAYMENT_BEING_CONFIRMED_MESSAGE,
+      });
+      expect(collect.withdrawUnsentDebits).not.toHaveBeenCalled();
+    });
+
+    it("an amount that could not be worked out", async () => {
+      scheduled("open");
+      invStore.amountDueForInvoice.mockResolvedValue(null);
+      expect((await startInvoicePayment(args)).ok).toBe(false);
+      expect(collect.withdrawUnsentDebits).not.toHaveBeenCalled();
+    });
+
+    it("another store's invoice", async () => {
+      invStore.getInvoice.mockResolvedValue(
+        openInvoice({ status: "processing", storeId: "other" }),
+      );
+      expect((await startInvoicePayment(args)).ok).toBe(false);
+      expect(collect.withdrawUnsentDebits).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// A merchant who opens the payment window and closes it leaves an attempt
+// `processing` with its gateway order. Before 22 Nov 2026 that was a dead
+// end: the invoice read "Payment in progress" for 72 hours.
+describe("★★ Continue payment: an unfinished checkout is reopened on its own order", () => {
+  const args = { storeId: STORE, invoiceId: INVOICE, now: NOW };
+  const OPEN = {
+    id: "att-open",
+    providerOrderId: "order_open",
+    amountPaise: 5_000_00,
+  };
+
+  function seedOpenCheckout(row: Record<string, unknown> | Error | null) {
+    invStore.getInvoice.mockResolvedValue(
+      openInvoice({ status: "processing" }),
+    );
+    dbHolder.current = makeDbMock({
+      selectByTable: {
+        billing_payment_attempts: [
+          row instanceof Error ? row : row ? [row] : [],
+        ],
+      },
+    });
+  }
+
+  beforeEach(() => {
+    rzp.rzpFetchOrder.mockResolvedValue({
+      ok: true,
+      data: { id: "order_open", status: "created", amount_paid: 0 },
+    });
+    orderState.orderIsUntouched.mockResolvedValue(true);
+  });
+
+  it("returns the SAME order, and creates neither an attempt nor an order", async () => {
+    seedOpenCheckout(OPEN);
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({
+      ok: true,
+      data: {
+        invoiceId: INVOICE,
+        providerOrderId: "order_open",
+        keyId: "rzp_1",
+        amountPaise: 5_000_00,
+        invoiceRef: "SM/2026-27/00002",
+      },
+    });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+    expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ only this store's own MANUAL checkout that already has an order", async () => {
+    seedOpenCheckout(OPEN);
+    await startInvoicePayment(args);
+    const wheres = dbHolder.current.calls.where.map((w: unknown) => {
+      const q = new PgDialect().sqlToQuery(w as never);
+      return { sql: q.sql.replace(/\s+/g, " "), params: q.params };
+    });
+    expect(wheres).toContainEqual({
+      sql: '("billing_payment_attempts"."invoice_id" = $1 and "billing_payment_attempts"."store_id" = $2 and "billing_payment_attempts"."mode" = $3 and "billing_payment_attempts"."state" = $4 and "billing_payment_attempts"."provider_order_id" is not null)',
+      params: [INVOICE, STORE, "manual", "processing"],
+    });
+  });
+
+  it("★★ an order the gateway says is PAID is never reopened", async () => {
+    seedOpenCheckout(OPEN);
+    rzp.rzpFetchOrder.mockResolvedValue({
+      ok: true,
+      data: { id: "order_open", status: "paid", amount_paid: 5_000_00 },
+    });
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({
+      ok: false,
+      error: ALREADY_CAPTURED_INVOICE_MESSAGE,
+    });
+  });
+
+  it("★★ an order with the full amount paid is not reopened, whatever its status reads", async () => {
+    seedOpenCheckout(OPEN);
+    rzp.rzpFetchOrder.mockResolvedValue({
+      ok: true,
+      data: { id: "order_open", status: "attempted", amount_paid: 5_000_00 },
+    });
+    expect(await startInvoicePayment(args)).toEqual({
+      ok: false,
+      error: ALREADY_CAPTURED_INVOICE_MESSAGE,
+    });
+  });
+
+  it("★★ a payment still waiting for approval is not reopened beside", async () => {
+    seedOpenCheckout(OPEN);
+    orderState.orderIsUntouched.mockResolvedValue(false);
+    expect(await startInvoicePayment(args)).toEqual({
+      ok: false,
+      error: PAYMENT_IN_PROGRESS_MESSAGE,
+    });
+  });
+
+  it("★★ an order that could not be read refuses: 'could not check' is not 'nobody paid'", async () => {
+    seedOpenCheckout(OPEN);
+    rzp.rzpFetchOrder.mockResolvedValue({
+      ok: false,
+      outcome: "unknown",
+      error: "timeout",
+    });
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(false);
+    expect(orderState.orderIsUntouched).not.toHaveBeenCalled();
+  });
+
+  it("★ an order made for another amount is never reopened at this one", async () => {
+    seedOpenCheckout({ ...OPEN, amountPaise: 4_000_00 });
+    expect(await startInvoicePayment(args)).toEqual({
+      ok: false,
+      error: PAYMENT_IN_PROGRESS_MESSAGE,
+    });
+    expect(rzp.rzpFetchOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ a checkout that could not be looked up refuses", async () => {
+    seedOpenCheckout(new Error("db down"));
+    const res = await startInvoicePayment(args);
+    expect(res.ok).toBe(false);
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
+  });
+
+  it("after Pay now instead was pressed and the window closed, the next press continues that checkout", async () => {
+    // The scheduled debit is gone already (nothing left to withdraw), and the
+    // checkout that replaced it is reopened.
+    seedOpenCheckout(OPEN);
+    const res = await startInvoicePayment({ ...args, insteadOfAutopay: true });
+    expect(res).toMatchObject({
+      ok: true,
+      data: { providerOrderId: "order_open" },
+    });
+    expect(collect.beginAttempt).not.toHaveBeenCalled();
   });
 });
 
@@ -529,6 +795,28 @@ describe("listPayableInvoices", () => {
     // Below a live plan's current cycle.
     expect(sql).toContain(
       `("billing_subscriptions"."state" in ('active', 'past_due', 'grace') and "billing_invoices"."cycle_seq" < "billing_subscriptions"."current_cycle_seq")`,
+    );
+  });
+
+  // 22 Nov 2026: the panel tells a scheduled automatic payment ("Pay now
+  // instead") from a checkout that was opened and not finished ("Continue
+  // payment") from a payment that is really moving (no button).
+  it("★★ marks a scheduled automatic debit and an unfinished checkout, each from its own attempts", async () => {
+    seed([[]]);
+    await listPayableInvoices(STORE);
+    const render = (q: unknown) =>
+      new PgDialect()
+        .sqlToQuery(q as never)
+        .sql.replace(/\s+/g, " ")
+        .trim();
+    const projection = dbHolder.current.calls.select[0];
+    // Notified, automatic, and its debit not sent yet.
+    expect(render(projection.autopayAt)).toBe(
+      `( select to_char(min(a.debit_after) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') from public.billing_payment_attempts a where a.invoice_id = "billing_invoices"."id" and a.mode = 'automatic' and a.state = 'processing' and a.debit_after is not null and a.debit_sent_at is null)`,
+    );
+    // A manual checkout that already has its gateway order.
+    expect(render(projection.resumable)).toBe(
+      `exists ( select 1 from public.billing_payment_attempts a where a.invoice_id = "billing_invoices"."id" and a.mode = 'manual' and a.state = 'processing' and a.provider_order_id is not null)`,
     );
   });
 
