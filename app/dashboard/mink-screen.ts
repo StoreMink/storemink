@@ -51,7 +51,9 @@ const LIMITS = {
 
 const SECRET_LABEL =
   /password|secret|token|api key|key id|otp|\bpin\b|credential/i;
-const PANEL = ".mink-chat-surface";
+// The chat itself and the top-bar "Ask Mink AI" bar: neither is page content
+// (the bar holds Mink's own suggestion and the merchant's unsent draft).
+const PANEL = ".mink-chat-surface, [data-mink-dock]";
 
 function collapse(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();

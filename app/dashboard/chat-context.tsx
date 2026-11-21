@@ -29,6 +29,18 @@ import {
 import type { MinkFeedbackIssue, MinkFeedbackRating } from "@/lib/mink/types";
 import type { MinkStopResult } from "@/lib/mink/run-stop-types";
 import type { MinkSkill } from "@/lib/mink/skills";
+import type { MinkDockSuggestion } from "@/lib/mink/page-suggestions";
+import { forgetMinkOpener, rememberMinkOpener } from "./mink-opener";
+
+/**
+ * True on a touch-first device, where moving focus into the composer raises
+ * the on-screen keyboard over half the chat. A question that was just sent
+ * leaves nothing to type, so there the composer is not focused.
+ */
+function touchFirst(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia("(pointer: coarse)").matches;
+}
 import type { MinkHighlight } from "@/lib/mink/guide-targets";
 import { MinkSpotlight } from "./mink-spotlight";
 import {
@@ -48,9 +60,27 @@ interface ChatContextType {
   toggleChat: () => void;
   closeChat: () => void;
   toggleExpand: () => void;
-  // Home "Ask anything…" box → open the chat in full view AND send the
-  // message, in a new chat (see lib/mink/chat-session).
+  /**
+   * Asks a question in a new chat: the docked side panel, or the full view
+   * with `expanded` (Home's box, the "Ask Mink" buttons). While a reply runs
+   * the question waits in the box, after anything already typed there. A
+   * draft in the box survives the new chat. An empty message opens Mink on
+   * the current chat.
+   */
+  startChat: (message: string, options?: { expanded?: boolean }) => void;
+  /** `startChat(message, { expanded: true })`. */
   startExpandedChat: (message: string) => void;
+  /**
+   * Opens the docked panel on the current chat; never toggles or expands.
+   * `focusComposer: false` leaves focus alone (a tap on a touch screen must
+   * not raise the keyboard).
+   */
+  openChat: (options?: { focusComposer?: boolean }) => void;
+  /** A better question the current page offers (the go-live card's task). */
+  pageSuggestion: MinkPageSuggestionValue | null;
+  setPageSuggestion: (suggestion: MinkPageSuggestionValue | null) => void;
+  /** Bumped by each entry point that should land focus in the composer. */
+  focusComposerOnOpen: number;
   /** Mink AI is switched on for this store (History's search shows only then). */
   enabled: boolean;
   // The shared Mink AI conversation (one thread across the Home box + panel).
@@ -145,6 +175,8 @@ interface ChatContextType {
   }) => Promise<MinkUiError | null>;
 }
 
+export type MinkPageSuggestionValue = MinkDockSuggestion;
+
 export interface MinkCreditSummary {
   used: number;
   cap: number | null;
@@ -231,11 +263,14 @@ export function useMinkVoice(): MinkVoiceChat {
   return useContext(MinkVoiceContext);
 }
 
+// One empty list, so a provider given no skills keeps a stable value.
+const NO_SKILLS: MinkSkill[] = [];
+
 export function ChatProvider({
   children,
   minkEnabled,
   canSaveMedia = false,
-  skills = [],
+  skills = NO_SKILLS,
 }: {
   children: ReactNode;
   minkEnabled: boolean;
@@ -344,7 +379,10 @@ export function ChatProvider({
   // ★ Opening Mink continues the chat it was showing, unless that chat has
   // gone quiet for hours, when a new one starts (ChatGPT, Claude, Sidekick).
   const toggleChat = useCallback(() => {
-    if (!isChatOpen) resumeOrStartFresh();
+    if (!isChatOpen) {
+      rememberMinkOpener();
+      resumeOrStartFresh();
+    }
     setIsChatOpen(!isChatOpen);
   }, [isChatOpen, resumeOrStartFresh]);
   const closeChat = useCallback(() => {
@@ -353,22 +391,102 @@ export function ChatProvider({
   }, []);
   const toggleExpand = useCallback(() => setIsExpanded((prev) => !prev), []);
 
-  // ★ A question from Home or an "Ask Mink" button is a new topic, so it
-  // starts a new chat rather than landing in whatever thread was open last.
-  // While Mink is still answering, the question waits in the box instead:
-  // starting a new chat then would stop that answer.
-  const startExpandedChat = useCallback(
-    (message: string) => {
+  // ★ Every close forgets the control that opened the chat. The Close button
+  // reads it synchronously before this runs; any other close (the face, the
+  // builder's button, a link tap on a phone) would otherwise leave it set, and
+  // a later Close would send focus back to a control from an earlier opening.
+  useEffect(() => {
+    if (!isChatOpen) forgetMinkOpener();
+  }, [isChatOpen]);
+
+  // A page that knows a better question than the skills catalogue (the
+  // go-live card's open task) offers it here; the top-bar bar and the panel's
+  // empty state show it first.
+  const [pageSuggestion, setPageSuggestionState] =
+    useState<MinkPageSuggestionValue | null>(null);
+  const setPageSuggestion = useCallback(
+    (next: MinkPageSuggestionValue | null) =>
+      setPageSuggestionState((prev) =>
+        prev?.label === next?.label && prev?.prompt === next?.prompt
+          ? prev
+          : next,
+      ),
+    [],
+  );
+  const [focusComposerOnOpen, setFocusComposerOnOpen] = useState(0);
+
+  // ★ The newest values the chat starters read, so `openChat` and
+  // `startChat` keep one identity across streamed tokens and the pop-out bar
+  // (MinkDockContext) does not re-render with every one of them.
+  const latest = useRef({
+    isChatOpen,
+    isReplying,
+    input: mink.input,
+    setInput,
+    startNewChat,
+    send,
+    resumeOrStartFresh,
+  });
+  useEffect(() => {
+    latest.current = {
+      isChatOpen,
+      isReplying,
+      input: mink.input,
+      setInput,
+      startNewChat,
+      send,
+      resumeOrStartFresh,
+    };
+  });
+
+  // The top-bar tab's tap on a touch screen: open, never toggle, never expand.
+  const openChat = useCallback((options?: { focusComposer?: boolean }) => {
+    const now = latest.current;
+    rememberMinkOpener();
+    if (!now.isChatOpen) now.resumeOrStartFresh();
+    setIsChatOpen(true);
+    setIsExpanded(false);
+    if (options?.focusComposer !== false) {
+      setFocusComposerOnOpen((n) => n + 1);
+    }
+  }, []);
+
+  // ★ A question from Home, an "Ask Mink" button or the top-bar bar is a new
+  // topic, so it starts a new chat rather than landing in whatever thread was
+  // open last. While Mink is still answering, the question waits in the box
+  // instead (starting a new chat then would stop that answer), after what is
+  // already typed there. ★ A draft in the box is never lost: sending clears
+  // the box, so it is put back once the question has gone.
+  const startChat = useCallback(
+    (message: string, options?: { expanded?: boolean }) => {
+      const now = latest.current;
+      const expanded = options?.expanded === true;
+      const text = message.trim();
+      rememberMinkOpener();
       setIsChatOpen(true);
-      setIsExpanded(true);
-      if (isReplying) {
-        setInput(message);
+      setIsExpanded(expanded);
+      // On a phone or tablet this would raise the keyboard over the chat
+      // (Home's box, the Ask Mink buttons, Customise storefront).
+      if (!touchFirst()) setFocusComposerOnOpen((n) => n + 1);
+      if (!text) {
+        if (!now.isChatOpen) now.resumeOrStartFresh();
         return;
       }
-      startNewChat();
-      send(message);
+      const draft = now.input;
+      const hasDraft = draft.trim().length > 0 && draft.trim() !== text;
+      if (now.isReplying) {
+        now.setInput(hasDraft ? `${draft.trimEnd()}\n\n${text}` : text);
+        return;
+      }
+      now.startNewChat();
+      now.send(text);
+      if (hasDraft) now.setInput(draft);
     },
-    [isReplying, setInput, startNewChat, send],
+    [],
+  );
+  const startExpandedChat = useCallback(
+    (message: string) => startChat(message, { expanded: true }),
+    [startChat],
   );
 
   // ★★ An address that names a chat (`?chat=<id>`, robustness audit B20; the
@@ -378,6 +496,9 @@ export function ChatProvider({
   const openChatFromAddress = useCallback(
     (conversationId: string | null) => {
       if (!minkEnabled) return;
+      // Replaces any opener left from before, so Close never returns focus
+      // to a control from an earlier opening.
+      rememberMinkOpener();
       setIsChatOpen(true);
       setIsExpanded(true);
       void openConversationFromAddress(conversationId);
@@ -397,7 +518,12 @@ export function ChatProvider({
       toggleChat,
       closeChat,
       toggleExpand,
+      startChat,
       startExpandedChat,
+      openChat,
+      pageSuggestion,
+      setPageSuggestion,
+      focusComposerOnOpen,
       ...mink,
       send,
       sendPrepared,
@@ -413,26 +539,45 @@ export function ChatProvider({
       toggleChat,
       closeChat,
       toggleExpand,
+      startChat,
       startExpandedChat,
+      openChat,
+      pageSuggestion,
+      setPageSuggestion,
+      focusComposerOnOpen,
       mink,
       send,
       sendPrepared,
     ],
   );
 
+  const dockValue = useMemo<MinkDockContextValue>(
+    () => ({
+      enabled: mink.enabled,
+      isChatOpen,
+      skills,
+      pageSuggestion,
+      startChat,
+      openChat,
+    }),
+    [mink.enabled, isChatOpen, skills, pageSuggestion, startChat, openChat],
+  );
+
   return (
     <ChatContext.Provider value={value}>
-      <MinkVoiceContext.Provider value={voice}>
-        {/* ★ Its own Suspense boundary: reading the address must never hold
+      <MinkDockContext.Provider value={dockValue}>
+        <MinkVoiceContext.Provider value={voice}>
+          {/* ★ Its own Suspense boundary: reading the address must never hold
             back the dashboard's own prerendered shell. */}
-        <Suspense fallback={null}>
-          <MinkChatAddress onOpen={openChatFromAddress} />
-        </Suspense>
-        {children}
-        {spotlight ? (
-          <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
-        ) : null}
-      </MinkVoiceContext.Provider>
+          <Suspense fallback={null}>
+            <MinkChatAddress onOpen={openChatFromAddress} />
+          </Suspense>
+          {children}
+          {spotlight ? (
+            <MinkSpotlight highlight={spotlight} onDone={clearSpotlight} />
+          ) : null}
+        </MinkVoiceContext.Provider>
+      </MinkDockContext.Provider>
     </ChatContext.Provider>
   );
 }
@@ -492,7 +637,12 @@ export function useChat() {
       toggleChat: () => {},
       closeChat: () => {},
       toggleExpand: () => {},
+      startChat: () => {},
       startExpandedChat: () => {},
+      openChat: () => {},
+      pageSuggestion: null,
+      setPageSuggestion: () => {},
+      focusComposerOnOpen: 0,
       enabled: false,
       messages: [],
       conversations: [],
@@ -549,4 +699,32 @@ export function useChat() {
     } satisfies ChatContextType;
   }
   return context;
+}
+
+/**
+ * The few values the top-bar pop-out bar reads, in their own context: the
+ * main chat context changes with every streamed token, and the bar must not
+ * re-render with it.
+ */
+export interface MinkDockContextValue {
+  enabled: boolean;
+  isChatOpen: boolean;
+  skills: MinkSkill[];
+  pageSuggestion: MinkPageSuggestionValue | null;
+  startChat: ChatContextType["startChat"];
+  openChat: ChatContextType["openChat"];
+}
+
+// Outside a provider (the platform console) the bar renders nothing.
+const MinkDockContext = createContext<MinkDockContextValue>({
+  enabled: false,
+  isChatOpen: false,
+  skills: [],
+  pageSuggestion: null,
+  startChat: () => {},
+  openChat: () => {},
+});
+
+export function useMinkDock(): MinkDockContextValue {
+  return useContext(MinkDockContext);
 }

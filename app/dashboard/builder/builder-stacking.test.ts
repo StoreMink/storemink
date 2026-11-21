@@ -58,4 +58,15 @@ describe("Website Builder stacking", () => {
     // full-screen canvas paint over the topbar.
     expect(zIndex === "auto" || Number(zIndex) < 10).toBe(true);
   });
+
+  it("hides the top-bar Ask Mink AI tab, which would paint over the builder's own top bar", () => {
+    const css = read("dashboard.css");
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter(
+      ([, selector]) =>
+        selector.includes(":has(.sm-builder)") &&
+        /\.dash-mink-pop(?![\w-])/.test(selector),
+    );
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.some(([, , body]) => /display:\s*none/.test(body))).toBe(true);
+  });
 });
