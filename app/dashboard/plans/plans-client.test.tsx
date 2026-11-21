@@ -1288,6 +1288,13 @@ describe("the checkout dialog (design 7.3)", () => {
     expect(
       screen.getByText("Renewals are charged by UPI Autopay"),
     ).toBeTruthy();
+    // The payment window shows the mandate's ceiling as chargeable at any
+    // time, so the review step says first what is actually charged.
+    expect(
+      screen.getByText(
+        "The payment window shows an upper limit, not what you pay. We charge only your renewal amount, once in each billing cycle, and your bank sends a notice first.",
+      ),
+    ).toBeTruthy();
   });
 
   it("the rail note reads the quote's renewal: invoiced", async () => {

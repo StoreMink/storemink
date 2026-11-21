@@ -10897,6 +10897,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261122_0283_autopay_limit_help",
+      "description": "Help Centre: the plan guide's section on how renewals are charged gains one paragraph on the upper limit the payment window shows for automatic payments (a ceiling, not what is charged). Content only.",
+      "file": "sql/20261122_0283_autopay_limit_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0282_pay_now_instead_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the plan guide says what the payment window's upper limit is",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-storemink-plan-and-subscription' and status='published' and body like '%It is a ceiling, not what you pay: StoreMink charges only your renewal amount, once in each billing cycle%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

@@ -10926,7 +10926,9 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0283 (0282 = Help: Pay now instead
+│                              # Next free: 0284 (0283 = Help: the payment
+│                              # window's upper limit for automatic payments;
+│                              # 0282 = Help: Pay now instead
 │                              # and Continue payment in the invoices guide;
 │                              # 0281 = two-step automatic
 │                              # renewal: billing_payment_attempts.debit_after
@@ -24517,11 +24519,28 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       ⚠ NOT YET PROVEN: that the debit succeeds once the notice period has
       passed; two notified test orders may be debited from 23 Nov 2026 11:28
       IST with `scripts/autopay-test-debit.mjs` (test keys only).
-      ⚠ OWNER DECISION LEFT: mandates are registered `monthly` or `yearly`
-      against a 30-day cycle (NPCI allows one successful UPI debit per mandate
-      cycle; `as_presented` would lift that but changes the Checkout wording
-      to "anytime"). Help: `0281` rewrites the invoices guide's autopay
-      sentence; `0282` adds Pay now instead and Continue payment to it.
+      ★★ A MANDATE IS REGISTERED `as_presented` (22 Nov 2026, owner's
+      request; `MANDATE_FREQUENCY` in `lib/billing/enrol.ts`). It was
+      `monthly` or `yearly`, and a mandate with a calendar frequency allows
+      one successful debit in each of its own cycles (NPCI's rule, on
+      Razorpay's UPI page). StoreMink's cycles are 30 and 365 days: a monthly
+      plan's debits creep a day earlier through every 31-day month until two
+      fall in one month and the second is refused, a yearly plan's does the
+      same in a leap year, and a merchant who moves from yearly to monthly
+      billing keeps a mandate that would refuse eleven renewals of twelve.
+      `as_presented` has no cycle of its own; the ceiling, the expiry, RBI's
+      ₹15,000 limit and the bank's notice still bound every debit. Accepted on
+      both rails in test mode. Razorpay's window then words the ceiling as
+      chargeable "anytime", so the review step says "The payment window shows
+      an upper limit, not what you pay ..." and the plan guide says the same.
+      ⚠ A mandate authorised earlier keeps its frequency (nothing can change
+      it, and the token read does not report it); a renewal refused for
+      falling in the same month is retried about a day and a half later.
+      ⚠ Not run: a full Checkout authorisation and a debit on an
+      `as_presented` mandate.
+      Help: `0281` rewrites the invoices guide's autopay sentence; `0282` adds
+      Pay now instead and Continue payment to it; `0283` adds the upper limit
+      paragraph to the plan guide.
       (A credit pack paid in a tab that then closed is settled by
       the webhook and the hourly job: `lib/ai/credit-purchase.ts`.)
 

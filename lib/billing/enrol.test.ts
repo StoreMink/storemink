@@ -112,6 +112,7 @@ const receipts = vi.hoisted(() => ({ notifyPlanActivated: vi.fn() }));
 vi.mock("./receipts", () => receipts);
 
 import {
+  MANDATE_FREQUENCY,
   completeEnrolmentPurchase,
   confirmEnrolment,
   ensureBillingAccount,
@@ -297,6 +298,31 @@ describe("startEnrolment", () => {
     expect(
       rzp.rzpCreateAuthorizationOrder.mock.calls[0][1].terms.maxAmountPaise,
     ).toBe(15_000_00);
+  });
+
+  // 22 Nov 2026. A `monthly` or `yearly` mandate allows one successful debit
+  // in each of ITS cycles, and StoreMink's 30-day and 365-day cycles do not
+  // line up with a calendar: sooner or later two renewals fall in one month
+  // and the second is refused. A yearly mandate would also refuse eleven of
+  // twelve renewals after a move to monthly billing.
+  it.each(["monthly", "yearly"] as const)(
+    "★★ a %s plan's mandate is registered AS PRESENTED, never on a calendar frequency",
+    async (period) => {
+      await startEnrolment({ ...args, plan: "basic", period });
+      const terms = rzp.rzpCreateAuthorizationOrder.mock.calls[0][1].terms;
+      expect(terms.frequency).toBe("as_presented");
+      expect(MANDATE_FREQUENCY).toBe("as_presented");
+    },
+  );
+
+  it("★ the ceiling and the expiry still bound the mandate", async () => {
+    await startEnrolment({ ...args, plan: "basic", period: "monthly" });
+    const terms = rzp.rzpCreateAuthorizationOrder.mock.calls[0][1].terms;
+    expect(terms.maxAmountPaise).toBeGreaterThan(0);
+    // Unix SECONDS, about five years out.
+    const years = (terms.expireAtUnix * 1000 - Date.now()) / (365 * 86_400_000);
+    expect(years).toBeGreaterThan(4);
+    expect(years).toBeLessThan(6);
   });
 
   it("★ but keeps real reprice headroom below the limit", async () => {

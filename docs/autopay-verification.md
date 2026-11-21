@@ -314,16 +314,35 @@ The script refuses anything but an `rzp_test_` key. `--notify true` creates a
 fresh notified order when both have been used. If the debit answers with a
 status `mapGatewayStatus` does not list, add it there.
 
-**Left as the owner's decision:**
+**The mandate's frequency: `as_presented` (22 Nov 2026, owner's request).**
+Mandates were registered `monthly` or `yearly`, and a mandate with a calendar
+frequency allows one successful debit in each of its own cycles (Razorpay's
+UPI page states NPCI's rule). StoreMink's cycles are 30 and 365 days, so a
+monthly plan's debits creep a day earlier through every 31-day month until two
+fall in one month and the second is refused; a yearly plan's does the same in
+a leap year; and a merchant who moves from yearly to monthly billing keeps
+their mandate, which would refuse eleven renewals of every twelve. New
+mandates are registered `as_presented` (`MANDATE_FREQUENCY`,
+`lib/billing/enrol.ts`): no cycle of their own, still bounded by the ceiling,
+the expiry, RBI's ₹15,000 limit and the bank's notice before every debit.
 
-- **The mandate's frequency.** Mandates are registered `monthly` (or `yearly`),
-  and StoreMink's cycle is 30 days, so over the years two renewals can fall in
-  one calendar month of the mandate. Razorpay's UPI page says NPCI allows one
-  successful debit on a token per billing cycle. Test mode accepts
-  `as_presented` on both rails, which removes that limit, but Checkout then
-  tells the merchant "StoreMink may charge up to ₹5,000 anytime" where it now
-  says "per month". Not changed. Existing mandates keep the frequency they
-  were registered with either way.
+- Checked in test mode on 22 Nov 2026 through `rzpCreateAuthorizationOrder`:
+  the order is accepted on both rails, and the card order reads back
+  `token.frequency: as_presented`.
+- Razorpay's payment window then words the ceiling as an amount that can be
+  charged "anytime" where it said "per month". The review step before payment
+  and the plan guide (Help `0283`) say in StoreMink's own words that it is a
+  ceiling and that only the renewal amount is charged, once in each cycle.
+- ⚠ Not run: a full Checkout authorisation and a later debit on an
+  `as_presented` mandate. The mandate registered on 21 Nov is `monthly`.
+- ⚠ A mandate authorised before this keeps its frequency: nothing can change
+  it, and the token read does not report it, so old and new cannot be told
+  apart from the gateway. A renewal of an old one refused for falling in the
+  same month is tried again about a day and a half later, by which time the
+  month has usually turned.
+
+**Left open:**
+
 - **The Razorpay support ticket** is no longer needed for enabling anything.
   The one useful question left for them is why an order with no `notification`
   is answered "URL not found" where a plain validation error would do.
