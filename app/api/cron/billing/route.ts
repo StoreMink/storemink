@@ -14,8 +14,9 @@ import {
 } from "@/lib/billing/renewal-worker";
 import {
   chargeUnavailableReason,
-  getRecurringCharge,
+  getRecurringGateway,
 } from "@/lib/billing/gateway";
+import { sendDueDebits, type DebitSummary } from "@/lib/billing/debit-pass";
 import {
   issueCapturedDrafts,
   reconcileStrandedAttempts,
@@ -34,7 +35,10 @@ import { bustPlatformTax } from "@/lib/billing/public-tax";
 //
 //   PROMOTE   every run: a scheduled GST change that has started is copied
 //             into the in-force columns (lib/billing/platform-settings.ts).
-//   COLLECT   at T-4d: issue the next cycle's invoice and charge it.
+//   COLLECT   at T-4d: issue the next cycle's invoice and create its order
+//             with the pre-debit notice (step 1; no money moves).
+//   DEBIT     every run: send the debit of each notified order whose notice
+//             period has passed (step 2, lib/billing/debit-pass.ts).
 //   RECONCILE every run: settle payments we never heard back about, then
 //             Mink credit packs paid for and never confirmed.
 //   REPAIR    every run: a captured payment whose invoice is still a draft
@@ -157,7 +161,7 @@ async function handle(request: Request) {
 
   const now = new Date();
   const pagingDeadline = Date.now() + PAGING_BUDGET_MS;
-  const charge = getRecurringCharge();
+  const charge = getRecurringGateway();
   const chargeBlocked = chargeUnavailableReason();
 
   // ★ PROMOTE FIRST, ONE UPDATE. Nothing below depends on it (`termsAt`
@@ -195,6 +199,24 @@ async function handle(request: Request) {
       }),
     pagingDeadline,
   );
+
+  // ★★ THEN THE DEBITS WHOSE NOTICE PERIOD HAS PASSED (21 Nov 2026). An
+  // automatic renewal is two steps: the pass above creates the order with its
+  // pre-debit notice, and a day or more later this one sends the debit
+  // (lib/billing/debit-pass.ts). After collect, so a renewal notified in this
+  // run is never also debited in it (its debit time is a day away); before
+  // reconcile, so a debit sent now is read back by the next run, not this
+  // one. With no gateway there is nothing to send.
+  const debits: DebitSummary = charge
+    ? await sendDueDebits({ gateway: charge, now })
+    : {
+        considered: 0,
+        sent: 0,
+        waiting: 0,
+        failed: 0,
+        cancelled: 0,
+        errors: 0,
+      };
 
   // ★★ RECONCILE BEFORE EVALUATING. A payment we never learned about is money
   // already in — and pass 2 decides grace and downgrade from whether the
@@ -243,6 +265,7 @@ async function handle(request: Request) {
   const errors =
     promoteErrors +
     collect.errors +
+    debits.errors +
     reconcile.errors +
     creditPacks.errors +
     repair.errors +
@@ -266,6 +289,7 @@ async function handle(request: Request) {
     collectionSkipped: chargeBlocked,
     promote: { promoted, errors: promoteErrors },
     collect,
+    debits,
     reconcile,
     creditPacks,
     repair,

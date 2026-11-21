@@ -71,6 +71,7 @@ import {
   collectDueRenewals,
   downgradeExpired,
   evaluateCycleTurns,
+  MANDATE_CHECK_HOLD_HOURS,
 } from "./renewal-worker";
 import { GRACE_HOURS } from "./cycle";
 
@@ -120,7 +121,17 @@ const priceFor = vi.fn(async () => ({
   planLabel: "Pro",
 }));
 
-const charge = vi.fn() as any;
+/**
+ * The gateway seam the pass is handed (lib/billing/gateway.ts in production).
+ * Here the mandate is chargeable unless a test says otherwise; `notify` and
+ * `debit` are never reached, because `./collect` is a seam too.
+ */
+const charge = {
+  checkMandate: vi.fn(async (): Promise<any> => ({ state: "chargeable" })),
+  notify: vi.fn(),
+  readNotice: vi.fn(),
+  debit: vi.fn(),
+} as any;
 
 const PUNJAB_GSTIN = "03ABCDE1234F1Z5";
 
@@ -742,7 +753,9 @@ describe("collectDueRenewals", () => {
     seed([[DUE_ROW]]);
     const s = await collectDueRenewals({ now: NOW, charge, priceFor });
     expect(collector.collectInvoice).not.toHaveBeenCalled();
-    expect(charge).not.toHaveBeenCalled();
+    // Not even the mandate is asked about: the invoice is not ours to touch
+    // while a payment on it is unresolved.
+    expect(charge.checkMandate).not.toHaveBeenCalled();
     expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
     expect(s).toMatchObject({ pendingReconcile: 1, collected: 0, failed: 0 });
   });
@@ -886,6 +899,269 @@ describe("collectDueRenewals", () => {
       await collectDueRenewals({ now: NOW, charge, priceFor });
       expect(collector.automaticAttemptsOn).not.toHaveBeenCalled();
     });
+  });
+
+  // 21 Nov 2026: StoreMink's record said `active` from the day a mandate was
+  // authorised, but the customer can cancel or pause it at their bank at any
+  // time, and only a `confirmed` token may be debited.
+  describe("★★ the mandate is checked at the gateway before anything is promised", () => {
+    const LIVE_MANDATE = {
+      id: "man-1",
+      status: "active",
+      maxAmountPaise: 10_000_00,
+      providerTokenId: "tok_1",
+      providerCustomerId: "cust_1",
+      method: "card",
+    };
+    const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+    /** The pass's two reads, then the mandate status write's result. */
+    function seedWith(mandate: unknown, moved: unknown[] = [{ id: "man-1" }]) {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [DUE_ROW],
+          [mandate],
+          [{ plan: "pro", scheduledPlan: null }],
+        ],
+        returning: moved,
+      });
+    }
+
+    it("asks about this mandate's customer and token before the invoice is issued", async () => {
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(charge.checkMandate).toHaveBeenCalledWith({
+        providerCustomerId: "cust_1",
+        providerTokenId: "tok_1",
+      });
+      expect(charge.checkMandate.mock.invocationCallOrder[0]).toBeLessThan(
+        repo.finalizeInvoiceClaimed.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("★★ a mandate the customer CANCELLED: the one notice says pay by hand, and nothing is collected", async () => {
+      charge.checkMandate.mockResolvedValueOnce({
+        state: "ended",
+        detail: "cancelled",
+      });
+      seedWith(LIVE_MANDATE);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(false);
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      // The mandate handed on is no longer `active`, so step 1 refuses it.
+      expect(collector.collectInvoice.mock.calls[0][0].mandate.status).toBe(
+        "revoked",
+      );
+      // StoreMink's own record follows the gateway.
+      expect(dbHolder.current.calls.set).toContainEqual(
+        expect.objectContaining({ status: "revoked" }),
+      );
+      expect(s.errors).toBe(0);
+    });
+
+    it("★ a PAUSED mandate is not charged now, and is left to be asked about again", async () => {
+      charge.checkMandate.mockResolvedValueOnce({
+        state: "paused",
+        detail: "paused",
+      });
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(false);
+      expect(dbHolder.current.calls.set).toContainEqual(
+        expect.objectContaining({ status: "unknown" }),
+      );
+    });
+
+    /** The pass's reads for a renewal that became due `hours` ago. */
+    function seedDueSince(hours: number) {
+      // Collection opens four days before the cycle begins.
+      const periodEnd = new Date(
+        NOW.getTime() + 4 * 24 * 3_600_000 - hours * 3_600_000,
+      ).toISOString();
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [{ ...DUE_ROW, currentPeriodEnd: periodEnd }],
+          [LIVE_MANDATE],
+          [{ plan: "pro", scheduledPlan: null }],
+        ],
+      });
+    }
+
+    it("★★ a gateway that could not be asked stops the run BEFORE the invoice is issued: no notice on a guess", async () => {
+      charge.checkMandate.mockResolvedValueOnce({ state: "unknown" });
+      seedDueSince(MANDATE_CHECK_HOLD_HOURS - 1);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(repo.finalizeInvoiceClaimed).not.toHaveBeenCalled();
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s.pendingReconcile).toBe(1);
+    });
+
+    // With no invoice the cycle turn has nothing unpaid to open grace on, and
+    // the store would keep its plan for nothing. And "could not be asked" can
+    // be permanent (Razorpay answers a deleted mandate "the id provided does
+    // not exist").
+    it(`★★ but not for ever: after ${MANDATE_CHECK_HOLD_HOURS}h of no answer the invoice is issued to pay by hand`, async () => {
+      charge.checkMandate.mockResolvedValueOnce({ state: "unknown" });
+      seedDueSince(MANDATE_CHECK_HOLD_HOURS);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(repo.finalizeInvoiceClaimed).toHaveBeenCalledTimes(1);
+      // The one notice asks for payment; it promises no automatic debit.
+      expect(dunning.notifyInvoiceIssued).toHaveBeenCalledTimes(1);
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(false);
+      // No automatic try on a mandate nobody could vouch for.
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s).toMatchObject({ manualRequired: 1, errors: 0 });
+      // ★ The mandate's record is untouched: silence is not a cancellation.
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+    });
+
+    it("★ once issued that way, a later run asks again, and autopay collects on a clear yes", async () => {
+      repo.ensureRenewalInvoice.mockResolvedValue({
+        id: "inv-1",
+        status: "open",
+        finalizedAt: "2026-08-31T00:00:00.000Z",
+      });
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 0,
+        lastAt: null,
+      });
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(charge.checkMandate).toHaveBeenCalledTimes(1);
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      // Issued on an earlier run: no second issue notice.
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+    });
+
+    it("★ a paused mandate the customer RESUMED is live again", async () => {
+      seedWith({ ...LIVE_MANDATE, status: "unknown" });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(dbHolder.current.calls.set).toContainEqual(
+        expect.objectContaining({ status: "active" }),
+      );
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(true);
+    });
+
+    it("nothing is asked with no gateway, no mandate, or a mandate already ended", async () => {
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      seed([[{ ...DUE_ROW, mandateId: null }]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      seedWith({ ...LIVE_MANDATE, status: "revoked" });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(charge.checkMandate).not.toHaveBeenCalled();
+    });
+
+    describe("a RETRY asks again, days after the invoice was issued", () => {
+      function issuedAndOwed() {
+        repo.ensureRenewalInvoice.mockResolvedValue({
+          id: "inv-1",
+          status: "open",
+          finalizedAt: "2026-08-28T00:00:00.000Z",
+        });
+        collector.automaticAttemptsOn.mockResolvedValue({
+          count: 1,
+          lastAt: hoursAgo(40),
+        });
+        repo.getInvoice.mockResolvedValue({
+          ...ISSUED,
+          storeId: STORE,
+          kind: "subscription",
+          periodStart: "2026-09-03T00:00:00.000Z",
+        });
+      }
+
+      it("a mandate still confirmed goes on to the next try", async () => {
+        issuedAndOwed();
+        seedWith(LIVE_MANDATE);
+        const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(charge.checkMandate).toHaveBeenCalledTimes(1);
+        expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+        expect(s.errors).toBe(0);
+      });
+
+      it("★★ a mandate cancelled since: no try, and the merchant is asked to pay ONCE", async () => {
+        issuedAndOwed();
+        charge.checkMandate.mockResolvedValueOnce({
+          state: "ended",
+          detail: "cancelled",
+        });
+        seedWith(LIVE_MANDATE);
+        const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(collector.collectInvoice).not.toHaveBeenCalled();
+        expect(s.manualRequired).toBe(1);
+        expect(dunning.notifyAutopayStopped).toHaveBeenCalledTimes(1);
+        expect(dunning.notifyAutopayStopped.mock.calls[0][0]).toMatchObject({
+          cause: "mandate",
+          storeId: STORE,
+        });
+      });
+
+      it("★ a status write another pass already made announces nothing a second time", async () => {
+        issuedAndOwed();
+        charge.checkMandate.mockResolvedValueOnce({
+          state: "ended",
+          detail: "cancelled",
+        });
+        // The conditional status write moved no row: someone got there first.
+        seedWith(LIVE_MANDATE, []);
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(collector.collectInvoice).not.toHaveBeenCalled();
+        expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+      });
+
+      it("a gateway that could not be asked leaves the retry for the next run", async () => {
+        issuedAndOwed();
+        charge.checkMandate.mockResolvedValueOnce({ state: "unknown" });
+        seedWith(LIVE_MANDATE);
+        const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(collector.collectInvoice).not.toHaveBeenCalled();
+        expect(s.pendingReconcile).toBe(1);
+      });
+
+      it("while it is still waiting its 24 hours, the gateway is not asked at all", async () => {
+        issuedAndOwed();
+        collector.automaticAttemptsOn.mockResolvedValue({
+          count: 1,
+          lastAt: hoursAgo(2),
+        });
+        seedWith(LIVE_MANDATE);
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(charge.checkMandate).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("★ a renewal whose order and notice were created counts as notified", async () => {
+    repo.ensureRenewalInvoice.mockResolvedValue({
+      id: "inv-1",
+      status: "open",
+      finalizedAt: "2026-08-28T00:00:00.000Z",
+    });
+    collector.collectInvoice.mockResolvedValue({
+      status: "notified",
+      attemptId: "att-1",
+      debitAfter: new Date("2026-09-02T14:00:00.000Z"),
+    });
+    seed([
+      [DUE_ROW],
+      [
+        {
+          id: "man-1",
+          status: "active",
+          maxAmountPaise: 10_000_00,
+          providerTokenId: "tok_1",
+          providerCustomerId: "cust_1",
+          method: "upi",
+        },
+      ],
+    ]);
+    const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+    expect(s).toMatchObject({ notified: 1, collected: 0, failed: 0 });
+    // The mandate's rail goes with it: it decides the notice period.
+    expect(collector.collectInvoice.mock.calls[0][0].mandate.method).toBe(
+      "upi",
+    );
   });
 
   describe("announceAutopayStopped: said only when it is true", () => {

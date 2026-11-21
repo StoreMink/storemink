@@ -69,30 +69,88 @@ export interface ChargeResponse {
   status: string;
 }
 
+/** Which rail a mandate was registered on: it decides the notice period. */
+export type MandateRail = "card" | "upi" | "emandate" | "nach" | "unknown";
+
+/** Can the mandate be debited right now, by the gateway's own word? */
+export type MandateCheck =
+  /** Confirmed at the gateway: it may be debited. */
+  | { state: "chargeable" }
+  /** The customer paused it. Not chargeable now; it may come back. */
+  | { state: "paused"; detail: string }
+  /** Cancelled, rejected or expired: it will never be chargeable again. */
+  | { state: "ended"; detail: string }
+  /** The gateway could not be asked. Decide nothing. */
+  | { state: "unknown" };
+
+/** Where the pre-debit notice of one notified order stands. */
+export type NoticeCheck =
+  /** The notice period has passed: the debit may be sent now. */
+  | { state: "ready" }
+  /** Not yet: the debit may be sent from `until`. */
+  | { state: "wait"; until: Date }
+  /** The gateway has not delivered the notice (yet). */
+  | { state: "undelivered" }
+  /** The gateway could not be asked. Decide nothing. */
+  | { state: "unknown" };
+
 /**
- * The seam. An implementation MUST put `idempotencyKey` in provider-visible
- * metadata and MUST persist the provider order through
- * `recordProviderOrderId` before it attempts the debit. Razorpay's published
- * recurring-payment reference does not promise an idempotency header, so the
- * durable attempt + provider order are the duplicate guard and reconciliation
- * handle here; do not copy the refund API's endpoint-specific header.
+ * The seam: everything the billing passes ask of the payment gateway for an
+ * AUTOMATIC renewal. `lib/billing/gateway.ts` is the one implementation.
+ *
+ * ★★ A RENEWAL IS TWO STEPS, A DAY OR MORE APART (21 Nov 2026). Razorpay
+ * accepts a recurring debit only for an order created with a pre-debit
+ * notification, and only once the notice period has passed since the customer
+ * was sent it. So:
+ *
+ *   `notify`  creates the order WITH its notice. No money moves.
+ *   `debit`   sends the debit for that order, once `readNotice` says ready.
+ *
+ * and `checkMandate` asks, before either, whether the mandate can still be
+ * charged at all ("Only tokens in the confirmed state can be used").
+ *
+ * An implementation MUST put `idempotencyKey` in provider-visible metadata.
+ * Razorpay's recurring reference promises no idempotency header, so the
+ * durable attempt, its write-once provider order and the `debit_sent_at`
+ * claim are the duplicate guards.
  */
-export type ChargeFn = (input: {
-  amountPaise: number;
-  idempotencyKey: string;
-  providerTokenId: string;
-  /** Razorpay requires the customer the token belongs to. */
-  providerCustomerId: string | null;
-  /** Which store is being billed — the implementation resolves its contact. */
-  storeId: string;
-  description: string;
-  /** Persist the gateway order before any debit is attempted. */
-  recordProviderOrderId: (providerOrderId: string) => Promise<boolean>;
-}) => Promise<RzpResult<ChargeResponse>>;
+export interface RecurringGateway {
+  checkMandate(input: {
+    providerCustomerId: string;
+    providerTokenId: string;
+  }): Promise<MandateCheck>;
+  notify(input: {
+    amountPaise: number;
+    idempotencyKey: string;
+    providerTokenId: string;
+    rail: MandateRail;
+    now: Date;
+  }): Promise<RzpResult<{ providerOrderId: string; debitAfter: Date }>>;
+  readNotice(input: {
+    providerOrderId: string;
+    rail: MandateRail;
+    now: Date;
+  }): Promise<NoticeCheck>;
+  debit(input: {
+    amountPaise: number;
+    idempotencyKey: string;
+    providerOrderId: string;
+    providerTokenId: string;
+    providerCustomerId: string;
+    /** Which store is being billed: the implementation resolves its contact. */
+    storeId: string;
+    description: string;
+  }): Promise<RzpResult<ChargeResponse>>;
+}
 
 export type CollectResult =
   | { status: "paid"; attemptId: string }
   | { status: "failed"; attemptId: string; code?: string; reason?: string }
+  /**
+   * The order and its pre-debit notice were created. No money has moved; the
+   * debit pass sends the debit once the notice period has passed.
+   */
+  | { status: "notified"; attemptId: string; debitAfter: Date }
   /** Outcome unknown — money may have moved. NEVER retry (Rule 1). */
   | { status: "pending_reconcile"; attemptId: string }
   | { status: "not_collectable"; reason: string }
@@ -189,43 +247,6 @@ export async function beginAttempt(
 }
 
 /**
- * Attach the gateway order before money is asked to move.
- *
- * Write-once: an accidentally repeated provider call must not replace the
- * first reconciliation handle with a second order id.
- */
-async function recordAttemptProviderOrder(
-  attemptId: string,
-  providerOrderId: string,
-): Promise<boolean> {
-  try {
-    return await withService(async (db) => {
-      const rows = await db
-        .update(billingPaymentAttempts)
-        .set({
-          providerOrderId,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(
-          and(
-            eq(billingPaymentAttempts.id, attemptId),
-            eq(billingPaymentAttempts.state, "created"),
-            isNull(billingPaymentAttempts.providerOrderId),
-          ),
-        )
-        .returning({ id: billingPaymentAttempts.id });
-      return rows.length === 1;
-    });
-  } catch (err) {
-    logError("billing.record_provider_order", err, {
-      attemptId,
-      providerOrderId,
-    });
-    return false;
-  }
-}
-
-/**
  * Fold an observed outcome into an attempt.
  *
  * ★ MONOTONIC, and claimed against the state we read. `resolvePaymentState`
@@ -253,10 +274,24 @@ export async function settleAttempt(
     providerOrderId?: string | null;
     failureCode?: string | null;
     failureReason?: string | null;
+    /** The earliest instant a notified order may be debited (step 1 of an
+     *  automatic renewal). Written with the order it belongs to. */
+    debitAfter?: Date | null;
     now?: Date;
     /** Send the paid receipt when this settle makes the invoice paid
      *  (default true). */
     notify?: boolean;
+    /**
+     * ★★ Move the attempt ONLY while its debit has not been sent
+     * (`debit_sent_at` is null), in the same statement. For every write that
+     * ends a notified attempt WITHOUT debiting it (the plan was cancelled, the
+     * mandate is gone, the notice never arrived): a terminal state can never
+     * be left, so writing one while another worker's debit was already on its
+     * way would make the machine ignore that debit's capture, and the money
+     * would sit behind a closed attempt. With this, exactly one of {the
+     * debit's claim, the withdrawal} wins, and a lost withdrawal returns null.
+     */
+    onlyIfUnsent?: boolean;
   } = {},
 ): Promise<PaymentState | null> {
   const now = extra.now ?? new Date();
@@ -322,6 +357,9 @@ export async function settleAttempt(
           resolvedAt: resolvedAtFor(decision.state, now),
           providerPaymentId: extra.providerPaymentId ?? undefined,
           providerOrderId: extra.providerOrderId ?? undefined,
+          debitAfter: extra.debitAfter
+            ? extra.debitAfter.toISOString()
+            : undefined,
           failureCode: extra.failureCode ?? undefined,
           failureReason: extra.failureReason ?? undefined,
           updatedAt: now.toISOString(),
@@ -332,6 +370,9 @@ export async function settleAttempt(
           and(
             eq(billingPaymentAttempts.id, attemptId),
             eq(billingPaymentAttempts.state, from),
+            extra.onlyIfUnsent
+              ? isNull(billingPaymentAttempts.debitSentAt)
+              : undefined,
           ),
         )
         .returning({ state: billingPaymentAttempts.state });
@@ -499,23 +540,33 @@ export interface CollectInput {
     providerTokenId: string | null;
     /** Razorpay attaches a mandate to a CUSTOMER; the charge needs both. */
     providerCustomerId?: string | null;
+    /** The rail it was registered on; decides the notice period. */
+    method?: MandateRail | null;
   } | null;
-  charge: ChargeFn;
+  charge: RecurringGateway;
   now?: Date;
 }
 
 /**
- * Attempt automatic collection of one invoice.
+ * Start automatic collection of one invoice: STEP 1, the notified order.
  *
- * ★ ELIGIBILITY IS CHECKED BEFORE ANYTHING IS WRITTEN. `collectionRoute` applies
- * BOTH ceilings — what the mandate authorised and the AFA-exempt limit — so an
- * amount that would need the merchant to authenticate is routed to the manual
- * path rather than attempted and failed. A failed attempt starts a grace clock;
- * "not collectable automatically" must not.
+ * ★★ NO MONEY MOVES HERE (21 Nov 2026). Razorpay accepts a renewal debit only
+ * for an order created with a pre-debit notification, and only once the
+ * notice period has passed. This opens the attempt, creates that order and
+ * records when the debit may be sent; the debit itself is sent by the debit
+ * pass (`lib/billing/debit-pass.ts`) a day or more later. Before this, the
+ * order was plain and the debit was sent in the same breath, which Razorpay
+ * answers "The requested URL was not found on the server" every time.
  *
- * ★ AN UNKNOWN OUTCOME IS NOT A FAILURE. On `outcome: "unknown"` the attempt is
- * left in `unknown` and the caller is told to reconcile — never to retry, and
- * never to treat it as a decline (Rule 1, Rule 6, spec §27, §44).
+ * ★ ELIGIBILITY IS CHECKED BEFORE ANYTHING IS WRITTEN. `collectionRoute`
+ * applies BOTH ceilings (what the mandate authorised and the AFA-exempt
+ * limit), so an amount that would need the merchant to authenticate is routed
+ * to the manual path, never attempted and failed. A failed attempt starts a
+ * grace clock; "not collectable automatically" must not.
+ *
+ * ★ AN UNKNOWN OUTCOME IS NOT A FAILURE. An order creation that timed out
+ * leaves the attempt `unknown` with no order; reconciliation closes it after
+ * its stale window (no order id was recorded, so nothing can be debited).
  */
 export async function collectInvoice(
   input: CollectInput,
@@ -530,7 +581,11 @@ export async function collectInvoice(
   if (!route.auto) return { status: "not_collectable", reason: route.reason };
 
   const tokenId = input.mandate?.providerTokenId;
-  if (!tokenId) return { status: "not_collectable", reason: "no_mandate" };
+  // A debit needs the customer the token belongs to. Without one nothing
+  // could ever be sent, so do not put a notice in front of the merchant.
+  if (!tokenId || !input.mandate?.providerCustomerId) {
+    return { status: "not_collectable", reason: "no_mandate" };
+  }
 
   // Nothing to collect — a fully credited invoice is settled without a charge.
   if (input.amountDuePaise <= 0) {
@@ -547,22 +602,19 @@ export async function collectInvoice(
   });
   if (!begun) return { status: "already_in_flight" };
 
-  let res: RzpResult<ChargeResponse>;
+  let res: Awaited<ReturnType<RecurringGateway["notify"]>>;
   try {
-    res = await input.charge({
+    res = await input.charge.notify({
       amountPaise: input.amountDuePaise,
       idempotencyKey: begun.idempotencyKey,
       providerTokenId: tokenId,
-      providerCustomerId: input.mandate?.providerCustomerId ?? null,
-      storeId: input.storeId,
-      description: input.description,
-      recordProviderOrderId: (providerOrderId) =>
-        recordAttemptProviderOrder(begun.attemptId, providerOrderId),
+      rail: input.mandate?.method ?? "unknown",
+      now,
     });
   } catch (err) {
-    // ★ A THROW IS AN UNKNOWN, not a failure. The request may well have reached
-    // the gateway. Leave the attempt in `unknown` for reconciliation.
-    logError("billing.charge_threw", err, { invoiceId: input.invoiceId });
+    // ★ A THROW IS AN UNKNOWN, not a failure. The request may well have
+    // reached the gateway. Leave the attempt in `unknown` for reconciliation.
+    logError("billing.notify_threw", err, { invoiceId: input.invoiceId });
     await settleAttempt(begun.attemptId, "unknown", { now });
     return { status: "pending_reconcile", attemptId: begun.attemptId };
   }
@@ -585,20 +637,87 @@ export async function collectInvoice(
     };
   }
 
-  const state = mapGatewayStatus(res.data.status);
-  const settled = await settleAttempt(begun.attemptId, state, {
-    providerPaymentId: res.data.providerPaymentId,
+  // ★★ THE ORDER AND ITS DEBIT TIME ARE RECORDED TOGETHER, in the one write
+  // that moves the attempt to `processing`. The debit pass finds the attempt
+  // by exactly these two columns, so an order we failed to record can never
+  // be debited: the attempt stays `created` with no order and reconciliation
+  // closes it. (The customer was sent a notice for a debit that never comes,
+  // which costs nothing; a debit nobody recorded would cost money.)
+  const recorded = await settleAttempt(begun.attemptId, "processing", {
+    providerOrderId: res.data.providerOrderId,
+    debitAfter: res.data.debitAfter,
     now,
   });
-
-  if (settled === "captured")
-    return { status: "paid", attemptId: begun.attemptId };
-  if (settled === "failed") {
-    return { status: "failed", attemptId: begun.attemptId, code: "declined" };
+  if (recorded !== "processing") {
+    logError(
+      "billing.notified_order_unrecorded",
+      new Error("the notified order could not be recorded on its attempt"),
+      { invoiceId: input.invoiceId, attemptId: begun.attemptId },
+    );
+    return { status: "pending_reconcile", attemptId: begun.attemptId };
   }
-  // authorized / processing / unknown — the answer has not arrived yet, and the
-  // X+3 window means that is the ORDINARY case for a recurring debit.
-  return { status: "pending_reconcile", attemptId: begun.attemptId };
+  return {
+    status: "notified",
+    attemptId: begun.attemptId,
+    debitAfter: res.data.debitAfter,
+  };
+}
+
+/**
+ * Withdraw an invoice's SCHEDULED automatic debits: notified attempts whose
+ * debit has not been sent yet. Returns how many were withdrawn, or null when
+ * they could not be read.
+ *
+ * ★ For the moment a merchant cancels their plan. The debit pass would
+ * withdraw them anyway when their time came (it re-checks the plan, the
+ * invoice and the mandate before every debit), but doing it at once means the
+ * invoice reads as unpaid straight away, and what the merchant is told ("your
+ * renewal invoice won't be charged") is true from that moment.
+ *
+ * ★ Each one is a guarded settle (`onlyIfUnsent`): an attempt whose debit was
+ * sent a moment ago is left alone and stays in flight.
+ */
+export async function withdrawUnsentDebits(input: {
+  invoiceId: string;
+  code: string;
+  reason: string;
+  now?: Date;
+}): Promise<number | null> {
+  const now = input.now ?? new Date();
+  let ids: string[];
+  try {
+    ids = await withService(async (db) => {
+      const rows = await db
+        .select({ id: billingPaymentAttempts.id })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, input.invoiceId),
+            eq(billingPaymentAttempts.mode, "automatic"),
+            eq(billingPaymentAttempts.state, "processing"),
+            isNotNull(billingPaymentAttempts.debitAfter),
+            isNull(billingPaymentAttempts.debitSentAt),
+          ),
+        );
+      return rows.map((r) => r.id);
+    });
+  } catch (err) {
+    logError("billing.withdraw_unsent_debits", err, {
+      invoiceId: input.invoiceId,
+    });
+    return null;
+  }
+  let withdrawn = 0;
+  for (const id of ids) {
+    const settled = await settleAttempt(id, "cancelled", {
+      failureCode: input.code,
+      failureReason: input.reason,
+      onlyIfUnsent: true,
+      now,
+    });
+    if (settled === "cancelled") withdrawn += 1;
+  }
+  return withdrawn;
 }
 
 /**

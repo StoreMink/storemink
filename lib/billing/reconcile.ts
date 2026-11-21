@@ -99,14 +99,17 @@ export const FAIL_AFTER_HOURS = 72;
  * How long an AUTOMATIC debit with no payment at all on its order waits before
  * it is declared failed.
  *
- * ★ The renewal pass records the order BEFORE it sends the debit, and nothing
- * but that one server call can pay a recurring order (it needs the customer's
- * mandate token). A debit call that timed out either created its payment,
- * which the gateway then lists on the order within moments, or it created
- * nothing. So an order still listing no payment hours later never will, and
- * holding the invoice the full 72 hours only keeps the merchant from paying it
- * by hand. A manual checkout keeps the long window: its order stays payable
- * from an open browser tab.
+ * ★ Counted from when the DEBIT was sent (`debit_sent_at`), never from when
+ * the attempt was opened: a renewal's order is created a day or more before
+ * its debit, and lists no payment for all that time by design. Nothing but
+ * that one server call can pay a recurring order (it needs the customer's
+ * mandate token). A debit call that timed out, or a worker that died right
+ * after claiming it, either created a payment, which the gateway then lists
+ * on the order within moments, or created nothing. So an order still listing
+ * no payment hours after its debit was sent never will, and holding the
+ * invoice the full 72 hours only keeps the merchant from paying it by hand. A
+ * manual checkout keeps the long window: its order stays payable from an open
+ * browser tab.
  */
 export const AUTO_NO_PAYMENT_FAIL_AFTER_HOURS = 6;
 
@@ -196,6 +199,8 @@ export async function reconcileStrandedAttempts(
     /** `automatic` for a debit the renewal pass sent; `manual` for a checkout. */
     mode: string;
     createdAt: string;
+    /** When the debit of an automatic attempt was sent (0281); else null. */
+    debitSentAt: string | null;
   }[];
   try {
     rows = await withService(async (db) =>
@@ -209,6 +214,7 @@ export async function reconcileStrandedAttempts(
           state: billingPaymentAttempts.state,
           mode: billingPaymentAttempts.mode,
           createdAt: billingPaymentAttempts.createdAt,
+          debitSentAt: billingPaymentAttempts.debitSentAt,
         })
         .from(billingPaymentAttempts)
         .where(
@@ -218,6 +224,17 @@ export async function reconcileStrandedAttempts(
             // ★ Without an order there is nothing to ask about. An attempt that
             // never reached the gateway is handled below, not here.
             isNotNull(billingPaymentAttempts.providerOrderId),
+            // ★★ NOT AN AUTOMATIC ATTEMPT STILL WAITING OUT ITS NOTICE PERIOD
+            // (21 Nov 2026). A renewal's order is created a day or more before
+            // its debit is sent, so for all that time its order rightly lists
+            // no payment. That is not a stranded attempt: reading it here
+            // would fail it as "never sent" hours before the debit pass was
+            // even allowed to send it. It is this pass's business only once
+            // `debit_sent_at` is set.
+            or(
+              isNull(billingPaymentAttempts.debitAfter),
+              isNotNull(billingPaymentAttempts.debitSentAt),
+            ),
           ),
         )
         .orderBy(desc(billingPaymentAttempts.createdAt))
@@ -236,6 +253,10 @@ export async function reconcileStrandedAttempts(
   for (const row of rows) {
     summary.considered += 1;
     try {
+      // ★ The clocks below run from when money was last ASKED to move: the
+      // debit of an automatic attempt (sent a day or more after the attempt
+      // was opened), else the attempt's own start.
+      const askedAt = new Date(row.debitSentAt ?? row.createdAt).getTime();
       const res = await fetchPayments(creds, row.providerOrderId!);
       if (!res.ok) {
         // The gateway is unreachable. Not a verdict — try again next sweep.
@@ -350,12 +371,8 @@ export async function reconcileStrandedAttempts(
       const neverSent =
         row.mode === "automatic" &&
         res.data.length === 0 &&
-        new Date(row.createdAt).getTime() < autoEmptyFailBefore;
-      if (
-        declined ||
-        neverSent ||
-        new Date(row.createdAt).getTime() < failBefore
-      ) {
+        askedAt < autoEmptyFailBefore;
+      if (declined || neverSent || askedAt < failBefore) {
         // Declined, or old enough that a payment landing now would be
         // extraordinary and the gateway has told us there is none. Free the
         // invoice.

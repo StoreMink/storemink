@@ -523,6 +523,10 @@ export async function confirmInvoicePayment(input: {
  * SQL. ★ The subscription is a LEFT join wrapped in coalesce: a store with no
  * subscription row lists its invoices as before, where a bare NOT over a NULL
  * comparison would silently hide every one.
+ *
+ * ★ `autopayAt` marks an invoice whose automatic debit is scheduled (its bank
+ * notice sent, its debit not yet): the panel says so instead of asking for a
+ * payment.
  */
 export async function listPayableInvoices(
   storeId: string,
@@ -544,6 +548,19 @@ export async function listPayableInvoices(
           taxPaise: billingInvoices.taxPaise,
           taxRateBps: billingInvoices.taxRateBps,
           taxInclusive: billingInvoices.taxInclusive,
+          // ★ A scheduled automatic debit: notified, not sent yet. Formatted
+          // in SQL so it is the same ISO string whatever the driver returns
+          // for a timestamp. ⚠ The outer table is named by hand, for the
+          // reason `readNextInvoice` (cancel.ts) gives.
+          autopayAt: sql<string | null>`(
+            select to_char(min(a.debit_after) at time zone 'UTC',
+                           'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+              from public.billing_payment_attempts a
+             where a.invoice_id = "billing_invoices"."id"
+               and a.mode = 'automatic'
+               and a.state = 'processing'
+               and a.debit_after is not null
+               and a.debit_sent_at is null)`,
         })
         .from(billingInvoices)
         .leftJoin(

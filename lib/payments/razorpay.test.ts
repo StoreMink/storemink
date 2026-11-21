@@ -26,6 +26,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   rzpCreateOrder,
   rzpFetchOrderPayments,
+  rzpFetchToken,
   rzpFetchPaymentRefunds,
   rzpRefund,
   validateCredentials,
@@ -241,6 +242,67 @@ describe("rzpCreateOrder", () => {
   it("accepts exactly the ₹1 minimum", async () => {
     respond({ json: { id: "order_1" } });
     expect((await rzpCreateOrder(CREDS, { amountPaise: 100 })).ok).toBe(true);
+  });
+});
+
+// 21 Nov 2026: the order of a renewal debit. Razorpay answers the debit call
+// "The requested URL was not found on the server" unless the order was created
+// with the pre-debit notification (docs/autopay-verification.md).
+describe("★★ rzpCreateOrder for a subsequent (recurring) payment", () => {
+  it("sends payment_capture and the notification, in Razorpay's own field names", async () => {
+    const fetchMock = respond({ json: { id: "order_1" } });
+    await rzpCreateOrder(CREDS, {
+      amountPaise: 177000,
+      receipt: "sm_bill_att-1",
+      paymentCapture: true,
+      notification: { tokenId: "token_1", paymentAfterUnix: 1795413211 },
+    });
+    expect(sent(fetchMock).body).toEqual({
+      amount: 177000,
+      currency: "INR",
+      receipt: "sm_bill_att-1",
+      payment_capture: true,
+      notification: { token_id: "token_1", payment_after: 1795413211 },
+    });
+  });
+
+  it("★ an ordinary checkout order carries neither: capture stays the account's own setting", async () => {
+    const fetchMock = respond({ json: {} });
+    await rzpCreateOrder(CREDS, { amountPaise: 50000, receipt: "r1" });
+    const body = sent(fetchMock).body;
+    expect(body).not.toHaveProperty("payment_capture");
+    expect(body).not.toHaveProperty("notification");
+  });
+
+  it("payment_capture false is sent as false, not dropped", async () => {
+    const fetchMock = respond({ json: {} });
+    await rzpCreateOrder(CREDS, { amountPaise: 50000, paymentCapture: false });
+    expect(sent(fetchMock).body.payment_capture).toBe(false);
+  });
+});
+
+describe("rzpFetchToken: a mandate's state at the gateway", () => {
+  it("reads the customer's token", async () => {
+    const fetchMock = respond({
+      json: { id: "token_1", recurring_details: { status: "confirmed" } },
+    });
+    const res = await rzpFetchToken(CREDS, "cust_1", "token_1");
+    expect(sent(fetchMock).url).toBe(
+      "https://api.razorpay.com/v1/customers/cust_1/tokens/token_1",
+    );
+    expect(sent(fetchMock).init.method).toBe("GET");
+    expect(res).toMatchObject({
+      ok: true,
+      data: { recurring_details: { status: "confirmed" } },
+    });
+  });
+
+  it("★ ids are encoded, so neither can rewrite the path", async () => {
+    const fetchMock = respond({ json: {} });
+    await rzpFetchToken(CREDS, "cust/../x", "token?y=1");
+    expect(sent(fetchMock).url).toBe(
+      "https://api.razorpay.com/v1/customers/cust%2F..%2Fx/tokens/token%3Fy%3D1",
+    );
   });
 });
 

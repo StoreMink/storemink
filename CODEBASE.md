@@ -10210,6 +10210,17 @@ wholesip/
 │   │                          # renewal pending (collect.pendingReconcile), tried
 │   │                          # again next hour; with no invoice the cycle does not
 │   │                          # turn (alert 23, docs/monitoring.md).
+│   │                          # ★★ An automatic renewal is TWO steps (21 Nov 2026):
+│   │                          # collectOne asks the gateway about the mandate, issues
+│   │                          # the invoice and creates the NOTIFIED order (step 1);
+│   │                          # ★ debit-pass.ts (server-only) sendDueDebits sends each
+│   │                          # debit once its notice period has passed (step 2),
+│   │                          # after re-reading the plan, invoice, mandate and
+│   │                          # notice, behind ONE conditional claim (debit_sent_at).
+│   │                          # ★ mandate-check.ts (server-only): verifyMandate asks
+│   │                          # the gateway whether a mandate is still chargeable
+│   │                          # and brings the record in line; loadMandateRecord,
+│   │                          # isVerifiable.
 │   │                          # ★★ close-cycle.ts (server-only):
 │   │                          # closeUnreachedInvoices, ONE locking statement
 │   │                          # voiding every subscription invoice above the
@@ -10911,7 +10922,10 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0281 (0277 = Mink AI pop-out Help;
+│                              # Next free: 0282 (0281 = two-step automatic
+│                              # renewal: billing_payment_attempts.debit_after
+│                              # and debit_sent_at, their partial index and one
+│                              # Help sentence; 0277 = Mink AI pop-out Help;
 │                              # 0278 = Mink
 │                              # credits refresh on the store's own date: usage
 │                              # carry and Help sentence; 0279 = payment
@@ -24405,24 +24419,86 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       `manual-pay.test.ts`, `collect.test.ts`, `webhook.test.ts`, the billing
       cron route test and `app/api/webhooks/razorpay/route.test.ts`. No
       merchant step changes, so no Help Centre update.
-      ⚠ STILL OPEN, AND IT BLOCKS AUTOPAY: the 21 Nov 2026 test-mode run
+      ★★ THE RENEWAL DEBIT IS TWO STEPS, A NOTICE AND THEN THE DEBIT (21 Nov
+      2026, migration 0281). The 21 Nov test-mode run
       (docs/autopay-verification.md) registered a mandate through the real
       test Checkout with everything working as built, and then Razorpay
-      REFUSED the renewal debit: `POST /payments/create/recurring` answers
-      HTTP 400 "The requested URL was not found on the server." ★★ THE CAUSE
-      IS STOREMINK'S OWN FLOW, not a feature Razorpay has to enable (the first
-      reading, corrected the same day): Razorpay's subsequent-payment pages
-      require the renewal's ORDER to carry `payment_capture` and a
-      `notification` object (the pre-debit notice), and allow the debit only
-      36 hours after that notice for a card (24 for UPI). With the order
-      built that way the same endpoint answers with those rules.
-      `chargeMandateViaRazorpay` creates a plain order and debits it at once.
-      Until the renewal is rebuilt as two steps (notify, then debit after the
-      notice period) every automatic renewal is refused, and the retry rule
-      above turns that into three tries and a pay-by-hand email. Not yet
-      proven: that the debit succeeds once the 36 hours have passed (a
-      notified test order may be debited from 23 Nov 2026 11:23 IST).
-      `scripts/autopay-test-debit.mjs` (test keys only) runs either step.
+      refused the renewal debit with HTTP 400 "The requested URL was not found
+      on the server." The cause was StoreMink's own flow: Razorpay requires
+      the renewal's ORDER to carry `payment_capture` and a `notification`
+      object (the pre-debit notice), and allows the debit only 36 hours 5
+      minutes after that notice is delivered for a card (24 hours for UPI).
+      The old code created a plain order and debited it at once, so every
+      automatic renewal was refused. Rebuilt:
+      1. **Step 1, the collect pass.** `collectOne` first asks the gateway
+         whether the mandate still stands (`verifyMandate`,
+         `lib/billing/mandate-check.ts`; only a `confirmed` token may be
+         debited, and the customer can cancel or pause it at their bank), so
+         the one issue notice says "nothing to do" or "pay this" truthfully.
+         `collectInvoice` then asks `RecurringGateway.notify` for the
+         notified order and records the attempt `processing` with the order
+         id and `debit_after`. No money moves.
+      2. **Step 2, the debit pass.** `sendDueDebits`
+         (`lib/billing/debit-pass.ts`), run by the same hourly job after
+         collect and before reconcile, takes each automatic attempt whose
+         `debit_after` has passed and re-reads everything that can have
+         changed: the invoice (still owed), the plan (`cycleRefusal`: not
+         cancelled, not ended), StoreMink's mandate record, the mandate at the
+         gateway, and the notice (`readNotice`: delivered, and its period
+         passed by the gateway's own clock). Then ONE conditional write claims
+         the debit (`debit_sent_at`, set only while null), and only the
+         claimant calls `POST /payments/create/recurring`.
+      3. **A try is a notice plus a debit**, so the three tries fall about a
+         day and a half apart for a card (debits at about T-2.5d, T-1d and
+         just after T0); the invoice is `processing` meanwhile, so no grace
+         starts on a payment in flight.
+      4. **An attempt is never closed over a debit in flight.** Every write
+         that ends a notified attempt without debiting it (plan cancelled,
+         invoice closed, mandate gone, notice never delivered) moves it only
+         while `debit_sent_at` is null (`settleAttempt`'s `onlyIfUnsent`): a
+         closed attempt never reopens, so a capture arriving afterwards would
+         be ignored.
+      5. **Waiting ends.** A gateway that does not answer decides nothing for
+         that run, but a notified attempt holds its invoice `processing` and
+         so holds off grace. After `GATEWAY_SILENCE_DEADLINE_HOURS` (24) past
+         its debit time the try is failed, a notice undelivered
+         `NOTICE_DELIVERY_DEADLINE_HOURS` (12) past it likewise, and at issue
+         an unanswered mandate check holds the invoice back at most
+         `MANDATE_CHECK_HOLD_HOURS` (24) before it is issued to pay by hand.
+         ⚠ Razorpay answers a deleted mandate "The id provided does not
+         exist"; that is read as "could not be asked", never as cancelled,
+         because a wrong key or account answers the same for every mandate.
+      6. **The mandate record follows the gateway**: cancelled or rejected
+         becomes `revoked` or `failed`, expired `expired`, paused `unknown`
+         (and `active` again when resumed, unless a newer mandate took its
+         place). The call that takes it off `active` sends the "Autopay is no
+         longer active" email once (`announceAutopayStopped` with
+         `cause: "mandate"`).
+      7. **Cancelling withdraws a scheduled debit at once**
+         (`withdrawUnsentDebits`, from `cancelAtPeriodEnd`), and
+         `readNextInvoice` reads an invoice that is `processing` only for a
+         debit not yet sent as an unpaid invoice that won't be charged.
+      8. **Reconcile leaves a waiting attempt alone** and runs its 6-hour and
+         72-hour clocks from `debit_sent_at`.
+      9. **Plans & Billing** shows "Your renewal is scheduled" with "Autopay
+         on or after" the date (`PayableInvoice.autopayAt`) where it said
+         "Payment in progress"; the renewal email says the bank or card
+         issuer sends a notice first.
+
+      Tests: `debit-pass.test.ts`, `mandate-check.test.ts`, `gateway.test.ts`,
+      `collect.test.ts`, `renewal-worker.test.ts`, `reconcile.test.ts`,
+      `cancel.test.ts`, the billing cron route test,
+      `lib/payments/razorpay.test.ts`, `open-invoices.test.tsx` and the email
+      tests. Step 1 was run in Razorpay test mode through the real gateway
+      functions on 21 Nov 2026 (mandate read, notified order, notice read).
+      ⚠ NOT YET PROVEN: that the debit succeeds once the notice period has
+      passed; two notified test orders may be debited from 23 Nov 2026 11:28
+      IST with `scripts/autopay-test-debit.mjs` (test keys only).
+      ⚠ OWNER DECISIONS LEFT: mandates are registered `monthly` or `yearly`
+      against a 30-day cycle (NPCI allows one successful UPI debit per mandate
+      cycle; `as_presented` would lift that but changes the Checkout wording
+      to "anytime"), and an invoice cannot be paid by hand while its debit is
+      scheduled. Help: `0281` rewrites the invoices guide's autopay sentence.
       (A credit pack paid in a tab that then closed is settled by
       the webhook and the hourly job: `lib/ai/credit-purchase.ts`.)
 
@@ -25970,11 +26046,13 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       in `lib/payments/razorpay.ts`; runbook in `docs/autopay-verification.md`).
       The API shapes come from Razorpay's published reference (2026-08-14), not
       inference. Two things shaped it:
-      - **★ A RECURRING CHARGE IS TWO CALLS.** `/payments/create/recurring`
-        requires an `order_id`, so an order is created and then charged. The gap
-        between them is the risk — an order created and a charge we never got an
-        answer to is indistinguishable from one that worked — so every failure
-        maps deliberately and the DEFAULT is `unknown`, never `failed`. A
+      - **★ A RECURRING CHARGE IS TWO CALLS, A DAY OR MORE APART** (since 21
+        Nov 2026; see "THE RENEWAL DEBIT IS TWO STEPS" above).
+        `/payments/create/recurring` requires an `order_id` created with its
+        pre-debit `notification`, and accepts the debit only after the notice
+        period. A debit we never got an answer to is indistinguishable from
+        one that worked, so every failure maps deliberately and the DEFAULT is
+        `unknown`, never `failed`. A
         missing status is read as `created` (Razorpay documents file-based bank
         charging leaving it there), never as `captured`.
       - **★★ ₹99,999 IS RAZORPAY'S CEILING on `token.max_amount`**, and Pro
@@ -25991,12 +26069,12 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         when credentials exist. Roll back the flag on any provider-shape mismatch.
       - **★★ THE PROVIDER ORDER IS DURABLE BEFORE THE DEBIT.** Razorpay's
         published recurring API does not promise a provider-side idempotency
-        header. `collectInvoice` therefore gives the provider seam a write-once
-        recorder; `chargeMandateViaRazorpay` persists `provider_order_id` before
-        calling `/payments/create/recurring`. A timeout can then be reconciled by
-        asking for payments on that order, and failure to persist the handle
-        refuses the debit. An order-creation timeout is a known non-charge
-        because the debit endpoint was never called.
+        header. `collectInvoice` (step 1) records `provider_order_id` and
+        `debit_after` on the attempt when the notified order is created, a day
+        or more before the debit pass sends anything, and the debit pass reads
+        only attempts that carry an order. A timeout can then be reconciled by
+        asking for payments on that order. An order-creation timeout is a
+        known non-charge because the debit endpoint was never called.
       - **★★ THE AUTHORISED CEILING IS DURABLE BEFORE CHECKOUT**
         (`billing_09`). Razorpay's payment response supplies the token but not
         the `token.max_amount` shown to the merchant. The exact server-computed

@@ -976,7 +976,9 @@ a day falls in it; moving the minute only moves the check.
 
 **The response body** carries each pass's summary: `collectionSkipped`,
 `promote` (`promoted`, the GST change made current this run or null, and
-`errors`), `collect`, `reconcile` (with `completed`, closed-tab purchases
+`errors`), `collect` (with `notified`: renewals whose order and bank notice
+were created this run), `debits` (`considered`, `sent`, `waiting`, `failed`,
+`cancelled`, `errors`; see below), `reconcile` (with `completed`, closed-tab purchases
 finished this run; a recovery scan that could not be read counts in
 `reconcile.errors`, so the run answers 503), `repair` (`considered`, `issued`,
 `completed`, `filed`, `deferred`, `unissued`, `errors`, `more`), `evaluate`, `downgrade` (with `ended`, cancelling plans
@@ -987,6 +989,19 @@ advanced) and `refunds` (`repairedInvoices`, `flaggedForPerson`, `detected`,
 pass filled its batch: `collect.considered`, the evaluate outcomes, the
 downgrade outcomes (`downgraded + ended + advancedAfterGrace`) at 50, or
 `refunds.more` or `repair.more`. A backlog draining is 200, not an error.
+
+★★ **An automatic renewal is two passes of this job, a day or more apart**
+(21 Nov 2026). The collect pass creates the gateway order with its pre-debit
+notice (`collect.notified`). The debit pass (`debits`, after collect and before
+reconcile) sends the debit once the notice period has passed: `sent` counts
+debits handed to the gateway, `waiting` those not yet allowed (a notice period
+still running, or a gateway that did not answer this run), `failed` tries that
+ended (refused, a mandate gone, 24 hours of gateway silence), `cancelled`
+attempts withdrawn because their plan was cancelled or their invoice closed. A
+`debits.errors` above zero answers 503. With no gateway configured the pass is
+skipped and reports zeros. So this job must keep running hourly for a renewal
+to be collected at all: paused for two days, a notified renewal is simply
+debited late, never twice.
 
 ⚠ **`collectionSkipped` in the response body means AUTOPAY is off, not that
 billing is idle.** While the Razorpay subsequent-charge endpoint is unverified

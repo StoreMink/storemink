@@ -18,7 +18,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, CalendarClock, Loader2 } from "lucide-react";
 import {
   confirmPayInvoice,
   startPayInvoice,
@@ -35,6 +35,14 @@ import {
   istShortDate,
 } from "@/lib/billing/tax-copy";
 import { shouldOpenPayment } from "./amount-guard";
+
+/**
+ * An automatic renewal that is SCHEDULED: the bank's notice has gone out and
+ * the debit follows a day or more later. Nothing is owed by hand meanwhile.
+ */
+function isScheduled(inv: PayableInvoice): boolean {
+  return inv.status === "processing" && !!inv.autopayAt;
+}
 
 /** "1 Nov 2026 to 30 Nov 2026", in India time (GST design 7.3). */
 function period(from: string | null, to: string | null): string | null {
@@ -129,18 +137,52 @@ export function OpenInvoices({
     }
   }
 
+  // ★★ NOTHING TO PAY BY HAND WHEN EVERY INVOICE IS A SCHEDULED AUTOPAY
+  // (21 Nov 2026). An automatic renewal now waits a day or more between its
+  // bank notice and its debit, and the amber "You have an invoice to pay ...
+  // your store moves to the Free plan" would alarm a merchant whose renewal is
+  // going exactly to plan. The calm panel says what is true instead.
+  const allScheduled = invoices.every(isScheduled);
+  const owed = invoices.filter((inv) => !isScheduled(inv)).length;
+
   return (
-    <section className="rounded-xl border border-amber-300 bg-amber-50 p-6">
+    <section
+      className={
+        allScheduled
+          ? "rounded-xl border border-[#e5e7eb] bg-white p-6"
+          : "rounded-xl border border-amber-300 bg-amber-50 p-6"
+      }
+    >
       <div className="flex items-start gap-3">
-        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        {allScheduled ? (
+          <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
+        ) : (
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        )}
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-amber-900">
-            {invoices.length === 1
-              ? "You have an invoice to pay"
-              : `You have ${invoices.length} invoices to pay`}
+          <h2
+            className={
+              allScheduled
+                ? "text-base font-semibold text-[#111827]"
+                : "text-base font-semibold text-amber-900"
+            }
+          >
+            {allScheduled
+              ? "Your renewal is scheduled"
+              : owed === 1
+                ? "You have an invoice to pay"
+                : `You have ${owed} invoices to pay`}
           </h2>
-          <p className="mt-0.5 text-sm text-amber-800">
-            Unpaid by the due date, your store moves to the Free plan.
+          <p
+            className={
+              allScheduled
+                ? "mt-0.5 text-sm text-[#5b6472]"
+                : "mt-0.5 text-sm text-amber-800"
+            }
+          >
+            {allScheduled
+              ? "Your saved payment method will be charged automatically. There is nothing you need to do."
+              : "Unpaid by the due date, your store moves to the Free plan."}
           </p>
 
           <ul className="mt-4 space-y-2">
@@ -155,10 +197,15 @@ export function OpenInvoices({
               // `processing` means a payment is already with the gateway.
               // Offering "Pay" would open a second one against the same money.
               const inFlight = inv.status === "processing";
+              const scheduled = isScheduled(inv);
               return (
                 <li
                   key={inv.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-4 py-3"
+                  className={
+                    allScheduled
+                      ? "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#e5e7eb] bg-white px-4 py-3"
+                      : "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-4 py-3"
+                  }
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-[#111827]">
@@ -184,7 +231,11 @@ export function OpenInvoices({
                       </div>
                     )}
                   </div>
-                  {inFlight ? (
+                  {scheduled && inv.autopayAt ? (
+                    <span className="text-xs font-medium text-[#374151]">
+                      Autopay on or after {istShortDate(inv.autopayAt)}
+                    </span>
+                  ) : inFlight ? (
                     <span className="text-xs font-medium text-amber-700">
                       Payment in progress…
                     </span>

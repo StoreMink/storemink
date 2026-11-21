@@ -673,6 +673,81 @@ describe("★★ declaring failure", () => {
       ).toBe(0);
       expect(collect.settleAttempt).not.toHaveBeenCalled();
     });
+
+    // 21 Nov 2026: a renewal's order is created a day or more before its
+    // debit is sent, and lists no payment for all that time by design.
+    describe("★★ a notified renewal: the clocks run from when the DEBIT was sent", () => {
+      it("an attempt still waiting out its notice period is not read at all", async () => {
+        seed([]);
+        await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([]) as any,
+        });
+        const where = new PgDialect().sqlToQuery(
+          dbHolder.current.calls.where[0] as never,
+        );
+        // Either it was never a notified attempt, or its debit has been sent.
+        expect(where.sql).toContain(
+          '("billing_payment_attempts"."debit_after" is null or "billing_payment_attempts"."debit_sent_at" is not null)',
+        );
+      });
+
+      it("opened two days ago, debit sent an hour ago: not failed as never sent", async () => {
+        seed([
+          attempt({
+            mode: "automatic",
+            createdAt: hoursOld(48),
+            debitSentAt: hoursOld(1),
+          }),
+        ]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([]) as any,
+        });
+        expect(res.failed).toBe(0);
+        expect(collect.settleAttempt).not.toHaveBeenCalled();
+      });
+
+      it(`debit sent more than ${AUTO_NO_PAYMENT_FAIL_AFTER_HOURS}h ago with no payment: failed, so the next try can start`, async () => {
+        collect.settleAttempt.mockResolvedValue("failed");
+        seed([
+          attempt({
+            mode: "automatic",
+            createdAt: hoursOld(48),
+            debitSentAt: hoursOld(AUTO_NO_PAYMENT_FAIL_AFTER_HOURS + 1),
+          }),
+        ]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([]) as any,
+        });
+        expect(res.failed).toBe(1);
+      });
+
+      it(`★ a debit still pending is not given up ${FAIL_AFTER_HOURS}h after the ATTEMPT opened`, async () => {
+        // The attempt is older than the long window, but its debit went out
+        // two hours ago and the gateway lists a payment still in progress.
+        seed([
+          attempt({
+            mode: "automatic",
+            createdAt: hoursOld(FAIL_AFTER_HOURS + 5),
+            debitSentAt: hoursOld(2),
+          }),
+        ]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([
+            { id: "pay_1", status: "created", amount: 500_000 },
+          ]) as any,
+        });
+        expect(res.failed).toBe(0);
+        expect(collect.settleAttempt).not.toHaveBeenCalledWith(
+          "att-1",
+          "failed",
+          expect.anything(),
+        );
+      });
+    });
   });
 
   it("★★ an ANCIENT attempt that WAS captured is recovered, never failed", async () => {

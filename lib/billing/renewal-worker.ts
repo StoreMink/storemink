@@ -40,7 +40,6 @@ import {
 import { withService, type Db } from "@/lib/db/client";
 import {
   billingInvoices,
-  billingMandates,
   billingSubscriptions,
   planEvents,
   posShifts,
@@ -58,17 +57,22 @@ import {
   autoCollectDecision,
   collectionCutoff,
   collectionRoute,
+  collectionStartsAt,
   cycleFrom,
   graceEndsAt,
-  type MandateStatus,
 } from "./cycle";
 import { closeUnreachedInvoices } from "./close-cycle";
 import {
   automaticAttemptsOn,
   collectInvoice,
-  type ChargeFn,
   type CollectResult,
+  type RecurringGateway,
 } from "./collect";
+import {
+  isVerifiable,
+  loadMandateRecord,
+  verifyMandate,
+} from "./mandate-check";
 import {
   amountDueForInvoice,
   ensureRenewalInvoice,
@@ -129,6 +133,8 @@ function afterCursor(
 export interface RenewalSummary {
   considered: number;
   collected: number;
+  /** Renewals whose order and pre-debit notice were created this run. */
+  notified: number;
   failed: number;
   pendingReconcile: number;
   manualRequired: number;
@@ -173,7 +179,7 @@ export async function collectDueRenewals(input: {
    * open invoices, and there were none. The two must be separable, because
    * manual payment is a complete billing path on its own.
    */
-  charge: ChargeFn | null;
+  charge: RecurringGateway | null;
   /** Injected so tests need no pricing table; production passes the LIVE
    *  reader, never a cached one — this number decides a charge. */
   priceFor: (
@@ -185,6 +191,7 @@ export async function collectDueRenewals(input: {
   const summary: RenewalSummary = {
     considered: 0,
     collected: 0,
+    notified: 0,
     failed: 0,
     pendingReconcile: 0,
     manualRequired: 0,
@@ -214,6 +221,7 @@ export async function collectDueRenewals(input: {
     try {
       const result = await collectOne(row, now, input);
       if (result === "paid") summary.collected += 1;
+      else if (result === "notified") summary.notified += 1;
       else if (result === "failed") summary.failed += 1;
       else if (result === "manual") summary.manualRequired += 1;
       else summary.pendingReconcile += 1;
@@ -224,6 +232,14 @@ export async function collectDueRenewals(input: {
   }
   return summary;
 }
+
+/**
+ * How long a renewal waits for the gateway to say whether its mandate still
+ * stands before the invoice is issued anyway, as one to pay by hand. Counted
+ * from when the renewal became due (four days before the cycle), so the
+ * merchant still has three days' notice.
+ */
+export const MANDATE_CHECK_HOLD_HOURS = 24;
 
 /**
  * Which subscriptions are due for collection?
@@ -327,7 +343,7 @@ async function collectOne(
   row: DueRow,
   now: Date,
   input: {
-    charge: ChargeFn | null;
+    charge: RecurringGateway | null;
     priceFor: (
       plan: Plan,
       period: BillingPeriod,
@@ -337,7 +353,7 @@ async function collectOne(
       planLabel: string;
     }>;
   },
-): Promise<"paid" | "failed" | "manual" | "pending"> {
+): Promise<"paid" | "notified" | "failed" | "manual" | "pending"> {
   // ★★ PRICE WHAT WILL APPLY NEXT CYCLE, not what applies today. `resolveNextCycle`
   // is the ONE place scheduled plan / period / location changes are resolved, so
   // this and `advanceCycle` cannot disagree — and if they did, the merchant would
@@ -423,6 +439,48 @@ async function collectOne(
   // again.
   if (invoice.status === "processing") return "pending";
 
+  // ★★ ASK THE GATEWAY ABOUT THE MANDATE BEFORE THE INVOICE IS ISSUED
+  // (21 Nov 2026). The issue notice below says either "we'll charge your saved
+  // payment method, there's nothing you need to do" or "pay this", and it is
+  // sent exactly once. StoreMink's own record says `active` from the day the
+  // mandate was authorised, but the customer can cancel or pause it at their
+  // bank at any time, and only a `confirmed` token may be debited. So the
+  // record is brought in line FIRST (`verifyMandate`), and the notice tells
+  // the truth. ★ A gateway that could not be asked stops this run BEFORE
+  // anything is written: the invoice stays a draft and the next run asks
+  // again, so the one notice is never sent on a guess.
+  //
+  // ★★ BUT NOT FOR EVER (`MANDATE_CHECK_HOLD_HOURS`). The invoice is what
+  // every later step hangs on: with none, the cycle turn has nothing unpaid
+  // to open grace on, and the store keeps its plan for nothing (that happened
+  // until 2026-08-13 for another reason). And "could not be asked" can be
+  // permanent: Razorpay answers a mandate that was deleted with a plain "the
+  // id provided does not exist", which is not a verdict this code will act on
+  // (a wrong key or account answers the same for EVERY mandate, and treating
+  // it as "cancelled" would switch autopay off for every store at once). So
+  // after a day of no answer the invoice is issued as one to pay by hand,
+  // the mandate's record untouched; if the gateway answers later, the retry
+  // check below lets autopay collect it after all.
+  let mandate = await loadMandateRecord(row.mandateId);
+  let mandateUnverified = false;
+  if (!invoice.finalizedAt && input.charge && isVerifiable(mandate)) {
+    const verdict = await verifyMandate(mandate!, input.charge, now);
+    if (verdict.result === "unknown") {
+      const holdUntil =
+        collectionStartsAt(periodStart).getTime() +
+        MANDATE_CHECK_HOLD_HOURS * 3_600_000;
+      if (now.getTime() < holdUntil) return "pending";
+      mandateUnverified = true;
+      logWarn("billing.renewal_mandate_unverified", {
+        storeId: row.storeId,
+        invoiceId: invoice.id,
+        mandateId: mandate!.id,
+      });
+    } else {
+      mandate = verdict.mandate;
+    }
+  }
+
   // ★ Finalize BEFORE charging. The document number is what the merchant is
   // being asked to pay against, and the pre-debit notification quotes it.
   // ★ Issuing goes through `issueInvoice`, which reads the tax again at issue
@@ -468,13 +526,12 @@ async function collectOne(
   // ★★ LOADED BEFORE THE NOTICE, NOT AFTER. The email says either "there's
   // nothing you need to do" or "pay this" — and getting that wrong in the
   // reassuring direction is how a merchant does nothing and loses their plan.
-  const mandate = await loadMandate(row.mandateId);
   const route = collectionRoute({
     mandateStatus: mandate?.status ?? null,
     mandateMaxPaise: mandate?.maxAmountPaise ?? null,
     totalPaise: amountDue,
   });
-  const willAutoCollect = !!input.charge && route.auto;
+  const willAutoCollect = !!input.charge && route.auto && !mandateUnverified;
 
   // ★★ THE REASON WAS COMPUTED AND THROWN AWAY. `collectionRoute` has always
   // said WHY a renewal cannot be auto-collected, `collectInvoice` returned it,
@@ -531,11 +588,22 @@ async function collectOne(
   // so every attempt would sit in reconciliation forever.
   if (!input.charge) return "manual";
 
-  // ★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY HAND
-  // (owner decision, 21 Nov 2026; the rule is `autoCollectDecision`). This
-  // pass re-reads the same subscription every hour from T-4d until its cycle
-  // turns or its grace ends, and a declined debit leaves the invoice `open`,
-  // so without this every run debited the mandate again: about 140 times.
+  // The merchant has just been told to pay this one by hand, because the
+  // gateway would not say whether the mandate still stands. No automatic try
+  // on this run; a later run asks again (the retry check below).
+  if (mandateUnverified) return "manual";
+
+  // ★★ THREE AUTOMATIC TRIES, AT LEAST 24 HOURS APART, THEN THE MERCHANT PAYS
+  // BY HAND (owner decision, 21 Nov 2026; the rule is `autoCollectDecision`).
+  // This pass re-reads the same subscription every hour from T-4d until its
+  // cycle turns or its grace ends, and a failed debit leaves the invoice
+  // `open`, so without this every run started another try.
+  // ★ A try is now a notified order and, a day or more later, its debit
+  // (`collectInvoice`, then lib/billing/debit-pass.ts). The next try cannot
+  // start until this one has failed, so for a card the tries fall about a day
+  // and a half apart: T-4d, T-2.5d, T-1d, the last debit landing just after
+  // the cycle turns (the invoice is `processing` then, so no grace opens on a
+  // payment still in flight).
   // Asked only when the debit would really be sent; an invoice that cannot be
   // collected automatically is answered by `collectInvoice` as before.
   // ★ A count that could not be read is "leave it this run", never "no tries
@@ -554,6 +622,33 @@ async function collectOne(
     if (decision === "exhausted") return "manual";
     if (decision === "wait") return "pending";
     triesBefore = history.count;
+
+    // ★★ A RETRY ASKS THE GATEWAY ABOUT THE MANDATE AGAIN. The check above
+    // ran when the invoice was issued, days ago for a second or third try,
+    // and a declined debit is exactly when a customer goes and cancels the
+    // mandate. (On the run that issued the invoice it was asked moments ago.)
+    // ★ Also the FIRST try of an invoice that was issued to pay by hand
+    // because the gateway would not answer (above): it is asked again here,
+    // and autopay collects only on a clear yes.
+    if (!justIssued && isVerifiable(mandate)) {
+      const verdict = await verifyMandate(mandate!, input.charge, now);
+      if (verdict.result === "unknown") return "pending";
+      if (verdict.result === "unusable") {
+        // No later try can succeed. Say so once, at the moment the record
+        // changed, so the merchant is not left waiting on a debit that is
+        // never coming.
+        if (verdict.changed) {
+          await announceAutopayStopped({
+            storeId: row.storeId,
+            invoiceId: invoice.id,
+            cause: "mandate",
+            now,
+          });
+        }
+        return "manual";
+      }
+      mandate = verdict.mandate;
+    }
   }
 
   const outcome = await collectInvoice({
@@ -566,9 +661,9 @@ async function collectOne(
     now,
   });
 
-  // ★ The last try has just failed: say so once, now, while there is still
-  // time to pay before the cycle turns. A try that fails later at the bank is
-  // announced by reconciliation, which is what records that failure.
+  // ★ The last try has just failed at its first step (the gateway refused the
+  // notified order): say so once, now. A try that fails at its debit is
+  // announced by the debit pass or by reconciliation, whichever records it.
   if (
     outcome.status === "failed" &&
     triesBefore + 1 >= AUTO_COLLECT_MAX_ATTEMPTS
@@ -580,7 +675,7 @@ async function collectOne(
     });
   }
 
-  return classify(outcome);
+  return outcome.status === "notified" ? "notified" : classify(outcome);
 }
 
 /**
@@ -600,6 +695,14 @@ async function collectOne(
 export async function announceAutopayStopped(input: {
   storeId: string;
   invoiceId: string;
+  /**
+   * `exhausted` (the default): every automatic try was used.
+   * `mandate`: the mandate itself can no longer be charged (the customer
+   * cancelled or paused it), so the tries left are worth nothing. The caller
+   * passes this only on the call that recorded the mandate as unusable, which
+   * is what keeps it to one message.
+   */
+  cause?: "exhausted" | "mandate";
   now?: Date;
 }): Promise<boolean> {
   const now = input.now ?? new Date();
@@ -610,8 +713,12 @@ export async function announceAutopayStopped(input: {
       return false;
     }
 
+    const cause = input.cause ?? "exhausted";
     const history = await automaticAttemptsOn(input.invoiceId);
-    if (!history || history.count < AUTO_COLLECT_MAX_ATTEMPTS) return false;
+    if (!history) return false;
+    if (cause === "exhausted" && history.count < AUTO_COLLECT_MAX_ATTEMPTS) {
+      return false;
+    }
 
     const [sub] = await withService((db) =>
       db
@@ -636,6 +743,7 @@ export async function announceAutopayStopped(input: {
       dueAt: invoice.periodStart ? new Date(invoice.periodStart) : null,
       invoiceRef: invoice.invoiceRef,
       attempts: history.count,
+      cause,
       now,
     });
     return true;
@@ -713,39 +821,11 @@ export function classify(
       return "manual";
     case "already_in_flight":
     case "pending_reconcile":
+    // The notified order is in place; its debit comes a day or more later.
+    case "notified":
       return "pending";
     default:
       return "pending";
-  }
-}
-
-async function loadMandate(mandateId: string | null) {
-  if (!mandateId) return null;
-  try {
-    return await withService(async (db) => {
-      const [row] = await db
-        .select({
-          id: billingMandates.id,
-          status: billingMandates.status,
-          maxAmountPaise: billingMandates.maxAmountPaise,
-          providerTokenId: billingMandates.providerTokenId,
-          providerCustomerId: billingMandates.providerCustomerId,
-        })
-        .from(billingMandates)
-        .where(eq(billingMandates.id, mandateId))
-        .limit(1);
-      if (!row) return null;
-      return {
-        id: row.id,
-        status: row.status as MandateStatus,
-        maxAmountPaise: row.maxAmountPaise,
-        providerTokenId: row.providerTokenId,
-        providerCustomerId: row.providerCustomerId,
-      };
-    });
-  } catch (err) {
-    logError("billing.renewal.load_mandate", err, { mandateId });
-    return null;
   }
 }
 

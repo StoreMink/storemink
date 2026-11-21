@@ -153,6 +153,8 @@ export async function notifyAutopayStopped(input: {
   dueAt: Date | null;
   invoiceRef: string | null;
   attempts: number;
+  /** Why autopay stopped: every try used, or the mandate itself is gone. */
+  cause?: "exhausted" | "mandate";
   now?: Date;
 }): Promise<void> {
   try {
@@ -173,6 +175,7 @@ export async function notifyAutopayStopped(input: {
         payBy,
         invoiceRef: input.invoiceRef,
         attempts: input.attempts,
+        cause: input.cause ?? "exhausted",
         manageUrl: manageUrl(to.slug),
       }),
       input.storeId,

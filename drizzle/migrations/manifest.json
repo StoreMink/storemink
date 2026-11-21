@@ -10846,6 +10846,35 @@
       "applyVerify": {
         "queries": []
       }
+    },
+    {
+      "id": "20261122_0281_autopay_two_step_debit",
+      "description": "The renewal debit as two steps: adds billing_payment_attempts.debit_after (the earliest instant a notified order may be debited) and debit_sent_at (the claim taken before the debit call), with a partial index for the hourly debit pass. Help Centre: one sentence of the invoices guide corrected in place (a notice before each automatic renewal; up to three tries over the following days).",
+      "file": "sql/20261122_0281_autopay_two_step_debit.sql",
+      "transaction": true,
+      "requires": ["20261121_0280_orders_razorpay_key_id"],
+      "verify": {
+        "columns": [
+          "billing_payment_attempts.debit_after",
+          "billing_payment_attempts.debit_sent_at"
+        ],
+        "queries": [
+          {
+            "name": "the debit pass has its partial index",
+            "sql": "select count(*)::text from pg_indexes where schemaname='public' and indexname='billing_payment_attempts_debit_due_idx'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the invoices guide says a notice comes before each automatic renewal",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%StoreMink tries up to three times over the following days, with a new notice each time%' and body not like '%tries up to three times, a day apart%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

@@ -31,6 +31,30 @@ export interface RzpOrder {
   /** How many times a payment has been tried against this order. 0 = untouched. */
   attempts?: number | null;
   amount_paid?: number | null;
+  /**
+   * The pre-debit notification of a recurring (subsequent) payment's order.
+   * Present only when the order was created with one.
+   */
+  notification?: RzpOrderNotification | null;
+}
+
+/**
+ * The pre-debit notice Razorpay sends the customer for one recurring debit.
+ *
+ * ★ Read back from the ORDER (`GET /orders/:id`), observed in test mode on
+ * 21 Nov 2026: `status` is `created` when the order is made and `delivered`
+ * about a minute later, with `delivered_at` set. The debit is allowed only
+ * once the notice period has passed since delivery.
+ */
+export interface RzpOrderNotification {
+  id?: string;
+  token_id?: string;
+  /** Unix SECONDS: the earliest instant the debit may be attempted. */
+  payment_after?: number | null;
+  /** `created` until Razorpay has sent it, then `delivered`. */
+  status?: string | null;
+  /** Unix SECONDS: when the customer was sent the notice. */
+  delivered_at?: number | null;
 }
 
 export interface RzpPayment {
@@ -106,6 +130,21 @@ export async function rzpCreateOrder(
     amountPaise: number;
     receipt?: string;
     notes?: Record<string, string>;
+    /**
+     * Capture the payment automatically. Sent ONLY when given: an ordinary
+     * checkout order leaves capture to the account's own setting, as before.
+     * Razorpay's reference marks it mandatory on the order of a subsequent
+     * (recurring) payment.
+     */
+    paymentCapture?: boolean;
+    /**
+     * The pre-debit notification of a subsequent (recurring) payment: which
+     * mandate token will be debited, and the earliest instant of the debit in
+     * Unix SECONDS. Razorpay sends the customer the notice when the order is
+     * created. ★ Without this object the debit call is answered "The requested
+     * URL was not found on the server" (docs/autopay-verification.md).
+     */
+    notification?: { tokenId: string; paymentAfterUnix: number };
   },
 ): Promise<RzpResult<RzpOrder>> {
   if (!Number.isInteger(params.amountPaise) || params.amountPaise < 100) {
@@ -123,6 +162,17 @@ export async function rzpCreateOrder(
       currency: "INR",
       receipt: params.receipt,
       notes: params.notes,
+      ...(params.paymentCapture === undefined
+        ? {}
+        : { payment_capture: params.paymentCapture }),
+      ...(params.notification
+        ? {
+            notification: {
+              token_id: params.notification.tokenId,
+              payment_after: params.notification.paymentAfterUnix,
+            },
+          }
+        : {}),
     }),
   });
 }
@@ -259,11 +309,13 @@ export interface RzpRecurringPayment {
 /**
  * Charge an existing mandate — the SUBSEQUENT payment.
  *
- * ★★ IT NEEDS AN ORDER FIRST. `POST /payments/create/recurring` takes an
- * `order_id`, so a charge is TWO calls: create the order, then charge it. The
- * caller (lib/billing/gateway.ts) does both and treats a failure between them
- * as UNKNOWN, because an order with no payment is indistinguishable from a
- * payment we never read.
+ * ★★ IT NEEDS AN ORDER FIRST, AND THE ORDER NEEDS ITS PRE-DEBIT NOTICE.
+ * `POST /payments/create/recurring` takes an `order_id`, and Razorpay accepts
+ * the debit only for an order created with a `notification` object, and only
+ * once the notice period has passed since that notice was delivered (36 hours
+ * 5 minutes for a card, 24 hours for UPI). So a renewal is TWO calls a day or
+ * more apart: `rzpCreateOrder` with `notification`, then this. The caller
+ * (lib/billing/gateway.ts) owns both steps.
  *
  * ★ `email` and `contact` are MANDATORY per the API reference, which is why the
  * mandate stores the customer id and the caller resolves the billing contact.
@@ -301,6 +353,40 @@ export async function rzpChargeMandate(
       notes: params.notes,
     }),
   });
+}
+
+/** A registered mandate, as `GET /customers/:id/tokens/:token_id` returns it. */
+export interface RzpToken {
+  id: string;
+  method?: string | null;
+  recurring?: boolean | null;
+  /**
+   * The mandate's own state. Razorpay's reference: `initiated`, `confirmed`,
+   * `rejected`, `cancelled`, `paused` (UPI also shows `cancellation_initiated`
+   * while NPCI confirms a closure), and "Only tokens in the confirmed state
+   * can be used to execute subsequent payments."
+   */
+  recurring_details?: {
+    status?: string | null;
+    failure_reason?: string | null;
+  } | null;
+  /** The mandate's ceiling, in paise. */
+  max_amount?: number | null;
+  /** Unix SECONDS: "The token expiry date timestamp." */
+  expired_at?: number | null;
+}
+
+/** One mandate token of a customer, with its current state at the gateway. */
+export async function rzpFetchToken(
+  creds: RazorpayCreds,
+  customerId: string,
+  tokenId: string,
+): Promise<RzpResult<RzpToken>> {
+  return rzpFetch<RzpToken>(
+    creds,
+    `/customers/${encodeURIComponent(customerId)}/tokens/${encodeURIComponent(tokenId)}`,
+    { method: "GET" },
+  );
 }
 
 export interface RzpPaymentDetail {

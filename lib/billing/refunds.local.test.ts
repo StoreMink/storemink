@@ -266,7 +266,7 @@ vi.mock("./renewal-worker", async (importOriginal) => {
 import { deleteStore } from "@/app/actions/platform";
 import { sendEmail } from "@/lib/email/send";
 import { logError } from "@/lib/observability/logger";
-import type { ChargeFn } from "./collect";
+import type { RecurringGateway } from "./collect";
 import { issueCreditNote } from "./credit-note-store";
 import { confirmEnrolment, startEnrolment } from "./enrol";
 import { finalizeInvoiceClaimed } from "./invoice-store";
@@ -1424,16 +1424,23 @@ describe.skipIf(!enabled)(
       }, 30_000);
 
       it("collection starts no new attempt, and the cycle turn advances", async () => {
-        const charge = vi.fn<ChargeFn>(async () => {
+        const refuse = async (): Promise<never> => {
           throw new Error("A paid renewal must not be charged again.");
-        });
+        };
+        const charge = {
+          checkMandate: vi.fn<RecurringGateway["checkMandate"]>(refuse),
+          notify: vi.fn<RecurringGateway["notify"]>(refuse),
+          readNotice: vi.fn<RecurringGateway["readNotice"]>(refuse),
+          debit: vi.fn<RecurringGateway["debit"]>(refuse),
+        };
         const collect = await collectDueRenewals({
           now: NOW,
           charge,
           priceFor,
         });
         expect(collect.errors).toBe(0);
-        expect(charge).not.toHaveBeenCalled();
+        expect(charge.notify).not.toHaveBeenCalled();
+        expect(charge.debit).not.toHaveBeenCalled();
         expect(
           await count(
             "select count(*) as n from public.billing_payment_attempts where invoice_id = $1",

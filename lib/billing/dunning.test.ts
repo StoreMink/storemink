@@ -234,6 +234,18 @@ describe("notifyAutopayStopped: asking the merchant to pay by hand", () => {
     expect(mail.sendBillingEmail).toHaveBeenCalledTimes(1);
   });
 
+  it("★ says WHY: every try used by default, or the mandate itself is gone", async () => {
+    await notifyAutopayStopped(args);
+    expect(mail.autopayStoppedTemplate.mock.calls[0][0].cause).toBe(
+      "exhausted",
+    );
+    await notifyAutopayStopped({ ...args, attempts: 1, cause: "mandate" });
+    expect(mail.autopayStoppedTemplate.mock.calls[1][0]).toMatchObject({
+      cause: "mandate",
+      attempts: 1,
+    });
+  });
+
   it("★ names no pay-by day once the cycle has already turned", async () => {
     await notifyAutopayStopped({
       ...args,

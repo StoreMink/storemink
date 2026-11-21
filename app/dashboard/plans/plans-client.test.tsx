@@ -651,6 +651,7 @@ describe("paying an open invoice (design 8.4)", () => {
     taxPaise: 0,
     taxRateBps: null,
     taxInclusive: false,
+    autopayAt: null,
   };
 
   async function refusedWith(error: string) {

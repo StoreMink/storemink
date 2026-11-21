@@ -755,6 +755,22 @@ export const billingPaymentAttempts = pgTable(
      *  ordinary/manual payments. Persisted before checkout so confirmation can
      *  activate the token with the ceiling the merchant actually authorised. */
     mandateMaxPaise: bigint("mandate_max_paise", { mode: "number" }),
+    /**
+     * An AUTOMATIC attempt's two-step debit (0281). Razorpay accepts a
+     * renewal debit only for an order created with a pre-debit notification,
+     * and only once the notice period has passed. `debitAfter` is the earliest
+     * instant the debit may be sent, set when the notified order is created;
+     * `debitSentAt` is the claim taken just before the debit call, so one
+     * attempt can never send two. Both null on every manual checkout.
+     */
+    debitAfter: timestamp("debit_after", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    debitSentAt: timestamp("debit_sent_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     failureCode: text("failure_code"),
     failureReason: text("failure_reason"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
@@ -778,6 +794,12 @@ export const billingPaymentAttempts = pgTable(
       .using("btree", table.updatedAt.asc().nullsLast().op("timestamptz_ops"))
       .where(
         sql`(state = ANY (ARRAY['processing'::text, 'authorized'::text, 'unknown'::text]))`,
+      ),
+    // The debit pass's scan: attempts notified and still waiting to be debited.
+    index("billing_payment_attempts_debit_due_idx")
+      .using("btree", table.debitAfter.asc().nullsLast().op("timestamptz_ops"))
+      .where(
+        sql`((debit_after IS NOT NULL) AND (debit_sent_at IS NULL) AND (state = 'processing'::text))`,
       ),
     // ★★ Three clicks on Pay, or a retry racing a manual payment, cannot make
     // two in-flight attempts — the second INSERT fails (§28, §36).

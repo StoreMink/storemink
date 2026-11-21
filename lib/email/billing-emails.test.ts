@@ -1200,6 +1200,33 @@ describe("autopayStoppedTemplate: automatic collection stopped, pay by hand", ()
     expect(e.html).toContain(MANAGE);
   });
 
+  // 21 Nov 2026: the mandate itself was cancelled or paused at the bank, so
+  // counting tries would be untrue (there may have been none).
+  it("★★ a mandate that is gone says so, and never counts tries", () => {
+    const e = autopayStoppedTemplate({
+      ...base,
+      attempts: 0,
+      cause: "mandate",
+      payBy: "2026-11-07T06:30:00.000Z",
+    });
+    expect(e.subject).toBe("Action needed: pay ₹2,400 for your Pro plan");
+    expect(e.html).toContain("Autopay is no longer active");
+    expect(e.html).toContain(
+      "has been cancelled or paused with your bank or card",
+    );
+    expect(e.html).not.toContain("We tried");
+    expect(e.html).not.toContain("0 times");
+    expect(e.html).toContain("7 Nov 2026");
+    expect(e.html).toContain("Pay now");
+    expect(e.subject + e.html).not.toContain("\u2014");
+  });
+
+  it("with no cause given it is the tries-used message", () => {
+    const e = autopayStoppedTemplate({ ...base, payBy: null });
+    expect(e.html).toContain("Automatic payment didn&#39;t go through");
+    expect(e.html).not.toContain("Autopay is no longer active");
+  });
+
   it("★ after the renewal day it names no date, only what an unpaid renewal leads to", () => {
     const e = autopayStoppedTemplate({ ...base, payBy: null });
     expect(e.html).not.toContain("Pay by");

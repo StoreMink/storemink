@@ -26,10 +26,13 @@ const worker = vi.hoisted(() => ({
 vi.mock("@/lib/billing/renewal-worker", () => worker);
 
 const gateway = vi.hoisted(() => ({
-  getRecurringCharge: vi.fn(),
+  getRecurringGateway: vi.fn(),
   chargeUnavailableReason: vi.fn(),
 }));
 vi.mock("@/lib/billing/gateway", () => gateway);
+
+const debitPass = vi.hoisted(() => ({ sendDueDebits: vi.fn() }));
+vi.mock("@/lib/billing/debit-pass", () => debitPass);
 
 const recon = vi.hoisted(() => ({
   reconcileStrandedAttempts: vi.fn(),
@@ -70,11 +73,27 @@ function req(auth?: string) {
 const EMPTY_COLLECT = {
   considered: 0,
   collected: 0,
+  notified: 0,
   failed: 0,
   pendingReconcile: 0,
   manualRequired: 0,
   errors: 0,
   next: null as { at: string; storeId: string } | null,
+};
+const EMPTY_DEBITS = {
+  considered: 0,
+  sent: 0,
+  waiting: 0,
+  failed: 0,
+  cancelled: 0,
+  errors: 0,
+};
+/** The four calls an automatic renewal is made of (lib/billing/collect.ts). */
+const GATEWAY = {
+  checkMandate: vi.fn(),
+  notify: vi.fn(),
+  readNotice: vi.fn(),
+  debit: vi.fn(),
 };
 const EMPTY_EVAL = {
   advanced: 0,
@@ -151,8 +170,9 @@ beforeEach(() => {
     settled: 0,
     errors: 0,
   });
-  gateway.getRecurringCharge.mockReturnValue(vi.fn());
+  gateway.getRecurringGateway.mockReturnValue(GATEWAY);
   gateway.chargeUnavailableReason.mockReturnValue(null);
+  debitPass.sendDueDebits.mockResolvedValue({ ...EMPTY_DEBITS });
   pricing.getPlanPricingLive.mockResolvedValue({
     free: { monthlyInr: 0, yearlyInr: 0 },
     basic: { monthlyInr: 1500, yearlyInr: 15000 },
@@ -238,7 +258,7 @@ describe("the three passes", () => {
 
 describe("★ collection with no gateway configured", () => {
   beforeEach(() => {
-    gateway.getRecurringCharge.mockReturnValue(null);
+    gateway.getRecurringGateway.mockReturnValue(null);
     gateway.chargeUnavailableReason.mockReturnValue("endpoint not verified");
   });
 
@@ -265,6 +285,12 @@ describe("★ collection with no gateway configured", () => {
     expect(body.collect).not.toBeNull();
   });
 
+  it("★ sends no debit: there is no gateway to send one through", async () => {
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(debitPass.sendDueDebits).not.toHaveBeenCalled();
+    expect(body.debits).toEqual(EMPTY_DEBITS);
+  });
+
   it("★ still 200s — an unconfigured gateway is not an outage", async () => {
     expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(200);
   });
@@ -273,6 +299,59 @@ describe("★ collection with no gateway configured", () => {
     await GET(req(`Bearer ${SECRET}`));
     expect(worker.evaluateCycleTurns).toHaveBeenCalled();
     expect(worker.downgradeExpired).toHaveBeenCalled();
+  });
+});
+
+// 21 Nov 2026: an automatic renewal is two steps. The collect pass creates the
+// order with its pre-debit notice; a day or more later this pass sends the
+// debit.
+describe("★★ the debit pass: step 2 of an automatic renewal", () => {
+  it("runs with the same gateway and the same clock as the collect pass", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(debitPass.sendDueDebits).toHaveBeenCalledTimes(1);
+    const input = debitPass.sendDueDebits.mock.calls[0][0];
+    expect(input.gateway).toBe(GATEWAY);
+    expect(input.now).toBe(worker.collectDueRenewals.mock.calls[0][0].now);
+    expect(worker.collectDueRenewals.mock.calls[0][0].charge).toBe(GATEWAY);
+  });
+
+  it("★ runs AFTER collect and BEFORE reconcile", async () => {
+    // After collect, so a renewal notified in this run is never also debited
+    // in it. Before reconcile, so a debit sent now is read back by the next
+    // run, when the gateway has had time to settle it.
+    await GET(req(`Bearer ${SECRET}`));
+    const debitAt = debitPass.sendDueDebits.mock.invocationCallOrder[0];
+    expect(worker.collectDueRenewals.mock.invocationCallOrder[0]).toBeLessThan(
+      debitAt,
+    );
+    expect(debitAt).toBeLessThan(
+      recon.reconcileStrandedAttempts.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reports what it did", async () => {
+    debitPass.sendDueDebits.mockResolvedValue({
+      ...EMPTY_DEBITS,
+      considered: 4,
+      sent: 2,
+      waiting: 1,
+      cancelled: 1,
+    });
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(body.debits).toMatchObject({ sent: 2, waiting: 1, cancelled: 1 });
+    expect(body.ok).toBe(true);
+  });
+
+  it("★ 503s when a debit could not be handled, so Scheduler runs it again", async () => {
+    debitPass.sendDueDebits.mockResolvedValue({ ...EMPTY_DEBITS, errors: 1 });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(503);
+    expect((await res.json()).ok).toBe(false);
+  });
+
+  it("a debit the gateway refused is an outcome, not an error", async () => {
+    debitPass.sendDueDebits.mockResolvedValue({ ...EMPTY_DEBITS, failed: 3 });
+    expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(200);
   });
 });
 
@@ -380,7 +459,7 @@ describe("★★ reconciliation", () => {
   it("runs even when the gateway charge is unavailable", async () => {
     // Reconciliation reads the VERIFIED order endpoint, not the recurring one —
     // so it works today, when nothing can be charged automatically.
-    gateway.getRecurringCharge.mockReturnValue(null);
+    gateway.getRecurringGateway.mockReturnValue(null);
     gateway.chargeUnavailableReason.mockReturnValue("not verified");
     await GET(req(`Bearer ${SECRET}`));
     expect(recon.reconcileStrandedAttempts).toHaveBeenCalled();

@@ -122,10 +122,13 @@ store and confirm:
       unexpected fields). (21 Nov 2026, test mode, card rail.)
 - [x] Standard Checkout receives the same `customer_id` and explicit
       `recurring: true` for a mandate order (pinned by client regression test).
-- [ ] `POST /payments/create/recurring` against a confirmed token returns
-      `razorpay_payment_id`. **★★ NOT YET, 21 Nov 2026: StoreMink's order
-      lacks the pre-debit `notification` Razorpay requires, and a debit is
-      allowed only 36 hours after it. See the run below.**
+- [x] `POST /orders` with `payment_capture` and `notification` returns an
+      order whose notice is delivered about a minute later. (21 Nov 2026,
+      test mode, through `razorpayRecurringGateway.notify`.)
+- [ ] `POST /payments/create/recurring` on that order, once its notice period
+      has passed, returns `razorpay_payment_id`. **★★ NOT YET PROVEN: the
+      first notified test orders can be debited from 23 Nov 2026, 11:28 IST.
+      See the run below.**
 - [ ] Note the exact `status` values you see. If any is outside
       `mapGatewayStatus`'s list, add it there — an unrecognised status resolves
       to `unknown`, which is safe but leaves the invoice for reconciliation.
@@ -202,30 +205,113 @@ node scripts/autopay-test-debit.mjs \
 The script refuses anything but an `rzp_test_` key. `--notify true` creates a
 fresh notified order when that one has been used.
 
-**What this means today.** A merchant can subscribe and authorise autopay, and
-the first payment is taken. At renewal every automatic debit is refused before
-it reaches a bank. With the retry rule that is three refused tries and then
-the "Automatic payment didn't go through" email asking them to pay the invoice
-by hand, which works. Nobody is charged twice and nobody loses a plan they pay
-for, but **autopay collects nothing until the renewal is rebuilt as the two
-documented steps.**
+**What it meant on 21 Nov.** A merchant could subscribe and authorise
+autopay, and the first payment was taken. At renewal every automatic debit was
+refused before it reached a bank, and after three refused tries the merchant
+was emailed to pay the invoice by hand. Nobody was charged twice and nobody
+lost a plan they paid for, but autopay collected nothing.
 
-**What the rebuild has to decide** (not built; needs the owner):
+### 21 Nov 2026: the renewal rebuilt as Razorpay's two steps
 
-- The renewal pass already starts four days before the cycle turns, which is
-  room for one notice and one debit. A retry needs a NEW notification and
-  another 36 hours (Razorpay's cards page: no retry of a failed debit when the
-  notification object is used), so "three tries, 24 hours apart" cannot hold
-  for cards as written.
-- Razorpay's UPI page says NPCI allows one successful debit on a token per
-  billing cycle, and StoreMink's 30-day cycle drifts against a monthly
-  mandate. Whether two renewals can ever fall in one of the mandate's cycles
-  has to be checked, or the mandate registered with a frequency that allows
-  it.
-- Whether the support request to Razorpay is still needed. It asked for the
-  Recurring Payments API to be enabled; the endpoint already answers, so the
-  useful question for them is why an order with no `notification` is answered
-  with "URL not found".
+Built on branch `fixes` (migration `0281`), from Razorpay's "create subsequent
+payments" pages for cards and UPI.
+
+**Step 1, the collect pass (`collectInvoice`, `lib/billing/collect.ts`).**
+Four days before the cycle begins the hourly job issues the invoice and, when
+it can be collected automatically, creates the order with
+`payment_capture: true` and `notification { token_id, payment_after }`. That
+is the pre-debit notice: Razorpay sends it to the customer. The attempt is
+recorded as `processing` with the order id and `debit_after`, the earliest
+instant the debit may be sent. No money moves.
+
+**Step 2, the debit pass (`sendDueDebits`, `lib/billing/debit-pass.ts`).** The
+same hourly job comes back once `debit_after` has passed and, in this order:
+
+1. checks the invoice is still owed and its cycle is one the store will enter
+   (a cancelled plan's is not);
+2. checks StoreMink still holds the mandate as `active`;
+3. asks the gateway whether the mandate is still chargeable (`verifyMandate`:
+   only a `confirmed` token may be debited);
+4. reads the order's `notification` back: delivered, and the notice period
+   passed by the gateway's own clock (36 hours 5 minutes after delivery for a
+   card, 24 hours for UPI, plus a 5 minute margin);
+5. claims the debit (one conditional write of `debit_sent_at`) and only then
+   calls `POST /payments/create/recurring`.
+
+**The rules it holds:**
+
+| Rule                                                    | How                                                                                                                                                                                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One attempt gets at most one debit                      | `debit_sent_at` is set only while it is null; two runs cannot both win it                                                                                                                                                                   |
+| A cancelled plan is never debited                       | cancelling withdraws the scheduled debit at once, and the debit pass re-reads the cancellation, the invoice and the mandate before every debit                                                                                              |
+| A mandate the customer cancelled or paused is not tried | the gateway is asked before the invoice is issued (so the one issue notice says "pay this", not "nothing to do"), before every retry and before every debit; StoreMink's record follows (`revoked`, `expired`, `failed`, paused: `unknown`) |
+| An unknown outcome is never a failure                   | a throw, a timeout or a 5xx on the debit leaves the attempt `unknown`; reconciliation reads the order                                                                                                                                       |
+| An attempt is never closed over a debit in flight       | every write that ends a notified attempt without debiting it is conditional on `debit_sent_at` still being null                                                                                                                             |
+| Waiting ends                                            | a gateway silent for 24 hours fails the try (debit pass) or issues the invoice to pay by hand (collect pass); a notice undelivered 12 hours past its debit time fails the try                                                               |
+| Reconciliation does not fail a waiting attempt          | attempts still inside their notice period are not read; its clocks run from `debit_sent_at`                                                                                                                                                 |
+
+**Retries.** Still three automatic tries, then the merchant is asked to pay by
+hand (owner's rule, 21 Nov). Each try now needs its own notice, so for a card
+the tries fall about a day and a half apart, not 24 hours: notice at T-4d and
+debit at about T-2.5d, a second debit at about T-1d, and the third just after
+the cycle turns. The invoice is `processing` while a try is under way, so no
+grace starts on a payment still in flight.
+
+**What the merchant sees.** Plans & Billing shows "Your renewal is scheduled"
+with "Autopay on or after <date>" while a debit is waiting out its notice,
+where it used to say "Payment in progress". The renewal email says the bank or
+card issuer will send a notice first. A mandate cancelled at the bank gets the
+"Autopay is no longer active" email once.
+
+**Checked in test mode on 21 Nov 2026, through the real gateway functions:**
+
+- `checkMandate` on the confirmed test token: `chargeable`.
+- `notify`: an order with its notification, `debit_after` 36.5 hours ahead
+  (the request asks 36 h 30 min so Razorpay's own 36 h 5 min floor is never
+  missed).
+- `readNotice` at once: `undelivered`. After 75 seconds: `wait` until
+  delivery + 36 h 5 min + the 5 minute margin.
+- A token id that does not exist: HTTP 400 "The id provided does not exist".
+  `checkMandate` reads that as `unknown`, on purpose: a wrong key or account
+  answers the same for every mandate, and acting on it as "cancelled" would
+  switch autopay off for every store at once. The bounded waits above are what
+  end it.
+
+**★★ Still not proven: that the debit SUCCEEDS after the notice period.** Two
+notified test orders are waiting:
+
+| Order                  | May be debited from               |
+| ---------------------- | --------------------------------- |
+| `order_U2tkdTXDXc6hig` | 23 Nov 2026 05:58 UTC (11:28 IST) |
+| `order_U2uKXBRjzCck0D` | 23 Nov 2026 06:02 UTC (11:32 IST) |
+
+```bash
+node scripts/autopay-test-debit.mjs \
+  --customer cust_U2tCpF6i2o1LPF --token token_U2tEUgvp4hWNEV \
+  --order order_U2tkdTXDXc6hig
+```
+
+The script refuses anything but an `rzp_test_` key. `--notify true` creates a
+fresh notified order when both have been used. If the debit answers with a
+status `mapGatewayStatus` does not list, add it there.
+
+**Left as the owner's decision:**
+
+- **The mandate's frequency.** Mandates are registered `monthly` (or `yearly`),
+  and StoreMink's cycle is 30 days, so over the years two renewals can fall in
+  one calendar month of the mandate. Razorpay's UPI page says NPCI allows one
+  successful debit on a token per billing cycle. Test mode accepts
+  `as_presented` on both rails, which removes that limit, but Checkout then
+  tells the merchant "StoreMink may charge up to ₹5,000 anytime" where it now
+  says "per month". Not changed. Existing mandates keep the frequency they
+  were registered with either way.
+- **Paying by hand while a debit is scheduled.** The invoice cannot be paid by
+  hand during the notice period (it is `processing`). A "pay now instead"
+  button that withdraws the scheduled debit first is possible with the guarded
+  write already built; not built.
+- **The Razorpay support ticket** is no longer needed for enabling anything.
+  The one useful question left for them is why an order with no `notification`
+  is answered "URL not found" where a plain validation error would do.
 
 **Seen and not yet explained (check again once debits work):**
 
