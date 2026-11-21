@@ -545,6 +545,7 @@ inherits staging's database, Firebase project, bucket and every secret name.
 | `_MINK_IMAGE_MODEL`                                                             | `gemini-nano-banana-2.1`                                            | `gemini-nano-banana-2.1`                                            | `gemini-nano-banana-2.1`                                         |
 | `_MINK_CHIRP_LOCATION`                                                          | `us`                                                                | `us`                                                                | `us`                                                             |
 | `_SARVAM_API_KEY`                                                               | `<SARVAM_API_KEY>` **←**                                            | _(empty unless configured)_                                         | _(empty unless configured)_                                      |
+| `_ELEVENLABS_API_KEY`                                                           | _(empty unless configured)_                                         | _(empty unless configured)_                                         | _(empty unless configured)_                                      |
 | `_MINK_MAX_STEPS_PER_RUN`                                                       | `12`                                                                | `12`                                                                | `12`                                                             |
 | `_MINK_MAX_TOOL_CALLS_PER_RUN`                                                  | `16`                                                                | `16`                                                                | `16`                                                             |
 | `_MINK_MAX_PARALLEL_READ_TOOLS`                                                 | `4`                                                                 | `4`                                                                 | `4`                                                              |
@@ -617,6 +618,14 @@ inherits staging's database, Firebase project, bucket and every secret name.
 > that should support Saaras. Anyone who can inspect that trigger or a deployed
 > revision can read the key. A manual Cloud Run-only value is not durable because
 > this build uses authoritative `--set-env-vars` on every deployment.
+
+> **ELEVENLABS_API_KEY follows the same rule.** Set `_ELEVENLABS_API_KEY` on
+> each trigger whose service should be able to draw Theme Studio and redesign
+> photos with ElevenLabs; it becomes a regular Cloud Run environment variable,
+> readable by anyone who can inspect the trigger or a revision. Empty (the
+> file default) means Google draws whatever the operator console's Image
+> provider choice says. The Theme Studio worker services copy it from the web
+> service on every deploy (`scripts/theme-studio-workers.py`).
 
 > **⚠ COST CUTS OF 2026-08-10 — three values here are now tuned for spend, not
 > for headroom.** Monthly GCP was tracking to ~₹6,400 and had to come down.

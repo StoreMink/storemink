@@ -159,6 +159,18 @@ export function createImageCheckpointStore(
           inputTokens: 0,
           outputTokens: 0,
         };
+        // ★ A provider that bills by the picture (ElevenLabs) carries its
+        //   price on the usage, not in tokens: that was the original run's
+        //   spend too, so it is not counted again here.
+        if (
+          reused.stage === "draw" &&
+          reused.response.usage.flatCostMicroUsd !== undefined
+        ) {
+          reused.response.usage = {
+            ...reused.response.usage,
+            flatCostMicroUsd: 0,
+          };
+        }
         if (reused.stage === "review") {
           reused.response.usage = {
             ...reused.response.usage,

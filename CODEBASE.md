@@ -6608,6 +6608,128 @@ review-first and do not persist the raw image. Migration
 paragraph in place to describe this one-click private-draft and follow-up image
 handoff; it adds no Help Centre section.
 
+### ElevenLabs image provider: GPT Image 2.5 Sunburst for Theme Studio and redesign photos (2026-11-22)
+
+Owner's ask: "build the elevenlabs image provider with gpt image 2.5
+sunburst, 1k resolution, low quality/medium quality configurable from operator
+dashboard ... the calls made should be fully optimised. no extra images should
+be drawn". Google allows two image starts a minute per project, which is what
+makes a Theme Studio photo run and a storefront redesign slow; ElevenLabs'
+Image API took five and ten jobs at once in the 22 Nov test. ★ BUILT AND
+VERIFIED BY THE SUITES ONLY: no call was made to ElevenLabs during the build
+(owner's rule: no metered call without a yes), so the first live run is still
+to come.
+
+★ WHAT IT DRAWS. Only the two callers that draw through
+`ThemeStudioImageClient` (`lib/theme-studio/image-provider.ts`, whose
+`provider` union gained `"elevenlabs"`): Theme Studio's photo run
+(`worker.ts` `executeImages`, for a `vertex-gemini` run) and the storefront
+redesign's page photos (`lib/mink/revamp/photos.ts` `chosenImageClient`).
+Everything on `requestMinkImage` stays on Google whatever the choice: chat
+images, Refine, storefront personalisation and the redesign's product
+re-shoots.
+
+★ THE CHOICE IS ONE PLATFORM ROW. `image_generation_settings` (migration
+`20261122_0284`, a service-only singleton like `mink_voice_settings`):
+`provider` (`google`, the default, or `elevenlabs`), `elevenlabs_quality`
+(`low` default, `medium`) and `elevenlabs_resolution` (`1K` default, `2K`).
+`lib/images/provider-settings.ts` is the client-safe vocabulary;
+`provider-settings-store.ts` reads it. ★ `resolveImageProvider` answers
+ElevenLabs only when it is chosen AND `ELEVENLABS_API_KEY` is set; a failed
+read or a missing key means Google draws (logged), never a run that cannot
+draw. The operator console's Mink page shows it as three segmented choices
+(`image-provider-switch.tsx`), saved by `setImageGenerationSettings`
+(`app/actions/mink-operator-actions.ts`, platform superadmins only). A change
+applies to the next run that starts drawing; a Theme Studio run resumes its
+saved draws only for the provider and model that made them
+(`resumableImageClient(client, drawModel, ...)`).
+
+★★ ONE PICTURE, ONE JOB (`lib/images/elevenlabs-images.ts`
+`drawElevenLabsImage`). The API is asynchronous (POST `/v1/flows/image`
+answers with a job id, GET `/v1/flows/image/{id}` says when it is done, the
+picture is downloaded from a signed URL), takes no idempotency key, and bills
+a job once it is accepted. So:
+
+1. Before submitting, an uncollected job for the same picture is looked for
+   and waited on (below).
+2. A submit is sent again only after HTTP 429, which proves no job was made
+   (three more tries, 2 to 6 s apart, growing). A submit that timed out,
+   dropped or met a 5xx may have made a job and is never sent again; the
+   caller is told a job may exist (`jobMayExist`).
+3. Once a job id is known nothing submits again: a failed status read is read
+   again (every 2 s, backing off to 10 s after 30 s, as their guide asks), and
+   a failed download asks the job for a fresh URL (three tries).
+4. `model`, `aspect_ratio`, `resolution` and `quality` are sent on every
+   request: the API's own default quality is `high`.
+5. A job the provider failed or moderated was not charged ("Failed
+   generations are not charged") and is reported as not drawn, so no budget
+   counts it.
+6. A draw waits 150 s for its job (`ELEVENLABS_WAIT_CEILING_MS`); a job not
+   done by then is left to be collected, not drawn again.
+
+★★ A SUBMITTED JOB IS COLLECTED, NEVER DRAWN TWICE
+(`lib/images/elevenlabs-generations.ts`, table `image_provider_generations`,
+0284). Every accepted job is written down with its scope (`revamp:{id}`,
+`theme-project:{id}`, so a Retry run collects what its earlier run paid
+for) and the request's digest (model, quality, resolution, shape,
+prompt and reference bytes, sha256). A draw cut off after its submit (the
+redesign's deadline, a restart, a Stop) leaves the row `submitted`; the next
+try for the same picture in the same scope claims it (one conditional write
+with `for update skip locked`, so two tries never collect one job; a claim
+older than 4 minutes belongs to a dead process) and waits for that job. A
+delivered picture is never handed out again, so the same request later is a
+deliberate redraw. Collectable for 6 hours; rows are pruned after 14 days
+(`lib/retention/prune.ts`). Every write is best effort: a database that
+cannot be reached costs the saving, never the picture.
+
+★★ A 1K PICTURE IS ENLARGED ONCE, HERE, SO NOTHING REDRAWS IT FOR SIZE
+(`finishElevenLabsPicture`). The redesign draws a photo smaller than its frame
+a second time and then does not charge for it (B14), and every 1K picture
+(832x1040, 1280x720) is smaller than every frame, so each photo would have
+been drawn twice. The provider's PNG is re-encoded to JPEG q92 and, at 1K,
+enlarged to twice its size with Lanczos. It adds no detail: a 1K photo is
+softer than a 2K one, and the console says so.
+
+★ THE CLIENT (`lib/images/elevenlabs-theme-client.ts`
+`createElevenLabsImageClient`): the brief's prompt, then which attached image
+is which ("REFERENCE IMAGES, IN THE ORDER ATTACHED: 1. The image labelled
+ANCHOR."), then the brief's rule about people (this API has no per-request
+safety setting; a moderated job comes back `refused`). Five jobs in flight per
+process (`ELEVENLABS_IN_FLIGHT`). The redesign's drain signal stops any draw
+not yet sent, and a call stopped while its job was under way is marked
+`stoppedInFlight`. `timing.providerAttempts` is 1 only when a job exists or
+may exist, so the callers' draw budgets count exactly the pictures paid for.
+
+★★ A REFERENCE IS WHAT A PICTURE COSTS HERE. Measured through the API on 22
+Nov 2026 at 1K: about 130 credits with no reference (medium), about 475 (low)
+and 562 (medium) with one product photo attached; the quality setting moves
+the price little. Nearly every redesign photo carries the ANCHOR, so
+references are sent no larger than their job needs (`ELEVENLABS_REFERENCE_EDGE`:
+anchor and set 512 px, a merchant's product photo 1,024 px so its label stays
+readable; JPEG q88, never enlarged). ⚠ That a smaller reference costs fewer
+credits is expected, not measured. ElevenLabs publishes no per-image price, so
+the spend ledgers get an estimate (`elevenLabsCreditsEstimate` times
+`ELEVENLABS_MICRO_USD_PER_CREDIT`, the Scale plan's list price) through
+`ImageUsage.flatCostMicroUsd`, which `estimateImageCostMicroUsd`
+(`lib/theme-studio/cost.ts`) returns as it is. ⚠ Low quality with no reference
+was never measured (110 is an assumption).
+
+⚠ STILL TRUE WHATEVER THE PROVIDER: the redesign's and Theme Studio's own
+quality checks may turn a photo down and draw it again with the problems
+named (a different request, so a new job), inside their existing budgets (a
+redesign: 8 photos, 11 draws at most).
+
+Deployment: `ELEVENLABS_API_KEY` is the `_ELEVENLABS_API_KEY` Cloud Build
+substitution (empty by default, like `_SARVAM_API_KEY`: a regular Cloud Run
+environment variable, readable by whoever can inspect a trigger or revision),
+and is on the Theme Studio workers' allowlist
+(`scripts/theme-studio-workers.py`). Tests: `lib/images/*.test.ts` (the draw
+against a stand-in API: one submit per picture, no resend after an unknown
+answer, collection, the 429 retry, the wait ceiling, downloads, the enlarge;
+the job record; the settings read; the client), `photos.test.ts`,
+`worker-image-client.test.ts`, the operator action and console tests,
+`scripts/cloudbuild-yaml.test.ts`. Operator-only, so no Help Centre update.
+
 ### Global Mink voice provider (2026-09-14)
 
 Voice audit (2026-10-27): `docs/mink-voice-audit-2026-10-27.md` records the
@@ -8981,6 +9103,21 @@ wholesip/
 │   │                          # refused). The first one read a stored
 │   │                          # +6591234567 as the ten digits 6591234567, so
 │   │                          # the POS OTP texted +916591234567 — see §23
+│   ├── images/provider-settings.ts # client-safe: which provider draws Theme Studio and
+│   │                          # redesign photos (google | elevenlabs), ElevenLabs
+│   │                          # quality (low | medium) and resolution (1K | 2K)
+│   ├── images/provider-settings-store.ts # server-only: reads image_generation_settings;
+│   │                          # resolveImageProvider (ElevenLabs only when chosen AND
+│   │                          # ELEVENLABS_API_KEY is set, else Google)
+│   ├── images/elevenlabs-images.ts # server-only: drawElevenLabsImage, one picture = one
+│   │                          # job (GPT Image 2.5 Sunburst); never resends a submit
+│   │                          # whose answer is unknown; enlarges 1K once; cost estimate
+│   ├── images/elevenlabs-generations.ts # server-only: the record of submitted jobs
+│   │                          # (image_provider_generations), so a paid job is
+│   │                          # collected by the next try, never drawn again
+│   ├── images/elevenlabs-theme-client.ts # server-only: the ThemeStudioImageClient over
+│   │                          # it (prompt with reference labels, shrunk references,
+│   │                          # five in flight)
 │   ├── http/byte-range.ts     # PURE: one HTTP Range header against a size (single
 │   │                          # range, suffix; several ranges → the whole file;
 │   │                          # "unsatisfiable" → 416). Used by the inbox media route
@@ -10926,7 +11063,10 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0284 (0283 = Help: the payment
+│                              # Next free: 0285 (0284 = the ElevenLabs image
+│                              # provider: image_generation_settings and
+│                              # image_provider_generations, no Help;
+│                              # 0283 = Help: the payment
 │                              # window's upper limit for automatic payments;
 │                              # 0282 = Help: Pay now instead
 │                              # and Continue payment in the invoices guide;
@@ -28924,6 +29064,12 @@ model refused`, logError); the fallback is final, so the worst case is about
   Sarvam Saaras v4 requires server-only **`SARVAM_API_KEY`**. The Cloud Run
   service account holds least-privilege **`roles/speech.client`** to call
   Speech-to-Text. Neither credential is exposed to the dashboard.
+  Theme Studio and storefront redesign photos are drawn by Google unless a
+  platform operator chooses ElevenLabs on the console's Mink page
+  (`image_generation_settings`), which needs server-only
+  **`ELEVENLABS_API_KEY`** (Cloud Build `_ELEVENLABS_API_KEY`, also on the
+  Theme Studio workers' allowlist); chosen without the key, Google still
+  draws (§ ElevenLabs image provider).
   Theme Studio reads **`THEME_STUDIO_PROVIDER`** (code default `fake`, the offline
   test provider; `vertex-gemini` sends new runs to the allowlisted models
   and must not be set until the dedicated worker job exists — §4

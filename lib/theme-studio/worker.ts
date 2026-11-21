@@ -63,6 +63,15 @@ import { describeSlots } from "./slot-images-core";
 import { MAX_AUTOMATIC_QA_REPAIRS } from "./automatic-qa-policy";
 import type { ThemeStudioImageClient } from "./image-provider";
 import { createVertexImageClient } from "./image-vertex";
+import { ELEVENLABS_IMAGE_MODEL } from "@/lib/images/elevenlabs-images";
+import {
+  createElevenLabsImageClient,
+  type ElevenLabsThemeClientOptions,
+} from "@/lib/images/elevenlabs-theme-client";
+import {
+  elevenLabsApiKey,
+  resolveImageProvider,
+} from "@/lib/images/provider-settings-store";
 import {
   THEME_STUDIO_MODELS,
   resolveThemeStudioModel,
@@ -997,6 +1006,24 @@ async function loadImageSeed(
 }
 
 /**
+ * The operator's ElevenLabs choice for one run's photos, or null for Google
+ * (the default, a failed read, or an environment with no key).
+ */
+async function chosenElevenLabs(
+  scope: string,
+): Promise<Omit<ElevenLabsThemeClientOptions, "deps"> | null> {
+  const settings = await resolveImageProvider();
+  const apiKey = elevenLabsApiKey();
+  if (settings.provider !== "elevenlabs" || !apiKey) return null;
+  return {
+    apiKey,
+    quality: settings.elevenlabsQuality,
+    resolution: settings.elevenlabsResolution,
+    scope,
+  };
+}
+
+/**
  * The image client for a photo run. ★★ Owner, 25 Oct 2026: Nano Banana 2.1
  * (image-models.ts) draws every Theme Studio photo at "2K" and the
  * homepage's hero slides at "4K" (themeStudioImageSize), thinking HIGH:
@@ -1010,8 +1037,19 @@ async function loadImageSeed(
 export function imageClientFor(
   provider: string,
   homepageSlides: ReadonlySet<string> = new Set(),
+  /**
+   * Set when a platform operator has chosen ElevenLabs for photos and this
+   * environment holds its key (`chosenElevenLabs`, 22 Nov 2026): the run's
+   * photos are then drawn by GPT Image 2.5 Sunburst, with no Google start
+   * pacing. ★ The run's own `provider` stays "vertex-gemini": it still names
+   * the text and review models, which do not change.
+   */
+  elevenLabs: Omit<ElevenLabsThemeClientOptions, "deps"> | null = null,
 ): ThemeStudioImageClient | null {
   if (provider === "fake") return createFakeImageClient();
+  if (provider === "vertex-gemini" && elevenLabs) {
+    return createElevenLabsImageClient(elevenLabs);
+  }
   if (provider === "vertex-gemini") {
     const config = getThemeStudioImageConfig();
     return config
@@ -1107,11 +1145,23 @@ async function executeImages(
     return { kind: "failed", errorCode: "images_nothing_to_draw" };
   }
   // ★ Only the photos the homepage opens with are drawn at 4K.
+  // ★ The ElevenLabs job record's scope is the PROJECT, not the run: a Retry
+  //   is a new run, and it must collect a job its earlier run paid for and
+  //   never received, not draw that picture again (elevenlabs-generations.ts).
   const client = imageClientFor(
     run.provider,
     homepageOpeningPhotoIds(input.package),
+    run.provider === "vertex-gemini"
+      ? await chosenElevenLabs(`theme-project:${run.projectId}`)
+      : null,
   );
   if (!client) return { kind: "failed", errorCode: "provider_unavailable" };
+  // The model that really draws: a saved draw is only ever replayed for the
+  // provider and model that made it (image-recovery.ts).
+  const drawModel =
+    client.provider === "elevenlabs"
+      ? ELEVENLABS_IMAGE_MODEL
+      : run.providerModel;
   // Filling new slots beside finished artwork must keep the original style.
   // A wholly new art set may establish a fresh anchor.
   const hasFinishedArt = describeSlots(input.package).some(
@@ -1159,7 +1209,7 @@ async function executeImages(
       workerId,
     });
     const result = await runThemeImageGeneration(
-      resumableImageClient(client, run.providerModel, run.promptVersion, store),
+      resumableImageClient(client, drawModel, run.promptVersion, store),
       {
         pkg: input.package,
         intent: input.intent,

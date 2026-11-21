@@ -3393,6 +3393,85 @@ export const minkVoiceSettings = pgTable(
   ],
 );
 
+/**
+ * Which provider draws Theme Studio's and the storefront redesign's photos
+ * (one row, operator-edited; migration 0284). Default Google.
+ */
+export const imageGenerationSettings = pgTable(
+  "image_generation_settings",
+  {
+    id: boolean().default(true).primaryKey().notNull(),
+    provider: text().default("google").notNull(),
+    elevenlabsQuality: text("elevenlabs_quality").default("low").notNull(),
+    elevenlabsResolution: text("elevenlabs_resolution").default("1K").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedBy: text("updated_by"),
+  },
+  () => [
+    check("image_generation_settings_id_check", sql`id`),
+    check(
+      "image_generation_settings_provider_check",
+      sql`provider = ANY (ARRAY['google'::text, 'elevenlabs'::text])`,
+    ),
+    check(
+      "image_generation_settings_quality_check",
+      sql`elevenlabs_quality = ANY (ARRAY['low'::text, 'medium'::text])`,
+    ),
+    check(
+      "image_generation_settings_resolution_check",
+      sql`elevenlabs_resolution = ANY (ARRAY['1K'::text, '2K'::text])`,
+    ),
+  ],
+);
+
+/**
+ * One row per job submitted to the async image provider (migration 0284): a
+ * job is paid for once submitted, so a draw that was cut off is COLLECTED by
+ * the next try for the same picture, never drawn again.
+ */
+export const imageProviderGenerations = pgTable(
+  "image_provider_generations",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    provider: text().notNull(),
+    scope: text().notNull(),
+    requestDigest: text("request_digest").notNull(),
+    generationId: text("generation_id").notNull(),
+    state: text().default("submitted").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "string" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "image_provider_generations_provider_check",
+      sql`provider = 'elevenlabs'`,
+    ),
+    check(
+      "image_provider_generations_state_check",
+      sql`state = ANY (ARRAY['submitted'::text, 'delivered'::text, 'failed'::text])`,
+    ),
+    check(
+      "image_provider_generations_digest_check",
+      sql`request_digest ~ '^[0-9a-f]{64}$'`,
+    ),
+    unique("image_provider_generations_generation_key").on(
+      table.provider,
+      table.generationId,
+    ),
+    index("image_provider_generations_pending_idx")
+      .on(table.provider, table.scope, table.requestDigest, table.createdAt)
+      .where(sql`state = 'submitted'`),
+    index("image_provider_generations_created_idx").on(table.createdAt),
+  ],
+);
+
 export const productReviews = pgTable(
   "product_reviews",
   {

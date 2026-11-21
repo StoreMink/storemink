@@ -82,6 +82,14 @@ export interface ImageUsage {
   inputTokens: number;
   /** Image (and the few text) tokens returned. */
   outputTokens: number;
+  /** The model that drew it, when the provider says. */
+  model?: string;
+  /**
+   * What the picture cost in whole micro-USD, for a provider that bills by
+   * the picture and reports no tokens (ElevenLabs, lib/images). When set it
+   * IS the cost: `estimateImageCostMicroUsd` returns it as it stands.
+   */
+  flatCostMicroUsd?: number;
 }
 
 export const ZERO_IMAGE_USAGE: ImageUsage = { inputTokens: 0, outputTokens: 0 };
@@ -110,7 +118,9 @@ export type ThemeImageResult = (
 };
 
 export interface ThemeStudioImageClient {
-  readonly provider: "fake" | "vertex-gemini";
+  /** `elevenlabs`: GPT Image 2.5 Sunburst through ElevenLabs' Image API
+   *  (lib/images/elevenlabs-theme-client.ts), when an operator has chosen it. */
+  readonly provider: "fake" | "vertex-gemini" | "elevenlabs";
   generateImage(
     request: ThemeImageRequest,
     signal: AbortSignal,

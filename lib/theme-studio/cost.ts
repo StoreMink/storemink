@@ -215,6 +215,8 @@ export interface ImageCallUsage {
   outputTokens: number;
   thinkingTokens?: number;
   model?: string;
+  /** A per-picture price from a provider that reports no tokens. */
+  flatCostMicroUsd?: number;
 }
 
 function tokens(value: unknown): number {
@@ -232,6 +234,15 @@ export function imageThinkingTokens(usage: ImageCallUsage): number {
 /** Whole micro-USD for ONE image request, at the rates of the model that
  *  drew it. */
 export function estimateImageCostMicroUsd(usage: ImageCallUsage): number {
+  // ★ A provider that bills by the picture (ElevenLabs) states its cost; with
+  //   no tokens to price, Google's rates would call every such picture free.
+  if (
+    typeof usage.flatCostMicroUsd === "number" &&
+    Number.isFinite(usage.flatCostMicroUsd) &&
+    usage.flatCostMicroUsd > 0
+  ) {
+    return Math.round(usage.flatCostMicroUsd);
+  }
   const rate = imageRatesFor(usage.model);
   return Math.round(
     tokens(usage.inputTokens) * rate.input +

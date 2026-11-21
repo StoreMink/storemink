@@ -10914,6 +10914,44 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261122_0284_image_provider_settings",
+      "description": "A second image provider for Theme Studio and the storefront redesign: image_generation_settings (one operator-edited row: provider google or elevenlabs, and ElevenLabs' quality and resolution) and image_provider_generations (one row per job submitted to the async provider, so a job already paid for is collected by the next try and never drawn twice). Expand only.",
+      "file": "sql/20261122_0284_image_provider_settings.sql",
+      "transaction": true,
+      "requires": ["20261122_0283_autopay_limit_help"],
+      "verify": {
+        "tables": ["image_generation_settings", "image_provider_generations"],
+        "columns": [
+          "image_generation_settings.provider",
+          "image_generation_settings.elevenlabs_quality",
+          "image_generation_settings.elevenlabs_resolution",
+          "image_provider_generations.scope",
+          "image_provider_generations.request_digest",
+          "image_provider_generations.generation_id",
+          "image_provider_generations.state",
+          "image_provider_generations.claimed_at"
+        ],
+        "constraints": [
+          "image_generation_settings_id_check",
+          "image_generation_settings_provider_check",
+          "image_generation_settings_quality_check",
+          "image_generation_settings_resolution_check",
+          "image_provider_generations_state_check",
+          "image_provider_generations_generation_key"
+        ],
+        "rlsTables": ["image_generation_settings", "image_provider_generations"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the image provider defaults to Google, so nothing changes until an operator switches",
+            "sql": "select provider || ' ' || elevenlabs_quality || ' ' || elevenlabs_resolution from image_generation_settings where id=true",
+            "equals": "google low 1K"
+          }
+        ]
+      }
     }
   ]
 }
