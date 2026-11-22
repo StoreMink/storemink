@@ -139,11 +139,13 @@ import { revampProvider, type RevampProvider } from "./provider";
 //   already has a studio photo of. Drawn only when the parent has none in
 //   the store's card shape, or it cannot be carried over.
 //
-// ★ ONE STAGING FOR THE WHOLE SHOP. Every studio photo of a revamp is asked
-//   for on the same backdrop, the redesign's own page colour (the runner
-//   passes it), never "white or a soft neutral": that choice, made by the
-//   model photo by photo, is how one live run's grid came back half cream
-//   and half white.
+// ★★ THE MERCHANT'S OWN SETTING IS KEPT (owner, 22 Nov 2026). A studio photo
+//   keeps the background, surface and surroundings of the merchant's photo
+//   and improves only the light, sharpness and framing: it never swaps them
+//   for a studio backdrop. It used to put every product on one plain
+//   backdrop of the redesign's page colour; the merchant's setting is part
+//   of how they show their product. The wording is the same for every
+//   product of a run, and the check no longer expects the setting to change.
 //
 // ★★ EVERY STUDIO PHOTO IS CHECKED AGAINST THE MERCHANT'S OWN PHOTO BEFORE
 //   IT IS STORED (L2-H). A live run drew a hammered silver ring as a blurred
@@ -193,9 +195,9 @@ import { revampProvider, type RevampProvider } from "./provider";
 //   paid for even when the step hands over before it returns.
 //
 // ★ Offline (`MINK_REVAMP_PROVIDER=fake`) the merchant's own photo is placed,
-//   whole, on a card-shaped canvas of the same backdrop colour instead of
-//   calling a model, so the offline flow exercises the same checks, limits,
-//   storage and shape.
+//   whole and with its own background, on a card-shaped canvas padded with
+//   the redesign's page colour, instead of calling a model, so the offline
+//   flow exercises the same checks, limits, storage and shape.
 // ---------------------------------------------------------------------------
 
 export interface MakeRevampProductPhotosOptions {
@@ -445,8 +447,9 @@ export async function makeRevampProductPhotos(
     /** Product keys whose parent studio photo is carried over, not drawn. */
     carried?: readonly string[];
     /**
-     * The redesign's page colour (#rrggbb), the backdrop every studio photo
-     * shares; anything else means plain white.
+     * The redesign's page colour (#rrggbb), used only offline to pad the
+     * merchant's photo to the card's shape; anything else means white. A
+     * studio photo keeps the merchant's own background.
      */
     backdrop?: string | null;
     /**
@@ -709,7 +712,7 @@ export async function makeRevampProductPhotos(
       }
       const validation = validateMinkMediaGenerationRequest({
         purpose: "product",
-        prompt: studioPrompt(candidate.product, backdrop, retake),
+        prompt: studioPrompt(candidate.product, retake),
         referenceImageUrls: [candidate.url],
         alt: altFor(candidate.product),
       });
@@ -1380,17 +1383,14 @@ function providerMediaType(mimeType: string): RevampImageMediaType | null {
 }
 
 /**
- * What the image model is asked for after the item: the exact item, in a
- * plain studio, on the one backdrop every product photo of the revamp
- * shares. ★ Word for word the same for every product of a run, so the shop
- * grid reads as one shoot.
+ * What the image model is asked for after the item: the exact item, in the
+ * merchant's own setting (owner, 22 Nov 2026), with only the light,
+ * sharpness and framing improved. ★ Word for word the same for every
+ * product of a run, and it names the setting, so the product-photo
+ * guidance never falls back to a plain studio backdrop.
  */
-function studioDirection(backdrop: string | null): string {
-  const surface = backdrop
-    ? `one plain seamless studio backdrop in a single flat ${colourWords(backdrop)} colour (${backdrop})`
-    : "one plain seamless studio backdrop in pure white";
-  return `. Photograph the exact item in the reference photo, whole and centred, on ${surface}, the same backdrop every product photo in this shop is shot on, with soft even light and a natural contact shadow.`;
-}
+const STUDIO_DIRECTION =
+  ". Photograph the exact item in the reference photo, whole and centred, in the same setting as the reference photo: keep its background, surface and surroundings as they are, and never replace them with a plain studio backdrop. Improve only the light, sharpness and framing, with a natural shadow.";
 
 /**
  * The studio-photo prompt for one product, within the image prompt's limit.
@@ -1399,12 +1399,11 @@ function studioDirection(backdrop: string | null): string {
  */
 export function studioPrompt(
   product: Pick<RevampProductInput, "name" | "description">,
-  backdrop: string | null = null,
   retake: StudioRetake | null = null,
 ): string {
   const name = promptText(product.name, 120) || "this product";
-  const head = `A clean studio photograph of ${name}`;
-  const direction = studioDirection(backdropHex(backdrop));
+  const head = `A clean, well-lit photograph of ${name}`;
+  const direction = STUDIO_DIRECTION;
   const correction = retake
     ? retakeText(
         retake,
@@ -1465,9 +1464,8 @@ function retakeText(retake: StudioRetake, max: number): string {
 }
 
 /**
- * The backdrop colour as lowercase #rrggbb, or null. ★ Only a hex colour is
- *   ever placed in the prompt: the value comes from the plan, and anything
- *   else would be text the image model reads as an instruction.
+ * The offline padding colour as lowercase #rrggbb, or null. ★ Only a hex
+ *   colour is accepted: the value comes from the plan.
  */
 function backdropHex(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -1476,36 +1474,6 @@ function backdropHex(value: unknown): string | null {
   return /^#[0-9a-f]{3}$/.test(hex)
     ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
     : null;
-}
-
-/** A colour in the few words an image model reads reliably: tone and warmth. */
-function colourWords(hex: string): string {
-  const [r, g, b] = [1, 3, 5].map(
-    (at) => parseInt(hex.slice(at, at + 2), 16) / 255,
-  );
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const lightness = (max + min) / 2;
-  const tone =
-    lightness >= 0.9
-      ? "very light"
-      : lightness >= 0.7
-        ? "light"
-        : lightness >= 0.4
-          ? "mid-tone"
-          : lightness >= 0.2
-            ? "dark"
-            : "very dark";
-  const chroma = max - min;
-  if (chroma < 0.04) return `${tone} neutral`;
-  const sector =
-    max === r
-      ? ((g - b) / chroma + 6) % 6
-      : max === g
-        ? (b - r) / chroma + 2
-        : (r - g) / chroma + 4;
-  const hue = sector * 60;
-  return `${tone} ${hue < 70 || hue >= 330 ? "warm" : "cool"}`;
 }
 
 /**
@@ -1768,7 +1736,7 @@ const STUDIO_PROBLEM_TEXT: Record<ThemeImageProblem, string> = {
   malformed:
     "The item is malformed, melted, duplicated or physically impossible.",
   multiple_subjects:
-    "It shows more than the one product in the REFERENCE, such as a second item or another variant. A set the REFERENCE shows as one product, such as a pair of earrings, is one product.",
+    "It shows more than the one product in the REFERENCE, such as a second item or another variant. A set the REFERENCE shows as one product, such as a pair of earrings, is one product, and things that are part of the REFERENCE's own setting are not extra products.",
   off_style: "",
   staging_mismatch: "",
   poor_crop:
@@ -1782,7 +1750,7 @@ export function revampStudioReviewSystem(): string {
 Report a problem only when you can see it clearly in the CANDIDATE. When the photo is acceptable, return an empty list. The problems are:
 ${STUDIO_PROBLEMS.map((problem) => `- ${problem}: ${STUDIO_PROBLEM_TEXT[problem]}`).join("\n")}
 
-The CANDIDATE is meant to differ from the REFERENCE in its setting: a plain studio backdrop, even light, a soft shadow, a straight-on camera. The REFERENCE's table, tray, shelf, window or room is not part of the item and should be gone. Never report a problem for the backdrop, the light, the shadow or the camera angle. Judge the item itself: its kind, shape, proportions, colour, material, texture, pattern, and any label or print on it.
+The CANDIDATE is meant to keep the REFERENCE's setting: the same background, surface and surroundings, with better light, sharpness and framing. Never report a problem for the background, the light, the shadow or the camera angle, or for small differences in the setting. Judge the item itself: its kind, shape, proportions, colour, material, texture, pattern, and any label or print on it.
 
 The note is one or two short sentences, at most 300 characters, naming what is wrong in plain words (for example "The ring is missing; only the wooden tray is shown."). Leave it empty when there are no problems.
 
@@ -1820,7 +1788,7 @@ export function revampStudioReviewContent(input: {
     { type: "image", mediaType: "image/webp", base64: input.candidate },
     {
       type: "text",
-      text: "REFERENCE (the merchant's own photo of the real item; the CANDIDATE must show this same item, without this photo's setting):",
+      text: "REFERENCE (the merchant's own photo of the real item; the CANDIDATE must show this same item, in this photo's setting):",
     },
     { type: "image", mediaType: "image/webp", base64: input.reference },
   ];

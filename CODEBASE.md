@@ -3701,7 +3701,10 @@ card charges only photographs a page shows.
 (`mink_prepared`) until Apply reveals the ones its card shows, since a
 stopped revamp charges nothing. `products.ts` makes a studio photo of each
 new product from the merchant's own, reviewed against it (theirs kept when
-it fails). ★ Each draw takes a turn on its image model's shared provider
+it fails). ★ The studio photo keeps the background and setting of the
+merchant's photo and improves only the light, sharpness and framing (owner,
+22 Nov 2026; it used to swap in one plain backdrop of the page colour), and
+its check no longer expects the setting to change. ★ Each draw takes a turn on its image model's shared provider
 capacity (`sharedProviderCapacity`, so it is start-paced like the shoot:
 one attempt on its own 75 s clock, a 429 shared with the others on the
 model, nothing sent once the drain began, and a draw still waiting for its

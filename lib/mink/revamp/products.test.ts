@@ -53,6 +53,7 @@ import {
   PRODUCT_REVIEW_RETRY_MS,
   REVAMP_PRODUCT_PHOTO_REASONS as REASONS,
   makeRevampProductPhotos,
+  revampStudioReviewContent,
   revampStudioReviewSystem,
   studioPrompt,
   type MakeRevampProductPhotosOptions,
@@ -1455,11 +1456,11 @@ describe("★★ the deadline drains the studio photos instead of cutting them (
   });
 });
 
-describe("★★ one staging across the shop's products", () => {
+describe("★★ the merchant's own setting is kept", () => {
   const direction = (prompt: string) =>
     prompt.slice(prompt.indexOf(". Photograph"));
 
-  it("★★ asks for every studio photo on the same backdrop, the redesign's page colour", async () => {
+  it("★★ keeps the merchant's own background in every studio photo (owner, 22 Nov 2026)", async () => {
     const keys = ["p1", "p2", "p3"];
     for (const key of keys) h.owned.set(url(key), "media");
     const { generate, calls } = makeGenerate();
@@ -1476,36 +1477,18 @@ describe("★★ one staging across the shop's products", () => {
     const prompts = calls.map((call) => call.request.prompt);
     expect(prompts).toHaveLength(3);
     for (const prompt of prompts) {
-      expect(prompt).toContain("#f5efe6");
-      // ★ One backdrop, never a choice the model makes per photo: "white or
-      //   a soft neutral" is how one shoot came back cream and white.
-      expect(prompt).not.toMatch(/white or|or a soft neutral/i);
+      expect(prompt).toMatch(/same setting as the reference photo/);
+      expect(prompt).toMatch(/keep its background, surface and surroundings/);
+      // ★ The page colour is never a backdrop now: the setting is the
+      //   merchant's, never a studio backdrop the model swaps in.
+      expect(prompt).not.toContain("#f5efe6");
+      expect(prompt).not.toMatch(/on one plain|pure white|white or/i);
       expect(prompt.length).toBeLessThanOrEqual(600);
     }
     expect(new Set(prompts.map(direction)).size).toBe(1);
   });
 
-  it("without a page colour, every studio photo is on the same plain white backdrop", async () => {
-    for (const key of ["p1", "p2"]) h.owned.set(url(key), "media");
-    const { generate, calls } = makeGenerate();
-    await makeRevampProductPhotos(
-      makeCtx().ctx,
-      {
-        request: request([product("p1"), product("p2")]),
-        stored: [],
-        only: null,
-      },
-      { provider: "vertex", generate, prepare },
-    );
-    const prompts = calls.map((call) => call.request.prompt);
-    for (const prompt of prompts) {
-      expect(prompt).toMatch(/pure white/);
-      expect(prompt).not.toMatch(/white or|or a soft neutral/i);
-    }
-    expect(new Set(prompts.map(direction)).size).toBe(1);
-  });
-
-  it("★ a colour that is not #rrggbb never reaches the prompt", async () => {
+  it("★ a page colour, however written, never reaches the prompt", async () => {
     h.owned.set(url("p1"), "media");
     const { generate, calls } = makeGenerate();
     await makeRevampProductPhotos(
@@ -1519,7 +1502,21 @@ describe("★★ one staging across the shop's products", () => {
       { provider: "vertex", generate, prepare },
     );
     expect(calls[0].request.prompt).not.toContain("logo");
-    expect(calls[0].request.prompt).toMatch(/pure white/);
+    expect(calls[0].request.prompt).toMatch(/same setting as the reference/);
+  });
+
+  it("★ the check expects the merchant's setting to stay", () => {
+    const system = revampStudioReviewSystem();
+    expect(system).toContain("meant to keep the REFERENCE's setting");
+    expect(system).not.toMatch(/should be gone/);
+    const content = revampStudioReviewContent({
+      product: { name: "Ring", description: "" },
+      candidate: "AA",
+      reference: "BB",
+      aspectRatio: "3:4",
+      attempt: 1,
+    });
+    expect(JSON.stringify(content)).toContain("in this photo's setting");
   });
 
   it("★ offline, the merchant's photo sits on the same backdrop colour", async () => {
@@ -2514,7 +2511,7 @@ describe("★★ every studio photo is checked against the merchant's own photo 
       name: "R".repeat(120),
       description: "D".repeat(400),
     };
-    const prompt = studioPrompt(long, "#f5efe6", {
+    const prompt = studioPrompt(long, {
       problems: [
         "wrong_subject",
         "text_or_logo",
@@ -2530,10 +2527,13 @@ describe("★★ every studio photo is checked against the merchant's own photo 
     // The check's note is model output: braces and dollar signs never reach
     // the image prompt.
     expect(
-      studioPrompt({ name: "Ring", description: "" }, null, {
-        problems: ["poor_crop"],
-        note: "Crop {{it}} for $1",
-      }),
+      studioPrompt(
+        { name: "Ring", description: "" },
+        {
+          problems: ["poor_crop"],
+          note: "Crop {{it}} for $1",
+        },
+      ),
     ).not.toMatch(/[{}$]/);
   });
 });
