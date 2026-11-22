@@ -347,6 +347,12 @@ export interface RzpRecurringPayment {
  * more apart: `rzpCreateOrder` with `notification`, then this. The caller
  * (lib/billing/gateway.ts) owns both steps.
  *
+ * ⚠ NOT YET SEEN TO SUCCEED (23 Nov 2026): the first notified test order to
+ * come due, a UPI one, was still answered HTTP 400 "The requested URL was not
+ * found on the server" after its period had passed
+ * (docs/autopay-verification.md). The request below is Razorpay's documented
+ * one, field for field.
+ *
  * ★ `email` and `contact` are MANDATORY per the API reference, which is why the
  * mandate stores the customer id and the caller resolves the billing contact.
  *

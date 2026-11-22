@@ -143,7 +143,9 @@ if (debit.status === 200) {
     /requested URL was not found/i.test(debit.json?.error?.description ?? "")
   ) {
     console.log(
-      "  meaning    : the order carries no pre-debit notification. Create it with --notify true and debit it 36 hours later.",
+      order.json.notification
+        ? "  meaning    : not known. This order carries its notification, so that is not the cause (seen 23 Nov 2026 on a notified UPI order whose notice period had passed). Ask Razorpay, quoting the order id."
+        : "  meaning    : the order carries no pre-debit notification. Create it with --notify true and debit it 36 hours later (25 for UPI).",
     );
   }
   if (debit.json?.error?.reason) {

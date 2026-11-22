@@ -86,10 +86,47 @@ describe("image marquee", () => {
     expect(seqs[1].getAttribute("aria-hidden")).toBe("true");
     // Five repeats of two pictures fill the loop; the imageless one is gone.
     expect(seqs[0].querySelectorAll(".home-marquee-item")).toHaveLength(10);
-    expect(screen.getAllByAltText("One").length).toBeGreaterThan(0);
     expect(
       seqs[0].querySelector("a.home-marquee-item")?.getAttribute("href"),
     ).toBe("/shop");
+  });
+
+  // 23 Nov 2026: with motion off the band stands still and wraps, and it used
+  // to show all ten. The stylesheet drops `.is-repeat` then (pinned below).
+  it("★★ marks every copy that only fills the loop, so each picture is shown, read and tabbed ONCE", () => {
+    const { container } = render(
+      <ImageMarqueeSection
+        sectionId="q"
+        config={{
+          ...EMPTY_CONFIG.image_marquee,
+          items: [
+            { image_url: IMG, image_alt: "One", href: "/shop" },
+            { image_url: IMG, image_alt: "Two", href: "" },
+          ],
+        }}
+      />,
+    );
+    const first = container.querySelectorAll(".home-marquee-seq")[0];
+    const originals = first.querySelectorAll(
+      ".home-marquee-item:not(.is-repeat)",
+    );
+    expect(originals).toHaveLength(2);
+    expect(first.querySelectorAll(".home-marquee-item.is-repeat")).toHaveLength(
+      8,
+    );
+    // The two originals lead the sequence, are named, and one can be tabbed to.
+    expect(first.children[0]).toBe(originals[0]);
+    expect(first.children[1]).toBe(originals[1]);
+    expect(screen.getAllByAltText("One")).toHaveLength(1);
+    expect(screen.getAllByAltText("Two")).toHaveLength(1);
+    expect(originals[0].getAttribute("tabindex")).toBeNull();
+    expect(originals[0].getAttribute("aria-hidden")).toBeNull();
+    // Every copy is silent and out of the tab order.
+    for (const copy of first.querySelectorAll(".is-repeat")) {
+      expect(copy.getAttribute("aria-hidden")).toBe("true");
+      if (copy.tagName === "A")
+        expect(copy.getAttribute("tabindex")).toBe("-1");
+    }
   });
 });
 

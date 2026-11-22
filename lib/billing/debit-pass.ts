@@ -436,6 +436,15 @@ async function debitOne(
       return "sent";
     }
     // A 4xx is a verdict: the debit was refused and nothing moved.
+    // ★ Logged (23 Nov 2026): a refused debit used to leave no line at all,
+    // so a gateway refusing EVERY store's debit showed only as merchants
+    // being asked, one by one, to pay by hand.
+    logWarn("billing.debit_pass.refused", {
+      attemptId: row.id,
+      storeId: row.storeId,
+      invoiceId: row.invoiceId,
+      reason: res.error.slice(0, 300),
+    });
     return failTry(row, "gateway_rejected", res.error, now);
   }
 

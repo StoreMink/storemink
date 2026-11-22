@@ -126,9 +126,11 @@ store and confirm:
       order whose notice is delivered about a minute later. (21 Nov 2026,
       test mode, through `razorpayRecurringGateway.notify`.)
 - [ ] `POST /payments/create/recurring` on that order, once its notice period
-      has passed, returns `razorpay_payment_id`. **★★ NOT YET PROVEN: the
-      first notified test orders can be debited from 23 Nov 2026, 11:28 IST.
-      See the run below.**
+      has passed, returns `razorpay_payment_id`. **★★ TRIED ON 23 NOV 2026 AND
+      REFUSED (UPI, test mode): HTTP 400 "The requested URL was not found on
+      the server", no payment created. See "23 Nov 2026: the first debit after
+      its notice period" below. The three card orders come due later the same
+      day.**
 - [ ] Note the exact `status` values you see. If any is outside
       `mapGatewayStatus`'s list, add it there — an unrecognised status resolves
       to `unknown`, which is safe but leaves the invoice for reconciliation.
@@ -392,15 +394,96 @@ this code at all.
 
 **Notified test orders waiting for their debit** (the last unproven step):
 
-| Mandate                  | Token                  | Order                  | May be debited from                      |
-| ------------------------ | ---------------------- | ---------------------- | ---------------------------------------- |
-| card, `monthly` (21 Nov) | `token_U2tEUgvp4hWNEV` | `order_U2tkdTXDXc6hig` | 23 Nov 2026 05:58 UTC (11:28 IST)        |
-| card, `monthly` (21 Nov) | `token_U2tEUgvp4hWNEV` | `order_U2uKXBRjzCck0D` | 23 Nov 2026 06:02 UTC (11:32 IST)        |
-| UPI, `as_presented`      | `token_U2vvhDK2JmkPt7` | `order_U2vyy6oJmMhMzf` | 22 Nov 2026 20:35 UTC (23 Nov 02:05 IST) |
-| card, `as_presented`     | `token_U2vsZK5pU21Z6F` | `order_U2vtkpoYDhuGbw` | 23 Nov 2026 07:35 UTC (13:05 IST)        |
+| Mandate                  | Token                  | Order                  | May be debited from                      | Result                                                                                    |
+| ------------------------ | ---------------------- | ---------------------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| card, `monthly` (21 Nov) | `token_U2tEUgvp4hWNEV` | `order_U2tkdTXDXc6hig` | 23 Nov 2026 05:58 UTC (11:28 IST)        | not run yet                                                                               |
+| card, `monthly` (21 Nov) | `token_U2tEUgvp4hWNEV` | `order_U2uKXBRjzCck0D` | 23 Nov 2026 06:02 UTC (11:32 IST)        | not run yet                                                                               |
+| UPI, `as_presented`      | `token_U2vvhDK2JmkPt7` | `order_U2vyy6oJmMhMzf` | 22 Nov 2026 20:35 UTC (23 Nov 02:05 IST) | **refused**, 23 Nov 02:14 and 02:21 IST: HTTP 400 "URL not found", no payment (see below) |
+| card, `as_presented`     | `token_U2vsZK5pU21Z6F` | `order_U2vtkpoYDhuGbw` | 23 Nov 2026 07:35 UTC (13:05 IST)        | not run yet                                                                               |
 
 All four belong to customer `cust_U2tCpF6i2o1LPF`; pass the token and order to
 `scripts/autopay-test-debit.mjs` as in the command above.
+
+### 23 Nov 2026: the first debit after its notice period (UPI, test mode)
+
+Run at 02:14 IST through StoreMink's own code (`razorpayRecurringGateway` and
+`rzpChargeMandate`), test keys only, on `order_U2vyy6oJmMhMzf` (₹100, UPI
+mandate `token_U2vvhDK2JmkPt7`, registered `as_presented`, ceiling ₹5,000).
+
+**Before the debit, everything the debit pass checks said go:**
+
+- the order: `created`, 0 attempts, notification `delivered` on 21 Nov 19:05
+  UTC, `payment_after` 22 Nov 20:05 UTC;
+- `checkMandate`: `chargeable` (the token reads `recurring: true`,
+  `recurring_details.status: confirmed`, `max_amount: 500000`);
+- `readNotice`: `ready` (25 hours and the 5 minute margin had passed 29
+  minutes earlier).
+
+**★★ The debit was refused.** `POST /payments/create/recurring` answered in
+2.3 seconds:
+
+```json
+{
+  "error": {
+    "code": "BAD_REQUEST_ERROR",
+    "description": "The requested URL was not found on the server.",
+    "source": "internal",
+    "step": "NA",
+    "reason": "NA",
+    "metadata": {}
+  }
+}
+```
+
+HTTP 400, no `razorpay_payment_id`, so no status for `mapGatewayStatus` to
+read. It is the same answer the plain order got on 21 Nov, before the
+two-step flow was built.
+
+**The two minutes after** (read at 8, 25, 56 and 117 seconds): the order
+moved to `attempted` with `attempts: 1`, `amount_paid: 0`, and
+`GET /orders/:id/payments` listed nothing each time. Sent once more at 02:21
+IST to keep the full error body above (the code keeps only the description):
+the same answer, and the order's `attempts` went to 2. No payment exists for
+this order.
+
+**What this does and does not show:**
+
+- The request is Razorpay's documented one, field for field (their UPI
+  "create subsequent payments" reference, read the same night). `contact` is
+  sent as a string where the reference types it an integer; the answer names
+  no field, and every other Razorpay call here takes the string.
+- The notification is NECESSARY and not shown to be SUFFICIENT. It changed the
+  answers before the period ended (`pre_debit_notification_failed`, then "Debit
+  can be attempted 36 hours after..."), which is why 21 Nov read the endpoint
+  as live. Past the period, with every documented condition met, Razorpay
+  counts an attempt on the order and then fails inside its own system
+  (`source: internal`) with the wording it uses for a route that is not there.
+- ⚠ Not known: whether this is test mode, this account (subsequent payments
+  by API not switched on), or UPI only. The three card orders above come due
+  on 23 Nov between 11:28 and 13:05 IST and answer the last of those. **Only
+  Razorpay can answer the rest: ask support, quoting `order_U2vyy6oJmMhMzf`,
+  `token_U2vvhDK2JmkPt7`, the time (22 Nov 2026 20:44 UTC) and the error
+  above.**
+
+**How the debit pass would have recorded it.** As a refused try: the attempt
+`failed` with `gateway_rejected` and the gateway's sentence as its reason. No
+money moved and none is in doubt (a 400 is a verdict, not an unknown). The
+invoice gets its next try with a new notice, and after the third the merchant
+is emailed to pay by hand. ⚠ If the live account answers the same, every
+renewal sends the customer three pre-debit notices from their bank and never
+a debit. Nobody is charged twice and nobody loses a plan they paid for, but
+autopay collects nothing, as on 21 Nov.
+
+**Changed in code the same night (uncommitted on `fixes`):** a refused debit
+left no log line at all, so a gateway refusing every store would have shown
+only as merchants being asked to pay by hand, one by one. Now the debit pass
+logs every refusal (`billing.debit_pass.refused`, a warning, with the
+gateway's words), and the gateway logs this particular answer as an error
+(`billing.gateway.debit_unavailable`, `isDebitUnavailableAnswer`), because it
+is about the gateway account and not about one merchant's mandate.
+`RECURRING_CHARGE_VERIFIED` is unchanged: switching automatic collection off
+until Razorpay answers is the owner's decision, best taken after the card
+runs.
 
 ### 22 Nov 2026: twenty-seven scenarios, hour by hour, on dummy subscriptions
 

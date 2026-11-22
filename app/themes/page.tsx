@@ -1,14 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import {
-  ArrowRight,
-  ArrowUpRight,
-  Check,
-  Palette,
-  ShoppingBag,
-  Smartphone,
-  Sparkles,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight } from "lucide-react";
 import { BrandMark } from "@/app/platform/brand-mark";
 import { PLATFORM_URL, THEMES_URL } from "@/lib/site";
 import { ROOT_DOMAIN } from "@/lib/store/host";
@@ -18,48 +10,47 @@ import {
   isThemeSelectable,
   newestThemesFirst,
   themeCategoriesFor,
+  type ThemeCategory,
   type ThemeIndustry,
   type ThemeMeta,
 } from "@/lib/themes/meta";
 import { getThemeCatalog } from "@/lib/themes/runtime-registry";
-import {
-  ThemeClosingArt,
-  ThemeHeroStage,
-  type ShowcaseTheme,
-} from "./theme-showcases";
-import { ThemeCatalogCarousel } from "./theme-catalog-carousel";
 
-const FEATURE_LABELS: Record<string, string> = {
-  "advanced-search": "Advanced search",
-  blogs: "Editorial blog",
-  "cart-drawer": "Cart drawer",
-  "category-navigation": "Category navigation",
-  faq: "FAQ layouts",
-  "product-filtering": "Product filtering",
-  "product-recommendations": "Product recommendations",
-  "promo-tiles": "Promotion tiles",
-  "quick-add": "Quick add",
-  "variant-picker": "Variant picker",
-};
+// ---------------------------------------------------------------------------
+// themes.storemink.com: the public theme catalogue.
+//
+// ★ A PLAIN GRID, NOT A SHOWCASE (owner, 23 Nov 2026: "no need of theme
+//   descriptions to show on the page. the overall vibe should be a bit like
+//   shopify's themes page"). The page used to be an editorial piece: a serif
+//   headline beside a rotating stage, one sideways rail of cards each
+//   carrying a paragraph, four feature ticks, a number and two badges, then a
+//   dark "standard" band and an art-led closing. A shopper comparing themes
+//   reads none of that; they look at the picture and the name. So:
+//     * the hero is a headline, one sentence and one button, and SHORT: the
+//       first row of themes is on screen before any scrolling on a laptop
+//       (owner, 23 Nov: "themes are visible with a scroll ... reduce this so
+//       that themes are visible on the first glance"), so the catalogue has
+//       a heading, a count and the filters above it and nothing else;
+//     * every theme is on the page at once, three across, as its picture,
+//       its name, which plans it is on, and what it suits;
+//     * a card has no description, no feature list, no number and no badge.
+// ★ The picture is the way in: it opens the live demo store when there is a
+//   healthy one. The two text links under the name say the same in words, so
+//   nothing depends on hover.
+// ---------------------------------------------------------------------------
 
 const STANDARD_ITEMS = [
   {
-    icon: Smartphone,
-    number: "01",
     title: "Composed for every screen",
-    body: "Layouts are shaped for mobile from the start, with tap targets, typography and merchandising that feel intentional at every size.",
+    body: "Designed for mobile, with intuitive layouts and seamless shopping at every size.",
   },
   {
-    icon: ShoppingBag,
-    number: "02",
     title: "Built around the buying journey",
-    body: "Discovery, product options, cart states and content extremes are reviewed with real catalog data before release.",
+    body: "Discovery, product options and cart flows are tested with real catalog data.",
   },
   {
-    icon: Palette,
-    number: "03",
     title: "Made to become yours",
-    body: "Change color, type, imagery and sections without code - while the theme keeps the details beautifully coherent.",
+    body: "Customize colors, fonts, imagery and sections without code.",
   },
 ] as const;
 
@@ -67,15 +58,25 @@ function demoUrl(slug: string) {
   return `https://${slug}.${ROOT_DOMAIN}`;
 }
 
-function statusLabel(theme: ThemeMeta) {
-  if (theme.catalog.visibility === "legacy") return "Foundation theme";
-  if (theme.release.status === "published") return "Available";
-  if (theme.release.status === "approved") return "Approved";
-  return "In review";
+/** What a theme suits, in the filter's own words ("Food & Beverages"). */
+function industryLabel(
+  theme: ThemeMeta,
+  categories: readonly ThemeCategory[],
+): string {
+  return theme.catalog.industries
+    .map(
+      (id) =>
+        categories.find((category) => category.id === id)?.label ??
+        id.replaceAll("-", " "),
+    )
+    .join(", ");
 }
 
-function industryLabel(theme: ThemeMeta) {
-  return theme.catalog.industries.join(" · ").replaceAll("-", " ");
+/** Which plans may use it, in the plans' own names (Free, Basic, Pro). */
+function planLabel(theme: ThemeMeta): string {
+  if (theme.catalog.minPlan === "pro") return "Pro only";
+  if (theme.catalog.minPlan === "basic") return "Basic and Pro";
+  return "All plans";
 }
 
 export default async function ThemesPage({
@@ -91,17 +92,11 @@ export default async function ThemesPage({
   )
     ? (requested as ThemeIndustry | "all")
     : "all";
+  const selectedLabel =
+    themeCategories.find((category) => category.id === selected)?.label ?? "";
   const selectableThemes = newestThemesFirst(
     themeCatalog.filter(isThemeSelectable),
   );
-  const showcaseThemes: ShowcaseTheme[] = selectableThemes.map((theme) => ({
-    id: theme.id,
-    name: theme.name,
-    industry: industryLabel(theme),
-    previewImage: theme.catalog.previewImage,
-    previewAlt:
-      theme.catalog.screenshots[0]?.alt ?? `${theme.name} theme preview`,
-  }));
   const themes = selectableThemes.filter(
     (theme) =>
       selected === "all" || theme.catalog.industries.includes(selected),
@@ -173,57 +168,25 @@ export default async function ThemesPage({
 
       <main>
         <section className="themes-hero">
-          <div className="themes-hero-content">
-            <p className="themes-kicker">
-              <Sparkles size={15} aria-hidden /> Curated storefront design
+          <h1>Make your store impossible to scroll past.</h1>
+          <div className="themes-hero-aside">
+            <p>
+              Choose a theme, preview your store, and customize every detail
+              without code.
             </p>
-            <h1>
-              Make your store <br />
-              impossible to <i>scroll past.</i>
-            </h1>
-            <p className="themes-hero-copy">
-              Commerce-ready themes with the polish of a custom build. Pick a
-              distinctive starting point, shape every detail to your brand, and
-              launch without touching code.
-            </p>
-            <div className="themes-hero-actions">
-              <a href="#catalog" className="themes-primary-action">
-                Browse all themes <ArrowRight size={18} aria-hidden />
-              </a>
-              <a href="#standard" className="themes-secondary-action">
-                See what&apos;s included
-              </a>
-            </div>
-            <div className="themes-proof" aria-label="Theme quality promises">
-              <span>
-                <Check size={14} aria-hidden /> No-code editing
-              </span>
-              <span>
-                <Check size={14} aria-hidden /> Mobile composed
-              </span>
-              <span>
-                <Check size={14} aria-hidden /> Commerce tested
-              </span>
-            </div>
+            <Link href={`${PLATFORM_URL}/signup`} className="themes-button">
+              Start your store
+            </Link>
           </div>
-
-          <ThemeHeroStage themes={showcaseThemes} />
         </section>
 
         <section className="themes-catalog" id="catalog">
           <div className="themes-catalog-head">
-            <div>
-              <p className="themes-overline">Find your starting point</p>
-              <h2>
-                Designed to sell.
-                <br />
-                Ready to make yours.
-              </h2>
-            </div>
-            <p>
-              Each theme is a complete point of view - not just a new color
-              palette. Browse by business, preview the real storefront, then
-              customize every surface in StoreMink.
+            <h2>
+              {selected === "all" ? "All themes" : `${selectedLabel} themes`}
+            </h2>
+            <p className="themes-count">
+              {themes.length} {themes.length === 1 ? "theme" : "themes"}
             </p>
           </div>
 
@@ -246,131 +209,98 @@ export default async function ThemesPage({
             ))}
           </nav>
 
-          <ThemeCatalogCarousel count={themes.length}>
+          <ul className="themes-grid" aria-label="Theme collection">
             {themes.map((theme, index) => {
               const previewable = canPreviewTheme(theme);
+              const picture = (
+                <Image
+                  src={theme.catalog.previewImage}
+                  alt={`${theme.name} theme storefront preview`}
+                  fill
+                  sizes="(max-width: 640px) 92vw, (max-width: 1024px) 46vw, 420px"
+                  loading={index < 3 ? "eager" : "lazy"}
+                />
+              );
               return (
-                <article className="theme-card" id={theme.id} key={theme.id}>
-                  <div className="theme-card-visual">
-                    <Image
-                      src={theme.catalog.previewImage}
-                      alt={`${theme.name} theme storefront preview`}
-                      fill
-                      sizes="(max-width: 680px) 86vw, (max-width: 1180px) 34vw, 390px"
-                      loading={index === 0 ? "eager" : "lazy"}
-                    />
-                    <div className="theme-card-badges">
-                      <span>{statusLabel(theme)}</span>
-                      <span>
-                        {theme.catalog.minPlan
-                          ? `${theme.catalog.minPlan}+`
-                          : "All plans"}
+                <li className="theme-card" id={theme.id} key={theme.id}>
+                  {previewable ? (
+                    <a
+                      className="theme-card-visual"
+                      href={demoUrl(theme.demo.slug)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={`Preview ${theme.name} theme`}
+                    >
+                      {picture}
+                      <span className="theme-card-cue" aria-hidden="true">
+                        Live preview <ArrowUpRight size={15} />
                       </span>
-                    </div>
-                    {previewable && (
+                    </a>
+                  ) : (
+                    <div className="theme-card-visual">{picture}</div>
+                  )}
+
+                  <div className="theme-card-info">
+                    <h3>{theme.name}</h3>
+                    <span>{planLabel(theme)}</span>
+                    <p>{industryLabel(theme, themeCategories)}</p>
+                  </div>
+
+                  <div className="theme-card-actions">
+                    {previewable ? (
                       <a
-                        className="theme-preview-action"
                         href={demoUrl(theme.demo.slug)}
                         target="_blank"
                         rel="noopener noreferrer"
-                        aria-label={`Preview ${theme.name} theme`}
                       >
-                        Live preview <ArrowUpRight size={16} aria-hidden />
+                        View live store <ArrowUpRight size={14} aria-hidden />
                       </a>
+                    ) : (
+                      <span
+                        className="theme-preview-offline"
+                        title={theme.demo.unavailableReason}
+                      >
+                        Live preview being restored
+                      </span>
                     )}
+                    <Link href={`${PLATFORM_URL}/signup`}>
+                      Start with {theme.name}{" "}
+                      <ArrowRight size={14} aria-hidden />
+                    </Link>
                   </div>
-
-                  <div className="theme-card-content">
-                    <p className="theme-eyebrow">{industryLabel(theme)}</p>
-                    <div className="theme-card-title">
-                      <h3>{theme.name}</h3>
-                      <span>{String(index + 1).padStart(2, "0")}</span>
-                    </div>
-                    <p className="theme-description">{theme.description}</p>
-                    <ul
-                      className="theme-features"
-                      aria-label={`${theme.name} features`}
-                    >
-                      {theme.catalog.features.slice(0, 4).map((feature) => (
-                        <li key={feature}>
-                          <Check size={12} aria-hidden />
-                          {FEATURE_LABELS[feature] ?? feature}
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="theme-card-actions">
-                      {previewable ? (
-                        <a
-                          href={demoUrl(theme.demo.slug)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          View live store <ArrowUpRight size={15} aria-hidden />
-                        </a>
-                      ) : (
-                        <span
-                          className="theme-preview-offline"
-                          title={theme.demo.unavailableReason}
-                        >
-                          Live preview being restored
-                        </span>
-                      )}
-                      <Link href={`${PLATFORM_URL}/signup`}>
-                        Start with {theme.name}{" "}
-                        <ArrowRight size={15} aria-hidden />
-                      </Link>
-                    </div>
-                  </div>
-                </article>
+                </li>
               );
             })}
-          </ThemeCatalogCarousel>
+          </ul>
         </section>
 
         <section className="themes-standard" id="standard">
-          <div className="themes-standard-intro">
-            <p className="themes-overline">The StoreMink standard</p>
+          <div className="themes-standard-head">
             <h2>More than a beautiful first impression.</h2>
             <p>
-              The details people notice - and the ones they don&apos;t have to -
-              are already considered. Your job is to make it feel like your
-              brand.
+              The details people notice, and the ones they never have to, are
+              already considered. Your job is to make it feel like your brand.
             </p>
           </div>
           <div className="themes-standard-grid">
-            {STANDARD_ITEMS.map((item) => {
-              const Icon = item.icon;
-              return (
-                <article key={item.number}>
-                  <div className="themes-standard-icon">
-                    <Icon size={23} strokeWidth={1.6} aria-hidden />
-                    <span>{item.number}</span>
-                  </div>
-                  <h3>{item.title}</h3>
-                  <p>{item.body}</p>
-                </article>
-              );
-            })}
+            {STANDARD_ITEMS.map((item) => (
+              <article key={item.title}>
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </article>
+            ))}
           </div>
         </section>
 
         <section className="themes-closing">
-          <ThemeClosingArt themes={showcaseThemes} />
-          <div className="themes-closing-copy">
-            <p className="themes-overline">Your next chapter starts here</p>
-            <h2>
-              Launch beautifully.
-              <br />
-              <i>Grow confidently.</i>
-            </h2>
-            <p>
-              Start with a polished storefront today, then keep shaping it as
-              your catalog, customers and ambition grow.
-            </p>
-            <Link href={`${PLATFORM_URL}/signup`}>
-              Start your free store <ArrowUpRight size={17} aria-hidden />
-            </Link>
-          </div>
+          <h2>Launch beautifully. Grow confidently.</h2>
+          <p>
+            Start with a polished storefront today, then keep shaping it as your
+            catalog, customers and ambition grow.
+          </p>
+          <Link href={`${PLATFORM_URL}/signup`} className="themes-button">
+            Start your free store
+          </Link>
         </section>
       </main>
 
