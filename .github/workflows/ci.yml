@@ -157,6 +157,17 @@ jobs:
         if: ${{ !cancelled() && (success() || steps.layouts.outcome == 'failure') }}
         run: node scripts/theme-studio-contrast-check.mjs
 
+      # ★ THEME STYLE RULES IN A REAL BROWSER (22 Nov 2026). Each exemplar
+      # theme's own style rules (lib/themes/stylesheet.ts), compiled and laid
+      # over the production storefront CSS: every rule must be in effect (the
+      # storefront's own CSS must not be winning over it), text must still
+      # read, and the page must not scroll sideways. A change to the
+      # storefront's CSS that quietly switches off part of every theme's
+      # styling fails here. Runs whatever the two steps above did.
+      - name: Check theme style rules
+        if: ${{ !cancelled() }}
+        run: npm run theme-studio:stylesheets
+
   shuffle:
     name: Test order independence (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest

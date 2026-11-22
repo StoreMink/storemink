@@ -39,6 +39,12 @@ import {
   type ProjectFacts,
 } from "./prompts";
 import {
+  commitmentIssues,
+  commitmentsPrompt,
+  layoutCommitments,
+} from "./commitments";
+import { stylesheetPrompt } from "./style-rules";
+import {
   addUsage,
   ZERO_USAGE,
   type ProviderUsage,
@@ -60,6 +66,8 @@ import {
 import {
   CONVERGENCE_TRIGGER,
   overusedChoices,
+  overusedStyling,
+  withoutStyling,
   measureDistinctness,
   fingerprintDistance,
   themeFingerprint,
@@ -487,6 +495,7 @@ async function decideOperatorChange(
                 input.existingThemes ?? [],
                 input.references.length > 0 ||
                   base.baseIntent.referenceAnalysis.length > 0,
+                themePromptFeatures(input.promptVersion).stylesheet,
               ),
             }
           : {}),
@@ -535,6 +544,12 @@ async function generate(
   const templatesJsonFeature = themePromptFeatures(
     input.promptVersion,
   ).templatesJson;
+  // v34+: fourteen design directions (design-directions.ts).
+  const moreDirections = themePromptFeatures(
+    input.promptVersion,
+  ).moreDirections;
+  // v34+: the theme's own style rules (style-rules.ts).
+  const stylesheetFeature = themePromptFeatures(input.promptVersion).stylesheet;
   // Explicit styles (intent schema 2) apply to new builds and to revisions of
   // themes that already carry a design direction. A revision of an older
   // schema-1 theme keeps its original contract: forcing a new direction and
@@ -549,6 +564,8 @@ async function generate(
       input.existingThemes ?? [],
       input.references.length > 0 ||
         Boolean(input.revision?.baseIntent.referenceAnalysis.length),
+      // v34+: the theme's own style rules count (fingerprint.ts).
+      themePromptFeatures(input.promptVersion).stylesheet,
     );
   const fail = (
     errorCode: string,
@@ -685,7 +702,7 @@ async function generate(
         explicitStyles,
       );
   if (explicitStyles)
-    baseA += `\n${catalogueVarietyContext(input.facts, input.existingThemes ?? [])}`;
+    baseA += `\n${catalogueVarietyContext(input.facts, input.existingThemes ?? [], moreDirections)}`;
   const images: ThemeStudioContentBlock[] = input.references.flatMap(
     (ref, index) => [
       {
@@ -726,6 +743,7 @@ async function generate(
               nestedBlocks,
               moreSections,
               moreVariants,
+              moreDirections,
             )
           : stageASystemPrompt(
               themePromptFeatures(input.promptVersion).nativeCommerce,
@@ -742,6 +760,7 @@ async function generate(
           peopleInImagery,
           nestedBlocks,
           moreSections,
+          moreDirections,
         ),
         effort: "high",
       },
@@ -846,6 +865,7 @@ async function generate(
           input.revision.baseIntent,
           fontPairings,
           templatesJsonFeature,
+          stylesheetFeature,
         )
       : undefined,
     compactInitial ? input.messages : undefined,
@@ -853,7 +873,21 @@ async function generate(
     templatesJsonFeature,
   );
   if (explicitStyles)
-    baseB += `\n${catalogueVarietyContext(input.facts, input.existingThemes ?? [])}`;
+    baseB += `\n${catalogueVarietyContext(input.facts, input.existingThemes ?? [], moreDirections)}`;
+  // v34+: the layout a NEW theme is committed to (commitments.ts): what its
+  // direction allows and the catalogue uses least. Never for a revision,
+  // nor a theme built from reference screenshots.
+  const committed =
+    themePromptFeatures(input.promptVersion).commitments &&
+    explicitStyles &&
+    !input.revision &&
+    !input.references.length
+      ? layoutCommitments(
+          intent.designDirection,
+          input.compile.themeId,
+          input.existingThemes ?? [],
+        )
+      : null;
   const placeholders = new Map<string, PlaceholderImage>();
   let previousB: unknown = null;
   let issuesB: string[] = [];
@@ -910,7 +944,20 @@ async function generate(
                   moreVariants,
                   templatesFeature,
                   templatesJsonFeature,
-                )) + (heroContrast ? heroContrastPrompt(fullBleedOpening) : ""),
+                )) +
+          (heroContrast ? heroContrastPrompt(fullBleedOpening) : "") +
+          // v34+: appended last, so every earlier version's text is as it
+          // was.
+          (stylesheetFeature
+            ? stylesheetPrompt(
+                intent.designDirection,
+                !!input.revision,
+                overusedStyling(input.existingThemes ?? []),
+              )
+            : "") +
+          (committed && intent.designDirection
+            ? commitmentsPrompt(committed, intent.designDirection)
+            : ""),
         content: [{ type: "text", text: userText }],
         schema: stageBSchemaFor(
           explicitStyles
@@ -926,6 +973,7 @@ async function generate(
           moreVariants,
           templatesFeature,
           templatesJsonFeature,
+          stylesheetFeature,
         ),
         effort: "high",
       },
@@ -948,7 +996,13 @@ async function generate(
       issuesB = expanded.issues;
       continue;
     }
-    const prepared = prepareDraft(expanded.value, intent);
+    // ★ A stylesheet never fails a theme on its own: while repairs remain
+    //   its faults are repair issues; on the last attempt the sound rules
+    //   are kept and the rest dropped.
+    const prepared = prepareDraft(expanded.value, intent, {
+      salvage: attempt >= THEME_STUDIO_LIMITS.repairAttempts,
+      requireOwnHand: !input.revision,
+    });
     if (!prepared.parts) {
       issuesB = prepared.issues;
       continue;
@@ -1010,6 +1064,17 @@ async function generate(
           : { package: compiled.package, issues: [] as string[] };
       if (claims.length || opened.issues.length) {
         issuesB = [...claims, ...opened.issues];
+        continue;
+      }
+      // v34+: a first draft that leaves its layout commitments is sent back
+      // once with the list (commitments.ts); what comes back is accepted
+      // either way, because the brief may truly need another layout.
+      const departed =
+        committed && attempt === 0
+          ? commitmentIssues(opened.package, committed)
+          : [];
+      if (departed.length) {
+        issuesB = departed;
         continue;
       }
       // A revision keeps the images of every slot that survived with the same
@@ -1094,7 +1159,10 @@ async function generate(
                           b.fingerprint,
                         ),
                     )
-                    .slice(0, 5),
+                    .slice(0, 5)
+                    // The correction changes layout settings only, so the
+                    // long styling axis is left out of what it is shown.
+                    .map(withoutStyling),
                   settings,
                 }),
               },

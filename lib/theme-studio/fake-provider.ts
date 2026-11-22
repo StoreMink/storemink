@@ -643,6 +643,105 @@ function fakeDraft(intent: ThemeIntent, name: string): Record<string, unknown> {
   };
 }
 
+/**
+ * The offline provider's stylesheet (v34): enough rules, across enough areas,
+ * to pass a new theme's "own hand" floor, and none whose contrast depends on
+ * the palette (type, borders, shape, motion and the ink tone only).
+ */
+export const FAKE_STYLESHEET = [
+  {
+    hook: "product-card.title",
+    declarations: {
+      fontSize: "sm",
+      fontWeight: 500,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+    },
+  },
+  { hook: "product-card.price", declarations: { fontWeight: 600 } },
+  {
+    hook: "product-card",
+    declarations: { borderWidth: 1, borderColor: "line", transition: "base" },
+  },
+  {
+    hook: "product-card",
+    state: "hover",
+    declarations: { boxShadow: "lifted", transform: "lift" },
+  },
+  { hook: "product-card.image", declarations: { transition: "slow" } },
+  {
+    hook: "product-card.image",
+    state: "hover",
+    declarations: { transform: "zoom" },
+  },
+  {
+    hook: "product-card.flag",
+    declarations: {
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      tone: "ink",
+      borderRadius: "none",
+    },
+  },
+  {
+    hook: "button.primary",
+    declarations: {
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+      tone: "ink",
+      borderRadius: "none",
+      transition: "fast",
+    },
+  },
+  {
+    hook: "button.primary",
+    state: "hover",
+    declarations: { boxShadow: "soft", transform: "lift-sm" },
+  },
+  {
+    hook: "section.title",
+    declarations: {
+      fontSize: "3xl",
+      letterSpacing: "-0.01em",
+      textAlign: "center",
+    },
+  },
+  {
+    hook: "section.eyebrow",
+    declarations: {
+      fontSize: "xs",
+      letterSpacing: "0.2em",
+      textTransform: "uppercase",
+    },
+  },
+  { hook: "hero.heading", declarations: { fontWeight: 300, lineHeight: 1.1 } },
+  {
+    hook: "category.name",
+    declarations: {
+      fontSize: "sm",
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+    },
+  },
+  {
+    hook: "collection.title",
+    declarations: { fontSize: "4xl", fontWeight: 400 },
+  },
+  { hook: "product.title", declarations: { fontSize: "3xl", lineHeight: 1.2 } },
+  {
+    hook: "footer.heading",
+    declarations: {
+      fontSize: "xs",
+      letterSpacing: "0.16em",
+      textTransform: "uppercase",
+    },
+  },
+  {
+    hook: "header.nav-link",
+    declarations: { fontSize: "sm", letterSpacing: "0.04em" },
+  },
+] as const;
+
 export function createFakeModelClient(
   input: FakeProviderInput,
 ): ThemeStudioModelClient {
@@ -834,6 +933,9 @@ export function createFakeModelClient(
       // v32 one as the object; a pre-v32 request's schema has neither and no
       // announcement, and the answer must not either.
       const answerFields = (request.schema?.properties ?? {}) as object;
+      // v34: the theme's own style rules, only where the schema asks.
+      if (Object.hasOwn(answerFields, "stylesheetJson"))
+        draft.stylesheetJson = JSON.stringify(FAKE_STYLESHEET);
       if (Object.hasOwn(answerFields, "templatesJson")) {
         draft.templatesJson = JSON.stringify(draft.templates);
         delete draft.templates;

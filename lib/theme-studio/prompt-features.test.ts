@@ -24,6 +24,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreVariants: false,
     templates: false,
     templatesJson: false,
+    stylesheet: false,
+    moreDirections: false,
+    commitments: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -44,6 +47,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreVariants: false,
     templates: false,
     templatesJson: false,
+    stylesheet: false,
+    moreDirections: false,
+    commitments: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -64,8 +70,11 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreVariants: true,
     templates: true,
     templatesJson: true,
+    stylesheet: true,
+    moreDirections: true,
+    commitments: true,
   });
-  expect(themePromptFeatures("theme-studio-v33")).toEqual(
+  expect(themePromptFeatures("theme-studio-v34")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -139,8 +148,20 @@ it("adds the page templates only from v32, so v31 requests replay unchanged", ()
 });
 
 it("writes the templates as a JSON string only from v33, so v32 requests replay unchanged", () => {
-  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v33");
   expect(themePromptFeatures("theme-studio-v32").templatesJson).toBe(false);
   expect(themePromptFeatures("theme-studio-v33").templatesJson).toBe(true);
   expect(themePromptFeatures("theme-studio-v33").templates).toBe(true);
+});
+
+it("adds the theme stylesheet only from v34, so v33 requests replay unchanged", () => {
+  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v34");
+  expect(themePromptFeatures("theme-studio-v33").stylesheet).toBe(false);
+  expect(themePromptFeatures("theme-studio-v34").stylesheet).toBe(true);
+  expect(themePromptFeatures("theme-studio-v34").templatesJson).toBe(true);
+  // The diversity mechanics arrive with it: fourteen directions and layout
+  // commitments.
+  for (const feature of ["moreDirections", "commitments"] as const) {
+    expect(themePromptFeatures("theme-studio-v33")[feature]).toBe(false);
+    expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(true);
+  }
 });

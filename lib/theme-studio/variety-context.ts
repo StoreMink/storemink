@@ -81,7 +81,9 @@ export async function loadVarietyContext(
     entries.set(row.theme_id, {
       themeId: row.theme_id,
       direction: intent.ok ? (intent.value.designDirection ?? null) : null,
-      fingerprint: themeFingerprint(pkg.value.definition),
+      // With the styling axis: a v34 draft is compared on its style rules
+      // too, against the themes that carry some.
+      fingerprint: themeFingerprint(pkg.value.definition, { styling: true }),
     });
   }
   for (const theme of THEME_DEFINITIONS)

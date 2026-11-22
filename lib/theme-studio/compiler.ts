@@ -53,6 +53,11 @@ import {
   normalizeAnnouncement,
   type ThemeAnnouncement,
 } from "@/lib/themes/announcement";
+import type { ThemeStyleRule } from "@/lib/themes/stylesheet";
+import {
+  parseStylesheetJson,
+  type StylesheetDraftOptions,
+} from "./style-rules";
 import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
@@ -1051,6 +1056,8 @@ export function announcementForDraft(
 export function prepareDraft(
   draftInput: unknown,
   intent: ThemeIntent,
+  /** v34: how the draft's stylesheetJson is judged (style-rules.ts). */
+  styleOptions: StylesheetDraftOptions = {},
 ): {
   parts: {
     draft: Rec;
@@ -1061,6 +1068,9 @@ export function prepareDraft(
       products: ThemeProductSeed[];
     };
     productSlots: Map<string, ProductSlot>;
+    /** v34: the style rules the draft wrote as a JSON string, checked
+     * against the vocabulary and this draft's palette; undefined for none. */
+    stylesheetFromJson?: ThemeStyleRule[];
     /** v33: the templates the draft wrote as a JSON string, checked and
      * completed; undefined for a draft without one. */
     templatesFromJson?: ThemeTemplates;
@@ -1154,6 +1164,21 @@ export function prepareDraft(
       ? stickyBarIssue(templatesFromJson, design.layout)
       : null;
   if (sticky) issues.push(sticky);
+  // v34: the theme's own style rules, as a JSON string. Their colours are
+  // judged against this draft's palette and brand colour.
+  let stylesheetFromJson: ThemeStyleRule[] | undefined;
+  if (typeof draftInput.stylesheetJson === "string") {
+    const brand = isRec(draftInput.brand)
+      ? text(draftInput.brand.primaryColor)
+      : "";
+    stylesheetFromJson = parseStylesheetJson(
+      draftInput.stylesheetJson,
+      design ? { design, ...(brand ? { brandPrimary: brand } : {}) } : {},
+      issues,
+      styleOptions,
+    );
+  } else if (draftInput.stylesheetJson !== undefined && !styleOptions.salvage)
+    issues.push("stylesheetJson must be a string holding one JSON array.");
 
   return {
     parts: {
@@ -1163,6 +1188,7 @@ export function prepareDraft(
       catalogue,
       productSlots,
       ...(templatesFromJson ? { templatesFromJson } : {}),
+      ...(stylesheetFromJson ? { stylesheetFromJson } : {}),
     },
     slots: [...used].sort(),
     issues,
@@ -1178,8 +1204,15 @@ export function assemblePackage(
   priorIssues: string[],
 ): CompileResult {
   const issues = [...priorIssues];
-  const { draft, design, pages, catalogue, productSlots, templatesFromJson } =
-    prepared;
+  const {
+    draft,
+    design,
+    pages,
+    catalogue,
+    productSlots,
+    templatesFromJson,
+    stylesheetFromJson,
+  } = prepared;
   const features = [
     ...new Set([
       ...list(draft.features).filter((f): f is ThemeFeature =>
@@ -1292,6 +1325,8 @@ export function assemblePackage(
       ...(normalizeAnnouncement(draft.announcement)
         ? { announcement: normalizeAnnouncement(draft.announcement) }
         : {}),
+      // v34: the theme's own style rules (lib/themes/stylesheet.ts).
+      ...(stylesheetFromJson ? { stylesheet: stylesheetFromJson } : {}),
     },
   };
 

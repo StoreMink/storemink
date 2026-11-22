@@ -1,5 +1,9 @@
 import { templateIssues } from "@/lib/themes/templates";
 import { announcementIssues } from "@/lib/themes/announcement";
+import {
+  stylesheetIssues,
+  type StylesheetContext,
+} from "@/lib/themes/stylesheet";
 import { THEME_RELEASE_OBJECT_ROOT } from "@/lib/storage/paths";
 import {
   HOMEPAGE_SECTION_TYPES,
@@ -23,10 +27,10 @@ import { cleanTypography } from "@/lib/themes/typography";
 import { parseThemeStudioModelKey, type ThemeStudioModelKey } from "./models";
 import { resolveOptionRows } from "@/lib/products/options";
 import {
-  DESIGN_DIRECTION_IDS,
   PALETTE_FAMILIES,
-  type DesignDirection,
+  STUDIO_DESIGN_DIRECTION_IDS,
   type PaletteFamily,
+  type StudioDesignDirection,
 } from "./design-directions";
 
 export const THEME_INTENT_SCHEMA_VERSION = 1 as const;
@@ -130,7 +134,7 @@ export interface ThemeIntent {
   schemaVersion:
     | typeof THEME_INTENT_SCHEMA_VERSION
     | typeof THEME_VARIETY_INTENT_SCHEMA_VERSION;
-  designDirection?: DesignDirection;
+  designDirection?: StudioDesignDirection;
   paletteFamily?: PaletteFamily;
   summary: string;
   audiences: string[];
@@ -528,7 +532,9 @@ export function validateThemeIntent(
     input.schemaVersion === 2 || input.designDirection !== undefined
       ? enumValue(
           input.designDirection,
-          DESIGN_DIRECTION_IDS,
+          // All fourteen (v34); an earlier request's schema offers only the
+          // first seven, so it can never carry a later one.
+          STUDIO_DESIGN_DIRECTION_IDS,
           "designDirection",
           issues,
         )
@@ -1233,6 +1239,7 @@ function validateThemeDefinition(
       "sampleData",
       "templates",
       "announcement",
+      "stylesheet",
     ],
     "definition.preset",
     issues,
@@ -1244,6 +1251,27 @@ function validateThemeDefinition(
   // The announcement bar (plan Phase 2c): optional, judged as written.
   if (preset.announcement !== undefined)
     issues.push(...announcementIssues(preset.announcement));
+  // The theme's own style rules (plan Phase 3): optional, judged as written,
+  // their colours against this package's own palette.
+  if (preset.stylesheet !== undefined) {
+    const styleDesign = isRecord(preset.design) ? preset.design : null;
+    const styleBrand = isRecord(preset.brand)
+      ? preset.brand.primaryColor
+      : null;
+    issues.push(
+      ...stylesheetIssues(
+        preset.stylesheet,
+        styleDesign && isRecord(styleDesign.palette)
+          ? {
+              design: styleDesign as unknown as StylesheetContext["design"],
+              ...(typeof styleBrand === "string"
+                ? { brandPrimary: styleBrand }
+                : {}),
+            }
+          : {},
+      ),
+    );
+  }
   const brand = isRecord(preset.brand) ? preset.brand : {};
   if (!isRecord(preset.brand))
     issues.push("definition.preset.brand must be an object.");
@@ -2047,7 +2075,7 @@ export const THEME_INTENT_JSON_SCHEMA = {
   ),
   properties: {
     schemaVersion: { type: "integer", enum: [1, 2] },
-    designDirection: { type: "string", enum: DESIGN_DIRECTION_IDS },
+    designDirection: { type: "string", enum: STUDIO_DESIGN_DIRECTION_IDS },
     paletteFamily: { type: "string", enum: PALETTE_FAMILIES },
     summary: { type: "string", maxLength: 1_000 },
     audiences: {

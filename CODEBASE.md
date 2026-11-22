@@ -10219,6 +10219,22 @@ wholesip/
 │   │                          # package.security, the design review's serious findings
 │   │                          # except photos, Design N words, no run id);
 │   │                          # acceptanceRepairDraft kept.
+│   ├── theme-studio/style-rules.ts # v34: the theme stylesheet in the Studio: the
+│   │                          # prompt section built from the catalogue,
+│   │                          # parseStylesheetJson (repair issues, then salvage
+│   │                          # on the last attempt), direction "voices"
+│   ├── theme-studio/commitments.ts # v34: layout commitments for a new theme: what
+│   │                          # its direction allows and the catalogue uses
+│   │                          # least (header, card, product page, footer, page
+│   │                          # width, grid, hover); DIRECTION_SIGNATURES
+│   ├── theme-studio/publish-distinctness.ts # server-only: the public catalogue's
+│   │                          # fingerprints, for Publish's lookalike refusal
+│   │                          # (fingerprint.ts publicationSimilarityBlocker)
+│   ├── themes/stylesheet.ts   # ★★ PURE: a theme's own style rules as data (hook
+│   │                          # catalogue, property allowlist, value scales),
+│   │                          # stylesheetIssues (vocabulary + contrast),
+│   │                          # compileStylesheet (scoped CSS), salvage, facts
+│   ├── themes/exemplars/stylesheets.ts # one hand-written stylesheet per exemplar
 │   ├── help/                   # ★ Public Help reads/types plus Mink AI retrieval (§21):
 │   │                          # assistant-input.ts rejects low-signal turns; chunks.ts
 │   │                          # creates heading-aware plain-text sections; embeddings.ts
@@ -11457,6 +11473,11 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
+│   ├── theme-studio-stylesheet-check.ts # ★ `npm run theme-studio:stylesheets`: each
+│   │                          # exemplar's style rules over the production
+│   │                          # storefront CSS in local Chrome (every rule in
+│   │                          # effect, contrast, no sideways scroll); in CI's
+│   │                          # renderer job. --shots=<dir> saves screenshots.
 │   ├── theme-studio-exemplar-check.ts # ★ The seven exemplar themes (lib/themes/
 │   │                          # exemplars/) through the acceptance gates without a
 │   │                          # Studio project: the real package gates over a slot-form
@@ -15380,6 +15401,126 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     pass). Help: `20261009_0180_page_templates_help` replaces the branding
     guide's layout step in place. Not yet run against live Gemini. A tile's
     picture is the merchant's; a Studio tile is a colour field.
+    **★★ PROMPT v34 (22 Nov 2026): THEMES THAT DO NOT LOOK THE SAME.** Owner:
+    "build step 3, the per-theme style rules ... all the themes should not
+    look same." Plan Phase 3 and Phase 4 items 1 to 3. Built and verified
+    offline and in local Chrome; **no live Gemini run yet** (the first v34
+    batch is the proof still owed).
+    ★ THE THEME STYLESHEET (plan Phase 3, "Track S";
+    `lib/themes/stylesheet.ts`, pure and client-safe). A theme may carry its
+    own style rules, `preset.stylesheet` (optional; absent on every release
+    made before): how its product names, prices, buttons, badges, headings,
+    photographs and hover states are set. ★★ RULES ARE DATA, NEVER CSS: a rule
+    is `{hook, state?, viewport?, declarations}` where the hook is a name from
+    a closed catalogue (60 hooks over 21 areas: `product-card.title`,
+    `button.primary`, `section.head`, `hero[variant=split].heading`, ...), a
+    property is one of 32 allowlisted names, and a value is one of that
+    property's listed values (font sizes `xs` to `6xl`, spaces, radii, shadow
+    presets, palette tokens). StoreMink's compiler writes the CSS, so there is
+    nothing to sanitise: no selector, length, colour, URL or function is ever
+    the author's. Limits: 200 rules, 14 declarations a rule, 32 KiB compiled.
+    ★★ COLOUR IS ALWAYS A READABLE PAIR: a label takes a `tone` (its
+    background and the text that goes with it), a box takes a `fill`, text
+    takes `color` ink, inkSoft or accent, and `stylesheetIssues` checks each
+    against the theme's own palette (4.5:1; 3:1 for headings), against every
+    surface that text can sit on (the fill of the box it lives in included),
+    and inside all four section colour schemes (`resolveScheme`). Elements
+    whose colour the storefront owns (copy over a photograph, the header, the
+    newsletter card) take type only (`ownsColour`); a label that can lie over
+    a photograph must paint its own background (`overPhoto`); a colour or
+    fill never reaches the overlay product card, which draws its text over
+    the photograph (`coloursOwnedUnder`, compiled as
+    `:not(.sm-card-overlay)`).
+    ★ COMPILED (`compileStylesheet`, `themeStylesheetCss`): every selector
+    under `.storefront-root.sm-styled.sm-styled` (the class twice: the rules
+    must beat the storefront's own variant rules without `!important`); base
+    rules, then viewport rules, then state rules; hover only under
+    `@media (hover: hover)`; transforms and transitions only under
+    `prefers-reduced-motion: no-preference`; a photo's hover is its card's
+    (`:hover` and `:focus-within`), and its frame clips a zoom; a disabled
+    button is never restyled. Everything is a palette token, so a merchant's
+    own colours and a section's scheme re-colour the rules too, and inline
+    styles the builder writes still win. The storefront layout writes the CSS
+    in a `<style data-sm="theme-styles">` inside the root and adds `sm-styled`
+    (`app/(storefront)/layout.tsx`); the cart drawer and sign-in dialog sit
+    outside the root and are untouched. The stored rules are read through
+    `salvageStylesheet` (vocabulary only) however they were stored, and the
+    compile itself reads the state and viewport from the closed lists (a
+    10,000-case random and hostile test found the one place that trusted
+    them). New markup hooks: `data-sm="header-brand"`, `"nav-link"`,
+    `"footer-heading"`, `"footer-links"`.
+    ★ IN THE STUDIO (`lib/theme-studio/style-rules.ts`): from v34 Stage B
+    writes `stylesheetJson`, one JSON string holding the array, the way v33
+    writes `templatesJson` (the answer schema grows by one string and stays
+    under what Vertex accepts). The prompt section is appended after
+    everything earlier revisions sent and is built from the catalogue, so
+    what the model is told and what the compiler accepts cannot drift. A new
+    theme must write at least 14 rules over at least 6 areas, the product
+    card, main button and section heading among them; a revision is shown its
+    base's rules and keeps them unless asked. ★★ A STYLESHEET NEVER FAILS A
+    THEME: its faults are repair issues while repairs remain, and on the last
+    attempt the sound rules are kept and the rest dropped. ⚠ Adding a hook,
+    property or value changes v34's prompt text, so it needs a new prompt
+    revision with the vocabulary gated, like the section lists.
+    ★ THE CATALOGUE FINGERPRINT gains an OPTIONAL `styling` axis
+    (`stylesheetFacts`: "hook:property=value", at most 160), set only when
+    Theme Studio asks (`themeFingerprint(theme, { styling: true })`) and
+    counted only when BOTH themes carry rules (`STYLING_WEIGHT` 40 beside the
+    104 of the layout axes). Every stored fingerprint, every theme without
+    rules and the storefront redesign's use of the type read exactly as
+    before. Two themes alike in every layout pick and different in every rule
+    score 0.28: a real difference, not a different theme (Shopify calls those
+    styles of one theme). `overusedStyling` feeds the facts most styled
+    catalogue themes share back into the stylesheet prompt.
+    ★★ PUBLISH REFUSES A LOOKALIKE (plan Phase 4 item 3; `fingerprint.ts`
+    `publicationSimilarityBlocker`, `publish-distinctness.ts`). Similarity
+    used to steer the prompt and show as a note; a theme scoring under
+    `PUBLICATION_DISTINCTNESS_THRESHOLD` (0.5) against any theme in the public
+    catalogue (its own earlier release excepted; bundled themes included) is
+    now refused at Publish, before anything is measured again or stored, with
+    the theme it resembles and what the two share, and the same line shows
+    among the theme page's blockers before Publish is pressed. Calibration:
+    each exemplar is 0.58 to 0.89 from its nearest neighbour.
+    ★ FOURTEEN DESIGN DIRECTIONS (plan Phase 4 item 2;
+    `design-directions.ts`): brutalist, scandinavian-utility, maximal-pattern,
+    dark-luxury, retro-catalogue, tech-spec and artisan-craft join the seven.
+    ★ `DESIGN_DIRECTIONS` (the seven) is unchanged and is still the storefront
+    redesign's vocabulary; Theme Studio reads `STUDIO_DESIGN_DIRECTIONS` from
+    v34 (Stage A schema twin and prompt gated, so earlier requests replay
+    byte for byte). Their font pairings live in `EXTENDED_DIRECTION_PAIRINGS`,
+    never in the pairing library's own lists (printed in every font prompt
+    since v25).
+    ★ LAYOUT COMMITMENTS (plan Phase 4 item 1; `commitments.ts`). On 4 Oct all
+    eight live themes chose the same page width and hover setting. A NEW theme
+    with no reference is now handed its header, card, product page, footer,
+    page width, grid columns and hover setting before Stage B writes
+    anything: per setting, the value its direction's signature
+    (`DIRECTION_SIGNATURES`) allows that the catalogue uses least, a tie
+    broken by the theme's id (deterministic, so a recovered run asks for the
+    same). A first draft that departs is sent back once with the list; the
+    second is accepted either way. Never for a revision or a reference-led
+    theme; never the grocery renderer.
+    Evidence: the seven exemplars each carry a hand-written stylesheet
+    (`lib/themes/exemplars/stylesheets.ts`; every pair differs in at least 79%
+    of what it says; 4 to 6 KB of CSS each) and pass the real package gates
+    (`npm run theme-studio:exemplars`, 6/6 for all seven).
+    `npm run theme-studio:stylesheets`
+    (`scripts/theme-studio-stylesheet-check.ts`, in CI's renderer job) lays
+    each one over the PRODUCTION storefront CSS in local Chrome at 390 and
+    1440px: every rule in effect (398 to 747 declarations a theme; nothing of
+    the storefront's wins over a rule), axe colour contrast clean with dark,
+    soft and tinted bands on the page, no sideways scroll.
+    `lib/themes/stylesheet-hooks.test.ts` reads the component sources so a
+    renamed class cannot silently switch off a hook (it found two dead ones
+    on its first run). Tests: `stylesheet.test.ts` (with the 10,000-case
+    fuzz), `style-rules.test.ts`, `fingerprint-styling.test.ts`,
+    `commitments.test.ts`, `design-directions.test.ts`, the v34 cases of
+    `pipeline.test.ts`, `publication.test.ts` and the opt-in
+    `publication-postgres.test.ts`; `stage-b-request.golden.json` holds v34's
+    pins and every v19 to v33 pin is unchanged. ⚠ Not built: a builder panel
+    listing a theme's rules; exemplars for the seven later directions; a
+    merchant switch for the rules. No migration. No Help Centre change: no
+    merchant step changes (a theme simply arrives styled).
     **Phase 2e, second slice (same day; still prompt v32, unused by any
     run).** The rest of the plan's `templates` field. A `size_guide` product
     block (two to eight measurement columns, up to twelve sizes with one

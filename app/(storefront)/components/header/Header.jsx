@@ -166,7 +166,9 @@ export default function Header() {
               }}
             />
           )}
-          <span className={styles.brandNameText}>{brand.name}</span>
+          <span className={styles.brandNameText} data-sm="header-brand">
+            {brand.name}
+          </span>
         </Link>
 
         <DesktopNav links={navLinks} />
@@ -438,7 +440,9 @@ export default function Header() {
                 style={{ height: "auto", maxWidth: "100px", maxHeight: "30px" }}
               />
             )}
-            <span className={styles.brandNameText}>{brand.name}</span>
+            <span className={styles.brandNameText} data-sm="header-brand">
+              {brand.name}
+            </span>
           </Link>
           <button
             className={styles.closeBtn}

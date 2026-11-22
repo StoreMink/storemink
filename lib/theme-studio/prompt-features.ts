@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v33";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v34";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -60,5 +60,21 @@ export function themePromptFeatures(version: string) {
      * same templates as one JSON string, `templatesJson`, which the compiler
      * parses and checks; earlier requests keep their schema byte for byte. */
     templatesJson: revision >= 33,
+    /** The theme's own style rules (plan Phase 3, owner 22 Nov 2026): Stage
+     * B writes `stylesheetJson`, a JSON string holding rules from the closed
+     * vocabulary in lib/themes/stylesheet.ts, which the compiler parses and
+     * checks into preset.stylesheet. Two themes with the same layout picks
+     * then still differ. Earlier requests keep their schema and prompt byte
+     * for byte. */
+    stylesheet: revision >= 34,
+    /** Fourteen design directions in place of seven (plan Phase 4 item 2;
+     * design-directions.ts STUDIO_DESIGN_DIRECTIONS): Stage A's schema and
+     * prompt offer the seven later ones too. Earlier requests keep the
+     * first seven byte for byte. */
+    moreDirections: revision >= 34,
+    /** Layout commitments (plan Phase 4 item 1; commitments.ts): a new
+     * theme is given the header, card, product page, footer, page width and
+     * grid its catalogue uses least, and asked to keep them. */
+    commitments: revision >= 34,
   };
 }

@@ -10,7 +10,9 @@ import {
 import { productSlotId } from "./compiler";
 import { solidHeroContrast } from "@/lib/themes/hero-contrast";
 import type { HeroConfig } from "@/lib/homepage/section-types";
-import { createFakeModelClient } from "./fake-provider";
+import { createFakeModelClient, FAKE_STYLESHEET } from "./fake-provider";
+import { stylesheetPrompt } from "./style-rules";
+import { commitmentsPrompt, layoutCommitments } from "./commitments";
 import {
   resumableGenerationClient,
   type SavedModelResponse,
@@ -2043,6 +2045,103 @@ describe("the Stage B request a run sends, against the golden pins", () => {
         "thumbs-left",
       );
     }
+  });
+
+  it("★★ under v34 a new theme carries its own style rules, a change keeps them, and a v33 run has none", async () => {
+    const built = await build("theme-studio-v34");
+    expect(sha(JSON.stringify(built.stageB.schema))).toBe(
+      GOLDEN.schemas["varietyInitial@v34"],
+    );
+    expect(propertiesOf(built.stageB)).toHaveProperty("stylesheetJson", {
+      type: "string",
+    });
+    // The stylesheet section is appended last, after everything v33 sent,
+    // with this theme's own design direction.
+    const direction = built.result.intent.designDirection;
+    expect(
+      built.stageB.system.endsWith(stylesheetPrompt(direction, false)),
+    ).toBe(true);
+    const rules = built.result.package.definition.preset.stylesheet;
+    expect(rules?.length).toBe(FAKE_STYLESHEET.length);
+    expect(validateThemePackageV2(built.result.package).ok).toBe(true);
+
+    const { revised, stageB } = await change("theme-studio-v34", built.result);
+    expect(sha(JSON.stringify(stageB.schema))).toBe(
+      GOLDEN.schemas["varietyDraft@v34"],
+    );
+    expect(stageB.system.endsWith(stylesheetPrompt(direction, true))).toBe(
+      true,
+    );
+    // The change is shown the theme's rules as the draft writes them.
+    expect(textOf(stageB)).toContain('"stylesheetJson":"[{');
+    expect(revised.package.definition.preset.stylesheet).toEqual(rules);
+
+    const older = await build("theme-studio-v33");
+    expect(propertiesOf(older.stageB)).not.toHaveProperty("stylesheetJson");
+    expect(older.stageB.system).not.toContain("stylesheetJson");
+    expect(older.result.package.definition.preset.stylesheet).toBeUndefined();
+  });
+
+  it("★★ under v34 a new theme with no reference is given layout commitments, sent back once if it leaves them, and still completes", async () => {
+    // A brief with no reference screenshots, and a provider that knows it.
+    const unreferenced = () => {
+      const fake = createFakeModelClient({ ...base, referenceCount: 0 });
+      const seen: StructuredRequest[] = [];
+      const client: ThemeStudioModelClient = {
+        provider: "fake",
+        generate: (request, signal) => {
+          seen.push(request);
+          return fake.generate(request, signal);
+        },
+      };
+      return { client, seen };
+    };
+    const { client, seen } = unreferenced();
+    const result = await runThemeGeneration(
+      client,
+      { ...input(), references: [], promptVersion: "theme-studio-v34" },
+      new AbortController().signal,
+    );
+    if (result.kind !== "version")
+      throw new Error(`expected a version: ${JSON.stringify(result)}`);
+    const drafts = seen.filter((r) => r.stage === "draft");
+    const committed = layoutCommitments(
+      result.intent.designDirection,
+      input().compile.themeId,
+      [],
+    )!;
+    // The commitments close the system prompt, after the stylesheet section.
+    expect(
+      drafts[0].system.endsWith(
+        commitmentsPrompt(committed, result.intent.designDirection!),
+      ),
+    ).toBe(true);
+    expect(drafts[0].system).toContain("Theme stylesheet:");
+    // The offline provider writes its own fixed layout: one repair turn
+    // names what departed, and the second draft is accepted as it is.
+    expect(drafts).toHaveLength(2);
+    expect(textOf(drafts[1])).toContain("Layout commitment: design.");
+    expect(result.package.definition.preset.stylesheet?.length).toBe(
+      FAKE_STYLESHEET.length,
+    );
+
+    // A theme built from a reference keeps the reference's layout, and a
+    // change keeps its base's: neither is committed to anything.
+    const referenced = await build("theme-studio-v34");
+    expect(referenced.stageB.system).not.toContain("Layout commitments:");
+    const { stageB } = await change("theme-studio-v34", referenced.result);
+    expect(stageB.system).not.toContain("Layout commitments:");
+    // And no earlier revision is.
+    const earlier = unreferenced();
+    const older = await runThemeGeneration(
+      earlier.client,
+      { ...input(), references: [], promptVersion: "theme-studio-v33" },
+      new AbortController().signal,
+    );
+    expect(older.kind).toBe("version");
+    const olderDrafts = earlier.seen.filter((r) => r.stage === "draft");
+    expect(olderDrafts).toHaveLength(1);
+    expect(olderDrafts[0].system).not.toContain("Layout commitments:");
   });
 
   it("sends the templates as one JSON string under v33, for a new theme and a change of either base", async () => {

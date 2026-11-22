@@ -22,6 +22,18 @@ import { THEME_STUDIO_SECTION_TYPES } from "@/lib/theme-studio/schemas";
 import { RENDERER_ENGINE_VERSIONS } from "../runtime-registry";
 import { EXEMPLAR_DIRECTION, EXEMPLAR_THEMES } from "./index";
 import type { ProductBlock } from "../templates";
+import {
+  compileStylesheet,
+  normalizeStylesheet,
+  stylesheetDistance,
+  stylesheetIssues,
+} from "../stylesheet";
+import {
+  STYLESHEET_MIN_AREAS,
+  STYLESHEET_MIN_RULES,
+  parseStylesheetJson,
+  stylesheetForDraft,
+} from "@/lib/theme-studio/style-rules";
 
 // ---------------------------------------------------------------------------
 // The Phase 2 exit evidence (docs/theme-studio-shopify-grade-plan.md): one
@@ -275,5 +287,52 @@ describe("the seven exemplar themes", () => {
       expect(design.page, theme.id).toBeDefined();
       expect(design.motion, theme.id).toBeDefined();
     }
+  });
+});
+
+// Plan Phase 3's exit evidence: the same renderer vocabulary, re-styled seven
+// ways by the themes' own style rules (./stylesheets.ts).
+describe("★★ the exemplars' own style rules", () => {
+  it.each(EXEMPLAR_THEMES.map((theme) => [theme.id, theme] as const))(
+    "%s is styled by rules that read in its own palette and pass a new theme's floor",
+    (_id, theme) => {
+      const rules = theme.preset.stylesheet!;
+      const context = {
+        design: theme.preset.design,
+        brandPrimary: theme.preset.brand.primaryColor,
+      };
+      expect(stylesheetIssues(rules, context)).toEqual([]);
+      // What the Studio would accept from Stage B as a new theme's own hand.
+      const issues: string[] = [];
+      const parsed = parseStylesheetJson(
+        stylesheetForDraft(rules),
+        context,
+        issues,
+        { requireOwnHand: true },
+      );
+      expect(issues).toEqual([]);
+      expect(parsed).toEqual(normalizeStylesheet(rules));
+      expect(rules.length).toBeGreaterThanOrEqual(STYLESHEET_MIN_RULES);
+      expect(
+        new Set(rules.map((rule) => rule.hook.split(/[.[]/)[0])).size,
+      ).toBeGreaterThanOrEqual(STYLESHEET_MIN_AREAS);
+      // A few kilobytes of CSS a page, never a second stylesheet's worth.
+      expect(compileStylesheet(rules).length).toBeLessThan(8 * 1024);
+      // Stored and read back (jsonb re-orders keys), it is the same rules.
+      expect(
+        normalizeStylesheet(jsonbRoundTrip(rules) as typeof rules),
+      ).toEqual(normalizeStylesheet(rules));
+    },
+  );
+
+  it("no two exemplars share a hand: every pair differs in at least seven of ten things it says", () => {
+    for (const a of EXEMPLAR_THEMES)
+      for (const b of EXEMPLAR_THEMES) {
+        if (a.id >= b.id) continue;
+        expect(
+          stylesheetDistance(a.preset.stylesheet, b.preset.stylesheet),
+          `${a.id} / ${b.id}`,
+        ).toBeGreaterThanOrEqual(0.7);
+      }
   });
 });

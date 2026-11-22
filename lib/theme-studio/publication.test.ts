@@ -8,16 +8,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // publication-postgres.test.ts (THEME_STUDIO_RECOVERY_DB_TEST=1).
 // ---------------------------------------------------------------------------
 
-const { evidence, recheck, config, storage, writeStoreObject } = vi.hoisted(
-  () => ({
+const { evidence, recheck, config, storage, writeStoreObject, catalogue } =
+  vi.hoisted(() => ({
+    /** The public catalogue a publish is compared with; empty by default. */
+    catalogue: { themes: [] as unknown[] },
     evidence: vi.fn(),
     recheck: vi.fn(),
     config: { autoQaEnabled: true },
     /** Whether media storage reads as configured (the default deps need it). */
     storage: { configured: false },
     writeStoreObject: vi.fn(),
-  }),
-);
+  }));
+// The catalogue read is its own query (publish-distinctness.ts); each test
+// here says what is in the catalogue.
+vi.mock("./publish-distinctness", () => ({
+  publishedThemeFingerprints: vi.fn(async () => catalogue.themes),
+}));
 
 vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 vi.mock("next/cache", () => ({
@@ -71,6 +77,7 @@ import {
 } from "@/drizzle/schema";
 import { operatorImagePackage, placeholderPackage } from "./_test-helpers";
 import { gate } from "./acceptance-gates";
+import { themeFingerprint } from "./fingerprint";
 import type { ThemePackageV2 } from "./contracts";
 import {
   changeThemeStudioCatalog,
@@ -254,6 +261,39 @@ const events = () =>
 describe("Publish on today's evidence (owner decision 4)", () => {
   beforeEach(() => {
     config.autoQaEnabled = true;
+    catalogue.themes = [];
+  });
+
+  it("★★ refuses a theme too close to one already in the catalogue, before measuring or writing anything", async () => {
+    const { updates, inserts } = scriptedDb(
+      new Map<unknown, Row[]>([
+        [themeStudioProjects, [project()]],
+        [themeStudioVersions, [version()]],
+      ]),
+    );
+    // The catalogue already holds this very design under another name.
+    catalogue.themes = [
+      {
+        themeId: "harbour",
+        name: "Harbour",
+        fingerprint: themeFingerprint(operatorImagePackage().definition, {
+          styling: true,
+        }),
+      },
+    ];
+    await expect(
+      publishThemeStudioProject(
+        actor,
+        { projectId, expectedRevision: 7 },
+        deps,
+      ),
+    ).rejects.toThrow(
+      /looks too much like "Harbour", which is already in the catalogue: they are 100% alike/,
+    );
+    expect(evidence).not.toHaveBeenCalled();
+    expect(recheck).not.toHaveBeenCalled();
+    expect(updates).toEqual([]);
+    expect(inserts).toEqual([]);
   });
 
   it("re-checks a design checked on an earlier build instead of publishing, and writes nothing itself", async () => {
@@ -699,6 +739,7 @@ describe("release images through the re-upload guard (takedown D4, A8)", () => {
 describe("the release state", () => {
   beforeEach(() => {
     config.autoQaEnabled = true;
+    catalogue.themes = [];
   });
 
   const tables = (
@@ -714,6 +755,28 @@ describe("the release state", () => {
       [themeCatalogAudit, []],
       [themeStudioAssets, []],
     ]);
+
+  it("★★ shows the similarity refusal before Publish is pressed, and offers no re-check that could not help", async () => {
+    scriptedDb(tables(project()));
+    evidence.mockResolvedValue({
+      ok: false,
+      reason: "old_build",
+      detail: "StoreMink was updated since these checks.",
+    });
+    catalogue.themes = [
+      {
+        themeId: "harbour",
+        name: "Harbour",
+        fingerprint: themeFingerprint(operatorImagePackage().definition, {
+          styling: true,
+        }),
+      },
+    ];
+    const state = await getThemeStudioReleaseState(projectId);
+    expect(state?.blockers).toHaveLength(1);
+    expect(state?.blockers[0]).toMatch(/looks too much like "Harbour"/);
+    expect(state?.recheckOnPublish).toBe(false);
+  });
 
   it("offers a re-check on Publish when Ready to publish evidence is from an earlier build", async () => {
     scriptedDb(tables(project()));

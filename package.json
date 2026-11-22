@@ -47,6 +47,7 @@
     "theme-studio:visual-fixtures": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-visual-fixtures.ts",
     "theme-studio:capture": "node jobs/theme-studio-capture/capture-job.mjs",
     "theme-studio:exemplars": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-exemplar-check.ts",
+    "theme-studio:stylesheets": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-stylesheet-check.ts",
     "theme-registry:import": "tsx --tsconfig tsconfig.scripts.json scripts/theme-registry-import.ts",
     "auth:sync-hosts": "tsx --tsconfig tsconfig.scripts.json scripts/sync-auth-hosts.ts",
     "themes:remove-samples": "tsx --tsconfig tsconfig.scripts.json scripts/remove-theme-samples.ts",

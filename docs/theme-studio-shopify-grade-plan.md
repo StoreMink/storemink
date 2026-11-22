@@ -139,6 +139,32 @@
 > probe's clipped-text scan, the chrome states through the real probe) and
 > one live Gemini batch under v32, which is also where the 2a–2e prompt
 > bullets get their first live reading.
+> **Phases 3 and 4 built offline (22 Nov 2026, prompt v34; owner: "build
+> step 3, the per-theme style rules ... all the themes should not look
+> same").** Phase 3: the scoped theme stylesheet as structured data
+> (`lib/themes/stylesheet.ts`: 60 hooks, 32 properties, closed value scales,
+> colour only as readable pairs checked against the theme's palette and its
+> section schemes), written by Stage B as `stylesheetJson`, compiled under the
+> storefront root and served by the layout; a stylesheet's faults are repair
+> issues and are salvaged on the last attempt, never a failed theme. The
+> exit evidence: the seven exemplars re-styled by hand
+> (`lib/themes/exemplars/stylesheets.ts`), all passing the package gates and
+> `npm run theme-studio:stylesheets` (every rule in effect over the
+> production CSS in local Chrome, contrast clean, no sideways scroll), and a
+> 10,000-case random and hostile test that nothing compiled leaves the
+> storefront root. ⚠ One exit number was NOT met on purpose: two themes that
+> share every layout pick and differ only in stylesheet score 0.28, not the
+> 0.45 written above. Reaching 0.45 would need styling to outweigh every
+> layout axis together, and a catalogue of themes that differ only in styling
+> is one theme in several hands; styling is a quarter of the score when both
+> themes carry rules, and one of eight major axes. Phase 4 items 1 to 3:
+> layout commitments (`commitments.ts`, a new theme is handed what its
+> direction allows and the catalogue uses least), fourteen design directions
+> (`STUDIO_DESIGN_DIRECTIONS`; the redesign keeps its seven), the fingerprint's
+> styling axis, and publication blocked under 0.50 against the public
+> catalogue. Still open: the first live Gemini batch under v34 (which is also
+> where Phase 4's exit, G4, is measured), the blind test (item 4), a builder
+> panel for the rules, and exemplars for the seven later directions.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

@@ -253,6 +253,11 @@ export interface ThemePreset {
    *  Absent = no bar, so every stored release renders as it did; a merchant
    *  can write their own or switch it off in the Website Builder. */
   announcement?: import("./announcement").ThemeAnnouncement;
+  /** The theme's own style rules (lib/themes/stylesheet.ts): how its cards,
+   *  headings, buttons and photographs are set, as structured data the
+   *  storefront compiles to CSS scoped under its root. Absent = no rules, so
+   *  every stored release renders as it did. */
+  stylesheet?: import("./stylesheet").ThemeStyleRule[];
 }
 
 /** One immutable preset release. Multiple releases with the same id may stay

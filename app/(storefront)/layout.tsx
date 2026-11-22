@@ -51,6 +51,10 @@ import {
   withThemeChromeDefaults,
 } from "@/lib/themes/footer";
 import { activeAnnouncement } from "@/lib/themes/announcement";
+import {
+  STYLESHEET_ROOT_CLASS,
+  themeStylesheetCss,
+} from "@/lib/themes/stylesheet";
 import { pageRootClasses } from "@/lib/themes/page";
 import { motionRootClasses, revealsOnScroll } from "@/lib/themes/motion";
 import { ScrollReveal } from "@/app/(storefront)/components/scroll-reveal";
@@ -213,6 +217,10 @@ export default async function StorefrontLayout({
     previewing ? Promise.resolve(null) : getStorefrontWhatsAppChat(store),
   ]);
   const design = theme?.preset.design ?? null;
+  // The theme's own style rules, compiled to CSS scoped under the root
+  // (lib/themes/stylesheet.ts). "" for a theme with none, which is every
+  // release made before 22 Nov 2026.
+  const themeCss = themeStylesheetCss(theme?.preset.stylesheet);
   // ★★ The theme's bar and newsletter words, laid over the store's chrome by
   //   the ONE function ChromeProvider also lays over chrome a preview frame
   //   is sent (lib/themes/footer.ts), so the frame shows what goes live.
@@ -297,6 +305,8 @@ export default async function StorefrontLayout({
     // hook measures (storefront-theme.css); the bar itself keeps it live in
     // the builder (header/announcement-bar.jsx).
     activeAnnouncement(chrome) ? "sm-announce" : "",
+    // The scope every compiled theme style rule is written under.
+    themeCss ? STYLESHEET_ROOT_CLASS : "",
     appearance.card === "grocery" ||
     appearance.productDetail === "grocery" ||
     appearance.cart === "grocery"
@@ -310,6 +320,12 @@ export default async function StorefrontLayout({
     return (
       <BrandProvider brand={clientBrand}>
         <div className={rootClass} style={themeVars as CSSProperties}>
+          {themeCss ? (
+            <style
+              data-sm="theme-styles"
+              dangerouslySetInnerHTML={{ __html: themeCss }}
+            />
+          ) : null}
           {children}
         </div>
       </BrandProvider>
@@ -336,6 +352,14 @@ export default async function StorefrontLayout({
                 live={previewing}
               >
                 <div className={rootClass} style={themeVars as CSSProperties}>
+                  {themeCss ? (
+                    // Vocabulary only: the compiler writes this text from a
+                    // closed catalogue, never from anything a theme typed.
+                    <style
+                      data-sm="theme-styles"
+                      dangerouslySetInnerHTML={{ __html: themeCss }}
+                    />
+                  ) : null}
                   <Header />
                   <StorefrontRefresh />
                   {children}
