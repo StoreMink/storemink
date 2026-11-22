@@ -634,6 +634,71 @@ describe("minutesUntilLapse", () => {
 });
 
 describe("settleShopperPendingOrders: the shopper's own waiting orders", () => {
+  // PR #303 review, 22 Nov 2026. A read that failed used to drop the order
+  // from the answer, so checkout saw nothing waiting and placed a second
+  // order while a UPI approval on the first was still being processed.
+  describe("★★ an order Razorpay could not be asked about is never 'nothing waiting'", () => {
+    it("a timeout or a 5xx on an order inside its payment window: reported as UNCHECKED", async () => {
+      db({ rows: [[order({ id: "a", created_at: minutesAgo(5) })]] });
+      vi.mocked(settleOrderPayment).mockResolvedValue({ kind: "unknown" });
+      const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
+      expect(res.unchecked.map((o) => o.id)).toEqual(["a"]);
+      expect(res.paid).toBeNull();
+      expect(res.waiting).toBeNull();
+    });
+
+    it("keys Razorpay refuses are no proof of nothing either, while the order is inside its window", async () => {
+      db({ rows: [[order({ id: "a", created_at: minutesAgo(5) })]] });
+      vi.mocked(settleOrderPayment).mockResolvedValue({
+        kind: "unknown",
+        refused: true,
+      });
+      const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
+      expect(res.unchecked.map((o) => o.id)).toEqual(["a"]);
+    });
+
+    it("★ past its payment window it is the reaper's, as before: not reported", async () => {
+      db({
+        rows: [
+          [
+            order({
+              id: "old",
+              created_at: minutesAgo(PAYMENT_GRACE_MINUTES + 1),
+            }),
+          ],
+        ],
+      });
+      vi.mocked(settleOrderPayment).mockResolvedValue({ kind: "unknown" });
+      const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
+      expect(res.unchecked).toEqual([]);
+    });
+
+    it("every unread order is listed, newest first, beside one that could be read", async () => {
+      db({
+        rows: [
+          [
+            order({ id: "new", created_at: minutesAgo(2) }),
+            order({ id: "mid", created_at: minutesAgo(8) }),
+            order({ id: "old", created_at: minutesAgo(20) }),
+          ],
+        ],
+      });
+      vi.mocked(settleOrderPayment)
+        .mockResolvedValueOnce({ kind: "unknown" })
+        .mockResolvedValueOnce({ kind: "none" })
+        .mockResolvedValueOnce({ kind: "unknown" });
+      const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
+      expect(res.unchecked.map((o) => o.id)).toEqual(["new", "old"]);
+      expect(res.waiting?.id).toBe("mid");
+    });
+
+    it("nothing unread: an empty list, never missing", async () => {
+      db({ rows: [[order()]] });
+      const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
+      expect(res.unchecked).toEqual([]);
+    });
+  });
+
   it("★★ reports the one that turned out to be paid", async () => {
     db({ rows: [[order({ id: "new" }), order({ id: "old" })]] });
     vi.mocked(settleOrderPayment)
@@ -661,7 +726,7 @@ describe("settleShopperPendingOrders: the shopper's own waiting orders", () => {
   it("★ cancels their own abandoned attempt once it is past the payment window", async () => {
     db({ rows: [[order({ created_at: minutesAgo(60) })]] });
     const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
-    expect(res).toEqual({ paid: null, waiting: null });
+    expect(res).toEqual({ paid: null, waiting: null, unchecked: [] });
     // Its stock and offer uses are free for the order about to be placed.
     expect(releaseCancelledOrder).toHaveBeenCalledTimes(1);
     expect(releaseOrderOfferUses).toHaveBeenCalledWith("s1", "o1");
@@ -674,6 +739,7 @@ describe("settleShopperPendingOrders: the shopper's own waiting orders", () => {
     expect(await settleShopperPendingOrders("s1", "c1", CREDS, NOW)).toEqual({
       paid: null,
       waiting: null,
+      unchecked: [],
     });
   });
 });

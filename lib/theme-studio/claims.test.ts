@@ -56,6 +56,19 @@ describe("unsupported claims", () => {
     ).toEqual([]);
   });
 
+  it("★ the organic rule can be left out, for a run on a prompt version older than the one that states it; every other rule still applies", () => {
+    const pkg = pkgWith((def) =>
+      setHeading(def, "Organic beans, craft roasted. Est. 2021"),
+    );
+    const brief = "A bold coffee brand.";
+    expect(unsupportedClaimIssues(pkg, brief).join(" ")).toContain(
+      "an organic claim",
+    );
+    const older = unsupportedClaimIssues(pkg, brief, { organic: false });
+    expect(older.join(" ")).not.toContain("an organic claim");
+    expect(older.join(" ")).toContain("a founding year");
+  });
+
   it("the same claim passes when the brief supports it", () => {
     const pkg = pkgWith((def) =>
       setHeading(def, "Award-winning serums for every skin"),

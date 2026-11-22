@@ -140,14 +140,17 @@ export function customerCopy(pkg: ThemePackageV2): string[] {
   ];
 }
 
-/** The rules one piece of copy breaks: claims `evidence` does not support. */
+/** The rules one piece of copy breaks: claims `evidence` does not support.
+ * `skipLabel` leaves one rule out (see `unsupportedClaimIssues`). */
 function unsupportedRules(
   text: string,
   evidence: string,
   numbers: Set<string>,
+  skipLabel: string | null = null,
 ): ClaimRule[] {
   const broken: ClaimRule[] = [];
   for (const rule of CLAIM_RULES) {
+    if (skipLabel && rule.label === skipLabel) continue;
     const match = rule.re.exec(text);
     if (!match) continue;
     const supported = rule.numeric
@@ -180,15 +183,26 @@ export function unsupportedClaimLabels(
  * Repair sentences for claims the evidence does not support. `evidence` is
  * the brief for an initial generation; a revision adds the base theme's own
  * copy, since claims already there passed this check when they were made.
+ *
+ * ★ `organic: false` LEAVES THE "ORGANIC" RULE OUT, for a run on a prompt
+ *   version older than the one that tells the model about it (v34, with
+ *   `CLAIMS_PROMPT`; PR #303 review, 22 Nov 2026). The rule was added on
+ *   22 Nov 2026 and applied to every run: a run on an older version that is
+ *   reclaimed after the deploy replays its SAVED draft, and a draft that
+ *   says "organic", written under rules that allowed it, then failed this
+ *   check and paid for a repair call its prompt never warned it about.
+ *   Every other rule predates those versions and applies to all of them.
  */
 export function unsupportedClaimIssues(
   pkg: ThemePackageV2,
   evidence: string,
+  options: { organic?: boolean } = {},
 ): string[] {
   const numbers = numbersIn(evidence);
   const issues = new Set<string>();
+  const skip = options.organic === false ? ORGANIC_CLAIM_LABEL : null;
   for (const text of customerCopy(pkg)) {
-    for (const rule of unsupportedRules(text, evidence, numbers)) {
+    for (const rule of unsupportedRules(text, evidence, numbers, skip)) {
       const excerpt = text.length > 80 ? `${text.slice(0, 77)}…` : text;
       issues.add(
         `Copy claims ${rule.label} ("${excerpt}") that the brief does not support. Remove the claim or rephrase without it; never invent awards, press, ratings, counts, certifications or dates.`,

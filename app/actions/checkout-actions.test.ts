@@ -175,6 +175,7 @@ vi.mock("@/lib/orders/pending-payments", () => ({
   settleShopperPendingOrders: vi.fn(async () => ({
     paid: null,
     waiting: null,
+    unchecked: [],
   })),
   orderHoldsCart: vi.fn(async () => false),
   // What differs between a waiting order and the form (PR #303 follow-up
@@ -2620,6 +2621,7 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
     vi.mocked(settleShopperPendingOrders).mockResolvedValue({
       paid: null,
       waiting: null,
+      unchecked: [],
     });
     vi.mocked(orderHoldsCart).mockResolvedValue(true);
     vi.mocked(waitingOrderChanges).mockResolvedValue([]);
@@ -2631,6 +2633,7 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
     vi.mocked(settleShopperPendingOrders).mockResolvedValue({
       paid: null,
       waiting: null,
+      unchecked: [],
     });
     vi.mocked(orderHoldsCart).mockResolvedValue(false);
     vi.mocked(waitingOrderChanges).mockResolvedValue([]);
@@ -2730,6 +2733,85 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
         shippingAmount: null,
       });
       expect(retireWaitingOrder).not.toHaveBeenCalled();
+    });
+
+    // ★★ PR #303 review, 22 Nov 2026. A Razorpay read that timed out used to
+    // count as "nothing waiting": the second order was placed while the UPI
+    // approval on the first was still being processed, and both were paid.
+    describe("★★ an earlier order for this cart that Razorpay could not be asked about", () => {
+      const unread = () =>
+        vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+          paid: null,
+          waiting: null,
+          unchecked: [WAITING_ORDER],
+        } as any);
+
+      it.each(["razorpay", "cod"] as const)(
+        "NO second order, paying by %s: nothing is priced, reserved or written, and the shopper is asked to try again",
+        async (method) => {
+          unread();
+          const res = await placeOrder(validForm, [oneItem()], null, method);
+          expect(res).toEqual({
+            error:
+              "We couldn't check your earlier payment for this cart (order ORD100110001) just now, so we haven't placed a second order. Please try again in a minute. If you approved that payment, the order will be confirmed shortly.",
+            unfinished: {
+              orderId: "order-old",
+              orderRef: "ORD100110001",
+              minutesLeft: 30,
+            },
+          });
+          expect(dbHolder.current.calls.insert).toHaveLength(0);
+          expect(dbHolder.current.calls.execute).toHaveLength(0);
+          expect(rzpCreateOrder).not.toHaveBeenCalled();
+        },
+      );
+
+      it("★★ it is never resumed and never cancelled: nobody knows what is happening on it", async () => {
+        unread();
+        const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+        expect("resumed" in res && res.resumed).toBeFalsy();
+        // No payment to reopen is offered either.
+        expect("unfinished" in res && res.unfinished?.payment).toBeUndefined();
+        expect(retireWaitingOrder).not.toHaveBeenCalled();
+        expect(waitingOrderChanges).not.toHaveBeenCalled();
+      });
+
+      it("★ it stops the order even when a NEWER order for this cart could be resumed", async () => {
+        vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+          paid: null,
+          waiting: { ...WAITING_ORDER, id: "order-newer" },
+          unchecked: [WAITING_ORDER],
+        } as any);
+        const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+        expect("unfinished" in res && res.unfinished?.orderId).toBe(
+          "order-old",
+        );
+        expect("resumed" in res && res.resumed).toBeFalsy();
+      });
+
+      it("an unread order for ANOTHER cart is another purchase: this order is placed", async () => {
+        unread();
+        vi.mocked(orderHoldsCart).mockResolvedValue(false);
+        const res = await placeOrder(validForm, [oneItem()], null, "cod");
+        expect("success" in res && res.success).toBe(true);
+      });
+
+      it("★ a payment that turned out PAID still wins: the shopper is told it went through", async () => {
+        vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+          paid: WAITING_ORDER,
+          waiting: null,
+          unchecked: [{ ...WAITING_ORDER, id: "order-other" }],
+        } as any);
+        const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+        expect("paidOrder" in res && res.paidOrder?.orderId).toBe("order-old");
+      });
+
+      it("the checkout page's check on load offers nothing to reopen for it", async () => {
+        unread();
+        expect(await resumeMyUnfinishedPayment([oneItem()])).toEqual({
+          state: "none",
+        });
+      });
     });
 
     // ★★ PR #303 follow-up review, 22 Nov 2026. The resume above matched on

@@ -236,10 +236,12 @@ export type CheckoutResult =
       paidOrder?: { orderId: string; orderRef: string; sameCart: boolean };
       /**
        * Set when the order was NOT placed because an earlier order for this
-       * same cart may still be paid (an approval is pending, or it could not
-       * be checked), and what the shopper is asking for now differs from it.
-       * `payment`, when present, reopens that earlier order exactly as it
-       * was placed; the page offers it as a choice, never by itself.
+       * same cart may still be paid. Two cases: an approval is pending on it
+       * and what the shopper is asking for now differs from it; or Razorpay
+       * could not be asked about it at all, whatever is being asked for.
+       * `payment`, present only in the first case, reopens that earlier order
+       * exactly as it was placed; the page offers it as a choice, never by
+       * itself. An order nobody could check is never reopened or cancelled.
        */
       unfinished?: {
         orderId: string;
@@ -1119,6 +1121,29 @@ export async function placeOrder(
         ? `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. You have not been charged again.`
         : `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. Check your cart before you place another order.`,
       paidOrder: earlier.paid,
+    };
+  }
+  // ★★ AN EARLIER ORDER FOR THIS CART THAT RAZORPAY COULD NOT BE ASKED ABOUT
+  // STOPS THE ORDER (PR #303 review, 22 Nov 2026). A timeout, a 5xx or a
+  // refused read used to count as "nothing waiting", so this went on to a
+  // second order while the shopper's UPI approval on the first was still
+  // being processed, and they paid for both. Nobody knows what is happening
+  // on that order, so it is neither resumed (its payment may already be in
+  // hand) nor cancelled (money may be landing on it): the shopper is asked
+  // to try again shortly. Checked BEFORE the waiting order below, because a
+  // newer order being resumable says nothing about this one. Only inside its
+  // payment window, and only for this same cart: another cart is another
+  // purchase.
+  if (earlier.unchecked) {
+    const order = earlier.unchecked;
+    const minutesLeft = minutesUntilLapse(order);
+    return {
+      error: `We couldn't check your earlier payment for this cart (order ${order.order_ref ?? ""}) just now, so we haven't placed a second order. Please try again in a minute. If you approved that payment, the order will be confirmed shortly.`,
+      unfinished: {
+        orderId: order.id,
+        orderRef: order.order_ref ?? "",
+        minutesLeft,
+      },
     };
   }
   // ★★ AND ONE STILL WAITING, FOR THIS SAME CART, IS NEVER PAID FOR BESIDE
@@ -2763,8 +2788,14 @@ async function settleEarlierPayment(
     /** The account that order was read on, for asking about it again. */
     creds: { keyId: string; keySecret: string };
   } | null;
+  /**
+   * An earlier order for THIS cart, still inside its payment window, that
+   * Razorpay could not be asked about. Never resumed and never cancelled:
+   * nobody knows whether a payment is landing on it.
+   */
+  unchecked: PendingOnlineOrder | null;
 }> {
-  const nothing = { paid: null, waiting: null };
+  const nothing = { paid: null, waiting: null, unchecked: null };
   try {
     // Cheap first: most shoppers have nothing waiting, and then no gateway
     // credentials are read and Razorpay is never called.
@@ -2796,7 +2827,16 @@ async function settleEarlierPayment(
           sameCart: await orderHoldsCart(settled.paid.id, cart),
         },
         waiting: null,
+        unchecked: null,
       };
+    }
+    // The newest unread order that holds this very cart, if there is one.
+    let unchecked: PendingOnlineOrder | null = null;
+    for (const order of settled.unchecked ?? []) {
+      if (await orderHoldsCart(order.id, cart)) {
+        unchecked = order;
+        break;
+      }
     }
     if (settled.waiting) {
       return {
@@ -2808,9 +2848,10 @@ async function settleEarlierPayment(
           enabled: gateway.enabled,
           creds: gateway.creds,
         },
+        unchecked,
       };
     }
-    return nothing;
+    return { paid: null, waiting: null, unchecked };
   } catch (err) {
     logError("checkout.settle_earlier_payment", err, { storeId });
     return nothing;

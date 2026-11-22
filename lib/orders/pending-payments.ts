@@ -687,6 +687,13 @@ export interface ShopperPendingResult {
   paid: PendingOnlineOrder | null;
   /** The newest order still inside its payment window, if any. */
   waiting: PendingOnlineOrder | null;
+  /**
+   * Orders still inside their payment window whose state could NOT be read
+   * (Razorpay timed out, answered an error, or refused these keys), newest
+   * first. ★ Never "nothing waiting": a payment may be landing on any of
+   * them, and the caller must not place a second order for the same cart.
+   */
+  unchecked: PendingOnlineOrder[];
 }
 
 /**
@@ -702,8 +709,17 @@ export interface ShopperPendingResult {
  * the stock and offer uses the shopper's own abandoned attempt was holding
  * are free for the order they are about to place.
  *
- * Never throws: on any failure it reports nothing waiting, and checkout
- * carries on exactly as before.
+ * ★★ AN ORDER RAZORPAY COULD NOT BE ASKED ABOUT IS NOT "NOTHING WAITING" (PR
+ * #303 review, 22 Nov 2026). `unknown` (a timeout, a 5xx, a dropped
+ * connection) and `refused` used to be dropped here, so the earlier order
+ * vanished from the answer and `placeOrder` went on to a second order: a
+ * shopper whose UPI approval was still being processed paid for both. They
+ * are reported as `unchecked` while the order is inside its payment window,
+ * the time in which a payment can still be expected on it. Past the window
+ * it is the reaper's and the late-payment sweep's, as before.
+ *
+ * Never throws: when the shopper's orders cannot even be LISTED it reports
+ * nothing waiting, and checkout carries on exactly as before.
  */
 export async function settleShopperPendingOrders(
   storeId: string,
@@ -711,7 +727,11 @@ export async function settleShopperPendingOrders(
   creds: RazorpayCreds,
   now: Date = new Date(),
 ): Promise<ShopperPendingResult> {
-  const result: ShopperPendingResult = { paid: null, waiting: null };
+  const result: ShopperPendingResult = {
+    paid: null,
+    waiting: null,
+    unchecked: [],
+  };
   try {
     const pending = await listShopperPendingOrders(storeId, customerId, now);
     for (const order of pending) {
@@ -728,6 +748,12 @@ export async function settleShopperPendingOrders(
         result.paid = order;
       // Newest first, so the first one still waiting is the newest.
       if (outcome === "waiting" && !result.waiting) result.waiting = order;
+      if (
+        (outcome === "unknown" || outcome === "refused") &&
+        orderAgeMinutes(order, now) < PAYMENT_GRACE_MINUTES
+      ) {
+        result.unchecked.push(order);
+      }
     }
   } catch (err) {
     logError("checkout.settle_shopper_pending", err, { storeId });

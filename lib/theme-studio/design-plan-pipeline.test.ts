@@ -531,6 +531,40 @@ describe("★★ what the first live v34 build taught", () => {
     expect(second).toContain('Copy claims a founding year ("EST. 2021")');
   });
 
+  // PR #303 review, 22 Nov 2026. The "organic" rule was added with v34 and
+  // applied to every run, so a run on an older prompt version that replayed
+  // its saved draft after the deploy paid for a repair its prompt never
+  // warned it about.
+  it('★ "organic" is sent back from v34 only: an older prompt version\'s draft is judged by the rules it was written under', async () => {
+    const organic = (draft: Draft, nth: number) => {
+      if (nth !== 0) return;
+      for (const page of draft.pages)
+        for (const section of page.sections) {
+          const config = JSON.parse(section.configJson);
+          if (typeof config.heading === "string") {
+            config.heading = "Organic beans, craft roasted";
+            section.configJson = JSON.stringify(config);
+            return;
+          }
+        }
+      throw new Error("the fixture has no heading to spoil");
+    };
+    const current = spoiling(organic);
+    expect((await run(current.client, input())).kind).toBe("version");
+    expect(text(stage(current.seen, "draft")[1])).toContain(
+      "Copy claims an organic claim",
+    );
+
+    const older = spoiling(organic);
+    const before = await run(
+      older.client,
+      input({ promptVersion: "theme-studio-v33" }),
+    );
+    expect(before.kind).toBe("version");
+    // No repair round was asked for: the one draft stood.
+    expect(stage(older.seen, "draft")).toHaveLength(1);
+  });
+
   it("says what the last draft still failed on when every repair is spent", async () => {
     const { client, seen } = spoiling(claim);
     const result = await run(client, input());

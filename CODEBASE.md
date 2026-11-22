@@ -6608,6 +6608,36 @@ review-first and do not persist the raw image. Migration
 paragraph in place to describe this one-click private-draft and follow-up image
 handoff; it adds no Help Centre section.
 
+### What every existing storefront gets on deploy, by intent (2026-11-22)
+
+★★ THESE REACH EVERY STORE, WHATEVER ITS THEME, AND NONE HAS A MASTER SWITCH.
+They are storefront rules in the shared CSS and the shared chrome defaults,
+not part of a theme's own style rules (which apply only under `.sm-styled`),
+so a store on Basket, Studio or Vitrine with no theme stylesheet changes too.
+Each was asked for by the owner on 22 Nov 2026 as a rule for all stores
+(PR #303 review: recorded here because merchants will see their stores
+change):
+
+- **Section spacing** (`homepage.css`): a plain section's padding overlaps
+  the gap beside it and coloured bands touch, so pages sit closer together.
+  A merchant who used large padding to space a page out gets less space.
+- **Testimonials** are one row that scrolls sideways.
+- **Photo tiles on phones** show their words under the photo, not over it.
+- **A full-width opening photo** sits flush under the header, with no padding
+  above it even when the theme or the merchant set some.
+- **The header bar** is 68px tall (was 80px), and the height reserved for it
+  before the browser measures it is 68px (was 80px, 88px on tablets).
+- **A label inside the newsletter's own panel** takes the panel's colour.
+- **A one-photo product** under the thumbnails-left gallery shows its photo
+  at full width.
+- **Shopping extras** (`lib/chrome/types.ts` defaults): the heart and the
+  quick-view eye on product cards, Recently viewed under a product, and an
+  Our stores link in the footer for a store with a shop location, all ON by
+  default. Each has its own switch in the Website Builder, Brand, Shopping
+  extras; the CSS rules above have none.
+
+⚠ Not announced to merchants by anything in the product: no email, no banner.
+
 ### Shopping extras: saved items, recently viewed, Our stores (2026-11-22)
 
 Owner: the storefront lacked three things premium themes have, and they are
@@ -15876,7 +15906,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     model the honest-copy rule BEFORE it breaks it (both live drafts invented
     "EST. <year>"), and the plain word "organic" is now a claim the brief
     must support (the review rejected "ORGANIC BEANS"; the check had let it
-    through). The stylesheet prompt names `button.secondary` among the hooks
+    through). ★ That one rule applies from v34 only
+    (`unsupportedClaimIssues(..., { organic: stylesheetFeature })`; PR #303
+    review): a run on an older prompt version that replays its saved draft
+    is judged by the rules it was written under, and no longer pays for a
+    repair its prompt never warned it about. Every other claim rule predates
+    those versions and applies to all of them. The stylesheet prompt names `button.secondary` among the hooks
     that need a tone with a background (both drafts wrote "outline").
     ★ `ORGANIC_CLAIM_LABEL` (exported from `claims.ts`): the storefront
     redesign's copy check (`lib/mink/revamp/copy-checks.ts`) has its own,
@@ -25328,6 +25363,27 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       (three undelivered notices, then a debit that pays). No merchant step
       changes, so no Help Centre update: "tries up to three times" still
       holds.
+    - **★★ AN EARLIER ORDER RAZORPAY COULD NOT BE ASKED ABOUT STOPS A SECOND
+      ORDER (PR #303 sixth review, 22 Nov 2026).** `settleShopperPendingOrders`
+      kept only `paid`, `captured_unrecorded` and `waiting`; an `unknown`
+      (timeout, 5xx, dropped connection) or `refused` read dropped the order
+      from its answer, so `placeOrder` saw nothing waiting and placed a
+      second order while the shopper's UPI approval on the first was still
+      being processed, and both were paid. Such orders are now reported as
+      `unchecked` (newest first) while they are inside their payment window
+      (`PAYMENT_GRACE_MINUTES`; past it they are the reaper's and the
+      late-payment sweep's, as before). `settleEarlierPayment` picks the
+      first one that holds this very cart, and `placeOrder` answers with
+      `unfinished` and NO `payment` before anything is priced, reserved or
+      written, whatever the payment method: "We couldn't check your earlier
+      payment for this cart (order X) just now, so we haven't placed a second
+      order. Please try again in a minute." It is checked before the waiting
+      order (a newer resumable order says nothing about this one), and it is
+      never resumed nor cancelled, because nobody knows whether money is
+      landing on it. Another cart is another purchase and goes ahead. A
+      payment found PAID still answers first. ⚠ If the shopper's orders
+      cannot even be listed, checkout carries on as before. Tests:
+      `pending-payments.test.ts`, `checkout-actions.test.ts`.
     - **★★ A FAILED DEBIT IS NOT FINAL: NO SECOND DEBIT WHILE AN EARLIER ONE
       MAY HOLD THE MONEY (PR #303 fourth review, 22 Nov 2026).** Two things
       rested on "a failed debit is final": reconcile fails an automatic

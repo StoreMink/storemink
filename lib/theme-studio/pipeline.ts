@@ -1196,6 +1196,10 @@ async function generate(
           ...input.messages.map((m) => m.body),
           ...(input.revision ? customerCopy(input.revision.basePackage) : []),
         ].join("\n"),
+        // The "organic" rule only from the prompt version that states it
+        // (v34): an older run replaying its saved draft is judged by the
+        // rules it was written under (claims.ts).
+        { organic: stylesheetFeature },
       );
       // v26+: a new theme opens with a photograph filling the band
       // (opening.ts). A revision keeps whatever opening its base has: the
