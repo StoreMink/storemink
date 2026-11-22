@@ -11011,6 +11011,30 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261122_0288_theme_studio_change_published",
+      "description": "Changing a published theme: the Theme Studio project guard admits a published project taking a change (published to generating or ready, and back to published only while its current design is one a publication published), and a project may publish once per design instead of once ever, so a change to a live theme becomes its next release while installed stores keep the release they pinned. No Help edit: operator-only.",
+      "file": "sql/20261122_0288_theme_studio_change_published.sql",
+      "transaction": true,
+      "requires": ["20261122_0287_quick_view_help"],
+      "verify": {
+        "functions": ["theme_studio_project_guard()"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a project publishes once per design, not once ever",
+            "sql": "select count(*)::text from pg_indexes where schemaname='public' and indexname='theme_studio_publications_one_published' and indexdef like '%(project_id, version_id)%' and indexdef like '%published%'",
+            "equals": "1"
+          },
+          {
+            "name": "the project guard lets a published project take a change",
+            "sql": "select count(*)::text from pg_proc where proname='theme_studio_project_guard' and prosrc like '%OLD.status = ''published'' AND NEW.status IN (''generating'', ''ready'', ''archived'')%' and prosrc like '%published only by a publication%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

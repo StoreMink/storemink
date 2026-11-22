@@ -11268,7 +11268,11 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0287 (0286 = Help: the Shopping
+│                              # Next free: 0289 (0288 = a published Theme
+│                              # Studio theme can be changed: the project
+│                              # guard's new moves and one published
+│                              # publication per design, no Help; 0287 =
+│                              # Help: Quick view; 0286 = Help: the Shopping
 │                              # extras step in the branding and layout guide;
 │                              # 0285 = image_provider_submits,
 │                              # the record of submits that lets a lost image
@@ -12284,6 +12288,26 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Phase 3's renderers live in `media-text-section.tsx`, `gallery-section.tsx`,
     `testimonials-section.tsx`, `video-section.tsx`, and
     `newsletter-section.tsx`.
+    ★ TESTIMONIALS ARE ONE ROW THAT SCROLLS SIDEWAYS, AND A PHOTO TILE'S
+    WORDS SIT UNDER THE PHOTO ON A PHONE (owner, 22 Nov 2026, for every
+    store). `.home-testimonials` is a single grid row
+    (`grid-auto-flow: column`, scroll snap, no scrollbar): as many quotes as
+    the section's columns fit across and the rest are reached by swiping, so
+    with no more quotes than columns it looks as the grid did; at 820px three
+    columns become two, and at 560px one quote shows with the edge of the
+    next (`--home-testimonial-cols: 1.15`). The row is focusable and named
+    (`role="group"`, the heading as its label) so a keyboard reaches the
+    quotes off the edge. They used to wrap, and on a phone stacked into one
+    long column. At 560px and below a tile WITH a photo
+    (`.home-tile:has(> .home-tile-img)`) gives the photo a 4:3 box of its own
+    and draws its title and sentence beneath, in the colour of the section it
+    sits on; with an odd number of tiles the first takes the full width at
+    16:9, and a collage keeps each tile's shape. Two tiles across a phone are
+    about 170px wide, so words laid over the picture covered it. A tile with
+    no photo keeps its words on its colour. ⚠ The two `!important`s there
+    undo next/image `fill`'s inline box. Both are CSS in `homepage.css`; no
+    setting, no migration, no Help Centre update (nothing a merchant does
+    changes).
     `lib/sections/registry.ts` re-exports it and adds page-level helpers:
     `PageSectionItem`, `validateSections`, `RESERVED_PAGE_SLUGS`,
     `validatePageSlug`. - **Custom pages** live in `store_pages` (draft `sections` jsonb +
@@ -15814,6 +15838,10 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     must support (the review rejected "ORGANIC BEANS"; the check had let it
     through). The stylesheet prompt names `button.secondary` among the hooks
     that need a tone with a background (both drafts wrote "outline").
+    ★ `ORGANIC_CLAIM_LABEL` (exported from `claims.ts`): the storefront
+    redesign's copy check (`lib/mink/revamp/copy-checks.ts`) has its own,
+    stricter "organic" rule and skips this label, so one word is reported
+    once there, not twice.
     (h) `portraitProductBriefs` (`compiler.ts`, v34 new themes): a product
     photography brief asked for in landscape is drawn at 4:5. A card never
     crops a photograph, so the theme's 4:3 product photos sat inside their
@@ -15861,6 +15889,59 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     (29, then 36, then 38), from six reference screenshots. ⚠ Its nine
     product photographs were drawn 4:3 before rule (i) existed and still sit
     letterboxed in their portrait frames; redrawing them is the owner's call.
+    ★★ A PUBLISHED THEME CAN BE CHANGED (owner, 22 Nov 2026: "there should
+    be ability to change the published theme. the stores which uses that
+    theme, stays on the older version"; migration
+    `20261122_0288_theme_studio_change_published`). Until now a project that
+    had published was finished: the chat said "Live themes can't be changed
+    yet", the guard allowed only `archived`, and a project could publish
+    once. Releases were already immutable and numbered (1.0.0, then the next
+    minor) and every store already pinned the exact release it installed, so
+    only the lock had to go. - **The rule.** A project is `published` exactly while its CURRENT
+    version is one a publication published (the guard checks this on every
+    move into `published`, from any state). A live theme takes a change in
+    the chat (`reviseThemeStudioVersion`), a picture upload or redraw
+    (`slot-images.ts` `EDITABLE_STATES`, `IMAGE_STATES`) or another design
+    made current (`restoreThemeStudioVersion`), and leaves `published` for
+    the ordinary working states. It is built, checked and reviewed like any
+    design. Publishing it stores the theme's NEXT release, points the
+    catalogue at it and re-seeds the demo store; the earlier release row,
+    its pictures and every store that installed it are untouched. - **Back to live without a release.** A change that fails or is stopped
+    with nothing new current leaves the theme live
+    (`published-version.ts` `restingStatusSql`, used by the worker's
+    `settleProjectWithoutVersion`; `publishedReleaseOf` in `stop.ts`), and
+    making the published design current again is `live`
+    (`ThemeStudioRestoreOutcome`), with nothing checked or queued. - **One release per design.** `beginAttempt` refuses a design that is
+    already a release ("This design is already published as v1.0.0..."),
+    and the index `theme_studio_publications_one_published` is now per
+    (project, version); it was per project. - **Status** (`studio-status.ts`). Row 1 ("Live, v1.0.0") only while the
+    theme rests on a published design (`published`, or `archived`); it used
+    to be "a release exists, whatever the state". While a change is worked
+    on, the theme's own row applies and `StudioStatus.liveVersion` names the
+    release that stays live, shown as a second badge ("v1.0.0 stays live",
+    `StudioBadge`). A theme with a release is never offered "Remove from
+    list" on any row. `progress.ts` `restsLive` is the same rule for which
+    working facts are read. - **Words.** Under the chat box of a theme with a release: "v1.0.0 is
+    live. A change you publish becomes a new version, and stores already
+    using this theme keep the version they have." The Publish dialog says
+    the same (`ReleasePublishFacts.replaces`), and the live panel says how
+    to change it. - **Not built.** No "update available" for a store on an earlier
+    release: it stays there until its merchant picks a theme again (themes
+    are chosen once today), and going back to an earlier release for new
+    installs is still the server's `select_release`, with no button.
+    Tests: `contracts.test.ts` (the state table against the newest guard,
+    by name), `studio-status.test.ts`, `tab-rules.test.ts`,
+    `workspace.test.tsx`, `release-workspace.test.tsx`, and the opt-in
+    `publication-postgres.test.ts` case that runs the whole path on the real
+    guards: publish 1.0.0, a change, a failed change stays live, a second
+    design, 1.1.0, the 1.0.0 row byte-identical, the same design refused.
+    Operator-only: no Help Centre update.
+    ★ THE OPENING SITS FLUSH UNDER THE HEADER (same day). `opening.ts`
+    `enforceHomepageOpening(..., { flush })` sets the opening section's
+    `style.padding_y` to `none` on v34 new themes: Roast's model wrote "sm",
+    which left a 28px strip of page colour between the header and the
+    slideshow. A full-bleed slideshow also has square corners now
+    (`.home-section.is-fullbleed > .home-carousel`, homepage.css).
     `npm run theme-studio:stylesheets`
     (`scripts/theme-studio-stylesheet-check.ts`, in CI's renderer job) lays
     each one over the PRODUCTION storefront CSS in local Chrome at 390 and
@@ -17530,6 +17611,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     sliver without overlapping anything.
     ★ Every check starts from the full header, so a tablet rotated to
     landscape unfolds again.
+    ★ THE BAR IS 68px TALL (22 Nov 2026, owner: "this bar is too big"). It
+    was 80px: 16px of padding above and below a 48px "Deliver to" button.
+    Now 12px of padding (`.header`, and the same at 1024px and below, where
+    it had grown to 20px 32px) around a 44px button
+    (`delivery-location.module.css` `.trigger`), the touch-target floor.
     ★ Transitions are switched off while measuring
     (`data-header-measuring`). The search box animates its width and the
     header its padding, and a mid-animation reading once passed a fit that

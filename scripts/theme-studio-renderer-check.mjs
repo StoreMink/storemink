@@ -593,6 +593,111 @@ try {
           });
       }
     }
+    // Photo tiles and testimonials (22 Nov 2026, owner's phone screenshots).
+    // On a phone a photo tile's words sit UNDER its photo: two tiles across
+    // 390px are about 170px wide, and a title with a sentence laid over the
+    // picture covered all of it. Above 560px the words stay on the photo.
+    // With an odd number of tiles the first takes the full width.
+    for (const [layout, count] of [
+      ["grid", 3],
+      ["grid", 4],
+      ["collage", 4],
+    ]) {
+      const label = `${width}px photo-tiles/${layout}/${count}`;
+      await page.setContent(
+        documentHtml(
+          `<section class="home-section"><div class="home-tile-grid cols-3 size-md layout-${layout}">${Array.from({ length: count }, (_, i) => `<a href="/shop" class="home-tile theme-light${layout === "collage" && i === 0 ? " span-2x1" : ""}"><img class="home-tile-img" alt="" src="${image(1600, 1200)}" style="position:absolute;height:100%;width:100%;left:0;top:0;right:0;bottom:0"><span class="home-tile-copy"><span class="home-tile-title">Up to 30% off brew bars</span><span class="home-tile-sub">${copy}</span></span></a>`).join("")}</div></section>`,
+        ),
+      );
+      const m = await page.evaluate(async () => {
+        await Promise.all(
+          [...document.images].map((i) => i.decode().catch(() => {})),
+        );
+        return [...document.querySelectorAll(".home-tile")].map((tile) => {
+          const box = tile.getBoundingClientRect();
+          const photo = tile
+            .querySelector(".home-tile-img")
+            .getBoundingClientRect();
+          const words = tile
+            .querySelector(".home-tile-copy")
+            .getBoundingClientRect();
+          return {
+            width: box.width,
+            photoHeight: photo.height,
+            photoWidth: photo.width,
+            // How much of the photo the words lie over, in px of height.
+            covered: Math.max(
+              0,
+              Math.min(photo.bottom, words.bottom) -
+                Math.max(photo.top, words.top),
+            ),
+            wordsInside: words.bottom <= box.bottom + 1,
+          };
+        });
+      });
+      const measured = await measureNative(page);
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("overflow");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (measured.crop.length) problems.push("a photo keeps under 35%");
+      if (m.some((tile) => tile.photoHeight < 80 || tile.photoWidth < 100))
+        problems.push("a photo is too small to see");
+      if (!m.every((tile) => tile.wordsInside))
+        problems.push("words run out of their tile");
+      if (width <= 560) {
+        if (m.some((tile) => tile.covered > 1))
+          problems.push("words lie over a photo on a phone");
+        if (layout === "grid" && count % 2 === 1 && m[0].width < width * 0.8)
+          problems.push("the odd first tile is not full width");
+      } else if (m.some((tile) => tile.covered < 20)) {
+        problems.push("words are not on the photo above 560px");
+      }
+      if (problems.length) failures.push({ label, problems, tiles: m });
+    }
+    // Testimonials are ONE row that scrolls sideways: never a second row,
+    // never a column down the phone, and the page itself never scrolls.
+    for (const [cols, count] of [
+      [3, 5],
+      [2, 5],
+      [3, 3],
+      [3, 1],
+    ]) {
+      const label = `${width}px testimonials-row/${cols}/${count}`;
+      await page.setContent(
+        documentHtml(
+          `<section class="home-section"><div class="home-testimonials layout-cards cols-${cols}" role="group" aria-label="Reviews" tabindex="0">${Array.from({ length: count }, () => `<blockquote class="home-testimonial"><p class="home-testimonial-quote">${copy}</p><footer class="home-testimonial-attribution"><cite>Aarav M.</cite><span>Verified customer</span></footer></blockquote>`).join("")}</div></section>`,
+        ),
+      );
+      const m = await page.evaluate(() => {
+        const row = document.querySelector(".home-testimonials");
+        const cards = [...row.children].map((c) => c.getBoundingClientRect());
+        const box = row.getBoundingClientRect();
+        return {
+          tops: [...new Set(cards.map((c) => Math.round(c.top)))].length,
+          cardWidth: cards[0].width,
+          rowWidth: box.width,
+          scrolls: row.scrollWidth > row.clientWidth + 10,
+          inView: cards.filter((c) => c.left < box.right - 1).length,
+        };
+      });
+      const measured = await measureNative(page);
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("the page scrolls sideways");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (m.tops !== 1) problems.push(`${m.tops} rows of quotes`);
+      // As many across as the section's columns (two at 820px, one and the
+      // edge of the next at 560px), so the rest are reached by swiping.
+      const across = width <= 560 ? 1 : width <= 820 ? 2 : cols;
+      if (m.scrolls !== count > across)
+        problems.push(m.scrolls ? "scrolls with nothing hidden" : "no scroll");
+      if (m.cardWidth < Math.min(240, m.rowWidth - 2))
+        problems.push(`a quote is ${Math.round(m.cardWidth)}px wide`);
+      if (width <= 560 && count > 1 && m.inView < 2)
+        problems.push("the next quote does not peek in on a phone");
+      if (problems.length) failures.push({ label, problems, ...m });
+    }
     // Page templates (2026-10-09, plan Phase 2e). The product gallery's five
     // shapes: on desktop the thumbnail shapes show one photo with the
     // thumbnails under or beside it, stacked and grid show every photo, the

@@ -19,6 +19,10 @@ interface ClaimRule {
   numeric?: true;
 }
 
+/** The storefront redesign has its own word for this one (copy-checks.ts),
+ *  and leaves this label out so a claim is reported once. */
+export const ORGANIC_CLAIM_LABEL = "an organic claim";
+
 const CLAIM_RULES: readonly ClaimRule[] = [
   {
     re: /\baward[- ]winning\b|\bwon (?:an?|the) [\w' ]{0,30}award/i,
@@ -67,7 +71,7 @@ const CLAIM_RULES: readonly ClaimRule[] = [
   // brand whose brief never said so, after this check had let it through.
   {
     re: /\borganic(?:ally)?\b/i,
-    label: "an organic claim",
+    label: ORGANIC_CLAIM_LABEL,
     evidence: /\borganic/i,
   },
   {

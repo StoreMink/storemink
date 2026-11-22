@@ -1205,6 +1205,7 @@ async function generate(
         fullBleedOpening && !input.revision
           ? enforceHomepageOpening(compiled.package, {
               carousel: carouselOpening,
+              flush: themePromptFeatures(input.promptVersion).designPlan,
             })
           : { package: compiled.package, issues: [] as string[] };
       if (claims.length || opened.issues.length) {

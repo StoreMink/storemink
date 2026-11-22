@@ -12,6 +12,7 @@ import {
   STUDIO_RELEASE_ROWS,
   STUDIO_STUCK_MINUTES,
   isStudioMenuKind,
+  liveVersionWords,
   studioListFilter,
   studioStatus,
   type StudioActionKind,
@@ -94,7 +95,7 @@ const kinds = (status: StudioStatus) => ({
 });
 
 describe("the 19 rows, first match wins", () => {
-  it("1: live, offered or not, whatever the project's state", () => {
+  it("1: live, offered or not, while the theme rests on a published design", () => {
     const live = studioStatus(
       input({
         projectStatus: "archived",
@@ -114,6 +115,7 @@ describe("the 19 rows, first match wins", () => {
     });
     const hidden = studioStatus(
       input({
+        projectStatus: "published",
         release: { version: "1.2.0", publishedAt: at(60), offered: false },
       }),
     );
@@ -126,6 +128,59 @@ describe("the 19 rows, first match wins", () => {
     // Remove from list is never offered for a live theme.
     expect(kinds(live).secondary).not.toContain("remove_from_list");
     expect(kinds(hidden).secondary).not.toContain("remove_from_list");
+    // The words already name the release, so no second badge.
+    expect(live.liveVersion).toBeNull();
+    expect(hidden.liveVersion).toBeNull();
+  });
+
+  it("★ a published theme being changed shows its own row, and names the release that stays live (migration 0288)", () => {
+    const release = { version: "1.0.0", publishedAt: at(600), offered: true };
+    // The change is being built.
+    const building = studioStatus(
+      input({ projectStatus: "generating", release, working: working() }),
+    );
+    expect(building).toMatchObject({
+      row: 5,
+      words: "Building: drawing pictures (26 min)",
+      liveVersion: "1.0.0",
+    });
+    expect(kinds(building)).toEqual({ primary: null, secondary: ["stop"] });
+    // The changed design passed its checks: it can be published, and that
+    // is the theme's next release.
+    const ready = studioStatus(
+      input({
+        projectStatus: "candidate",
+        release,
+        evidence: { ok: true } as StudioStatusInput["evidence"],
+      }),
+    );
+    expect(ready).toMatchObject({
+      row: 15,
+      words: "Ready to publish",
+      liveVersion: "1.0.0",
+    });
+    expect(kinds(ready).primary).toBe("publish");
+    // It is in the "ready" list chip like any other, not "live".
+    expect(studioListFilter(ready)).toBe("ready");
+    expect(studioListFilter(building)).toBe("building");
+    // A changed design that needs a fix says so; the release is untouched.
+    const fix = studioStatus(
+      input({ release, checks: checks({ serious: 2 }) }),
+    );
+    expect(fix).toMatchObject({
+      row: 14,
+      words: "Needs a fix (2 problems)",
+      liveVersion: "1.0.0",
+    });
+    // ★ Stores are using it: never "Remove from list", on any row.
+    for (const status of [building, ready, fix])
+      expect(kinds(status).secondary).not.toContain("remove_from_list");
+    expect(kinds(fix).secondary).toContain("delete");
+    // A theme that never published has no such badge.
+    expect(
+      studioStatus(input({ projectStatus: "candidate" })).liveVersion,
+    ).toBeNull();
+    expect(liveVersionWords("1.0.0")).toBe("v1.0.0 stays live");
   });
 
   it("2: publishing, while its last write is under 15 minutes old", () => {

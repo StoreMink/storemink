@@ -88,15 +88,31 @@ const STATE_TRANSITIONS: Record<
   readonly ThemeStudioProjectState[]
 > = {
   draft: ["generating", "archived"],
-  generating: ["ready", "failed", "blocked"],
-  ready: ["generating", "candidate", "blocked", "archived"],
+  // generating -> published: a change to a live theme that did not finish
+  // leaves the published design current (migration 0288).
+  generating: ["ready", "failed", "blocked", "published"],
+  // ready, candidate, blocked -> published: the published design made
+  // current again (0288). The database allows it only while the current
+  // version has a published publication.
+  ready: ["generating", "candidate", "blocked", "archived", "published"],
   // candidate -> ready: failed or superseded acceptance evidence demotes a
   // candidate without calling it blocked (migration 0131).
-  candidate: ["generating", "ready", "approved", "blocked", "archived"],
+  candidate: [
+    "generating",
+    "ready",
+    "approved",
+    "blocked",
+    "archived",
+    "published",
+  ],
   approved: ["generating", "published", "blocked", "archived"],
-  published: ["archived"],
+  // ★ A published theme can be changed (0288, owner 22 Nov 2026): a change
+  //   or new pictures (generating), a replaced picture or another design
+  //   made current (ready). Publishing the result stores the theme's next
+  //   release; stores that installed an earlier one keep it.
+  published: ["generating", "ready", "archived"],
   failed: ["generating", "archived"],
-  blocked: ["generating", "ready", "archived"],
+  blocked: ["generating", "ready", "archived", "published"],
   archived: [],
 };
 

@@ -137,6 +137,11 @@
   line-height: 1.35;
 }
 
+/* The release that stays live while a change to a published theme is worked
+   on, beside the status words. */
+.studio-badge-live {
+  margin-inline-start: 6px;
+}
 .studio-badge::before {
   content: "";
   flex-shrink: 0;

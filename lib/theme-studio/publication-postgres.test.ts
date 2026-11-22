@@ -36,7 +36,8 @@ const { service, openPreview, config } = vi.hoisted(() => ({
   config: { autoQaEnabled: true },
 }));
 vi.mock("@/lib/db/client", () => ({ withService: service }));
-vi.mock("./config", () => ({
+vi.mock("./config", async (original) => ({
+  ...(await original<typeof import("./config")>()),
   getThemeStudioConfig: () => ({
     provider: "fake",
     generationEnabled: true,
@@ -80,7 +81,14 @@ import {
   publishThemeStudioProject,
   type PublicationDeps,
 } from "./publication";
-import { digestThemeStudioJson } from "./repository";
+import { restingStatusSql } from "./published-version";
+import {
+  digestThemeStudioJson,
+  restoreThemeStudioVersion,
+  reviseThemeStudioVersion,
+} from "./repository";
+import { themeStudioProjects } from "@/drizzle/schema";
+import { eq, sql } from "drizzle-orm";
 
 const ENABLED = process.env.THEME_STUDIO_RECOVERY_DB_TEST === "1";
 const BUILD = "publish-build-today";
@@ -1443,6 +1451,259 @@ describe.skipIf(!ENABLED)(
         expect(log.count).toBe(22);
         expect(log.kinds).toHaveLength(16);
         expect(log.omitted).toBe(6);
+      });
+    });
+
+    it("★ a published theme takes a change: publishing it is the next release, and the first release stays as it was (migration 0288)", async () => {
+      await withRollback(async (ctx) => {
+        const s = await ctx.seed({ build: BUILD });
+        const first = deps();
+        await publishThemeStudioProject(
+          ctx.actor,
+          {
+            projectId: s.projectId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          },
+          first,
+        );
+        const statusOf = async () =>
+          await ctx.one<{ status: string; current_version_id: string }>(
+            "SELECT status, current_version_id FROM theme_studio_projects WHERE id=$1",
+            [s.projectId],
+          );
+        const releaseOne = await ctx.one<{
+          id: string;
+          manifest_digest: string;
+        }>(
+          "SELECT id, manifest_digest FROM theme_releases WHERE theme_id=$1 AND version='1.0.0'",
+          [s.themeId],
+        );
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: s.versionId,
+        });
+
+        // 1. A live theme takes a change. It was refused before 0288
+        //    ("This project can't start a revision right now.").
+        const change = await reviseThemeStudioVersion(ctx.actor, {
+          projectId: s.projectId,
+          versionId: s.versionId,
+          expectedRevision: await ctx.revisionOf(s.projectId),
+          expectedPackageDigest: s.packageDigest,
+          body: "Make the home page heading shorter.",
+          idempotencyKey: `change_live_${randomUUID()}`,
+        });
+        expect(change.duplicate).toBe(false);
+        expect((await statusOf()).status).toBe("generating");
+        // The release new stores get did not move.
+        const catalogAt = async () =>
+          (
+            await ctx.one<{ current_release_id: string }>(
+              "SELECT current_release_id FROM theme_catalog_entries WHERE theme_id=$1",
+              [s.themeId],
+            )
+          ).current_release_id;
+        expect(await catalogAt()).toBe(releaseOne.id);
+
+        // 2. The change does not finish and nothing new is current: the
+        //    theme is simply live again (worker.ts and stop.ts settle with
+        //    this same expression).
+        await service(async (db: ReturnType<typeof drizzle>) => {
+          await db
+            .update(themeStudioProjects)
+            .set({
+              status: restingStatusSql(),
+              revision: sql`${themeStudioProjects.revision} + 1`,
+            })
+            .where(eq(themeStudioProjects.id, s.projectId));
+        });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: s.versionId,
+        });
+
+        // 3. A changed design, as a finished change leaves it: a second
+        //    version, current, with the theme at ready.
+        const changed: ThemePackageV2 = {
+          ...s.pkg,
+          definition: {
+            ...s.pkg.definition,
+            description: `${s.pkg.definition.description} Now with a shorter heading.`,
+          },
+        };
+        const parsed = validateThemePackageV2(changed);
+        if (!parsed.ok) throw new Error(parsed.issues.join("; "));
+        const secondDigest = digestThemeStudioJson(parsed.value);
+        expect(secondDigest).not.toBe(s.packageDigest);
+        const secondId = randomUUID();
+        await ctx.pg.query(
+          `INSERT INTO theme_studio_versions(id,project_id,run_id,parent_version_id,version_number,intent_json,intent_digest,package_json,package_digest,visibility,qa_status)
+           VALUES($1,$2,$3,$4,2,'{}',$5,$6,$7,'operator','passed')`,
+          [
+            secondId,
+            s.projectId,
+            change.runId,
+            s.versionId,
+            "b".repeat(64),
+            JSON.stringify(parsed.value),
+            secondDigest,
+          ],
+        );
+        await ctx.pg.query(
+          "UPDATE theme_studio_projects SET status='generating',revision=revision+1 WHERE id=$1",
+          [s.projectId],
+        );
+        await ctx.pg.query(
+          "UPDATE theme_studio_projects SET status='ready',current_version_id=$2,revision=revision+1 WHERE id=$1",
+          [s.projectId, secondId],
+        );
+        // ★ The database's rule holds from every state: a theme is published
+        //   only on a design a publication published. The changed design
+        //   has none yet.
+        await ctx.pg.query("SAVEPOINT never_published");
+        await expect(
+          ctx.pg.query(
+            "UPDATE theme_studio_projects SET status='published' WHERE id=$1",
+            [s.projectId],
+          ),
+        ).rejects.toThrow(/published only by a publication/);
+        await ctx.pg.query("ROLLBACK TO SAVEPOINT never_published");
+
+        // 4. The published design made current again: live, nothing to
+        //    check or publish.
+        expect(
+          await restoreThemeStudioVersion(ctx.actor, {
+            projectId: s.projectId,
+            versionId: s.versionId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          }),
+        ).toEqual({ changed: true, outcome: "live" });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: s.versionId,
+        });
+        expect(
+          await ctx.count(
+            "SELECT count(*)::int AS n FROM theme_studio_captures WHERE project_id=$1 AND status='queued'",
+            [s.projectId],
+          ),
+        ).toBe(0);
+
+        // 5. The changed design passed its checks on today's build, and is
+        //    made current on the live theme: Ready to publish.
+        const secondRun = await ctx.insertRun(
+          {
+            projectId: s.projectId,
+            versionId: secondId,
+            packageDigest: secondDigest,
+            assetsDigest: s.assetsDigest,
+          },
+          { build: BUILD, minutesAgo: 10 },
+        );
+        await ctx.pg.query(
+          `INSERT INTO theme_studio_visual_qa_runs(id,project_id,version_id,package_digest,qa_iteration,status,browser_report,screenshot_asset_ids,vision_report,created_by,created_at,updated_at,finished_at)
+           VALUES($1,$2,$3,$4,0,'passed',$5,$6,$7,$8,now()-interval '9 minutes',now()-interval '9 minutes',now()-interval '9 minutes')`,
+          [
+            randomUUID(),
+            s.projectId,
+            secondId,
+            secondDigest,
+            JSON.stringify({ acceptanceRunId: secondRun, buildId: BUILD }),
+            [randomUUID()],
+            JSON.stringify({
+              severityRules: "severity-v1",
+              reviewSeverity: { outcome: "pass", serious: [], warnings: [] },
+            }),
+            ctx.actor.id,
+          ],
+        );
+        expect(
+          await restoreThemeStudioVersion(ctx.actor, {
+            projectId: s.projectId,
+            versionId: secondId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          }),
+        ).toEqual({ changed: true, outcome: "ready_to_publish" });
+        expect(await statusOf()).toEqual({
+          status: "candidate",
+          current_version_id: secondId,
+        });
+
+        // 6. Publishing it stores the theme's NEXT release.
+        const second = deps();
+        const result = await publishThemeStudioProject(
+          ctx.actor,
+          {
+            projectId: s.projectId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          },
+          second,
+        );
+        expect(result).toMatchObject({
+          ok: true,
+          kind: "published",
+          releaseVersion: "1.1.0",
+        });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: secondId,
+        });
+        expect(
+          second.stored.every((p) =>
+            p.startsWith(`theme-releases/${s.themeId}/1.1.0/`),
+          ),
+        ).toBe(true);
+        expect(
+          (
+            await ctx.pg.query(
+              "SELECT release_version, version_id FROM theme_studio_publications WHERE project_id=$1 AND status='published' ORDER BY release_version",
+              [s.projectId],
+            )
+          ).rows,
+        ).toEqual([
+          { release_version: "1.0.0", version_id: s.versionId },
+          { release_version: "1.1.0", version_id: secondId },
+        ]);
+        const releaseTwo = await ctx.one<{ id: string }>(
+          "SELECT id FROM theme_releases WHERE theme_id=$1 AND version='1.1.0'",
+          [s.themeId],
+        );
+        // New installs read the catalogue, which now names 1.1.0 ...
+        expect(await catalogAt()).toBe(releaseTwo.id);
+        // ★ ... and 1.0.0, which a store that installed the theme pins, is
+        //   the very row it was: same id, same content address, published.
+        expect(
+          await ctx.one(
+            "SELECT id, manifest_digest, release_status FROM theme_releases WHERE theme_id=$1 AND version='1.0.0'",
+            [s.themeId],
+          ),
+        ).toEqual({ ...releaseOne, release_status: "published" });
+
+        // 7. One release per design: the same design is never stored twice.
+        await ctx.pg.query(
+          "UPDATE theme_studio_projects SET status='ready',revision=revision+1 WHERE id=$1",
+          [s.projectId],
+        );
+        await ctx.pg.query(
+          "UPDATE theme_studio_projects SET status='candidate',revision=revision+1 WHERE id=$1",
+          [s.projectId],
+        );
+        await expect(
+          publishThemeStudioProject(
+            ctx.actor,
+            {
+              projectId: s.projectId,
+              expectedRevision: await ctx.revisionOf(s.projectId),
+            },
+            deps(),
+          ),
+        ).rejects.toThrow(/already published as v1\.1\.0/);
+        expect(
+          await ctx.count(
+            "SELECT count(*)::int AS n FROM theme_releases WHERE theme_id=$1",
+            [s.themeId],
+          ),
+        ).toBe(2);
       });
     });
   },

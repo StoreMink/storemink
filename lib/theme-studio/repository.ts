@@ -25,6 +25,7 @@ import {
 import { withService, type Db } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
 import { resolveRecreatedThemeId } from "./project-identity";
+import { publishedReleaseOf } from "./published-version";
 import { isBundledThemeId } from "@/lib/themes";
 import type {
   ThemeCatalogSize,
@@ -2021,10 +2022,13 @@ const MAX_REVISION_MESSAGES = 20;
 
 /** States a version can be revised from. Each may move to `generating`.
  * `blocked` may too, when no questions are open (`questionsOpen`). */
+// `published` since 0288: a live theme takes a change, and publishing the
+// result stores its next release (published-version.ts).
 const REVISABLE_STATES: readonly ThemeStudioProjectState[] = [
   "ready",
   "candidate",
   "approved",
+  "published",
 ];
 
 /**
@@ -2221,8 +2225,14 @@ export async function reviseThemeStudioVersion(
 }
 
 /** States a version's images can be drawn from. Like a revision, but not
- *  `approved`: an approved project's version is frozen for publication. */
-const IMAGE_STATES: readonly ThemeStudioProjectState[] = ["ready", "candidate"];
+ *  `approved`: an approved project's version is frozen for publication. A
+ *  published theme's pictures can be redrawn (0288): they become a new
+ *  design, and the release stores installed keeps its own. */
+const IMAGE_STATES: readonly ThemeStudioProjectState[] = [
+  "ready",
+  "candidate",
+  "published",
+];
 
 /**
  * Ask Theme Studio to draw a version's images: an art-direction anchor, then
@@ -2426,7 +2436,10 @@ export type ThemeStudioRestoreOutcome =
    * evidence is from an earlier build, or has no design review bound to it). */
   | "rechecking"
   /** A version that never passed, checked on a new hidden version. */
-  | "checking";
+  | "checking"
+  /** The design made current is one already published: the theme is live on
+   * it again, and there is nothing to check or publish. */
+  | "live";
 
 /**
  * Make an earlier version current again. Nothing is copied or deleted:
@@ -2469,10 +2482,13 @@ export async function restoreThemeStudioVersion(
     }
     // A candidate may be restored too: changing the current version drops it
     // back to ready, because its acceptance evidence covered another version.
+    // A published theme too (0288): another design made current is where a
+    // change to it can start from.
     if (
       project.status !== "ready" &&
       project.status !== "blocked" &&
-      project.status !== "candidate"
+      project.status !== "candidate" &&
+      project.status !== "published"
     ) {
       throw new ThemeStudioError(
         "illegal_state",
@@ -2515,14 +2531,45 @@ export async function restoreThemeStudioVersion(
     }
     if (
       version.id === project.currentVersionId &&
-      (project.status === "ready" || project.status === "candidate")
+      (project.status === "ready" ||
+        project.status === "candidate" ||
+        project.status === "published")
     ) {
       return {
         changed: false,
-        outcome: project.status === "candidate" ? "ready_to_publish" : "ready",
+        outcome:
+          project.status === "published"
+            ? "live"
+            : project.status === "candidate"
+              ? "ready_to_publish"
+              : "ready",
       };
     }
     const revision = project.revision + 1;
+    // ★ The design being made current is one already published: the theme
+    //   is simply live on it again (0288). Nothing is checked or queued, and
+    //   Publish has nothing to do. The database allows this move only
+    //   because that publication exists.
+    const releaseVersion = await publishedReleaseOf(db, project.id, version.id);
+    if (releaseVersion) {
+      await db
+        .update(themeStudioProjects)
+        .set({ status: "published", currentVersionId: version.id, revision })
+        .where(eq(themeStudioProjects.id, project.id));
+      await recordEvent(db, {
+        projectId: project.id,
+        actor,
+        eventType: "version_restored",
+        detail: {
+          versionId: version.id,
+          versionNumber: version.versionNumber,
+          previousVersionId: project.currentVersionId,
+          outcome: "live",
+          releaseVersion,
+        },
+      });
+      return { changed: true, outcome: "live" };
+    }
     await db
       .update(themeStudioProjects)
       .set({ status: "ready", currentVersionId: version.id, revision })

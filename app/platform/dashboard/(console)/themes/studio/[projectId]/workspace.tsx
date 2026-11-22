@@ -131,6 +131,8 @@ export function restoredMessage(
       return `${design} is current. Checking it again on today's StoreMink build, about 3 to 5 minutes.`;
     case "checking":
       return `${design} is current. Checking it now, about 3 to 5 minutes.`;
+    case "live":
+      return `${design} is current. It is the published design, so the theme is live on it.`;
     default:
       return `${design} is current.`;
   }
@@ -1012,7 +1014,11 @@ function DesignPicker({
                   <strong>{designLabel(design.versionNumber)}</strong>
                   {isCurrent ? (
                     <StudioBadge
-                      status={{ words: status.words, tone: status.tone }}
+                      status={{
+                        words: status.words,
+                        tone: status.tone,
+                        liveVersion: status.liveVersion,
+                      }}
                     />
                   ) : null}
                   {design.id === viewedId ? (
@@ -1271,8 +1277,10 @@ const OWN_INTENTS: readonly StudioActionKind[] = [
   ...PICTURES_INTENTS,
 ];
 const WORKING_ROWS = new Set([2, 5, 6]);
-const REVISABLE = new Set(["ready", "candidate", "approved"]);
-const RESTORABLE = new Set(["ready", "blocked", "candidate"]);
+// A live theme takes a change, and another design can be made current on it
+// (migration 0288): publishing the result is the theme's next release.
+const REVISABLE = new Set(["ready", "candidate", "approved", "published"]);
+const RESTORABLE = new Set(["ready", "blocked", "candidate", "published"]);
 const TAB_LABEL: Record<StudioTabKey, string> = {
   preview: "Preview",
   checks: "Checks",
@@ -1436,15 +1444,14 @@ export function ProjectWorkspace({
   // a theme its checks blocked with no questions open takes a change.
   const canRevise =
     !working &&
-    !facts.release &&
     (REVISABLE.has(project.status) ||
       (project.status === "blocked" && !answering)) &&
     packaged.length > 0;
   // Make current: the client copy of the server's rule (repository.ts
-  // restoreThemeStudioVersion). Not offered on a live or removed theme; held
-  // back, with the reason under it, while something works.
+  // restoreThemeStudioVersion). Not offered on a removed theme; held back,
+  // with the reason under it, while something works.
   const restore = {
-    offered: !facts.release && project.status !== "archived",
+    offered: project.status !== "archived",
     allowed: !working && RESTORABLE.has(project.status),
     reason: working
       ? "Theme Studio is working on this theme. Make another design current once it finishes."
@@ -1774,13 +1781,11 @@ export function ProjectWorkspace({
         ? "Publishing now. You can send changes after it finishes."
         : WORKING_ROWS.has(status.row)
           ? "You can send changes when it finishes."
-          : facts.release
-            ? "Live themes can't be changed yet. Start a new theme from this brief instead."
-            : project.status === "archived"
-              ? "This theme was removed from the list, so it can't be changed."
-              : status.row === 8
-                ? "This theme had too many rounds of questions. Start a new theme from this brief."
-                : null;
+          : project.status === "archived"
+            ? "This theme was removed from the list, so it can't be changed."
+            : status.row === 8
+              ? "This theme had too many rounds of questions. Start a new theme from this brief."
+              : null;
 
   const phoneBar =
     status.row === 15 || status.row === 16
@@ -1889,6 +1894,11 @@ export function ProjectWorkspace({
           now={facts.now}
           working={working}
           lockedReason={lockedReason}
+          liveNote={
+            facts.release
+              ? `v${facts.release.version} is live. A change you publish becomes a new version, and stores already using this theme keep the version they have.`
+              : null
+          }
           apiRef={composer}
           onViewDesign={(id) =>
             api.openTab("preview", {
@@ -2037,7 +2047,11 @@ export function ProjectWorkspace({
             <h1 className="studio-title">{project.name}</h1>
             <span className="studio-head-status">
               <StudioBadge
-                status={{ words: status.words, tone: status.tone }}
+                status={{
+                  words: status.words,
+                  tone: status.tone,
+                  liveVersion: status.liveVersion,
+                }}
               />
             </span>
             <div className="studio-head-actions">

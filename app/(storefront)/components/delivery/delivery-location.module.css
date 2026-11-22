@@ -9,7 +9,9 @@
   align-items: center;
   width: 100%;
   max-width: 196px;
-  min-height: 48px;
+  /* 44px: a full touch target, and no taller than the header's other
+     controls, so it is never the thing that sets the bar's height. */
+  min-height: 44px;
   gap: 9px;
   padding: 6px 10px;
   border: 1px solid var(--sm-border);

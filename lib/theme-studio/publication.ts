@@ -311,10 +311,18 @@ async function beginAttempt(
       .from(themeStudioPublications)
       .where(eq(themeStudioPublications.projectId, project.id))
       .orderBy(desc(themeStudioPublications.createdAt));
-    if (attempts.some((a) => a.status === "published")) {
+    // ★ ONE RELEASE PER DESIGN (0288). A published theme can be changed, and
+    //   publishing the changed design stores the theme's next release. A
+    //   design that is already a release is never stored a second time: the
+    //   database holds the same rule (theme_studio_publications_one_published
+    //   is per project AND version).
+    const already = attempts.find(
+      (a) => a.status === "published" && a.versionId === version.id,
+    );
+    if (already) {
       throw new ThemeStudioError(
         "illegal_state",
-        "This project is already published.",
+        `This design is already published as v${already.releaseVersion}. Change the theme first, then publish the new design.`,
       );
     }
     const active = attempts.find((a) => a.status === "publishing");

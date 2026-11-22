@@ -144,6 +144,16 @@ export interface StudioStatus {
   /** Other actions this state offers, in display order; the menu kinds
    * (STUDIO_MENU_KINDS) go in the "..." menu. */
   secondary: StudioAction[];
+  /** The release that stays live while a change to a published theme is
+   * built, checked or waiting to be published ("1.0.0"); null on row 1
+   * (the words already say it) and for a theme that never published. A
+   * screen shows it beside the words: "v1.0.0 stays live". */
+  liveVersion?: string | null;
+}
+
+/** The words for `liveVersion`, for the badge beside the status. */
+export function liveVersionWords(version: string): string {
+  return `v${version} stays live`;
 }
 
 /** Every action's words, one label per kind. */
@@ -266,9 +276,24 @@ function settle(draft: Draft, input: StudioStatusInput): StudioStatus {
     else primary = studioAction(draft.primary);
   }
   const secondary = draft.secondary
-    .filter((kind) => kind !== draft.primary && !blockedBy(kind, false))
+    .filter(
+      (kind) =>
+        kind !== draft.primary &&
+        !blockedBy(kind, false) &&
+        // A theme with a release is never removed from the list, on any row:
+        // stores are using it. (Delete says what it does to them.)
+        !(kind === "remove_from_list" && input.release),
+    )
     .map(studioAction);
-  return { row: draft.row, words, tone: draft.tone, primary, secondary };
+  return {
+    row: draft.row,
+    words,
+    tone: draft.tone,
+    primary,
+    secondary,
+    liveVersion:
+      draft.row !== 1 && input.release ? input.release.version : null,
+  };
 }
 
 /** The "..." menu of a theme nothing is working on that is not live. */
@@ -313,8 +338,15 @@ export function studioStatus(input: StudioStatusInput): StudioStatus {
   const stop = input.stop;
   const checks = input.checks;
 
-  // 1. A published release exists, whatever the project's status.
-  if (input.release) {
+  // 1. Live: the theme rests on a published design. ★ A published theme
+  // can be changed (migration 0288): while the change is built, checked or
+  // waiting to be published the project is in the ordinary working states,
+  // its own row below applies, and `liveVersion` names the release that
+  // stays live meanwhile. Removed from the list, a live theme is still row 1.
+  if (
+    input.release &&
+    (input.projectStatus === "published" || input.projectStatus === "archived")
+  ) {
     return settle(
       input.release.offered
         ? {

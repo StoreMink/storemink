@@ -88,6 +88,7 @@ import {
 } from "./generation-recovery";
 import { sendThemeStudioNotice, type ThemeStudioNoticeKind } from "./notify";
 import { digestThemeStudioJson, recordThemeStudioEvent } from "./repository";
+import { restingStatusSql } from "./published-version";
 import { runThemeStudioVisualQaWorker } from "./visual-qa";
 import {
   automaticImageProvider,
@@ -462,7 +463,9 @@ async function settleProjectWithoutVersion(
   const settled = await db
     .update(themeStudioProjects)
     .set({
-      status: sql`CASE WHEN ${themeStudioProjects.currentVersionId} IS NULL THEN 'failed' ELSE 'ready' END`,
+      // `published` when the design it kept is a published one: a change to
+      // a live theme that did not finish leaves it live (0288).
+      status: restingStatusSql(),
       revision: sql`${themeStudioProjects.revision} + 1`,
     })
     .where(
