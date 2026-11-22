@@ -746,6 +746,46 @@ try {
           failures.push({ label, problems, ...m, ...measured });
       }
     }
+    // ★ ONE PHOTOGRAPH (22 Nov 2026). Every case above has three, and a
+    // product with one renders no thumbnails at all: under thumbs-left the
+    // lone photograph then fell into the 72px thumbnail column and a real
+    // theme's product page showed a postage stamp. So each shape is also
+    // laid out with a single photograph, which must fill the gallery.
+    for (const mode of [
+      "thumbs-bottom",
+      "thumbs-left",
+      "stacked",
+      "carousel",
+      "grid",
+    ]) {
+      const label = `${width}px pdp/${mode}/one photo`;
+      await page.setContent(
+        documentHtmlShop(
+          `<main class="shop-main pdp-page"><div class="pdp-grid">
+          <div class="pdp-gallery sm-gallery mode-${mode} is-single"><div class="sm-gallery-frame"><div class="sm-gallery-track"><button class="pdp-main-img sm-gallery-slide" data-active="true" aria-label="Zoom photo"><img class="pdp-main-img-el" alt="" src="${image(1280, 1600)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain"></button></div></div></div>
+          <div class="pdp-info"><h1 class="pdp-name">${heading}</h1><div class="pdp-price"><span class="pdp-price-sell">₹1,800</span></div></div>
+          </div></main>`,
+          "",
+        ),
+      );
+      const one = await page.evaluate(() => {
+        const rect = (selector) =>
+          document.querySelector(selector).getBoundingClientRect();
+        return {
+          gallery: rect(".sm-gallery").width,
+          slide: rect(".sm-gallery-slide").width,
+          slideHeight: rect(".sm-gallery-slide").height,
+        };
+      });
+      cases += 1;
+      const problems = [];
+      if (one.slide < one.gallery - 2)
+        problems.push(
+          `the only photograph is ${Math.round(one.slide)}px wide in a ${Math.round(one.gallery)}px gallery`,
+        );
+      if (one.slideHeight < 120) problems.push("the only photograph is tiny");
+      if (problems.length) failures.push({ label, problems, ...one });
+    }
     // The blog template (plan Phase 2e): the index as a grid, a list of rows
     // or a featured first post, and the article narrow, wide or with an aside
     // of related posts beside the reading column from 1024px.

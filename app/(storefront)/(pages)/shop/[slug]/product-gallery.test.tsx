@@ -80,6 +80,43 @@ describe("ProductGallery", () => {
     expect(container.querySelector(".is-multi")).toBeNull();
   });
 
+  it("★ marks a one-photo gallery, so a thumbnail column is never kept for it", () => {
+    // Under thumbs-left the lone photo took the 72px thumbnail column: a
+    // real theme's product page showed a postage stamp (22 Nov 2026).
+    const single = render(
+      <ProductGallery
+        images={["/a.jpg"]}
+        alt="Linen shirt"
+        activeIndex={0}
+        onActiveIndexChange={() => {}}
+        onZoom={() => {}}
+        classPrefix="pdp"
+        mode="thumbs-left"
+        sizes="100vw"
+      />,
+    );
+    expect(single.container.querySelector(".sm-gallery")).toHaveClass(
+      "mode-thumbs-left",
+      "is-single",
+    );
+    single.unmount();
+    const several = render(
+      <ProductGallery
+        images={["/a.jpg", "/b.jpg"]}
+        alt="Linen shirt"
+        activeIndex={0}
+        onActiveIndexChange={() => {}}
+        onZoom={() => {}}
+        classPrefix="pdp"
+        mode="thumbs-left"
+        sizes="100vw"
+      />,
+    );
+    expect(several.container.querySelector(".sm-gallery")).not.toHaveClass(
+      "is-single",
+    );
+  });
+
   it("shows the placeholder when there is no photo", () => {
     const { container } = render(
       <ProductGallery
