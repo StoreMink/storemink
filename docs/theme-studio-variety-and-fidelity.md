@@ -8,6 +8,21 @@ choices, but width and hover-image settings remain identical across eight drafts
 the complete live exit criterion is still not passed (§12). Reference fidelity
 (F1/F2) and renderer additions remain separate pending phases.
 
+**Implementation status, 22 November 2026 (prompt v34, built offline, not run
+live):** three parts of Track F are in, as part of the design plan
+(`lib/theme-studio/design-plan.ts`, CODEBASE.md §11). F1 above is answered:
+the stage that builds the theme is now sent the screenshots, not only notes
+about them. F3 is answered: a screenshot is labelled as the design to follow
+(never its logo, brand name, wording or photographs), not "extract design
+structure only". Part of T-F2 is in: each screenshot's colours are measured
+from its pixels (`reference-colours.ts`) and given to the planning stage. The
+plan carries the layout read from the screenshots, which the build is held
+to. **Still not built:** the structured per-screenshot Reference Spec (T-F1),
+the fidelity loop that renders the theme, compares it with the reference
+region by region and repairs the differences (T-F4), the side-by-side view
+(T-F5) and the capability-gap report (T-F6). So F5 above still stands: nothing
+measures fidelity during a build.
+
 |          |                                                                                                                                     |
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | Status   | Approved by owner 2026-10-03 (decisions in §11)                                                                                     |

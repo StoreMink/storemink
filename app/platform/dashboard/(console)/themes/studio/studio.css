@@ -178,6 +178,15 @@
   background: var(--dash-red);
 }
 
+/* ---------- The design plan: what was decided before the build ---------- */
+.studio-plan {
+  padding: 14px 16px;
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface);
+  color: var(--dash-text);
+}
+
 /* ---------- Notices: a banner or a boxed note ---------- */
 .studio-notice {
   padding: 10px 14px;

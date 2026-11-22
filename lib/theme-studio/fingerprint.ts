@@ -57,6 +57,16 @@ export interface ExistingThemeFingerprint {
   themeId: string;
   direction: StudioDesignDirection | null;
   fingerprint: ThemeFingerprint;
+  /**
+   * True for a theme in the PUBLIC catalogue (a published release, or a
+   * bundled theme a new store can choose): the ones a new theme is held to
+   * the publish floor against, before anything is drawn (design-plan.ts and
+   * pipeline.ts, prompt v34). Absent on every context frozen before
+   * 22 Nov 2026, which reads as "not known to be published": no floor.
+   */
+  published?: boolean;
+  /** The theme's name, for the operator's words. Published themes only. */
+  name?: string;
 }
 /** Expand compound fingerprint fields for transparent catalogue frequency
  * hints and the evaluation's individual-setting convergence checks. */
@@ -284,6 +294,17 @@ export interface DistinctnessReport {
   beforeScore?: number | null;
   /** v24+: style settings that repeat the catalogue's dominant answer. */
   overusedChoices?: string[];
+  /**
+   * v34+, a new theme: the published theme it was nearest to when it was
+   * measured against the publish floor, before any photograph was drawn
+   * (pipeline.ts). Present only for a draft that cleared it.
+   */
+  publishFloor?: {
+    threshold: number;
+    nearestThemeId: string;
+    nearestName: string;
+    score: number;
+  };
 }
 export function measureDistinctness(
   theme: ThemeDefinition,
@@ -442,6 +463,27 @@ export function readDistinctnessReport(
         r.overusedChoices.every((c) => typeof c === "string" && c.length <= 120)
           ? { overusedChoices: [...r.overusedChoices] }
           : {}),
+        ...(r.publishFloor &&
+        typeof r.publishFloor === "object" &&
+        typeof r.publishFloor.threshold === "number" &&
+        r.publishFloor.threshold > 0 &&
+        r.publishFloor.threshold <= 1 &&
+        typeof r.publishFloor.score === "number" &&
+        r.publishFloor.score >= 0 &&
+        r.publishFloor.score <= 1 &&
+        typeof r.publishFloor.nearestThemeId === "string" &&
+        r.publishFloor.nearestThemeId.length <= 80 &&
+        typeof r.publishFloor.nearestName === "string" &&
+        r.publishFloor.nearestName.length <= 120
+          ? {
+              publishFloor: {
+                threshold: r.publishFloor.threshold,
+                nearestThemeId: r.publishFloor.nearestThemeId,
+                nearestName: r.publishFloor.nearestName,
+                score: r.publishFloor.score,
+              },
+            }
+          : {}),
       }
     : null;
 }
@@ -481,7 +523,10 @@ export function readVarietyContext(
               t.fingerprint[k].every(text)
             : text(t.fingerprint[k]),
         ) &&
-        styling(t.fingerprint.styling),
+        styling(t.fingerprint.styling) &&
+        (t.published === undefined || typeof t.published === "boolean") &&
+        (t.name === undefined ||
+          (typeof t.name === "string" && t.name.length <= 120)),
     )
   )
     return null;
@@ -495,6 +540,12 @@ export function readVarietyContext(
         ? { styling: [...t.fingerprint.styling] }
         : {}),
     } as unknown as ThemeFingerprint,
+    ...(t.published === true ? { published: true } : {}),
+    // A name is shown to an operator, never executed: control characters
+    // out, length bounded above.
+    ...(t.published === true && typeof t.name === "string" && t.name.trim()
+      ? { name: t.name.replace(/[\u0000-\u001f\u007f\s]+/g, " ").trim() }
+      : {}),
   }));
 }
 
@@ -585,15 +636,27 @@ function sharedInWords(a: ThemeFingerprint, b: ThemeFingerprint): string[] {
   return shared;
 }
 
+/** The published theme a built theme is closest to. */
+export interface NearestPublishedTheme {
+  themeId: string;
+  name: string;
+  /** Distance over the whole fingerprint, 0 to 1 (3 decimals). */
+  score: number;
+  /** True when it is under the publish floor: it could not be published. */
+  tooAlike: boolean;
+  /** What the two share, in an operator's words, most visible first. */
+  shared: string[];
+}
+
 /**
- * Why this theme cannot be published beside the catalogue as it stands, in
- * the operator's words, or null when it is different enough from every theme
- * in it. The theme's own earlier release is never one of `published`.
+ * The one measure publishing uses, as data: the published theme nearest to
+ * this one. Also asked BEFORE any photograph is drawn (pipeline.ts, prompt
+ * v34), so a theme that could not be published is not paid for first.
  */
-export function publicationSimilarityBlocker(
+export function nearestPublishedTheme(
   theme: ThemeDefinition,
   published: readonly PublishedThemeFingerprint[],
-): string | null {
+): NearestPublishedTheme | null {
   const current = themeFingerprint(theme, { styling: true });
   const nearest = published
     .map((other) => ({
@@ -604,12 +667,78 @@ export function publicationSimilarityBlocker(
       (a, b) =>
         a.score - b.score || a.other.themeId.localeCompare(b.other.themeId),
     )[0];
-  if (!nearest || nearest.score >= PUBLICATION_DISTINCTNESS_THRESHOLD)
+  if (!nearest) return null;
+  return {
+    themeId: nearest.other.themeId,
+    name: nearest.other.name,
+    score: Math.round(nearest.score * 1000) / 1000,
+    tooAlike: nearest.score < PUBLICATION_DISTINCTNESS_THRESHOLD,
+    shared: sharedInWords(current, nearest.other.fingerprint),
+  };
+}
+
+/**
+ * A run stopped at the publish floor, in the operator's words, from the
+ * detail the pipeline recorded; null for any other detail. Nothing was drawn
+ * for such a run, which is the point of stopping there.
+ */
+export function stoppedForAlikenessWords(detail: unknown): string | null {
+  const d = detail as {
+    nearestName?: unknown;
+    alikePercent?: unknown;
+    shared?: unknown;
+  } | null;
+  if (
+    !d ||
+    typeof d !== "object" ||
+    typeof d.nearestName !== "string" ||
+    !d.nearestName.trim() ||
+    typeof d.alikePercent !== "number" ||
+    !(d.alikePercent >= 0 && d.alikePercent <= 100)
+  )
     return null;
-  const shared = sharedInWords(current, nearest.other.fingerprint);
+  const shared = Array.isArray(d.shared)
+    ? d.shared
+        .filter((item): item is string => typeof item === "string")
+        .slice(0, 8)
+        .map((item) => item.slice(0, 120))
+    : [];
+  return (
+    `This design came out ${Math.round(d.alikePercent)}% like "${d.nearestName.slice(0, 120)}", which is already published, so it was stopped before any picture was drawn. ` +
+    `A theme must differ from every published theme by at least ${Math.round(PUBLICATION_DISTINCTNESS_THRESHOLD * 100)}%.` +
+    (shared.length ? ` They share ${shared.join(", ")}.` : "") +
+    " Start it again with a brief that sets it apart: another layout, page colour or font."
+  );
+}
+
+/** The published themes in a run's frozen catalogue context. */
+export function publishedInContext(
+  existing: readonly ExistingThemeFingerprint[],
+): PublishedThemeFingerprint[] {
+  return existing
+    .filter((theme) => theme.published)
+    .map((theme) => ({
+      themeId: theme.themeId,
+      name: theme.name ?? theme.themeId,
+      fingerprint: theme.fingerprint,
+    }));
+}
+
+/**
+ * Why this theme cannot be published beside the catalogue as it stands, in
+ * the operator's words, or null when it is different enough from every theme
+ * in it. The theme's own earlier release is never one of `published`.
+ */
+export function publicationSimilarityBlocker(
+  theme: ThemeDefinition,
+  published: readonly PublishedThemeFingerprint[],
+): string | null {
+  const nearest = nearestPublishedTheme(theme, published);
+  if (!nearest || !nearest.tooAlike) return null;
+  const { shared } = nearest;
   const alike = Math.round((1 - nearest.score) * 100);
   return (
-    `This theme looks too much like "${nearest.other.name}", which is already in the catalogue: ` +
+    `This theme looks too much like "${nearest.name}", which is already in the catalogue: ` +
     `they are ${alike}% alike, and a theme must differ from every published theme by at least ${Math.round(PUBLICATION_DISTINCTNESS_THRESHOLD * 100)}%.` +
     (shared.length ? ` They share ${shared.join(", ")}.` : "") +
     " Ask for a change that sets it apart, then publish."

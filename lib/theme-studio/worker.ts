@@ -1392,6 +1392,8 @@ async function execute(
         promptVersion: run.promptVersion,
         messages: input.messages,
         existingThemes: input.existingThemes,
+        // The offline drill rebuilds a bundled theme: see GenerationInput.
+        ...(run.provider === "fake" ? { skipCatalogueFloor: true } : {}),
         references: input.references.map((r) => ({
           base64: r.bytes.toString("base64"),
           sha256: r.sha256,

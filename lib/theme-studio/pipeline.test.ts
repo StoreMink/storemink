@@ -13,6 +13,7 @@ import type { HeroConfig } from "@/lib/homepage/section-types";
 import { createFakeModelClient, FAKE_STYLESHEET } from "./fake-provider";
 import { stylesheetPrompt } from "./style-rules";
 import { commitmentsPrompt, layoutCommitments } from "./commitments";
+import { designPlanBuildPrompt } from "./design-plan";
 import {
   resumableGenerationClient,
   type SavedModelResponse,
@@ -2055,11 +2056,15 @@ describe("the Stage B request a run sends, against the golden pins", () => {
     expect(propertiesOf(built.stageB)).toHaveProperty("stylesheetJson", {
       type: "string",
     });
-    // The stylesheet section is appended last, after everything v33 sent,
-    // with this theme's own design direction.
+    // The stylesheet section is appended after everything v33 sent, with
+    // this theme's own design direction; a new theme's design plan follows
+    // it (design-plan.ts).
     const direction = built.result.intent.designDirection;
     expect(
-      built.stageB.system.endsWith(stylesheetPrompt(direction, false)),
+      built.stageB.system.endsWith(
+        stylesheetPrompt(direction, false) +
+          designPlanBuildPrompt(built.result.intent.designPlan!),
+      ),
     ).toBe(true);
     const rules = built.result.package.definition.preset.stylesheet;
     expect(rules?.length).toBe(FAKE_STYLESHEET.length);
@@ -2110,17 +2115,22 @@ describe("the Stage B request a run sends, against the golden pins", () => {
       input().compile.themeId,
       [],
     )!;
-    // The commitments close the system prompt, after the stylesheet section.
+    // The commitments are the layout of the theme's design plan
+    // (design-plan.ts), which closes the system prompt after the stylesheet
+    // section; the bare commitments text is for a theme with no plan.
+    const plan = result.intent.designPlan!;
+    expect(plan.layout).toEqual(committed);
+    expect(plan.layoutSource).toBe("catalogue");
+    expect(drafts[0].system.endsWith(designPlanBuildPrompt(plan))).toBe(true);
+    expect(drafts[0].system).not.toContain("Layout commitments:");
     expect(
-      drafts[0].system.endsWith(
-        commitmentsPrompt(committed, result.intent.designDirection!),
-      ),
-    ).toBe(true);
+      commitmentsPrompt(committed, result.intent.designDirection!),
+    ).toContain("Layout commitments:");
     expect(drafts[0].system).toContain("Theme stylesheet:");
     // The offline provider writes its own fixed layout: one repair turn
     // names what departed, and the second draft is accepted as it is.
     expect(drafts).toHaveLength(2);
-    expect(textOf(drafts[1])).toContain("Layout commitment: design.");
+    expect(textOf(drafts[1])).toContain("Design plan: design.");
     expect(result.package.definition.preset.stylesheet?.length).toBe(
       FAKE_STYLESHEET.length,
     );

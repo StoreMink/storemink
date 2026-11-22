@@ -742,6 +742,24 @@ export const FAKE_STYLESHEET = [
   },
 ] as const;
 
+/** The offline drill's design plan: a light page and a readable ink. */
+export const FAKE_DESIGN_PLAN = {
+  colours: {
+    page: "#fbfaf7",
+    surface: "#ffffff",
+    ink: "#1f2a24",
+    accent: "#2f5d50",
+  },
+  fontPairing: "editorial-fraunces",
+  buttons: { shape: "rounded", primary: "solid" },
+  layout: null,
+  styling: [
+    "Product names in the body face, medium weight.",
+    "Prices a size up from the name, in the text colour.",
+  ],
+  setsApart: ["Fake provider output: no catalogue theme was read."],
+} as const;
+
 export function createFakeModelClient(
   input: FakeProviderInput,
 ): ThemeStudioModelClient {
@@ -880,6 +898,14 @@ export function createFakeModelClient(
                     schemaVersion: 2,
                     designDirection: "magazine-editorial",
                     paletteFamily: "light",
+                    // v34: the design plan, only where the schema asks
+                    // (design-plan.ts). A fixed, valid plan: no model
+                    // decided anything.
+                    ...(JSON.stringify(request.schema ?? {}).includes(
+                      '"designPlanJson"',
+                    )
+                      ? { designPlanJson: JSON.stringify(FAKE_DESIGN_PLAN) }
+                      : {}),
                   }
                 : intent.value
               : { schemaVersion: THEME_INTENT_SCHEMA_VERSION },

@@ -167,7 +167,16 @@
 > since (2026-11-22): the builder's read-only list of a theme's rules, and an
 > exemplar for each of the seven later directions
 > (`lib/themes/exemplars/later-directions.ts`), fourteen in all, every pair
-> at least 77% apart in what its stylesheet says.
+> at least 77% apart in what its stylesheet says. Then, on the owner's
+> direction ("the planning is done beforehand ... it should also plan the
+> alikeness in this step"): the design plan (`design-plan.ts`). Stage A now
+> decides a new theme's colours, fonts, buttons, styling and (from
+> screenshots) layout; the plan is checked against every published theme
+> before Stage B, which is held to it; and the built theme is measured
+> against publishing's own 0.50 floor BEFORE any photograph is drawn,
+> corrected up to twice, and stopped with nothing drawn if it still could
+> not be published. Reference screenshots have their colours measured from
+> the pixels and are sent to Stage B too. Not run live.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

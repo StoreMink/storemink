@@ -26,6 +26,7 @@ import { cleanPage } from "@/lib/themes/page";
 import { cleanTypography } from "@/lib/themes/typography";
 import { parseThemeStudioModelKey, type ThemeStudioModelKey } from "./models";
 import { resolveOptionRows } from "@/lib/products/options";
+import { parseDesignPlan, type DesignPlan } from "./design-plan";
 import {
   PALETTE_FAMILIES,
   STUDIO_DESIGN_DIRECTION_IDS,
@@ -186,6 +187,13 @@ export interface ThemeIntent {
   }[];
   assumptions: string[];
   capabilityGaps: ThemeCapabilityGap[];
+  /**
+   * The design decided before anything was built (design-plan.ts; prompt
+   * v34, new themes only): colours, fonts, buttons, layout and how the theme
+   * sets its type, checked against every published theme. Absent on every
+   * intent before it and on a revision's.
+   */
+  designPlan?: DesignPlan;
 }
 
 export interface ThemePackageAsset {
@@ -308,6 +316,7 @@ const ROOT_INTENT_KEYS = [
   "referenceAnalysis",
   "assumptions",
   "capabilityGaps",
+  "designPlan",
 ] as const;
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -967,6 +976,12 @@ export function validateThemeIntent(
     issues,
   );
 
+  // Optional, and absent on every intent before prompt v34.
+  const designPlan =
+    input.designPlan === undefined || input.designPlan === null
+      ? null
+      : parseDesignPlan(input.designPlan, "designPlan", issues);
+
   if (issues.length > 0 || !density || !shape || !motion)
     return { ok: false, issues };
   return {
@@ -993,6 +1008,7 @@ export function validateThemeIntent(
       referenceAnalysis,
       assumptions,
       capabilityGaps,
+      ...(designPlan ? { designPlan } : {}),
     },
   };
 }
@@ -2071,12 +2087,17 @@ export const THEME_INTENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ROOT_INTENT_KEYS.filter(
-    (key) => key !== "designDirection" && key !== "paletteFamily",
+    (key) =>
+      key !== "designDirection" &&
+      key !== "paletteFamily" &&
+      key !== "designPlan",
   ),
   properties: {
     schemaVersion: { type: "integer", enum: [1, 2] },
     designDirection: { type: "string", enum: STUDIO_DESIGN_DIRECTION_IDS },
     paletteFamily: { type: "string", enum: PALETTE_FAMILIES },
+    // The plan's own reader is authoritative (design-plan.ts).
+    designPlan: { type: "object" },
     summary: { type: "string", maxLength: 1_000 },
     audiences: {
       type: "array",

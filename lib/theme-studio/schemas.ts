@@ -748,6 +748,46 @@ function withoutBriefPeople(schema: Schema): Schema {
 }
 
 const STAGE_A_SCHEMAS = [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA];
+
+const WITH_DESIGN_PLAN = new Map<Schema, Schema>();
+/**
+ * A Stage A schema whose intent also carries `designPlanJson` (v34+, a new
+ * theme only; design-plan.ts): the design, decided before anything is built,
+ * as ONE JSON string that the pipeline parses and checks. A string like
+ * `templatesJson` and `stylesheetJson`, so the plan's enumerations never
+ * count against the structured-output size limit. Every other request keeps
+ * its schema byte for byte.
+ */
+export function withDesignPlan(schema: Schema): Schema {
+  let twin = WITH_DESIGN_PLAN.get(schema);
+  if (twin) return twin;
+  twin = structuredClone(schema);
+  let added = false;
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const properties = record.properties as Record<string, Schema> | undefined;
+    if (
+      properties &&
+      "referenceAnalysis" in properties &&
+      "summary" in properties
+    ) {
+      properties.designPlanJson = { type: "string" };
+      record.required = Object.keys(properties);
+      added = true;
+      return;
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  if (!added) throw new Error("Stage A schema has no intent to plan in.");
+  WITH_DESIGN_PLAN.set(schema, twin);
+  return twin;
+}
 const STAGE_A_TWINS = new Map<string, Schema>();
 
 /** The pre-v34 shape of a Stage A schema: its designDirection enum (the

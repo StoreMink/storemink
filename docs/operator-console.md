@@ -373,6 +373,17 @@ with its distinctness and the threshold: a warning that calls for a look at the
 composition and never stops Publish. References take priority over novelty.
 Image updates retain the comparison, and older versions have no score.
 
+From prompt v34 a new theme is planned before it is built. The Checks tab shows
+its **Design plan**: the colours, fonts, buttons and layout decided up front,
+how it sets its type, and what sets it apart. Before any picture is drawn, the
+built design is measured against every published theme. A design less than 50%
+different from one of them is corrected up to twice; if it still is, the build
+stops with nothing drawn, and the chat names the theme it resembled and what
+they share. Start it again with a brief that sets it apart. A theme built from
+reference screenshots is held to the same rule, and Publish still refuses a
+theme less than 50% different from a published one, because the catalogue can
+change between a build and a publish.
+
 A model that asks for details leaves the theme at **Needs your answer** until
 you answer in the chat, or make another design current, which sets the questions
 aside. A theme stopped by its security check (**Can't publish: security

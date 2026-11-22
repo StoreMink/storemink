@@ -10343,6 +10343,12 @@ wholesip/
 │   │                          # prompt section built from the catalogue,
 │   │                          # parseStylesheetJson (repair issues, then salvage
 │   │                          # on the last attempt), direction "voices"
+│   ├── theme-studio/design-plan.ts # v34: the design plan a new theme is built from
+│   │                          # (colours, fonts, buttons, layout, styling), its
+│   │                          # check against every published theme, and what
+│   │                          # holds Stage B to it
+│   ├── theme-studio/reference-colours.ts # v34: a reference screenshot's colours,
+│   │                          # measured from its pixels for the planning stage
 │   ├── theme-studio/commitments.ts # v34: layout commitments for a new theme: what
 │   │                          # its direction allows and the catalogue uses
 │   │                          # least (header, card, product page, footer, page
@@ -15645,6 +15651,85 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     back with it while repairs remain (never the reason a theme fails, never
     for a revision, never before v34). The seven new palettes are in
     `scripts/theme-studio-contrast-check.mjs` (882 cases).
+    ★★ THE DESIGN PLAN, AND ALIKENESS SETTLED BEFORE ANYTHING IS DRAWN
+    (owner, 22 Nov 2026: "the planning is done beforehand ... it should also
+    plan the alikeness in this step ... on the basis of that, the theme
+    should be created"; `design-plan.ts`, feature `designPlan`, v34, a NEW
+    theme only). Before it, Stage A wrote prose and Stage B decided every
+    concrete thing; alikeness was measured after the build at 0.35 where
+    Publish asks 0.50, and not corrected at all for a theme built from
+    screenshots, so a theme could have every photograph drawn and then be
+    refused at Publish. Now:
+    (1) Stage A writes `designPlanJson` (one JSON string, like
+    `templatesJson`, so its enumerations never count against the schema size
+    limit; `withDesignPlan` in `schemas.ts`): page, surface, text and accent
+    colours, the font pairing, the buttons, styling in words, what sets it
+    apart, and, only when screenshots were supplied, the layout they show.
+    `parseDesignPlan` whitelists and bounds it and refuses a text colour
+    under 4.5:1 on the page or on cards. The plan is kept on the stored
+    intent (`ThemeIntent.designPlan`).
+    (2) StoreMink completes it (`completeDesignPlan`): a theme with no
+    screenshots gets the layout commitments as its plan's layout, whatever
+    the model wrote; a theme built from screenshots keeps the layout read
+    from them.
+    (3) THE PLAN IS CHECKED AGAINST EVERY PUBLISHED THEME before Stage B
+    (`designPlanIssues`): `planDistance` is the weighted share of what the
+    plan decides (layout, card, page colour, accent, fonts, buttons, page
+    width; the fingerprint's own weights) that differs, and under
+    `PLAN_DISTINCTNESS_FLOOR` 0.5 the plan goes back to Stage A naming the
+    theme and what they share. A plan never fails a theme: on Stage A's last
+    attempt a whole plan is kept as it is, and an unreadable one is left out
+    (the bare commitments then apply).
+    (4) Stage B is held to it (`designPlanBuildPrompt`, appended last;
+    `designPlanDepartures`, sent back once like a commitment): colours by
+    colour band (a shade may move so text reads, a family may not), the
+    rest by value.
+    (5) ★★ THE PUBLISH FLOOR IS MEASURED BEFORE ANY PHOTOGRAPH
+    (`pipeline.ts`): after Stage B the built theme is measured with
+    publishing's own function (`nearestPublishedTheme`, which
+    `publicationSimilarityBlocker` now also uses) against the published
+    themes in the run's frozen context. Under it, up to `FLOOR_CORRECTIONS`
+    (2) bounded corrections, for a theme built from screenshots too; a
+    correction is kept only if it moves away from that theme and never if it
+    newly puts a draft under the floor. Still under it, the run fails
+    `too_similar` with the theme's name, the alikeness and what they share,
+    and NOTHING IS DRAWN. A draft that clears it carries
+    `distinctness.publishFloor`. Publish keeps its own check: the catalogue
+    can change between a build and a publish.
+    (6) Which catalogue themes are PUBLISHED is frozen with the run
+    (`ExistingThemeFingerprint.published` and `name`, set in
+    `variety-context.ts` for a published release and a public bundled
+    theme; a context frozen earlier has neither, which reads as no floor).
+    (7) REFERENCE SCREENSHOTS ARE READ MORE CLOSELY: their colours are
+    MEASURED from the pixels (`reference-colours.ts`: 5-bit colour boxes
+    merged within 16 RGB steps, so a cream page and its white cards stay two
+    colours; the largest is the background, the strongest contrast the
+    text, the most saturated the accent; deterministic, never fatal) and
+    given to Stage A beside the brief; the screenshot's label says it is the
+    design to follow (never its logo, brand name, wording or photographs);
+    and Stage B is sent the screenshots too, where before it saw only
+    Stage A's notes.
+    ★ The offline drill (the fake provider) is exempt from both floors
+    (`GenerationInput.skipCatalogueFloor`, set only by the worker): its draft
+    is a bundled theme's own tokens.
+    In Theme Studio the Checks tab shows the plan (`design-plan-card.tsx`:
+    colours, fonts, buttons, layout and where it came from, styling, and what
+    the design was measured against before any picture was drawn), and a run
+    stopped at the floor says which theme it resembled
+    (`stoppedForAlikenessWords`, shown where a decline reason is; stop word
+    `too_similar`). Every request before v34, and every revision, is byte for
+    byte as it was; the Stage B pins are unchanged (the plan is appended at
+    the call, after everything they pin). Tests: `design-plan.test.ts`,
+    `design-plan-pipeline.test.ts` (the real pipeline over the offline
+    provider: the plan asked for and kept, the screenshots sent to Stage B,
+    an unusable plan repaired, a plan that never fails a theme, the stop
+    before any photograph, a correction that clears the floor, references
+    held to it, drafts and v33 not), `reference-colours.test.ts`,
+    `design-plan-card.test.tsx`. ⚠ NOT RUN LIVE: no model has written a
+    plan yet, and the reference fidelity loop (render, compare with the
+    screenshot region by region, repair; `theme-studio-variety-and-fidelity.md`
+    T-F4) is still not built, so how closely a result follows its
+    screenshots is still unmeasured during a build.
     `npm run theme-studio:stylesheets`
     (`scripts/theme-studio-stylesheet-check.ts`, in CI's renderer job) lays
     each one over the PRODUCTION storefront CSS in local Chrome at 390 and

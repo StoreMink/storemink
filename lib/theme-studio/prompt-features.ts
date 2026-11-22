@@ -76,5 +76,13 @@ export function themePromptFeatures(version: string) {
      * theme is given the header, card, product page, footer, page width and
      * grid its catalogue uses least, and asked to keep them. */
     commitments: revision >= 34,
+    /** The design plan (owner 22 Nov 2026; design-plan.ts): Stage A decides
+     * a new theme's colours, fonts, buttons, styling and (from screenshots)
+     * layout and writes them as `designPlanJson`; the plan is checked
+     * against every published theme, Stage B is held to it and also sees the
+     * screenshots, the screenshots' colours are measured from their pixels,
+     * and a built theme under the publish floor is corrected or stopped
+     * BEFORE any photograph is drawn. */
+    designPlan: revision >= 34,
   };
 }

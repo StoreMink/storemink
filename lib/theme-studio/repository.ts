@@ -1,5 +1,10 @@
 import "server-only";
-import { readDistinctnessReport, type DistinctnessReport } from "./fingerprint";
+import {
+  readDistinctnessReport,
+  stoppedForAlikenessWords,
+  type DistinctnessReport,
+} from "./fingerprint";
+import { readStoredDesignPlan, type DesignPlan } from "./design-plan";
 import { IMAGE_CRASH_ATTEMPTS } from "./image-recovery";
 
 import { createHash } from "node:crypto";
@@ -193,6 +198,9 @@ export interface ThemeStudioPackageSummary {
 
 export interface ThemeStudioVersionView {
   distinctness?: DistinctnessReport | null;
+  /** The design decided before anything was built (design-plan.ts), or null
+   *  for a version made before plans, or by a change to an earlier design. */
+  designPlan?: DesignPlan | null;
   designDirection?: string | null;
   paletteFamily?: string | null;
   packageSummary: ThemeStudioPackageSummary | null;
@@ -411,8 +419,12 @@ function runExtras(usage: unknown, detail: unknown) {
       d.kind === "clarify" && Array.isArray(d.questions)
         ? d.questions.filter((q): q is string => typeof q === "string")
         : [],
+    // A reason in words: the model's own for a decline, or the theme a
+    // design was stopped for resembling, before anything was drawn.
     declineReason:
-      d.kind === "declined" && typeof d.reason === "string" ? d.reason : null,
+      d.kind === "declined" && typeof d.reason === "string"
+        ? d.reason
+        : stoppedForAlikenessWords(d),
     refusalCategory: typeof d.category === "string" ? d.category : null,
     change: changeView(d),
   };
@@ -711,6 +723,7 @@ export async function getThemeStudioProject(
             | "asset_edit",
           editedSlots: editedSlots(v.editDetail),
           distinctness: readDistinctnessReport(v.distinctnessReport),
+          designPlan: readStoredDesignPlan(v.intentJson),
           designDirection:
             typeof intentField(v.intentJson, "designDirection") === "string"
               ? String(intentField(v.intentJson, "designDirection"))

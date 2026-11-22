@@ -27,6 +27,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     stylesheet: false,
     moreDirections: false,
     commitments: false,
+    designPlan: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -50,6 +51,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     stylesheet: false,
     moreDirections: false,
     commitments: false,
+    designPlan: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -73,6 +75,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     stylesheet: true,
     moreDirections: true,
     commitments: true,
+    designPlan: true,
   });
   expect(themePromptFeatures("theme-studio-v34")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
@@ -160,7 +163,11 @@ it("adds the theme stylesheet only from v34, so v33 requests replay unchanged", 
   expect(themePromptFeatures("theme-studio-v34").templatesJson).toBe(true);
   // The diversity mechanics arrive with it: fourteen directions and layout
   // commitments.
-  for (const feature of ["moreDirections", "commitments"] as const) {
+  for (const feature of [
+    "moreDirections",
+    "commitments",
+    "designPlan",
+  ] as const) {
     expect(themePromptFeatures("theme-studio-v33")[feature]).toBe(false);
     expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(true);
   }
