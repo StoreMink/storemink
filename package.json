@@ -24,7 +24,7 @@
     "dev:all": "concurrently -n proxy,next -c blue,green --kill-others-on-fail \"npm run db:proxy\" \"npm run dev\"",
     "dev:all:lean": "concurrently -n proxy,next -c blue,green --kill-others-on-fail \"npm run db:proxy\" \"npm run dev:lean\"",
     "dev:all:full": "concurrently -n proxy,next -c blue,green --kill-others-on-fail \"npm run db:proxy\" \"npm run dev:full\"",
-    "build": "NODE_OPTIONS=\"--max-old-space-size=4096 ${NODE_OPTIONS:-}\" next build",
+    "build": "node scripts/build.mjs",
     "brand:build": "node scripts/build-brand-assets.mjs",
     "start": "next start",
     "lint": "eslint .",
