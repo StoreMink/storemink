@@ -4,7 +4,11 @@ import type {
   ThemeStudioRunView,
 } from "@/lib/theme-studio/repository";
 import { SCORECARD_DIMENSIONS } from "@/lib/theme-studio/scorecard";
-import type { StudioStatus, StudioTone } from "./studio-status";
+import {
+  liveVersionWords,
+  type StudioStatus,
+  type StudioTone,
+} from "./studio-status";
 import { STOP_REASON_CODES, stopReasonWords } from "./studio-words";
 
 // Small presentational pieces and the plain words shared by the Studio pages.
@@ -66,12 +70,23 @@ const STATUS_TONE: Record<ThemeStudioProjectState, StudioTone> = {
 export function StudioBadge({
   status,
 }: {
-  status: Pick<StudioStatus, "words" | "tone">;
+  status: Pick<StudioStatus, "words" | "tone"> & {
+    /** The release that stays live while a change to a published theme is
+     * worked on (studioStatus's `liveVersion`): shown as a second badge. */
+    liveVersion?: string | null;
+  };
 }) {
   return (
-    <span className="studio-badge" data-tone={status.tone}>
-      {status.words}
-    </span>
+    <>
+      <span className="studio-badge" data-tone={status.tone}>
+        {status.words}
+      </span>
+      {status.liveVersion ? (
+        <span className="studio-badge studio-badge-live" data-tone="success">
+          {liveVersionWords(status.liveVersion)}
+        </span>
+      ) : null}
+    </>
   );
 }
 

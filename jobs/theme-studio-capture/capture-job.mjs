@@ -58,6 +58,61 @@ export const MIN_WAKE_MS = 60_000;
 /** Kept back from the budget for the job's own shutdown. */
 const SHUTDOWN_MARGIN_MS = 10_000;
 
+/** The most one review screenshot may weigh: the web app refuses more
+ * (lib/theme-studio/capture.ts MAX_QA_SCREENSHOT_BYTES). */
+export const MAX_QA_SCREENSHOT_BYTES = 512 * 1024;
+/** The JPEG qualities a review screenshot is tried at, best first. */
+export const QA_SCREENSHOT_QUALITIES = [55, 40, 28, 18];
+
+/** How long a review screenshot waits for the page's photographs. */
+export const PICTURE_WAIT_MS = 8_000;
+
+/**
+ * Runs IN THE PAGE, just before a design-review screenshot: wait until every
+ * photograph the page shows has loaded, and return how many still have not.
+ *
+ * WHY (22 Nov 2026). The measuring probe scrolls the page so lazy pictures
+ * start loading and waits six seconds for them; a picture still on its way
+ * after that, or one whose first request failed and whose second succeeded
+ * (the probe asks again and rightly does not call it broken), was left as an
+ * empty box in the screenshot. On the first change to a live theme, with
+ * nine new product photographs being resized for the first time, one story
+ * picture was caught that way: the reviewer saw "a blank, unrendered
+ * container", called it a platform fault and failed a design whose page
+ * rendered correctly a moment later.
+ *
+ * So, for every picture that has a source and a box on the page and is not
+ * loaded: one that failed is asked for once more, one still held back as
+ * lazy is asked for now, and the page waits up to `ms` for them. A picture
+ * that really is broken still fails its own check (the probe's
+ * brokenImages); this only stops a slow one being photographed as missing.
+ * Self-contained: Playwright sends this function's source to the browser.
+ */
+export async function waitForPictures(ms) {
+  const missing = () =>
+    [...document.images].filter((img) => {
+      if (!(img.currentSrc || img.src)) return false;
+      const box = img.getBoundingClientRect();
+      if (!(box.width > 0 && box.height > 0)) return false;
+      return !(img.complete && img.naturalWidth > 0);
+    });
+  for (const img of missing()) {
+    if (img.complete) {
+      // It failed. Setting the same address again asks for it again.
+      const srcset = img.getAttribute("srcset");
+      const src = img.getAttribute("src");
+      if (srcset !== null) img.setAttribute("srcset", srcset);
+      if (src !== null) img.setAttribute("src", src);
+    } else if (img.loading === "lazy") {
+      img.loading = "eager";
+    }
+  }
+  const until = Date.now() + ms;
+  while (missing().length > 0 && Date.now() < until)
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  return missing().length;
+}
+
 export class CaptureError extends Error {
   /** `surface`: the preview page a status error came from, when known. */
   constructor(code, surface) {
@@ -279,14 +334,29 @@ export async function takeQaScreenshots(
           const probeMs = Date.now() - probeStarted;
           const screenshotStarted = Date.now();
           if (claim.qa.phase !== "layout") {
+            // ★ The design review judges this picture, so every photograph
+            //   on the page must be in it (waitForPictures). Best effort: a
+            //   page that cannot be asked is photographed as it is.
+            await page
+              .evaluate(waitForPictures, PICTURE_WAIT_MS)
+              .catch(() => {});
             // Capture the measured layout unchanged. CSS zoom reflows the page
             // and made vision review a different composition from the probe.
-            const bytes = await page.screenshot({
-              type: "jpeg",
-              quality: 55,
-              fullPage: true,
-            });
-            if (bytes.byteLength > 512 * 1024) {
+            // ★ A long page full of photographs can pass the limit at the
+            //   first quality (the "Volt" theme's home page did, once every
+            //   photograph was waited for). The reviewer judges layout and
+            //   composition, which a lower JPEG quality still shows, so the
+            //   page is photographed again, smaller, before giving up.
+            let bytes = null;
+            for (const quality of QA_SCREENSHOT_QUALITIES) {
+              bytes = await page.screenshot({
+                type: "jpeg",
+                quality,
+                fullPage: true,
+              });
+              if (bytes.byteLength <= MAX_QA_SCREENSHOT_BYTES) break;
+            }
+            if (bytes.byteLength > MAX_QA_SCREENSHOT_BYTES) {
               throw new CaptureError("qa_screenshot_too_large");
             }
             screenshots.push({

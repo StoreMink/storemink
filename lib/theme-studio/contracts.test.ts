@@ -398,11 +398,7 @@ describe("Theme Studio contracts", () => {
     // publish that did not finish waits in, then to `published`.
     expect(canTransitionThemeStudioProject("candidate", "approved")).toBe(true);
     expect(canTransitionThemeStudioProject("approved", "published")).toBe(true);
-    expect(canTransitionThemeStudioProject("ready", "published")).toBe(false);
     expect(canTransitionThemeStudioProject("ready", "approved")).toBe(false);
-    expect(canTransitionThemeStudioProject("published", "generating")).toBe(
-      false,
-    );
     expect(canTransitionThemeStudioProject("archived", "draft")).toBe(false);
     expect(canTransitionThemeStudioProject("candidate", "ready")).toBe(true);
     // A re-check before Publish (owner decision 4) steps back to generating,
@@ -420,7 +416,33 @@ describe("Theme Studio contracts", () => {
     );
   });
 
-  it("matches the newest database project guard exactly (migration 0151)", () => {
+  it("★ lets a published theme take a change, and come back to published (migration 0288)", () => {
+    // A change or new pictures, a replaced picture, another design made
+    // current: the three ways a live theme starts to change.
+    expect(canTransitionThemeStudioProject("published", "generating")).toBe(
+      true,
+    );
+    expect(canTransitionThemeStudioProject("published", "ready")).toBe(true);
+    expect(canTransitionThemeStudioProject("published", "archived")).toBe(true);
+    // Never straight to a publish: the changed design is checked like any
+    // other first.
+    for (const to of ["candidate", "approved", "failed", "blocked"] as const)
+      expect(canTransitionThemeStudioProject("published", to), to).toBe(false);
+    // Back to published without a new release: the change did not finish, or
+    // the published design was made current again. (The database allows
+    // these only while the current design has a published publication.)
+    for (const from of ["generating", "ready", "candidate", "blocked"] as const)
+      expect(canTransitionThemeStudioProject(from, "published"), from).toBe(
+        true,
+      );
+    // A theme that never built, or was removed, is never published this way.
+    for (const from of ["draft", "failed", "archived"] as const)
+      expect(canTransitionThemeStudioProject(from, "published"), from).toBe(
+        false,
+      );
+  });
+
+  it("matches the newest database project guard exactly (migration 0288)", () => {
     // The guard is the enforcement; this contract is the copy the actions
     // read for friendly refusals. Parse the NEWEST migration that defines the
     // guard and compare every pair, so the two cannot drift apart silently.
@@ -434,10 +456,20 @@ describe("Theme Studio contracts", () => {
         ),
       );
     const newest = definesGuard[definesGuard.length - 1];
-    // One-step publish (0151) is the newest guard today. A later migration
-    // that replaces it must also be the one this test reads, so it fails
-    // here first, by name, rather than comparing against an older copy.
-    expect(newest).toBe("20261003_0151_theme_studio_single_step_publish.sql");
+    // Changing a published theme (0288) is the newest guard today. A later
+    // migration that replaces it must also be the one this test reads, so it
+    // fails here first, by name, rather than comparing against an older copy.
+    expect(newest).toBe("20261122_0288_theme_studio_change_published.sql");
+    // The rule every move into `published` still answers to, whatever state
+    // it comes from: a publication of the current design.
+    const guard = readFileSync(join(dir, newest), "utf8");
+    expect(guard).toContain(
+      "IF NEW.status = 'published' AND OLD.status <> 'published' THEN",
+    );
+    expect(guard).toContain("AND p.version_id = NEW.current_version_id");
+    expect(guard).toMatch(
+      /ON public\.theme_studio_publications \(project_id, version_id\)\s+WHERE status = 'published'/,
+    );
     const sql = readFileSync(join(dir, newest), "utf8");
     const body = sql.slice(
       sql.indexOf(

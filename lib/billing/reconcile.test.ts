@@ -51,11 +51,16 @@ const collect = vi.hoisted(() => ({
   // RC-F1b: no captured draft purchase to finish unless a test says so.
   capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
   fileRecoveredPurchase: vi.fn(async () => true),
+  // A payment on a closed checkout is filed for a person (PR #303 re-review).
+  fileClosedAttemptPayment: vi.fn(async (): Promise<boolean> => true),
   readAddonOrderTarget: vi.fn(async (): Promise<unknown> => null),
 }));
 vi.mock("./collect", () => collect);
 
-const worker = vi.hoisted(() => ({ advanceAfterPayment: vi.fn() }));
+const worker = vi.hoisted(() => ({
+  advanceAfterPayment: vi.fn(),
+  announceAutopayStopped: vi.fn(),
+}));
 vi.mock("./renewal-worker", () => worker);
 
 // The repair pass issues through `issueInvoice` (GST Stage 4); what it does to
@@ -101,6 +106,7 @@ import {
   capturedDraftsWhere,
   countOpenReconciliationItems,
   creditDraftsWhere,
+  AUTO_NO_PAYMENT_FAIL_AFTER_HOURS,
   FAIL_AFTER_HOURS,
   issueCapturedDrafts,
   listReconciliationItems,
@@ -369,7 +375,9 @@ describe("★★ finding money", () => {
         fetchOrderPayments: gateway([CAPTURED]) as any,
       });
       expect(worker.advanceAfterPayment).toHaveBeenCalledWith(STORE, NOW);
-      expect(dbHolder.current.db.select).toHaveBeenCalledTimes(1);
+      // The scan, the scan for attempts with no gateway order, and the scan
+      // for checkouts closed while still payable. Never the invoice.
+      expect(dbHolder.current.db.select).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -419,6 +427,470 @@ describe("★★ declaring failure", () => {
       "failed",
       expect.objectContaining({ failureCode: "reconciled_no_payment" }),
     );
+  });
+
+  // 21 Nov 2026: a debit the renewal pass sent, which the gateway itself
+  // reports failed, no longer waits 72 hours to count as failed.
+  describe("★★ an automatic debit the gateway reports failed", () => {
+    const FAILED_PAYMENT = { id: "pay_f", status: "failed", amount: 500_000 };
+
+    it("is failed at once, inside the 72-hour window", async () => {
+      collect.settleAttempt.mockResolvedValue("failed");
+      seed([attempt({ mode: "automatic" })]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([FAILED_PAYMENT]) as any,
+      });
+      expect(res.failed).toBe(1);
+      expect(res.stillUnknown).toBe(0);
+      expect(collect.settleAttempt).toHaveBeenCalledWith(
+        "att-1",
+        "failed",
+        expect.objectContaining({ failureCode: "gateway_failed" }),
+      );
+    });
+
+    it("★ then asks whether that was the last try (the announcement decides)", async () => {
+      collect.settleAttempt.mockResolvedValue("failed");
+      seed([attempt({ mode: "automatic" })]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([FAILED_PAYMENT]) as any,
+      });
+      expect(worker.announceAutopayStopped).toHaveBeenCalledWith({
+        storeId: STORE,
+        invoiceId: "inv-1",
+        now: NOW,
+      });
+    });
+
+    it("★★ a MANUAL checkout with a failed try is left alone: its order is still payable", async () => {
+      seed([attempt({ mode: "manual" })]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([FAILED_PAYMENT]) as any,
+      });
+      expect(res.failed).toBe(0);
+      expect(res.stillUnknown).toBe(1);
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(worker.announceAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("★ waits while any payment on the order is not failed, or none exists yet", async () => {
+      for (const payments of [
+        [],
+        [FAILED_PAYMENT, { id: "pay_c", status: "created", amount: 500_000 }],
+        [{ id: "pay_a", status: "authorized", amount: 500_000 }],
+      ]) {
+        vi.clearAllMocks();
+        provider.getPlatformRazorpayCreds.mockReturnValue({
+          keyId: "rzp_1",
+          keySecret: "secret",
+        });
+        seed([attempt({ mode: "automatic" })]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway(payments) as any,
+        });
+        expect(res.failed).toBe(0);
+        expect(collect.settleAttempt).not.toHaveBeenCalled();
+      }
+    });
+
+    it("a failure a concurrent settle recorded is not announced twice", async () => {
+      collect.settleAttempt.mockResolvedValue(null);
+      seed([attempt({ mode: "automatic" })]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([FAILED_PAYMENT]) as any,
+      });
+      expect(worker.announceAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("the 72-hour failure of an automatic debit asks too; a deleted store's does not", async () => {
+      collect.settleAttempt.mockResolvedValue("failed");
+      seed([attempt({ mode: "automatic", createdAt: ANCIENT })]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(worker.announceAutopayStopped).toHaveBeenCalledTimes(1);
+
+      vi.mocked(worker.announceAutopayStopped).mockClear();
+      seed([attempt({ mode: "automatic", storeId: null })]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([FAILED_PAYMENT]) as any,
+      });
+      expect(worker.announceAutopayStopped).not.toHaveBeenCalled();
+    });
+  });
+
+  // PR #303 re-review, 22 Nov 2026. Closing an attempt does not close its
+  // Razorpay order: a Checkout window left open in another tab can still pay
+  // it. The pass read only attempts still in flight, so such a payment was
+  // recorded nowhere unless its webhook arrived.
+  describe("★★ a payment made on a checkout that had already been closed", () => {
+    const closed = (over: Record<string, unknown> = {}) => ({
+      id: "att-old",
+      storeId: STORE,
+      invoiceId: "inv-1",
+      providerOrderId: "order_old",
+      amountPaise: 500_000,
+      state: "cancelled",
+      failureCode: "amount_changed",
+      mode: "manual",
+      ...over,
+    });
+    /** Select #1 the main scan, #2 the orderless scan, #3 closed checkouts. */
+    const seedClosed = (rows: any[] | Error) =>
+      (dbHolder.current = makeDbMock({ selectQueue: [[], [], rows] }));
+
+    it("is filed for a person, with what was paid and why the checkout was closed", async () => {
+      seedClosed([closed()]);
+      const fetchOrderPayments = gateway([CAPTURED]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: fetchOrderPayments as any,
+      });
+      expect(fetchOrderPayments).toHaveBeenCalledWith(
+        expect.anything(),
+        "order_old",
+      );
+      expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith({
+        storeId: STORE,
+        invoiceId: "inv-1",
+        attemptId: "att-old",
+        providerPaymentId: "pay_1",
+        providerOrderId: "order_old",
+        expectedPaise: 500_000,
+        observedPaise: 500_000,
+        closedAs: "cancelled",
+        closedCode: "amount_changed",
+        automatic: false,
+        source: "reconcile",
+        now: NOW,
+      });
+      expect(res.paidAfterClose).toBe(1);
+      // ★ Never applied here: the closed attempt is not settled, and no plan
+      // is moved. Whether it settles the invoice or goes back is a person's.
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+    });
+
+    it("★ one already filed (even resolved) is not counted again", async () => {
+      collect.fileClosedAttemptPayment.mockResolvedValueOnce(false);
+      seedClosed([closed()]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(res.paidAfterClose).toBe(0);
+    });
+
+    it("no payment on the order, or a gateway that cannot be read, files nothing", async () => {
+      seedClosed([closed()]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      seedClosed([closed()]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: vi.fn(async () => ({
+          ok: false as const,
+          error: "timeout",
+          outcome: "unknown" as const,
+        })) as any,
+      });
+      expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
+    });
+
+    // The next review, same day: "a failed debit is final" is not something
+    // Razorpay promises. A renewal debit reported failed can be authorised
+    // late by the bank and captured, and with a missed webhook nothing else
+    // read it.
+    it("★★ a renewal DEBIT recorded as failed and captured later is filed too, as an automatic one", async () => {
+      seedClosed([
+        closed({
+          id: "att-auto",
+          mode: "automatic",
+          state: "failed",
+          failureCode: "gateway_failed",
+        }),
+      ]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attemptId: "att-auto",
+          automatic: true,
+          closedCode: "gateway_failed",
+          source: "reconcile",
+        }),
+      );
+      expect(res.paidAfterClose).toBe(1);
+    });
+
+    it("★ asks about closed attempts of the last 72 hours that hold an order: every MANUAL one, and an automatic one only when its debit was SENT", async () => {
+      seedClosed([]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      const where = new PgDialect().sqlToQuery(dbHolder.current.calls.where[2]);
+      expect(where.sql).toContain('"state" in');
+      expect(where.params).toEqual(
+        expect.arrayContaining(["failed", "cancelled", "manual"]),
+      );
+      // An automatic attempt that ended before its debit cannot be paid.
+      expect(where.sql).toMatch(
+        /"mode" = \$\d+ or [^)]*"debit_sent_at" is not null or [^)]*"provider_payment_id" is not null/,
+      );
+      expect(where.sql).toContain('"provider_order_id" is not null');
+      expect(where.sql).toContain('"resolved_at" >');
+      expect(where.params).toContain(
+        new Date(NOW.getTime() - FAIL_AFTER_HOURS * 3_600_000).toISOString(),
+      );
+    });
+
+    it("a failed scan is one error and stops nothing else", async () => {
+      seedClosed(new Error("db down"));
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(res.errors).toBe(1);
+      expect(collect.capturedDraftPurchases).toHaveBeenCalled();
+    });
+  });
+
+  // 21 Nov 2026: an attempt whose gateway order was never recorded used to be
+  // skipped for ever, so its invoice read `processing` indefinitely.
+  describe("★★ an attempt that never got a gateway order", () => {
+    const orderless = (over: Record<string, unknown> = {}) => ({
+      id: "att-x",
+      storeId: STORE,
+      invoiceId: "inv-9",
+      mode: "manual",
+      ...over,
+    });
+    /** Select #1 is the main scan (nothing), select #2 the orderless scan. */
+    const seedOrderless = (rows: any[]) =>
+      (dbHolder.current = makeDbMock({ selectQueue: [[], rows] }));
+
+    it("is closed as failed once it is stale: nothing could ever be paid on it", async () => {
+      collect.settleAttempt.mockResolvedValue("failed");
+      seedOrderless([orderless()]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(res.orderless).toBe(1);
+      expect(collect.settleAttempt).toHaveBeenCalledWith(
+        "att-x",
+        "failed",
+        expect.objectContaining({ failureCode: "no_gateway_order" }),
+      );
+    });
+
+    it("★ asks only about attempts with NO order and NO payment id, older than the stale window", async () => {
+      seedOrderless([]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      const where = new PgDialect().sqlToQuery(dbHolder.current.calls.where[1]);
+      expect(where.sql).toContain('"provider_order_id" is null');
+      expect(where.sql).toContain('"provider_payment_id" is null');
+      expect(where.sql).toContain('"created_at" <');
+      expect(where.params).toContain(
+        new Date(NOW.getTime() - STALE_AFTER_MINUTES * 60_000).toISOString(),
+      );
+    });
+
+    it("an automatic one asks whether that was the last try; a manual one does not", async () => {
+      collect.settleAttempt.mockResolvedValue("failed");
+      seedOrderless([orderless({ mode: "automatic" })]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(worker.announceAutopayStopped).toHaveBeenCalledWith({
+        storeId: STORE,
+        invoiceId: "inv-9",
+        now: NOW,
+      });
+
+      vi.mocked(worker.announceAutopayStopped).mockClear();
+      seedOrderless([orderless()]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(worker.announceAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("one a concurrent settle moved is not counted; a failed scan is one error", async () => {
+      collect.settleAttempt.mockResolvedValue(null);
+      seedOrderless([orderless()]);
+      expect(
+        (
+          await reconcileStrandedAttempts({
+            now: NOW,
+            fetchOrderPayments: gateway([]) as any,
+          })
+        ).orderless,
+      ).toBe(0);
+
+      dbHolder.current = makeDbMock({
+        selectQueue: [[], new Error("db down")],
+      });
+      expect(
+        (
+          await reconcileStrandedAttempts({
+            now: NOW,
+            fetchOrderPayments: gateway([]) as any,
+          })
+        ).errors,
+      ).toBe(1);
+    });
+  });
+
+  describe("★ an automatic debit whose order never got a payment", () => {
+    const hoursOld = (h: number) =>
+      new Date(NOW.getTime() - h * 3_600_000).toISOString();
+
+    it(`is failed after ${AUTO_NO_PAYMENT_FAIL_AFTER_HOURS}h, not 72: the merchant can then pay by hand`, async () => {
+      collect.settleAttempt.mockResolvedValue("failed");
+      seed([
+        attempt({
+          mode: "automatic",
+          state: "unknown",
+          createdAt: hoursOld(AUTO_NO_PAYMENT_FAIL_AFTER_HOURS + 1),
+        }),
+      ]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(res.failed).toBe(1);
+      expect(collect.settleAttempt).toHaveBeenCalledWith(
+        "att-1",
+        "failed",
+        expect.objectContaining({ failureCode: "reconciled_no_payment" }),
+      );
+    });
+
+    it("waits inside those hours, and a MANUAL checkout keeps the full window", async () => {
+      seed([
+        attempt({
+          mode: "automatic",
+          createdAt: hoursOld(AUTO_NO_PAYMENT_FAIL_AFTER_HOURS - 1),
+        }),
+      ]);
+      expect(
+        (
+          await reconcileStrandedAttempts({
+            now: NOW,
+            fetchOrderPayments: gateway([]) as any,
+          })
+        ).failed,
+      ).toBe(0);
+
+      seed([
+        attempt({
+          mode: "manual",
+          createdAt: hoursOld(AUTO_NO_PAYMENT_FAIL_AFTER_HOURS + 20),
+        }),
+      ]);
+      expect(
+        (
+          await reconcileStrandedAttempts({
+            now: NOW,
+            fetchOrderPayments: gateway([]) as any,
+          })
+        ).failed,
+      ).toBe(0);
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+    });
+
+    // 21 Nov 2026: a renewal's order is created a day or more before its
+    // debit is sent, and lists no payment for all that time by design.
+    describe("★★ a notified renewal: the clocks run from when the DEBIT was sent", () => {
+      it("an attempt still waiting out its notice period is not read at all", async () => {
+        seed([]);
+        await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([]) as any,
+        });
+        const where = new PgDialect().sqlToQuery(
+          dbHolder.current.calls.where[0] as never,
+        );
+        // Either it was never a notified attempt, or its debit has been sent.
+        expect(where.sql).toContain(
+          '("billing_payment_attempts"."debit_after" is null or "billing_payment_attempts"."debit_sent_at" is not null)',
+        );
+      });
+
+      it("opened two days ago, debit sent an hour ago: not failed as never sent", async () => {
+        seed([
+          attempt({
+            mode: "automatic",
+            createdAt: hoursOld(48),
+            debitSentAt: hoursOld(1),
+          }),
+        ]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([]) as any,
+        });
+        expect(res.failed).toBe(0);
+        expect(collect.settleAttempt).not.toHaveBeenCalled();
+      });
+
+      it(`debit sent more than ${AUTO_NO_PAYMENT_FAIL_AFTER_HOURS}h ago with no payment: failed, so the next try can start`, async () => {
+        collect.settleAttempt.mockResolvedValue("failed");
+        seed([
+          attempt({
+            mode: "automatic",
+            createdAt: hoursOld(48),
+            debitSentAt: hoursOld(AUTO_NO_PAYMENT_FAIL_AFTER_HOURS + 1),
+          }),
+        ]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([]) as any,
+        });
+        expect(res.failed).toBe(1);
+      });
+
+      it(`★ a debit still pending is not given up ${FAIL_AFTER_HOURS}h after the ATTEMPT opened`, async () => {
+        // The attempt is older than the long window, but its debit went out
+        // two hours ago and the gateway lists a payment still in progress.
+        seed([
+          attempt({
+            mode: "automatic",
+            createdAt: hoursOld(FAIL_AFTER_HOURS + 5),
+            debitSentAt: hoursOld(2),
+          }),
+        ]);
+        const res = await reconcileStrandedAttempts({
+          now: NOW,
+          fetchOrderPayments: gateway([
+            { id: "pay_1", status: "created", amount: 500_000 },
+          ]) as any,
+        });
+        expect(res.failed).toBe(0);
+        expect(collect.settleAttempt).not.toHaveBeenCalledWith(
+          "att-1",
+          "failed",
+          expect.anything(),
+        );
+      });
+    });
   });
 
   it("★★ an ANCIENT attempt that WAS captured is recovered, never failed", async () => {

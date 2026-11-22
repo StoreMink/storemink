@@ -47,16 +47,20 @@ vi.mock("@/lib/payments/razorpay", async (importOriginal) => ({
 
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 import {
+  automaticAttemptsOn,
+  hasUnknownAttempt,
   beginAttempt,
   capturedAttemptForInvoice,
   capturedDraftPurchases,
   collectInvoice,
+  fileClosedAttemptPayment,
   fileRecoveredPurchase,
   mapGatewayStatus,
   readAddonOrderTarget,
+  recordGatewayOrder,
   settleAttempt,
   verifyRecoveredCapture,
-  type ChargeFn,
+  withdrawUnsentDebits,
 } from "./collect";
 import { AFA_EXEMPT_LIMIT_PAISE } from "./cycle";
 import type { PaymentState } from "./payment-state";
@@ -70,6 +74,8 @@ const MANDATE = {
   status: "active" as const,
   maxAmountPaise: 27_000_00,
   providerTokenId: "tok_live_1",
+  providerCustomerId: "cust_1" as string | null,
+  method: undefined as "card" | "upi" | undefined,
 };
 
 function seed(opts: { selects?: any[][]; returning?: any[] } = {}) {
@@ -79,13 +85,24 @@ function seed(opts: { selects?: any[][]; returning?: any[] } = {}) {
   });
 }
 
-/** A charge fn that records how it was called. */
-function chargeOk(status = "captured") {
-  const fn = vi.fn(async () => ({
-    ok: true as const,
-    data: { providerPaymentId: "pay_1", status },
-  }));
-  return fn as unknown as ChargeFn & { mock: any };
+const NOW_1 = new Date("2026-11-22T06:00:00.000Z");
+/** When the gateway says the notified order may be debited. */
+const DEBIT_AFTER = new Date("2026-11-23T18:30:00.000Z");
+
+/** A gateway whose notify succeeds, recording how each step was called. */
+function gatewayOk() {
+  return {
+    checkMandate: vi.fn(async () => ({ state: "chargeable" as const })),
+    notify: vi.fn<(input: any) => Promise<any>>(async () => ({
+      ok: true as const,
+      data: { providerOrderId: "order_1", debitAfter: DEBIT_AFTER },
+    })),
+    readNotice: vi.fn(async () => ({ state: "ready" as const })),
+    debit: vi.fn(async () => ({
+      ok: true as const,
+      data: { providerPaymentId: "pay_1", status: "created" },
+    })),
+  };
 }
 
 beforeEach(() => {
@@ -356,6 +373,61 @@ describe("settleAttempt", () => {
   it("returns null for an unknown attempt", async () => {
     seed({ selects: [[]] });
     expect(await settleAttempt(ATTEMPT, "captured")).toBeNull();
+  });
+});
+
+// PR #303 re-review, 22 Nov 2026. The four checkout starts returned the new
+// order id to the browser whether or not the attempt had recorded it.
+describe("★★ recordGatewayOrder: an order is handed out only once its attempt holds it", () => {
+  const input = {
+    attemptId: ATTEMPT,
+    providerOrderId: "order_1",
+    invoiceId: INVOICE,
+    storeId: STORE,
+    now: NOW_1,
+  };
+
+  it("records the order and moves the attempt to processing", async () => {
+    seed({
+      selects: [
+        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
+        [{ state: "processing" }],
+      ],
+      returning: [{ state: "processing" }],
+    });
+    expect(await recordGatewayOrder(input)).toBe(true);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      state: "processing",
+      providerOrderId: "order_1",
+    });
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("★★ a write that fails answers FALSE, says so loudly, and tries to close the attempt", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [new Error("pool wait ran out"), new Error("still down")],
+    });
+    expect(await recordGatewayOrder(input)).toBe(false);
+    const events = vi.mocked(logError).mock.calls.map((c) => c[0]);
+    expect(events).toContain("billing.checkout_order_unrecorded");
+  });
+
+  it("★ a claim another writer won is not a recorded order either, and the attempt is closed", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        // The record: read as `created`, but the claim matched no row.
+        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
+        // The close that follows.
+        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
+        [{ state: "failed" }],
+      ],
+      returningQueue: [[], [{ state: "failed" }], []],
+    });
+    expect(await recordGatewayOrder(input)).toBe(false);
+    expect(dbHolder.current.calls.set[1]).toMatchObject({
+      state: "failed",
+      failureCode: "order_unrecorded",
+    });
   });
 });
 
@@ -721,242 +793,236 @@ describe("a capture seen again re-syncs its invoice (finding F1)", () => {
   });
 });
 
+// 21 Nov 2026: `collectInvoice` is STEP 1 of an automatic renewal. It opens
+// the attempt and creates the order with its pre-debit notice. It moves no
+// money: the debit is sent a day or more later by lib/billing/debit-pass.ts.
 describe("collectInvoice — eligibility is checked BEFORE anything is written", () => {
   const base = {
     invoiceId: INVOICE,
     storeId: STORE,
-    description: "Basic yearly",
-    mandate: MANDATE,
+    description: "Pro monthly renewal",
   };
 
   it("★ refuses over the AFA limit and NEVER calls the gateway", async () => {
-    const charge = chargeOk();
+    const charge = gatewayOk();
     const res = await collectInvoice({
       ...base,
       amountDuePaise: AFA_EXEMPT_LIMIT_PAISE + 1,
+      mandate: { ...MANDATE, maxAmountPaise: 2_00_000_00 },
       charge,
     });
     expect(res).toEqual({
       status: "not_collectable",
       reason: "over_afa_limit",
     });
-    expect(charge).not.toHaveBeenCalled();
-    // Nothing written either — a refusal is not a failed attempt, and a failed
-    // attempt would start a grace clock.
-    expect(dbHolder.current.calls.values).toHaveLength(0);
+    expect(charge.notify).not.toHaveBeenCalled();
+    // And nothing was written — no orphan attempt row.
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
   });
 
-  it("refuses with no mandate, without charging", async () => {
-    const charge = chargeOk();
+  it("refuses with no mandate, without notifying", async () => {
+    const charge = gatewayOk();
     const res = await collectInvoice({
       ...base,
+      amountDuePaise: 5_000_00,
       mandate: null,
-      amountDuePaise: 1_770_00,
       charge,
     });
     expect(res).toEqual({ status: "not_collectable", reason: "no_mandate" });
-    expect(charge).not.toHaveBeenCalled();
+    expect(charge.notify).not.toHaveBeenCalled();
   });
 
   it("refuses on a revoked mandate", async () => {
-    const charge = chargeOk();
+    const charge = gatewayOk();
     const res = await collectInvoice({
       ...base,
+      amountDuePaise: 5_000_00,
       mandate: { ...MANDATE, status: "revoked" },
-      amountDuePaise: 1_770_00,
       charge,
     });
-    expect(res).toMatchObject({ status: "not_collectable" });
-    expect(charge).not.toHaveBeenCalled();
+    expect(res.status).toBe("not_collectable");
+    expect(charge.notify).not.toHaveBeenCalled();
   });
 
-  it("refuses when nothing is due, without charging", async () => {
-    const charge = chargeOk();
-    const res = await collectInvoice({ ...base, amountDuePaise: 0, charge });
-    expect(res).toEqual({ status: "not_collectable", reason: "nothing_due" });
-    expect(charge).not.toHaveBeenCalled();
+  it("★★ refuses a mandate with no customer: its debit could never be sent, so no notice goes out", async () => {
+    const charge = gatewayOk();
+    const res = await collectInvoice({
+      ...base,
+      amountDuePaise: 5_000_00,
+      mandate: { ...MANDATE, providerCustomerId: null },
+      charge,
+    });
+    expect(res).toEqual({ status: "not_collectable", reason: "no_mandate" });
+    expect(charge.notify).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+  });
+
+  it("refuses when nothing is due, without notifying", async () => {
+    const charge = gatewayOk();
+    const res = await collectInvoice({
+      ...base,
+      amountDuePaise: 0,
+      mandate: MANDATE,
+      charge,
+    });
+    expect(res.status).toBe("not_collectable");
+    expect(charge.notify).not.toHaveBeenCalled();
   });
 
   it("★ refuses when an attempt is already in flight", async () => {
+    const charge = gatewayOk();
+    // The partial unique index refused the insert.
     seed({ returning: [] });
-    const charge = chargeOk();
     const res = await collectInvoice({
       ...base,
-      amountDuePaise: 1_770_00,
+      amountDuePaise: 5_000_00,
+      mandate: MANDATE,
       charge,
     });
     expect(res).toEqual({ status: "already_in_flight" });
-    expect(charge).not.toHaveBeenCalled();
+    expect(charge.notify).not.toHaveBeenCalled();
   });
 });
 
-describe("collectInvoice — ordering and outcomes", () => {
+describe("collectInvoice — step 1: the notified order, and no money", () => {
   const base = {
     invoiceId: INVOICE,
     storeId: STORE,
-    description: "Basic yearly",
+    amountDuePaise: 5_000_00,
+    description: "Pro monthly renewal",
     mandate: MANDATE,
-    amountDuePaise: 1_770_00,
+    now: NOW_1,
   };
+  /** The attempt read by the settle that records the order: still `created`. */
+  const created = [
+    { id: ATTEMPT, state: "created", invoiceId: INVOICE, storeId: STORE },
+  ];
 
   it("★★ writes the attempt row BEFORE calling the gateway", async () => {
-    let rowsAtChargeTime = -1;
-    const charge = vi.fn(async () => {
-      rowsAtChargeTime = dbHolder.current.calls.values.length;
+    let attemptsWhenNotified = -1;
+    const charge = gatewayOk();
+    charge.notify.mockImplementation(async () => {
+      attemptsWhenNotified = dbHolder.current.calls.insert.length;
       return {
         ok: true as const,
-        data: { providerPaymentId: "p", status: "captured" },
+        data: { providerOrderId: "order_1", debitAfter: DEBIT_AFTER },
       };
-    }) as unknown as ChargeFn;
-
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "captured" }],
-      ],
-      returning: [{ id: ATTEMPT }],
     });
+    seed({ selects: [created] });
     await collectInvoice({ ...base, charge });
-    expect(rowsAtChargeTime).toBe(1);
+    expect(attemptsWhenNotified).toBe(1);
   });
 
-  it("★ passes OUR idempotency key to the gateway", async () => {
-    const charge = chargeOk();
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "captured" }],
-      ],
-      returning: [{ id: ATTEMPT }],
+  it("★ passes OUR idempotency key, the token and the mandate's rail to the gateway", async () => {
+    const charge = gatewayOk();
+    seed({ selects: [created] });
+    await collectInvoice({
+      ...base,
+      mandate: { ...MANDATE, method: "upi" },
+      charge,
     });
-    await collectInvoice({ ...base, charge });
-    const arg = (charge as any).mock.calls[0][0];
+    const arg = charge.notify.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      amountPaise: 5_000_00,
+      providerTokenId: "tok_live_1",
+      rail: "upi",
+      now: NOW_1,
+    });
+    // A UUID we minted, and the same one stored on the attempt row.
     expect(arg.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
-    expect(arg.idempotencyKey).toBe(
-      dbHolder.current.calls.values[0].idempotencyKey,
+    expect(dbHolder.current.calls.values[0].idempotencyKey).toBe(
+      arg.idempotencyKey,
     );
-    expect(arg.providerTokenId).toBe("tok_live_1");
-  });
-
-  it("★★ gives the provider a write-once order recorder before debit", async () => {
-    let recorded = false;
-    const charge = vi.fn(async (input: Parameters<ChargeFn>[0]) => {
-      recorded = await input.recordProviderOrderId("order_recurring_1");
-      return {
-        ok: true as const,
-        data: { providerPaymentId: "pay_1", status: "captured" },
-      };
-    }) as unknown as ChargeFn;
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "captured" }],
-      ],
-      returning: [{ id: ATTEMPT }],
-    });
-
+    // An unrecorded rail is `unknown`, which the gateway gives the longer notice.
+    seed({ selects: [created] });
     await collectInvoice({ ...base, charge });
+    expect(charge.notify.mock.calls[1][0].rail).toBe("unknown");
+  });
 
-    expect(recorded).toBe(true);
-    expect(dbHolder.current.calls.set).toContainEqual(
-      expect.objectContaining({ providerOrderId: "order_recurring_1" }),
+  it("★★ records the order AND when it may be debited in one write, and is `notified`", async () => {
+    const charge = gatewayOk();
+    seed({ selects: [created], returning: [{ id: ATTEMPT }] });
+    dbHolder.current = makeDbMock({
+      selectQueue: [created, [{ state: "processing" }]],
+      returningQueue: [
+        [{ id: ATTEMPT }], // the attempt insert
+        [{ state: "processing" }], // the settle's claim
+        [{ id: INVOICE }], // the invoice sync
+      ],
+    });
+    const res = await collectInvoice({ ...base, charge });
+    expect(res).toEqual({
+      status: "notified",
+      attemptId: ATTEMPT,
+      debitAfter: DEBIT_AFTER,
+    });
+    const recorded = dbHolder.current.calls.set.find(
+      (s: any) => s.providerOrderId === "order_1",
     );
+    expect(recorded).toMatchObject({
+      state: "processing",
+      providerOrderId: "order_1",
+      debitAfter: DEBIT_AFTER.toISOString(),
+    });
   });
 
-  it("reports paid on a capture", async () => {
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "captured" }],
-      ],
-      returning: [{ id: ATTEMPT }],
-    });
-    const res = await collectInvoice({ ...base, charge: chargeOk("captured") });
-    expect(res).toEqual({ status: "paid", attemptId: ATTEMPT });
+  it("★★ NEVER sends the debit: that is the debit pass's job, a day or more later", async () => {
+    const charge = gatewayOk();
+    seed({ selects: [created] });
+    await collectInvoice({ ...base, charge });
+    expect(charge.debit).not.toHaveBeenCalled();
+    expect(charge.readNotice).not.toHaveBeenCalled();
   });
 
-  it("★ a 4xx rejection IS a failure — the money definitively did not move", async () => {
-    const charge = vi.fn(async () => ({
-      ok: false as const,
-      error: "card declined",
-      outcome: "rejected" as const,
-    })) as unknown as ChargeFn;
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "failed" }],
-      ],
-      returning: [{ id: ATTEMPT }],
+  it("★ a 4xx on the order IS a failure: nothing was created, the try is over", async () => {
+    const charge = gatewayOk();
+    charge.notify.mockResolvedValue({
+      ok: false,
+      error:
+        "Debit can be attempted 36 hours after sending the pre-debit notification",
+      outcome: "rejected",
     });
+    seed({ selects: [created] });
     const res = await collectInvoice({ ...base, charge });
     expect(res).toMatchObject({ status: "failed", code: "gateway_rejected" });
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      state: "failed",
+      failureCode: "gateway_rejected",
+    });
   });
 
-  it("★★ an UNKNOWN outcome is NOT a failure — reconcile, never retry", async () => {
-    const charge = vi.fn(async () => ({
-      ok: false as const,
+  it("★★ an UNKNOWN outcome is NOT a failure: reconcile, never retry", async () => {
+    const charge = gatewayOk();
+    charge.notify.mockResolvedValue({
+      ok: false,
       error: "timeout",
-      outcome: "unknown" as const,
-    })) as unknown as ChargeFn;
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "unknown" }],
-      ],
-      returning: [{ id: ATTEMPT }],
+      outcome: "unknown",
     });
+    seed({ selects: [created] });
     const res = await collectInvoice({ ...base, charge });
     expect(res).toEqual({ status: "pending_reconcile", attemptId: ATTEMPT });
-    // Crucially NOT "failed": a failure starts the grace clock (Rule 6).
-    expect(res.status).not.toBe("failed");
+    expect(dbHolder.current.calls.set[0].state).toBe("unknown");
   });
 
   it("★★ a THROWN gateway call is also UNKNOWN, not a failure", async () => {
-    const charge = vi.fn(async () => {
-      throw new Error("socket hang up");
-    }) as unknown as ChargeFn;
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "unknown" }],
-      ],
-      returning: [{ id: ATTEMPT }],
-    });
+    const charge = gatewayOk();
+    charge.notify.mockRejectedValue(new Error("socket hang up"));
+    seed({ selects: [created] });
+    const res = await collectInvoice({ ...base, charge });
+    expect(res.status).toBe("pending_reconcile");
+    expect(dbHolder.current.calls.set[0].state).toBe("unknown");
+  });
+
+  it("★★ an order that could not be RECORDED is never reported as notified", async () => {
+    // The settle found no attempt to move (a failed write reads the same):
+    // the order exists at the gateway but nothing here points at it, so the
+    // debit pass can never debit it. Reconcile closes the attempt.
+    const charge = gatewayOk();
+    seed({ selects: [[]] });
     const res = await collectInvoice({ ...base, charge });
     expect(res).toEqual({ status: "pending_reconcile", attemptId: ATTEMPT });
   });
-
-  it("★ an authorized-but-not-captured charge waits, it does not claim payment", async () => {
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "authorized" }],
-      ],
-      returning: [{ id: ATTEMPT }],
-    });
-    const res = await collectInvoice({
-      ...base,
-      charge: chargeOk("authorized"),
-    });
-    expect(res).toEqual({ status: "pending_reconcile", attemptId: ATTEMPT });
-  });
-
-  it("★ an unrecognised gateway status waits rather than failing", async () => {
-    seed({
-      selects: [
-        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
-        [{ state: "unknown" }],
-      ],
-      returning: [{ id: ATTEMPT }],
-    });
-    const res = await collectInvoice({ ...base, charge: chargeOk("whatever") });
-    expect(res).toMatchObject({ status: "pending_reconcile" });
-  });
 });
-
-// ---------------------------------------------------------------------------
-// Recovered purchases (RC-F1b): the helpers the three purchase kinds share.
-// ---------------------------------------------------------------------------
 
 describe("★★ recovered purchases (RC-F1b)", () => {
   const CREDS = { keyId: "rzp_1", keySecret: "secret" };
@@ -1189,6 +1255,70 @@ describe("★★ recovered purchases (RC-F1b)", () => {
     });
   });
 
+  // PR #303 re-review, 22 Nov 2026.
+  describe("★★ fileClosedAttemptPayment: a payment on a closed checkout is never dropped", () => {
+    const input = {
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-old",
+      providerPaymentId: "pay_9",
+      providerOrderId: "order_old",
+      expectedPaise: 400_000,
+      observedPaise: 400_000,
+      closedAs: "cancelled",
+      closedCode: "amount_changed",
+      source: "webhook" as const,
+      now: new Date("2026-11-22T00:00:00.000Z"),
+    };
+
+    it("files ONE open item per payment, keyed by the payment, and logs an error", async () => {
+      seed({ selects: [[]], returning: [{ id: "item-1" }] });
+      expect(await fileClosedAttemptPayment(input)).toBe(true);
+      expect(dbHolder.current.calls.values[0]).toMatchObject({
+        storeId: STORE,
+        kind: "state_conflict",
+        status: "open",
+        invoiceId: "inv-1",
+        attemptId: "att-old",
+        providerPaymentId: "pay_9",
+        providerOrderId: "order_old",
+        expectedPaise: 400_000,
+        observedPaise: 400_000,
+        detail: {
+          repair_key: "closed_checkout_paid:pay_9",
+          closedAs: "cancelled",
+          closedCode: "amount_changed",
+          source: "webhook",
+        },
+      });
+      expect(dbHolder.current.calls.onConflict).toHaveLength(1);
+      expect(vi.mocked(logError).mock.calls[0][0]).toBe(
+        "billing.payment_on_closed_attempt",
+      );
+    });
+
+    it("★ one filed before (in any status) is not filed or announced again", async () => {
+      seed({ selects: [[]], returning: [] });
+      expect(await fileClosedAttemptPayment(input)).toBe(false);
+      expect(logError).not.toHaveBeenCalled();
+    });
+
+    it("★★ a payment a SIBLING attempt recorded on the same order is not a lost payment", async () => {
+      seed({ selects: [[{ id: "att-new" }]], returning: [{ id: "item-1" }] });
+      expect(await fileClosedAttemptPayment(input)).toBe(false);
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+    });
+
+    it("a deleted store's is marked so, and a failed write answers false", async () => {
+      seed({ selects: [[]], returning: [{ id: "item-1" }] });
+      await fileClosedAttemptPayment({ ...input, storeId: null });
+      expect(dbHolder.current.calls.values[0].detail.storeDeleted).toBe(true);
+
+      dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+      expect(await fileClosedAttemptPayment(input)).toBe(false);
+    });
+  });
+
   describe("fileRecoveredPurchase", () => {
     const input = {
       storeId: STORE,
@@ -1234,5 +1364,202 @@ describe("★★ recovered purchases (RC-F1b)", () => {
       expect(await fileRecoveredPurchase(input)).toBe(false);
       expect(logWarn).not.toHaveBeenCalled();
     });
+  });
+});
+
+// 21 Nov 2026. A notified attempt can be ended without a debit (the plan was
+// cancelled, the mandate is gone). A terminal state is never left, so that
+// write must not land once another worker has sent the debit: its capture
+// would be ignored.
+describe("★★ settleAttempt onlyIfUnsent: ending an attempt only while no debit was sent", () => {
+  const render = (q: unknown) => {
+    const out = new PgDialect().sqlToQuery(q as never);
+    return { sql: out.sql.replace(/\s+/g, " ").trim(), params: out.params };
+  };
+
+  it("the claim also requires `debit_sent_at` to be null", async () => {
+    seed({
+      selects: [
+        [{ id: ATTEMPT, state: "processing", invoiceId: INVOICE }],
+        [{ state: "cancelled" }],
+      ],
+      returning: [{ state: "cancelled" }],
+    });
+    expect(
+      await settleAttempt(ATTEMPT, "cancelled", { onlyIfUnsent: true }),
+    ).toBe("cancelled");
+    const where = render(dbHolder.current.calls.where[1]);
+    expect(where.sql).toBe(
+      '("billing_payment_attempts"."id" = $1 and "billing_payment_attempts"."state" = $2 and "billing_payment_attempts"."debit_sent_at" is null)',
+    );
+    expect(where.params).toEqual([ATTEMPT, "processing"]);
+  });
+
+  it("★★ a debit already sent: nothing moves, and the caller is told so", async () => {
+    seed({
+      selects: [[{ id: ATTEMPT, state: "processing", invoiceId: INVOICE }]],
+      // The guarded claim matched no row.
+      returning: [],
+    });
+    expect(
+      await settleAttempt(ATTEMPT, "cancelled", { onlyIfUnsent: true }),
+    ).toBeNull();
+    // The invoice was not re-derived from a write that never happened.
+    expect(dbHolder.current.calls.update).toHaveLength(1);
+  });
+
+  it("without the flag the claim is on the state alone, as before", async () => {
+    seed({
+      selects: [
+        [{ id: ATTEMPT, state: "processing", invoiceId: INVOICE }],
+        [{ state: "failed" }],
+      ],
+      returning: [{ state: "failed" }],
+    });
+    await settleAttempt(ATTEMPT, "failed");
+    expect(render(dbHolder.current.calls.where[1]).sql).toBe(
+      '("billing_payment_attempts"."id" = $1 and "billing_payment_attempts"."state" = $2)',
+    );
+  });
+});
+
+describe("★★ withdrawUnsentDebits: a cancelled plan's scheduled debit", () => {
+  const input = {
+    invoiceId: INVOICE,
+    code: "plan_cancelled",
+    reason: "the plan was cancelled before the debit",
+    now: NOW_1,
+  };
+
+  it("finds only automatic, notified, unsent attempts on that invoice", async () => {
+    seed({ selects: [[]] });
+    expect(await withdrawUnsentDebits(input)).toBe(0);
+    const where = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.where[0] as never,
+    );
+    expect(where.sql.replace(/\s+/g, " ")).toBe(
+      '("billing_payment_attempts"."invoice_id" = $1 and "billing_payment_attempts"."mode" = $2 and "billing_payment_attempts"."state" = $3 and "billing_payment_attempts"."debit_after" is not null and "billing_payment_attempts"."debit_sent_at" is null)',
+    );
+    expect(where.params).toEqual([INVOICE, "automatic", "processing"]);
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+  });
+
+  it("★ closes each one as cancelled, with the guarded write, and counts it", async () => {
+    seed({
+      selects: [
+        [{ id: ATTEMPT }],
+        [{ id: ATTEMPT, state: "processing", invoiceId: INVOICE }],
+        [{ state: "cancelled" }],
+      ],
+      returning: [{ state: "cancelled" }],
+    });
+    expect(await withdrawUnsentDebits(input)).toBe(1);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      state: "cancelled",
+      failureCode: "plan_cancelled",
+      failureReason: "the plan was cancelled before the debit",
+    });
+    const where = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.where[2] as never,
+    );
+    expect(where.sql).toContain('"debit_sent_at" is null');
+    // The invoice is re-derived: it reads as unpaid again, not in progress.
+    expect(dbHolder.current.calls.set[1]).toMatchObject({ status: "open" });
+  });
+
+  it("★★ one whose debit was sent meanwhile is left in flight, and not counted", async () => {
+    seed({
+      selects: [
+        [{ id: ATTEMPT }],
+        [{ id: ATTEMPT, state: "processing", invoiceId: INVOICE }],
+      ],
+      returning: [],
+    });
+    expect(await withdrawUnsentDebits(input)).toBe(0);
+  });
+
+  it("a failed read is NULL, never zero", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+    expect(await withdrawUnsentDebits(input)).toBeNull();
+  });
+});
+
+describe("automaticAttemptsOn: what the retry rule counts", () => {
+  it("returns the tries, the starts and when the newest automatic attempt was opened", async () => {
+    seed({
+      selects: [
+        [{ count: 2, starts: 4, lastAt: "2026-11-20 10:20:03.123456+00" }],
+      ],
+    });
+    expect(await automaticAttemptsOn(INVOICE)).toEqual({
+      count: 2,
+      starts: 4,
+      lastAt: new Date("2026-11-20T10:20:03.123Z"),
+    });
+    // Scoped to this invoice's AUTOMATIC attempts: a manual checkout the
+    // merchant opened is not one of the three tries.
+    const where = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.where[0] as never,
+    );
+    expect(where.sql).toContain('"invoice_id" = $1');
+    expect(where.sql).toContain('"mode" = $2');
+    expect(where.params).toEqual([INVOICE, "automatic"]);
+  });
+
+  it("★★ a TRY is a debit that was sent; an attempt withdrawn before its debit is nothing (PR #303 review)", async () => {
+    seed({ selects: [[{ count: 0, starts: 0, lastAt: null }]] });
+    await automaticAttemptsOn(INVOICE);
+    const projection = dbHolder.current.calls.select[0] as Record<
+      string,
+      unknown
+    >;
+    const text = (key: string) =>
+      new PgDialect()
+        .sqlToQuery(projection[key] as never)
+        .sql.replace(/\s+/g, " ");
+    // A try: the debit was sent, or a payment exists.
+    expect(text("count")).toBe(
+      'count(*) filter (where "billing_payment_attempts"."debit_sent_at" is not null or "billing_payment_attempts"."provider_payment_id" is not null)::int',
+    );
+    // A start: everything except an attempt cancelled before its debit (the
+    // plan was cancelled, or "Pay now instead").
+    expect(text("starts")).toBe(
+      'count(*) filter (where not ("billing_payment_attempts"."state" = \'cancelled\' and "billing_payment_attempts"."debit_sent_at" is null and "billing_payment_attempts"."provider_payment_id" is null))::int',
+    );
+    // The spacing reads every attempt, whatever became of it.
+    expect(text("lastAt")).toBe('max("billing_payment_attempts"."created_at")');
+  });
+
+  it("no tries yet is a count of zero with no time", async () => {
+    seed({ selects: [[{ count: 0, starts: 0, lastAt: null }]] });
+    expect(await automaticAttemptsOn(INVOICE)).toEqual({
+      count: 0,
+      starts: 0,
+      lastAt: null,
+    });
+  });
+
+  it("★★ a failed read is NULL, never zero: 'could not count' is not 'never tried'", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+    expect(await automaticAttemptsOn(INVOICE)).toBeNull();
+  });
+});
+
+describe("hasUnknownAttempt: a payment still waiting for its result", () => {
+  it("true when the invoice has an attempt in `unknown`, false when it has none", async () => {
+    seed({ selects: [[{ id: ATTEMPT }]] });
+    expect(await hasUnknownAttempt(INVOICE)).toBe(true);
+    const where = new PgDialect().sqlToQuery(
+      dbHolder.current.calls.where[0] as never,
+    );
+    expect(where.params).toEqual([INVOICE, "unknown"]);
+
+    seed({ selects: [[]] });
+    expect(await hasUnknownAttempt(INVOICE)).toBe(false);
+  });
+
+  it("★★ a failed read is NULL, never false", async () => {
+    dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+    expect(await hasUnknownAttempt(INVOICE)).toBeNull();
   });
 });

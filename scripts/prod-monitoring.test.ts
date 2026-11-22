@@ -141,6 +141,7 @@ const COMPLAINT = "Takedown: a complaint needs action";
 const FOLLOWUPS_FAILING = "Takedown: follow-ups failing";
 const FOLLOWUPS_STOPPED = "Takedown: follow-ups stopped";
 const SEND_EMAILS_SCHEDULE = "Cloud Scheduler attempt failed (send-emails)";
+const PAYMENT_HELD = "Billing: a payment landed on a closed payment attempt";
 const FOLLOWUPS_METRIC = "moderation_followups_ran";
 const WEB_PROD =
   'resource.type="cloud_run_revision" AND resource.labels.service_name="storemink-web-prod"';
@@ -244,7 +245,7 @@ function messageMatches(filter: string, message: string): boolean {
 }
 
 describe("prod-monitoring.py", () => {
-  it("keeps the 15 applied alerts in order and adds exactly the five Theme Studio ones (P6), the two refund ones, the two GST ones and the four takedown ones (P4)", () => {
+  it("keeps the 15 applied alerts in order and adds exactly the five Theme Studio ones (P6), the two refund ones, the two GST ones, the four takedown ones (P4) and the held payment one", () => {
     const names = policies().map((policy) => policy.displayName);
     expect(names).toEqual([
       ...APPLIED_23_OCT,
@@ -261,6 +262,7 @@ describe("prod-monitoring.py", () => {
       FOLLOWUPS_FAILING,
       FOLLOWUPS_STOPPED,
       SEND_EMAILS_SCHEDULE,
+      PAYMENT_HELD,
     ]);
     // --apply is idempotent by display name, so every name is unique.
     expect(new Set(names).size).toBe(names.length);
@@ -296,6 +298,37 @@ describe("prod-monitoring.py", () => {
       // The email quotes the line it fired on.
       expect(policy.documentation.content).toContain(line);
     }
+  });
+
+  // PR #303 fifth review, 22 Nov 2026. A payment captured on a closed attempt
+  // is filed for a person, and until this the only signal was a log line.
+  it("★★ tells a person when a merchant's payment is held and not recorded on their invoice", () => {
+    const policy = policies().find(
+      (p) => p.displayName === PAYMENT_HELD,
+    ) as Policy;
+    expect(policy.severity).toBe("ERROR");
+    expect(policy.conditions).toHaveLength(1);
+    expect(policy.conditions[0].conditionMatchedLog).toBeDefined();
+    expect(policy.alertStrategy).toEqual({
+      notificationRateLimit: { period: "3600s" },
+      autoClose: "1800s",
+    });
+    const filter = filterOf(policy);
+    expect(filter).toContain(
+      'resource.labels.service_name="storemink-web-prod"',
+    );
+    // ":" (has): logError puts the stack after the message, and the line
+    // written when the item could NOT be filed must fire as well.
+    expect(filter).toContain(
+      'jsonPayload.message:"billing.payment_on_closed_attempt"',
+    );
+    expect(filter).not.toMatch(/-dev\b/);
+    expect(policy.documentation.content).toContain(
+      "does not downgrade the store while the item is open",
+    );
+    expect(policy.documentation.content).toContain("docs/monitoring.md");
+    // It never claims an approval nobody gave.
+    expect(policy.documentation.content).not.toContain("owner-approved");
   });
 
   it("★ watches each refund line in the production web service, one email an hour, never on dev", () => {
@@ -459,7 +492,7 @@ describe("prod-monitoring.py", () => {
     ]);
     expect(out).toContain("# DRY RUN: nothing is sent.");
     expect(out).toContain(
-      "# 28 alert policies, 3 uptime checks, 2 log metrics, 1 channel",
+      "# 29 alert policies, 3 uptime checks, 2 log metrics, 1 channel",
     );
   });
 });

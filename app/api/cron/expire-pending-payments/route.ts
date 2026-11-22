@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
-import { and, asc, eq, gte, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
-import { recordEvent } from "@/lib/notifications/record";
 import { orders } from "@/drizzle/schema";
 import {
   lookupStoreGateway,
@@ -15,7 +14,16 @@ import {
 import { settleOrderPayment } from "@/lib/payments/capture";
 import { sweepPendingRefunds } from "@/lib/payments/refund-reconcile";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
-import { releaseCancelledOrder } from "@/lib/orders/cancel";
+import {
+  confirmYoungPendingOrders,
+  expectedGatewayPaise,
+  expireUnpaidOrder,
+  PAYMENT_GRACE_MINUTES,
+  pendingOrderColumns,
+  refusedReadReason,
+  settlePendingOrder,
+  type PendingOnlineOrder,
+} from "@/lib/orders/pending-payments";
 import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 
 // Reaper for online-payment orders stuck in `payment_status: 'pending'` —
@@ -25,7 +33,10 @@ import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 // Cloud Scheduler runs it hourly at :30 (docs/cron-jobs.md); it's only a
 // backstop, since the success page reconciles a real payment instantly.
 //
-// For each razorpay order pending longer than the grace window:
+// First it confirms YOUNG orders whose money has landed
+// (`confirmYoungPendingOrders`, also run every few minutes by the
+// confirm-payments job). Then, for each razorpay order pending longer than the
+// grace window:
 //   1. Ask Razorpay first — a CAPTURED payment means the money was taken:
 //      mark the order paid (never lose a paid order). An AUTHORIZED payment
 //      of the exact amount is captured first, so a store whose Razorpay
@@ -33,8 +44,10 @@ import { sweepCodConfirmations } from "@/lib/whatsapp/cod-sweep";
 //   2. Otherwise atomically claim the pending → failed transition, then run
 //      the shared cancellation cleanup (stock back at the location that
 //      reserved it, spent store credit reinstated, pickup holds released),
-//      release the coupon use, and cancel the order. An order whose gateway
-//      cannot be READ is left alone rather than cancelled.
+//      release the coupon use and the offer uses, and cancel the order
+//      (`expireUnpaidOrder`, lib/orders/pending-payments.ts). An order whose
+//      gateway cannot be READ is left alone rather than cancelled, for up to
+//      a week.
 //   3. Look again at orders it expired in the last three days: a payment that
 //      landed after expiry is recorded so it can be refunded, never lost.
 //
@@ -52,9 +65,9 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-// Long enough for a slow UPI approve + the shopper's retry attempts; short
-// enough that reserved stock isn't hostage for hours.
-const GRACE_MINUTES = 45;
+// The grace period itself (45 minutes) is PAYMENT_GRACE_MINUTES in
+// lib/orders/pending-payments.ts, shared with the checks that settle a
+// store's waiting orders before its Razorpay account changes.
 const BATCH_LIMIT = 200;
 
 /** How long an order whose gateway cannot be READ is left alone before it is
@@ -73,57 +86,26 @@ function authorized(request: Request): boolean {
   return request.headers.get("authorization") === `Bearer ${secret}`;
 }
 
-// placeOrder stores the coupon code as typed; the usage counters key on the
-// normalized form (mirror of checkout-actions normalizeCode).
-function normalizeCode(code: string): string {
-  return code.trim().toUpperCase().replace(/\s+/g, "");
-}
-
-interface PendingOrder {
-  id: string;
-  store_id: string;
-  razorpay_order_id: string | null;
-  applied_coupon_code: string | null;
-  order_ref: string | null;
-  customer_id: string | null;
-  total: number | null;
-  store_credit_used: number | null;
-  created_at: string | null;
-}
-
-/** What the gateway was asked for: the total less anything store credit
- *  settled (§29). */
-function expectedPaise(order: {
-  total: number | null;
-  store_credit_used: number | null;
-}): number {
-  return Math.round(
-    (Number(order.total ?? 0) - Number(order.store_credit_used ?? 0)) * 100,
-  );
-}
-
 async function handle(request: Request) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const cutoff = new Date(Date.now() - GRACE_MINUTES * 60_000).toISOString();
+  // ★ MONEY FIRST. Young orders whose payment has landed are confirmed before
+  // anything is cancelled. The frequent confirm-payments job does this every
+  // few minutes; running it here too means it still happens hourly on an
+  // environment where that job was never scheduled.
+  const confirmed = await confirmYoungPendingOrders();
 
-  let pending: PendingOrder[];
+  const cutoff = new Date(
+    Date.now() - PAYMENT_GRACE_MINUTES * 60_000,
+  ).toISOString();
+
+  let pending: PendingOnlineOrder[];
   try {
     pending = await withService((db) =>
       db
-        .select({
-          id: orders.id,
-          store_id: orders.storeId,
-          razorpay_order_id: orders.razorpayOrderId,
-          applied_coupon_code: orders.appliedCouponCode,
-          order_ref: orders.orderRef,
-          customer_id: orders.customerId,
-          total: orders.total,
-          store_credit_used: orders.storeCreditUsed,
-          created_at: orders.createdAt,
-        })
+        .select(pendingOrderColumns)
         .from(orders)
         .where(
           and(
@@ -149,7 +131,7 @@ async function handle(request: Request) {
     // and not one unpaid order.
     return NextResponse.json({
       ok: true,
-      paid: 0,
+      paid: confirmed.paid,
       expired: 0,
       ...(await standingSweeps()),
     });
@@ -166,144 +148,91 @@ async function handle(request: Request) {
 
   let paid = 0;
   let expired = 0;
+  // Captured at the gateway, not yet marked paid here: reported, never expired.
+  let unrecorded = 0;
 
   for (const order of pending) {
-    // 1. Razorpay is the source of truth — never cancel a paid order.
+    // 1. Razorpay is the source of truth: never cancel a paid order.
     if (order.razorpay_order_id) {
       const lookup = await gatewayFor(order.store_id);
+      const ageMs =
+        Date.now() - new Date(order.created_at ?? Date.now()).getTime();
       if (lookup.status === "error") {
         // ★★ COULD NOT READ IS NOT "NOT CONNECTED". This used to fall through
         // to expiry, so a database blip or a rotated decryption key cancelled
         // orders whose shoppers had paid. Leave the order alone unless the
         // connection has stayed unreadable for a week.
-        const age =
-          Date.now() - new Date(order.created_at ?? Date.now()).getTime();
-        if (age < UNREADABLE_GATEWAY_GRACE_MS) continue;
+        if (ageMs < UNREADABLE_GATEWAY_GRACE_MS) continue;
         console.error(
           `expire-pending-payments (gateway unreadable for a week, order ${order.id})`,
         );
       } else if (lookup.status === "connected") {
-        // ★ Captures an AUTHORIZED payment of the exact amount too: on a
-        // Razorpay account set to capture manually, that is how a real
-        // payment looks until somebody captures it, and expiring the order
-        // would let Razorpay hand the money back.
-        const state = await settleOrderPayment(
-          lookup.gateway.creds,
-          order.razorpay_order_id,
-          expectedPaise(order),
-          { capture: true },
-        );
-        if (state.kind === "unknown") {
-          // Can't reach Razorpay for this order — skip it this run rather
-          // than risk cancelling a captured payment.
+        // ★ ONE IMPLEMENTATION (lib/orders/pending-payments.ts): a captured
+        // payment marks the order paid through `markOrderPaid` (an AUTHORIZED
+        // one of the exact amount is captured first, for accounts that
+        // capture manually); with no payment the order is cancelled and
+        // everything it held is given back.
+        const outcome = await settlePendingOrder(order, lookup.gateway.creds, {
+          expire: "after_grace",
+        });
+        if (outcome === "paid") paid++;
+        if (outcome === "expired") expired++;
+        if (outcome === "paid" || outcome === "expired") continue;
+        // The claim lost to a payment recorded a moment ago: nothing to do.
+        if (outcome === "waiting") continue;
+        // ★★ RAZORPAY HOLDS THE MONEY AND THE ORDER COULD NOT BE MARKED PAID.
+        // Never cancelled, however old it gets: the week's grace below is
+        // for an order nobody could ask about, and this one was answered
+        // (PR #303 review). The next run tries the write again; the error is
+        // logged on every run until it lands, for a person to follow up.
+        if (outcome === "captured_unrecorded") {
+          unrecorded++;
           console.error(
-            `expire-pending-payments (rzp fetch, order ${order.id}): unreadable`,
+            `expire-pending-payments (captured payment could not be recorded, order ${order.id}): left pending, never expired`,
           );
           continue;
         }
-        if (state.kind === "captured") {
-          try {
-            // ★★ THROUGH `markOrderPaid`, NOT A LOCAL UPDATE. This branch used
-            // to write pending → paid itself, so a payment the reaper RESCUED
-            // notified nobody at all: no confirmation to the shopper, no "New
-            // order" to the merchant, no `order.payment_received`. Sharing the
-            // choke point also means the claim, the confirmation and the
-            // ledger line stay in one place for all three paths.
-            if ((await markOrderPaid(order.id, state.paymentId)) === "paid") {
-              paid++;
-            }
-          } catch (err) {
-            console.error(
-              `expire-pending-payments (mark paid, order ${order.id}):`,
-              err instanceof Error ? err.message : err,
-            );
-          }
+        // ★★ RAZORPAY COULD NOT BE ASKED ABOUT THIS ORDER (unreachable, or
+        // these keys were refused: revoked, or another account's). Skip it
+        // rather than risk cancelling a captured payment, but not for ever:
+        // this used to have no limit, so an order on a revoked key stayed
+        // pending and held its stock indefinitely, at the front of every
+        // batch. After a week it is cancelled like an unreadable connection.
+        if (ageMs < UNREADABLE_GATEWAY_GRACE_MS) {
+          // For a refusal, the order's own record says whether the keys
+          // changed since it was placed or Razorpay is refusing the keys that
+          // made it (pending-payments.ts refusedReadReason).
+          console.error(
+            `expire-pending-payments (rzp fetch, order ${order.id}): ${
+              outcome === "refused"
+                ? `refused, ${refusedReadReason(order, lookup.gateway.creds.keyId)}`
+                : "unreadable"
+            }`,
+          );
           continue;
         }
-      }
-      // Gateway disconnected since the order was placed → nothing captured is
-      // verifiable; fall through and expire it (stock shouldn't stay hostage).
-    }
-
-    // 2. Claim the pending → failed transition atomically. A shopper's
-    //    confirmOnlinePayment racing this loop flips pending → paid first and
-    //    this claim then matches nothing — the order is left alone.
-    let claimed: { id: string }[];
-    try {
-      claimed = await withService((db) =>
-        db
-          .update(orders)
-          .set({ paymentStatus: "failed", status: "cancelled" })
-          .where(
-            and(eq(orders.id, order.id), eq(orders.paymentStatus, "pending")),
-          )
-          .returning({ id: orders.id }),
-      );
-    } catch (claimErr) {
-      console.error(
-        `expire-pending-payments (claim, order ${order.id}):`,
-        claimErr instanceof Error ? claimErr.message : claimErr,
-      );
-      continue;
-    }
-    if (!claimed.length) continue;
-    expired++;
-
-    // The merchant needs to know an order died unpaid — it looked like a sale
-    // in the dashboard until this ran. recordEvent (not emitEvent): a cron
-    // response ends the moment we return, so after() has nothing to run on.
-    await recordEvent({
-      type: "order.payment_failed",
-      storeId: order.store_id,
-      actor: { type: "system" },
-      subject: { type: "order", id: order.id, label: order.order_ref },
-      customerId: order.customer_id,
-      payload: {
-        orderRef: order.order_ref ?? "",
-        total: Number(order.total ?? 0),
-        currency: "INR",
-        reason: "Payment not completed",
-      },
-    });
-
-    // 3. ★★ THE SHARED CANCELLATION CLEANUP, not a hand-written subset of it.
-    // This used to restock by hand and stop there, so the STORE CREDIT the
-    // order spent at checkout was never given back: a shopper who applied
-    // ₹200 of credit, closed the payment window and was told to try cash on
-    // delivery lost the ₹200. releaseCancelledOrder reinstates it exactly
-    // once, restocks at the location that reserved the units (the hand-written
-    // copy always used the default one), and releases pickup holds.
-    await releaseCancelledOrder(
-      order.store_id,
-      order.id,
-      withService,
-      "payment_expired",
-    ).catch((err) =>
-      console.error(
-        `expire-pending-payments (release, order ${order.id}):`,
-        err instanceof Error ? err.message : err,
-      ),
-    );
-
-    // 4. Give the coupon use back (best-effort, floors at 0).
-    if (order.applied_coupon_code) {
-      await withService((db) =>
-        db.execute(
-          sql`select decrement_coupon_usage(p_code => ${normalizeCode(order.applied_coupon_code!)}, p_store_id => ${order.store_id})`,
-        ),
-      ).catch((err) =>
         console.error(
-          `expire-pending-payments (decrement_coupon, order ${order.id}):`,
-          err instanceof Error ? err.message : err,
-        ),
-      );
+          `expire-pending-payments (gateway ${outcome === "refused" ? "refused the read" : "unreachable"} for a week, order ${order.id})`,
+        );
+      }
+      // Gateway disconnected since the order was placed: nothing captured is
+      // verifiable; fall through and expire it (stock shouldn't stay hostage).
+      // Disconnecting settles every waiting order first, so this is an order
+      // the old keys could not read either.
     }
+
+    // 2. Cancel it and give back what it held: stock, store credit, pickup
+    //    holds, the coupon use and the offer uses. The pending → failed claim
+    //    inside is atomic, so a shopper's confirmOnlinePayment racing this loop
+    //    flips pending → paid first and the order is left alone.
+    if (await expireUnpaidOrder(order)) expired++;
   }
 
   return NextResponse.json({
     ok: true,
-    paid,
+    paid: paid + confirmed.paid,
     expired,
+    ...(unrecorded ? { capturedUnrecorded: unrecorded } : {}),
     ...(await standingSweeps()),
   });
 }
@@ -416,7 +345,7 @@ async function sweepLatePayments(): Promise<number> {
       const state = await settleOrderPayment(
         lookup.gateway.creds,
         row.razorpay_order_id,
-        expectedPaise(row),
+        expectedGatewayPaise(row),
         { capture: false },
       );
       if (state.kind !== "captured") continue;

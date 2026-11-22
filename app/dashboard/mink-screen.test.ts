@@ -36,6 +36,7 @@ describe("readMinkScreen", () => {
           <label for="s">Status</label><select id="s"><option value="all">All</option><option value="pending" selected>Pending</option></select>
         </form>
         <div role="dialog"><h2>Refund order</h2></div>
+        <div data-mink-dock><h2>Ask Mink AI</h2><form><label for="dock">Ask Mink AI anything</label><input id="dock" value="half typed" /></form></div>
       </main>
       <aside class="mink-chat-surface"><table><tbody><tr><td>chat row</td></tr></tbody></table><h1>Mink</h1></aside>
     `;

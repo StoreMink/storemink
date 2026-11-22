@@ -651,6 +651,8 @@ describe("paying an open invoice (design 8.4)", () => {
     taxPaise: 0,
     taxRateBps: null,
     taxInclusive: false,
+    autopayAt: null,
+    resumable: false,
   };
 
   async function refusedWith(error: string) {
@@ -1285,6 +1287,13 @@ describe("the checkout dialog (design 7.3)", () => {
     await enabled("Continue to payment");
     expect(
       screen.getByText("Renewals are charged by UPI Autopay"),
+    ).toBeTruthy();
+    // The payment window shows the mandate's ceiling as chargeable at any
+    // time, so the review step says first what is actually charged.
+    expect(
+      screen.getByText(
+        "The payment window shows an upper limit, not what you pay. We charge only your renewal amount, once in each billing cycle, and your bank sends a notice first.",
+      ),
     ).toBeTruthy();
   });
 

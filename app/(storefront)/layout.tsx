@@ -51,6 +51,11 @@ import {
   withThemeChromeDefaults,
 } from "@/lib/themes/footer";
 import { activeAnnouncement } from "@/lib/themes/announcement";
+import { getPublicShopLocations } from "@/lib/storefront/store-locations";
+import {
+  STYLESHEET_ROOT_CLASS,
+  themeStylesheetCss,
+} from "@/lib/themes/stylesheet";
 import { pageRootClasses } from "@/lib/themes/page";
 import { motionRootClasses, revealsOnScroll } from "@/lib/themes/motion";
 import { ScrollReveal } from "@/app/(storefront)/components/scroll-reveal";
@@ -213,6 +218,10 @@ export default async function StorefrontLayout({
     previewing ? Promise.resolve(null) : getStorefrontWhatsAppChat(store),
   ]);
   const design = theme?.preset.design ?? null;
+  // The theme's own style rules, compiled to CSS scoped under the root
+  // (lib/themes/stylesheet.ts). "" for a theme with none, which is every
+  // release made before 22 Nov 2026.
+  const themeCss = themeStylesheetCss(theme?.preset.stylesheet);
   // ★★ The theme's bar and newsletter words, laid over the store's chrome by
   //   the ONE function ChromeProvider also lays over chrome a preview frame
   //   is sent (lib/themes/footer.ts), so the frame shows what goes live.
@@ -257,6 +266,13 @@ export default async function StorefrontLayout({
     design?.layout,
     chrome.appearance,
   );
+  // The store's shops, for the footer's "Our stores" link (cached five
+  // minutes; a failed read is "none"). Not read at all where there is no
+  // footer, or where the merchant switched the page off.
+  const shopLocations =
+    bareShell || !appearance.storeLocator
+      ? []
+      : await getPublicShopLocations(store.id);
   const rootClass = [
     "storefront-root",
     `sm-header-${appearance.header}`,
@@ -297,6 +313,14 @@ export default async function StorefrontLayout({
     // hook measures (storefront-theme.css); the bar itself keeps it live in
     // the builder (header/announcement-bar.jsx).
     activeAnnouncement(chrome) ? "sm-announce" : "",
+    // The merchant's wishlist switch: every card renders its heart, and this
+    // class is what shows it (storefront-theme.css).
+    appearance.wishlist ? "sm-wishlist" : "",
+    // The merchant's quick view switch, shown the same way: every card
+    // renders its eye, and this class is what shows it.
+    appearance.quickView ? "sm-quickview" : "",
+    // The scope every compiled theme style rule is written under.
+    themeCss ? STYLESHEET_ROOT_CLASS : "",
     appearance.card === "grocery" ||
     appearance.productDetail === "grocery" ||
     appearance.cart === "grocery"
@@ -310,6 +334,12 @@ export default async function StorefrontLayout({
     return (
       <BrandProvider brand={clientBrand}>
         <div className={rootClass} style={themeVars as CSSProperties}>
+          {themeCss ? (
+            <style
+              data-sm="theme-styles"
+              dangerouslySetInnerHTML={{ __html: themeCss }}
+            />
+          ) : null}
           {children}
         </div>
       </BrandProvider>
@@ -336,10 +366,25 @@ export default async function StorefrontLayout({
                 live={previewing}
               >
                 <div className={rootClass} style={themeVars as CSSProperties}>
+                  {themeCss ? (
+                    // Vocabulary only: the compiler writes this text from a
+                    // closed catalogue, never from anything a theme typed.
+                    <style
+                      data-sm="theme-styles"
+                      dangerouslySetInnerHTML={{ __html: themeCss }}
+                    />
+                  ) : null}
                   <Header />
                   <StorefrontRefresh />
                   {children}
-                  <Footer credit={footerCredit} />
+                  <Footer
+                    credit={footerCredit}
+                    // The "Our stores" page exists only for a store with a
+                    // shop location whose merchant keeps the page on.
+                    storesLink={
+                      appearance.storeLocator && shopLocations.length > 0
+                    }
+                  />
                   {whatsappChat ? (
                     <WhatsAppChatButton href={whatsappChat.href} />
                   ) : null}

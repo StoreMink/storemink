@@ -130,6 +130,15 @@ const h = vi.hoisted(() => {
     sharedCapacityCalls: [] as unknown[][],
     /** The options each Vertex image / review client was created with. */
     vertexImageOptions: [] as Array<Record<string, unknown>>,
+    /** What `createElevenLabsImageClient` was built with. */
+    elevenLabsOptions: [] as Array<Record<string, unknown>>,
+    /** The operator's image provider; `key` null = no ElevenLabs key here. */
+    imageProvider: {
+      provider: "google" as "google" | "elevenlabs",
+      quality: "low" as "low" | "medium",
+      resolution: "1K" as "1K" | "2K",
+      key: null as string | null,
+    },
     vertexReviewOptions: [] as Array<Record<string, unknown>>,
     /** The Vertex text config the reviewer reads; null means none. */
     vertexConfig: null as unknown,
@@ -279,6 +288,30 @@ vi.mock("@/lib/theme-studio/image-vertex", async (importOriginal) => ({
     h.vertexImageOptions.push(options as Record<string, unknown>);
     const client: ThemeStudioImageClient = {
       provider: "vertex-gemini",
+      generateImage: async () => ({
+        kind: "error",
+        code: "provider_unavailable",
+        usage: ZERO_IMAGE_USAGE,
+      }),
+    };
+    return client;
+  },
+}));
+// The operator's image provider (lib/images, 22 Nov 2026). Google unless a
+// test sets `h.imageProvider`; the settings read never reaches a database.
+vi.mock("@/lib/images/provider-settings-store", () => ({
+  resolveImageProvider: async () => ({
+    provider: h.imageProvider.key ? h.imageProvider.provider : "google",
+    elevenlabsQuality: h.imageProvider.quality,
+    elevenlabsResolution: h.imageProvider.resolution,
+  }),
+  elevenLabsApiKey: () => h.imageProvider.key,
+}));
+vi.mock("@/lib/images/elevenlabs-theme-client", () => ({
+  createElevenLabsImageClient: (options: Record<string, unknown>) => {
+    h.elevenLabsOptions.push(options);
+    const client: ThemeStudioImageClient = {
+      provider: "elevenlabs",
       generateImage: async () => ({
         kind: "error",
         code: "provider_unavailable",
@@ -801,6 +834,11 @@ beforeEach(() => {
   h.sharedCapacity = null;
   h.sharedCapacityCalls.length = 0;
   h.vertexImageOptions.length = 0;
+  h.elevenLabsOptions.length = 0;
+  h.imageProvider.provider = "google";
+  h.imageProvider.quality = "low";
+  h.imageProvider.resolution = "1K";
+  h.imageProvider.key = null;
   h.vertexReviewOptions.length = 0;
   h.vertexConfig = null;
   h.storePhotos.clear();
@@ -1980,6 +2018,68 @@ describe("drawRevampPhotos", () => {
         expect(revampDrainingCapacity(held.capacity, undefined)).toBe(
           held.capacity,
         );
+      });
+
+      // 22 Nov 2026: a platform operator may have GPT Image 2.5 Sunburst
+      // (ElevenLabs) draw a redesign's photos. Google's two-starts-a-minute
+      // limit is why the shoot takes minutes.
+      describe("★★ the operator's image provider", () => {
+        const draw = async () => {
+          vi.stubEnv("MINK_REVAMP_PROVIDER", "vertex");
+          h.imageConfig = imageConfig;
+          h.vertexConfig = { projectId: "project", region: "global" };
+          h.sharedCapacity = {
+            run: (operation, signal) =>
+              operation({ signal, succeeded() {}, async rateLimited() {} }),
+          };
+          const drain = new AbortController();
+          const made = makeCtx();
+          await drawRevampPhotos(
+            { ...made.ctx, draining: drain.signal },
+            input(),
+            { prepare },
+          ).catch(() => undefined);
+          return made.ctx;
+        };
+
+        it("ElevenLabs chosen, and its key is here: its client draws, with the operator's quality and resolution", async () => {
+          h.imageProvider.provider = "elevenlabs";
+          h.imageProvider.quality = "medium";
+          h.imageProvider.resolution = "2K";
+          h.imageProvider.key = "sk_test";
+          const ctx = await draw();
+          expect(h.elevenLabsOptions).toHaveLength(1);
+          expect(h.elevenLabsOptions[0]).toMatchObject({
+            apiKey: "sk_test",
+            quality: "medium",
+            resolution: "2K",
+            // ★ This redesign's own scope: a draw the deadline cut off is
+            //   collected by the run that continues it, never drawn twice.
+            scope: `revamp:${ctx.revampId}`,
+            // A draw stopped while its job is under way says so (D3).
+            markStoppedInFlight: true,
+          });
+          // ★ The drain rule is kept: no job is submitted once it has begun.
+          expect(h.elevenLabsOptions[0].draining).toBeInstanceOf(AbortSignal);
+          // Google's image client, and its start pacing, are not built.
+          expect(h.vertexImageOptions).toHaveLength(0);
+        });
+
+        it("★★ chosen, but this environment has no key: Google draws, as before", async () => {
+          h.imageProvider.provider = "elevenlabs";
+          h.imageProvider.key = null;
+          await draw();
+          expect(h.elevenLabsOptions).toHaveLength(0);
+          expect(h.vertexImageOptions).toHaveLength(1);
+        });
+
+        it("Google chosen: Google draws, whatever keys exist", async () => {
+          h.imageProvider.provider = "google";
+          h.imageProvider.key = "sk_test";
+          await draw();
+          expect(h.elevenLabsOptions).toHaveLength(0);
+          expect(h.vertexImageOptions).toHaveLength(1);
+        });
       });
 
       it("★ the photos step builds both Vertex clients on the draining capacity and 429 wait", async () => {

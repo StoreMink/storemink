@@ -100,6 +100,7 @@ vi.mock("./invoice-store", () => store);
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  recordGatewayOrder: vi.fn(),
   capturedDraftPurchases: vi.fn(),
   capturedAttemptForInvoice: vi.fn(),
   fileRecoveredPurchase: vi.fn(),
@@ -323,6 +324,7 @@ beforeEach(() => {
     idempotencyKey: "key-1",
   });
   collect.settleAttempt.mockResolvedValue("processing");
+  collect.recordGatewayOrder.mockResolvedValue(true);
   packs.getMinkCreditPackLive.mockResolvedValue(null);
 });
 

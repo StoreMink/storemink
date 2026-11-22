@@ -206,9 +206,13 @@ export interface StudioStatusInput {
   archivedAt: string | null;
   /** The project has a current version (current_version_id is set). */
   hasCurrentVersion: boolean;
-  /** Row 1: the release this project published (its theme_studio_publications
-   * row with status `published`), whatever the project's status; null when it
-   * never published. `offered`: the theme's catalog entry is public
+  /** The newest release this project published (its newest
+   * theme_studio_publications row with status `published`); null when it
+   * never published. ★ Row 1 ("Live") only while the project RESTS on a
+   * published design (`projectStatus` "published", or "archived"): since
+   * migration 0288 a published theme can take a change, and while that
+   * change is built, checked or waiting to be published the theme's own row
+   * applies and this is the release that stays live meanwhile. `offered`: the theme's catalog entry is public
    * (theme_catalog_entries.visibility = 'public'); false reads "Not offered
    * to new stores". */
   release: { version: string; publishedAt: string; offered: boolean } | null;
@@ -2426,14 +2430,24 @@ function statusInput(
   };
 }
 
+/** Whether the theme rests on a published design: row 1 ("Live"), which
+ * reads none of the working facts. A published theme a change is being made
+ * to (0288) does not: its own row applies. Mirrors studioStatus's row 1. */
+function restsLive(fact: Pick<FactRow, "releaseVersion" | "status">): boolean {
+  return (
+    !!fact.releaseVersion &&
+    (fact.status === "published" || fact.status === "archived")
+  );
+}
+
 /** Whether the theme's facts can decide a row that reads the evidence (15,
- * 16 or 19): ready or Ready to publish, nothing working, never published. */
+ * 16 or 19): ready or Ready to publish, nothing working. A live theme's
+ * changed design needs it like any other. */
 function needsEvidence(fact: FactRow, work: WorkFacts): boolean {
   return (
     !!fact.currentVersionId &&
     (fact.status === "ready" || fact.status === "candidate") &&
-    !work.working &&
-    !fact.releaseVersion
+    !work.working
   );
 }
 
@@ -2541,15 +2555,13 @@ export async function listThemeStudioProjectsForConsole(
   const pieces = await readPieces(
     db,
     facts
-      .filter((f) => !f.releaseVersion && f.status !== "archived")
+      .filter((f) => !restsLive(f) && f.status !== "archived")
       .map((f) => f.projectId),
   );
   const checkRuns = await readCheckRunCounts(
     db,
     facts
-      .filter(
-        (f) => f.checkRunId && !f.releaseVersion && f.status !== "archived",
-      )
+      .filter((f) => f.checkRunId && !restsLive(f) && f.status !== "archived")
       .map((f) => ({ id: f.checkRunId!, status: f.checkRunStatus ?? "" })),
   );
   const versions = await readVersionFacts(

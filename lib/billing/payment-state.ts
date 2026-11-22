@@ -48,6 +48,11 @@ const PROGRESS: readonly PaymentState[] = [
   "captured",
 ];
 
+/** Closed without money: failed or cancelled. Nothing moves it again. */
+export function isClosedWithoutPayment(state: PaymentState): boolean {
+  return TERMINAL_FAILURE.has(state);
+}
+
 export function isTerminal(state: PaymentState): boolean {
   return TERMINAL_SUCCESS.has(state) || TERMINAL_FAILURE.has(state);
 }

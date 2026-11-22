@@ -5,6 +5,7 @@
 import { DESIGN_FONTS } from "../fonts";
 import { vitrine } from "../definitions/vitrine";
 import { catalogueOf, exemplar, exemplarMeta, img, section } from "./shared";
+import { EXEMPLAR_STYLESHEETS } from "./stylesheets";
 
 const ID = "exemplar-bold-and-loud";
 const pic = (name: string) => img(ID, name);
@@ -512,6 +513,8 @@ export const boldAndLoud = exemplar(
         { label: "Terms", href: "/terms" },
       ],
     },
+    // The theme's own style rules (./stylesheets.ts, plan Phase 3).
+    stylesheet: EXEMPLAR_STYLESHEETS["bold-and-loud"],
     sampleData: catalogue,
   },
 );

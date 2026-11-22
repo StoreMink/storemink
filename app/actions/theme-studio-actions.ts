@@ -52,6 +52,7 @@ import {
   validateProjectInput,
   type CreateThemeStudioProjectInput,
   type ThemeStudioRestoreOutcome,
+  type ThemeStudioRestoreRelease,
 } from "@/lib/theme-studio/repository";
 import {
   discardProjectPreviews,
@@ -426,20 +427,25 @@ export async function restoreThemeStudioVersionAction(input: {
   ThemeStudioActionResult & {
     changed?: boolean;
     outcome?: ThemeStudioRestoreOutcome;
+    /** For a published design: its release, and the one new stores get. */
+    release?: ThemeStudioRestoreRelease;
   }
 > {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
   if (!Number.isInteger(input?.expectedRevision)) return MALFORMED;
   try {
-    const { changed, outcome } = await restoreThemeStudioVersion(actor, {
-      projectId: String(input.projectId),
-      versionId: String(input.versionId),
-      expectedRevision: input.expectedRevision,
-    });
+    const { changed, outcome, release } = await restoreThemeStudioVersion(
+      actor,
+      {
+        projectId: String(input.projectId),
+        versionId: String(input.versionId),
+        expectedRevision: input.expectedRevision,
+      },
+    );
     revalidatePath(STUDIO_PATH);
     revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
-    return { ok: true, changed, outcome };
+    return { ok: true, changed, outcome, ...(release ? { release } : {}) };
   } catch (error) {
     return failure(error, "restore version");
   }

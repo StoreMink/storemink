@@ -415,8 +415,15 @@ describe("the page templates in the Stage B schemas", () => {
       expect(v32).not.toBe(schema);
       const asV32 = (key: string) =>
         key === "templatesJson" ? "templates" : key;
-      expect(Object.keys(v32.properties)).toEqual(keys.map(asV32));
-      expect(v32.required).toEqual(current.required.map(asV32));
+      // v34's stylesheetJson came after v32, so a v32 request has none.
+      const beforeV34 = (key: string) => key !== "stylesheetJson";
+      expect(Object.keys(v32.properties)).toEqual(
+        keys.filter(beforeV34).map(asV32),
+      );
+      expect(v32.required).toEqual(
+        current.required.filter(beforeV34).map(asV32),
+      );
+      expect(v32.properties.stylesheetJson).toBeUndefined();
       expect(v32.properties.templatesJson).toBeUndefined();
       expect(v32.properties.templates).toEqual(TEMPLATES_SCHEMA);
       const without = (properties: object, key: string) =>
@@ -424,7 +431,7 @@ describe("the page templates in the Stage B schemas", () => {
           Object.entries(properties).filter(([name]) => name !== key),
         );
       expect(without(v32.properties, "templates")).toEqual(
-        without(current.properties, "templatesJson"),
+        without(without(current.properties, "templatesJson"), "stylesheetJson"),
       );
       // The v32 object, required, with the whole vocabulary of blocks and
       // galleries.
@@ -489,7 +496,10 @@ describe("the page templates in the Stage B schemas", () => {
       expect(v31.properties.announcement).toBeUndefined();
       expect(v31.required).toEqual(
         current.required.filter(
-          (key) => key !== "templatesJson" && key !== "announcement",
+          (key) =>
+            key !== "templatesJson" &&
+            key !== "announcement" &&
+            key !== "stylesheetJson",
         ),
       );
       const legacyLists = productDetailEnums(v31);
@@ -519,8 +529,70 @@ describe("the page templates in the Stage B schemas", () => {
 // (variety draft) and 16,733 bytes (draft), were refused, so every operator
 // change that reached Stage B failed until v33 moved the templates into a
 // string. At v33 the four measure: draft 14,161, initial 11,025, variety
-// draft 13,321 and variety initial 11,668 bytes.
+// draft 13,321 and variety initial 11,668 bytes. v34's stylesheetJson adds
+// one more string to each (about 50 bytes), which is why the theme's style
+// rules travel as a string too and not as a closed schema.
 const LARGEST_ACCEPTED_SCHEMA_BYTES = 14_240;
+
+describe("the theme stylesheet in the Stage B schemas (v34)", () => {
+  it.each([
+    ["draft", STAGE_B_DRAFT_SCHEMA],
+    ["initial draft", STAGE_B_INITIAL_DRAFT_SCHEMA],
+    ["variety draft", STAGE_B_VARIETY_DRAFT_SCHEMA],
+    ["variety initial", STAGE_B_VARIETY_INITIAL_SCHEMA],
+  ] as const)(
+    "%s: one required JSON string from v34, and a v33 request has none and is otherwise the same",
+    (_name, schema) => {
+      const current = schema as {
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+      const keys = Object.keys(current.properties);
+      // A string, like the templates: the rules are checked by the compiler,
+      // and the schema stays small.
+      expect(current.properties.stylesheetJson).toEqual({ type: "string" });
+      expect(keys[keys.indexOf("templatesJson") + 1]).toBe("stylesheetJson");
+      expect(current.required).toContain("stylesheetJson");
+      const v33 = stageBSchemaFor(
+        schema,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true,
+        false,
+      ) as typeof current;
+      expect(v33).not.toBe(schema);
+      // Built once per shape.
+      expect(
+        stageBSchemaFor(schema, true, true, true, true, true, true, false),
+      ).toBe(v33);
+      expect(Object.keys(v33.properties)).toEqual(
+        keys.filter((key) => key !== "stylesheetJson"),
+      );
+      expect(v33.required).toEqual(
+        current.required.filter((key) => key !== "stylesheetJson"),
+      );
+      expect(v33.properties).toEqual(
+        Object.fromEntries(
+          Object.entries(current.properties).filter(
+            ([key]) => key !== "stylesheetJson",
+          ),
+        ),
+      );
+      // Every earlier shape has none either.
+      for (const earlier of [
+        stageBSchemaFor(schema, true, true, true, true, true, false),
+        stageBSchemaFor(schema, true, true, true, true, false, false),
+        stageBSchemaFor(schema, false, false, false, false, false, false),
+      ])
+        expect(
+          (earlier as typeof current).properties.stylesheetJson,
+        ).toBeUndefined();
+    },
+  );
+});
 
 describe("the Stage B schemas stay within what Vertex accepted", () => {
   const current = themePromptFeatures(THEME_STUDIO_PROMPT_VERSION);
@@ -533,6 +605,7 @@ describe("the Stage B schemas stay within what Vertex accepted", () => {
       current.moreVariants,
       current.templates,
       current.templatesJson,
+      current.stylesheet,
     );
   it.each(
     (

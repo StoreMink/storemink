@@ -71,6 +71,12 @@ import {
   IMAGE_REQUEST_TIMEOUT_MS,
   createVertexImageClient,
 } from "@/lib/theme-studio/image-vertex";
+import { ELEVENLABS_IMAGE_MODEL } from "@/lib/images/elevenlabs-images";
+import { createElevenLabsImageClient } from "@/lib/images/elevenlabs-theme-client";
+import {
+  elevenLabsApiKey,
+  resolveImageProvider,
+} from "@/lib/images/provider-settings-store";
 import { resolveThemeStudioModel } from "@/lib/theme-studio/models";
 import {
   ZERO_USAGE,
@@ -1833,7 +1839,8 @@ export async function drawRevampPhotos(
       // ★ Picked inside the try: a misconfigured image model throws, and the
       //   photos claimed above must go back when it does.
       const provided =
-        options.imageClient ?? defaultImageClient(provider, drawsDrain);
+        options.imageClient ??
+        (await chosenImageClient(provider, revampId, drawsDrain));
       /** Draws asked per brief in this invocation: which attempt a refusal was. */
       const drawAttempts = new Map<string, number>(
         [...checks].map(([key, state]) => [
@@ -1901,7 +1908,10 @@ export async function drawRevampPhotos(
             mergeUsage(
               drawCallUsage(answer),
               revampCallUsage(
-                THEME_STUDIO_IMAGE_MODEL_KEY,
+                // Counted under the model that was asked (P0).
+                provided.provider === "elevenlabs"
+                  ? ELEVENLABS_IMAGE_MODEL
+                  : THEME_STUDIO_IMAGE_MODEL_KEY,
                 drawCallCounts(answer),
               ),
             ),
@@ -2946,6 +2956,42 @@ function shapeOf(card: unknown): ThemeImageDirection["shape"] {
 }
 
 // ── Clients ─────────────────────────────────────────────────────────────────
+
+/**
+ * The client that draws this redesign's photos: the one a platform operator
+ * chose (lib/images/provider-settings.ts, 22 Nov 2026).
+ *
+ * ★ ElevenLabs (GPT Image 2.5 Sunburst) only when it is chosen AND this
+ *   environment holds its key; otherwise Google, exactly as before. Choosing
+ *   a provider can never fail a redesign.
+ * ★ The redesign's id is the scope its jobs are recorded under, so a draw the
+ *   deadline cut off is collected by the run that continues it and not drawn
+ *   a second time (lib/images/elevenlabs-generations.ts).
+ * ★ No Google start pacing: that 31 to 45 second gap is Google's limit of two
+ *   image starts a minute, which this provider does not have. The drain rule
+ *   is kept: no job is submitted once the deadline's drain has begun.
+ */
+async function chosenImageClient(
+  provider: RevampProvider,
+  revampId: string,
+  draining?: AbortSignal,
+): Promise<ThemeStudioImageClient> {
+  if (provider !== "fake") {
+    const settings = await resolveImageProvider();
+    const apiKey = elevenLabsApiKey();
+    if (settings.provider === "elevenlabs" && apiKey) {
+      return createElevenLabsImageClient({
+        apiKey,
+        quality: settings.elevenlabsQuality,
+        resolution: settings.elevenlabsResolution,
+        scope: `revamp:${revampId}`,
+        draining,
+        markStoppedInFlight: true,
+      });
+    }
+  }
+  return defaultImageClient(provider, draining);
+}
 
 /**
  * The image client: Vertex with the shared provider capacity, or the fake.

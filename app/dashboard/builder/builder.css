@@ -1097,6 +1097,18 @@
   line-height: 1.5;
   color: var(--b-text-3);
 }
+
+/* The theme's own style rules, listed read-only under Design. */
+.sm-b-stylerules {
+  margin: 8px 0 0;
+  padding: 0 0 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--b-text-3);
+}
+.sm-b-stylerules li + li {
+  margin-top: 4px;
+}
 .sm-b-hint a {
   color: var(--b-accent);
   text-decoration: underline;

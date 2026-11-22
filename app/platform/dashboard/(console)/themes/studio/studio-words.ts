@@ -130,6 +130,8 @@ export function buildTimeWords(range: ThemeStudioBuildTimeRange): string {
 const RUN_STOP: Record<string, string> = {
   invalid_output:
     "The model's answer still failed its checks after its repair attempts.",
+  too_similar:
+    "The design came out too much like a theme that is already published, so it was stopped before any picture was drawn. Start it again with a brief that sets it apart: another layout, page colour or font.",
   model_refused: "The model declined this request for safety reasons.",
   model_declined: "The model declined to build this theme.",
   output_truncated: "The model ran out of room before it finished.",

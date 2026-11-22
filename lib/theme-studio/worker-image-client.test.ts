@@ -228,6 +228,46 @@ describe("Theme Studio's photo client (worker.ts imageClientFor)", () => {
   });
 });
 
+// 22 Nov 2026: a platform operator may have GPT Image 2.5 Sunburst
+// (ElevenLabs) draw Theme Studio's photos.
+describe("★★ the operator's ElevenLabs choice (worker.ts imageClientFor)", () => {
+  const CHOICE = {
+    apiKey: "sk_test",
+    quality: "low" as const,
+    resolution: "1K" as const,
+    scope: "theme-project:p1",
+  };
+
+  it("a Vertex run's photos are drawn by ElevenLabs when it is chosen", () => {
+    reset();
+    expect(
+      imageClientFor("vertex-gemini", HOMEPAGE_SLIDES, CHOICE)?.provider,
+    ).toBe("elevenlabs");
+  });
+
+  it("★ it needs no Google image model to be configured", () => {
+    vi.stubEnv("GCP_PROJECT_ID", "");
+    vi.stubEnv("THEME_STUDIO_GCP_PROJECT_ID", "");
+    expect(
+      imageClientFor("vertex-gemini", HOMEPAGE_SLIDES, CHOICE)?.provider,
+    ).toBe("elevenlabs");
+  });
+
+  it("the offline provider stays offline, and an unknown one draws nothing", () => {
+    expect(imageClientFor("fake", HOMEPAGE_SLIDES, CHOICE)?.provider).toBe(
+      "fake",
+    );
+    expect(imageClientFor("other", HOMEPAGE_SLIDES, CHOICE)).toBeNull();
+  });
+
+  it("with no choice, Google draws as before", () => {
+    reset();
+    expect(
+      imageClientFor("vertex-gemini", HOMEPAGE_SLIDES, null)?.provider,
+    ).toBe("vertex-gemini");
+  });
+});
+
 describe("★ a photo run names the homepage's opening photos (worker.ts executeImages)", () => {
   it("builds its image client with the slots its package's homepage opens with", () => {
     // executeImages needs a claimed run and a database, and the
@@ -239,7 +279,11 @@ describe("★ a photo run names the homepage's opening photos (worker.ts execute
       "utf8",
     ).replace(/\s+/g, " ");
     expect(source).toContain(
-      "imageClientFor( run.provider, homepageOpeningPhotoIds(input.package), )",
+      'imageClientFor( run.provider, homepageOpeningPhotoIds(input.package), run.provider === "vertex-gemini" ? await chosenElevenLabs(`theme-project:${run.projectId}`) : null, )',
+    );
+    // A saved draw is replayed only for the provider and model that made it.
+    expect(source).toContain(
+      "resumableImageClient(client, drawModel, run.promptVersion, store)",
     );
     // ...and it is the only call of it in worker.ts.
     expect(source.match(/(?<!function )imageClientFor\(/g)).toHaveLength(1);

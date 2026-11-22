@@ -9,10 +9,12 @@
 // client pays in the Razorpay modal → confirmCreditPurchase (HMAC verify →
 // paid → add_ai_credits). The add_ai_credits RPC is idempotent per payment id
 // (unique partial index), so double-confirmation / reconcile races can never
-// double-credit. Dropped callbacks are reconciled on AI-page load (the same
-// reconcile-on-read pattern as order payments — no webhook in v1).
+// double-credit. A dropped callback (the tab closed before the confirm) is
+// settled by StoreMink's Razorpay webhook, by the hourly billing job, and when
+// this page next loads: all through lib/ai/credit-purchase.ts, which holds the
+// settle itself.
 
-import { and, desc, eq, lte, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { emitEvent } from "@/lib/notifications/record";
 import { loggableError } from "@/lib/db/errors";
@@ -23,7 +25,6 @@ import {
 } from "@/lib/billing/credit-invoice";
 import { buildAiCreditsInvoice } from "@/lib/billing/invoice";
 import {
-  gatewayCreatedAt,
   paymentCapturedAt,
   readTaxForPayment,
 } from "@/lib/billing/payment-tax";
@@ -42,16 +43,15 @@ import {
 import { getAiUsage, type AiUsageSummary } from "@/lib/ai/quota";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
-  capturedPayment,
   rzpCreateOrder,
-  rzpFetchOrderPayments,
   verifyCapturedCheckoutPayment,
   verifyCheckoutSignature,
 } from "@/lib/payments/razorpay";
-
-// A purchase left `pending` this long is presumed dropped and gets reconciled
-// against Razorpay on the next AI-page load.
-const RECONCILE_AFTER_MS = 3 * 60_000;
+import {
+  creditPurchasePaise,
+  reconcilePendingCreditPurchases,
+  settleCreditPurchase,
+} from "@/lib/ai/credit-purchase";
 
 export interface AiLedgerEntry {
   id: string;
@@ -92,134 +92,6 @@ export interface AiUsagePageData {
   ledger: AiLedgerEntry[];
 }
 
-// Mark a paid purchase + grant its credits, idempotently. Shared by the
-// client confirm path and the reconcile pass.
-//
-// `paidAt` is when Razorpay captured the payment, when the caller knows it:
-// the reconcile pass and the confirm path both pass the payment's own
-// `created_at`, so a pack paid before a scheduled GST change but confirmed or
-// noticed after it is issued with the terms of its payment time (GST design
-// 5.4 step 4, R1-07). Absent, the invoice reads its terms at issue.
-async function settlePurchase(
-  purchase: { id: string; store_id: string; credits: number; pack_id: string },
-  rzpPaymentId: string,
-  paidAt?: Date,
-): Promise<void> {
-  try {
-    const claimed = await withService((db) =>
-      db
-        .update(aiCreditPurchases)
-        .set({
-          status: "paid",
-          rzpPaymentId,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(
-          and(
-            eq(aiCreditPurchases.id, purchase.id),
-            eq(aiCreditPurchases.status, "pending"),
-          ),
-        )
-        .returning({ id: aiCreditPurchases.id }),
-    );
-    // The status update lost the race (already paid). A concurrent winner may
-    // still be between granting credits and issuing the receipt, or a previous
-    // best-effort invoice write may have failed. Retrying the paid-finalization
-    // is idempotent and repairs that document without granting credits twice.
-    if (claimed.length === 0) {
-      await issueCreditInvoice(purchase.id, undefined, paidAt);
-      return;
-    }
-  } catch (err) {
-    console.error(
-      "settlePurchase (status):",
-      err instanceof Error ? err.message : err,
-    );
-    return;
-  }
-
-  // Credits keyed on the payment id — a repeat call is a no-op (returns false).
-  try {
-    await withService((db) =>
-      db.execute(
-        sql`select add_ai_credits(p_store => ${purchase.store_id}, p_delta => ${purchase.credits}, p_kind => ${"purchase"}, p_ref => ${rzpPaymentId}, p_note => ${`pack ${purchase.pack_id}`})`,
-      ),
-    );
-  } catch (err) {
-    console.error(
-      "settlePurchase (credits):",
-      err instanceof Error ? err.message : err,
-    );
-  }
-
-  // ★★ ISSUE THE DOCUMENT HERE, because this is the ONE place a purchase becomes
-  // paid — the confirm path AND the reconcile-on-read sweep both arrive here.
-  // Hooking only `confirmCreditPurchase` would leave every purchase settled by
-  // reconciliation without an invoice, which is exactly the case where the
-  // merchant is already unsure what happened.
-  //
-  // ★ AFTER the credits, and best-effort: a merchant who paid gets what they
-  // bought even if the document fails to issue. One that did not issue is
-  // picked up by the hourly repair pass (`issueCapturedDrafts`).
-  await issueCreditInvoice(purchase.id, undefined, paidAt);
-}
-
-// Reconcile-on-read: any stale pending purchase for this store is checked
-// against Razorpay; captured ⇒ settle, nothing captured ⇒ leave pending (the
-// shopper may still be mid-payment — there is no reaper for credit purchases,
-// an old pending row is harmless).
-async function reconcilePendingPurchases(storeId: string): Promise<void> {
-  const creds = getPlatformRazorpayCreds();
-  if (!creds) return;
-  const cutoff = new Date(Date.now() - RECONCILE_AFTER_MS).toISOString();
-  let stale: {
-    id: string;
-    store_id: string;
-    credits: number;
-    pack_id: string;
-    rzp_order_id: string | null;
-  }[];
-  try {
-    stale = await withService((db) =>
-      db
-        .select({
-          id: aiCreditPurchases.id,
-          store_id: aiCreditPurchases.storeId,
-          credits: aiCreditPurchases.credits,
-          pack_id: aiCreditPurchases.packId,
-          rzp_order_id: aiCreditPurchases.rzpOrderId,
-        })
-        .from(aiCreditPurchases)
-        .where(
-          and(
-            eq(aiCreditPurchases.storeId, storeId),
-            eq(aiCreditPurchases.status, "pending"),
-            lte(aiCreditPurchases.createdAt, cutoff),
-          ),
-        )
-        .limit(10),
-    );
-  } catch (err) {
-    console.error("reconcilePendingPurchases:", err);
-    return;
-  }
-  for (const p of stale) {
-    if (!p.rzp_order_id) continue;
-    const res = await rzpFetchOrderPayments(creds, p.rzp_order_id);
-    if (!res.ok) continue;
-    const captured = capturedPayment(res.data);
-    if (captured) {
-      // When Razorpay captured it (`created_at`, `gatewayCreatedAt`); with
-      // none, the invoice is issued at the time it is noticed, as before.
-      await settlePurchase(
-        p,
-        captured.id,
-        gatewayCreatedAt(captured) ?? undefined,
-      );
-    }
-  }
-}
-
 /** Everything the /dashboard/plans (Plans & Billing) page renders. Also runs
  *  the pending-purchase reconcile pass so a dropped payment callback self-heals
  *  on next visit.
@@ -236,7 +108,7 @@ export async function getAiUsagePageData(): Promise<AiUsagePageData> {
 
   const storeId = await getActingStoreId();
 
-  await reconcilePendingPurchases(storeId);
+  await reconcilePendingCreditPurchases({ storeId });
 
   const [dbResult, usage] = await Promise.all([
     // ★ The two reads run ONE AFTER THE OTHER (R3-01): a `withService` scope
@@ -415,7 +287,7 @@ export async function startCreditPurchase(
 
   // ★ A DRAFT invoice, raised only once the order exists, so a purchase that
   // died at the gateway leaves no document behind at all. It carries no number
-  // yet; `settlePurchase` finalizes it when the money lands, which is what keeps
+  // yet; `settleCreditPurchase` finalizes it when the money lands, which is what keeps
   // an abandoned checkout from burning one in the gapless GST series.
   //
   // ★★ FAIL CLOSED (GST design 5.5): once the document can be a tax invoice, a
@@ -527,7 +399,7 @@ export async function confirmCreditPurchase(
   const observedPayment = await verifyCapturedCheckoutPayment(creds, {
     paymentId: rzpPaymentId,
     orderId: purchase.rzp_order_id,
-    amountPaise: purchase.amount_paise ?? purchase.amount_inr * 100,
+    amountPaise: creditPurchasePaise(purchase),
   });
   if (!observedPayment.ok) {
     console.error(
@@ -544,7 +416,7 @@ export async function confirmCreditPurchase(
     ? await paymentCapturedAt(creds, rzpPaymentId, "billing.credit_pack")
     : undefined;
 
-  await settlePurchase(
+  const claimed = await settleCreditPurchase(
     {
       id: purchase.id,
       store_id: purchase.store_id,
@@ -554,13 +426,18 @@ export async function confirmCreditPurchase(
     rzpPaymentId,
     paidAt,
   );
-  emitEvent({
-    type: "ai.credits_purchased",
-    storeId: purchase.store_id,
-    actor: { type: "admin", id: userId },
-    subject: { type: "credits", id: purchase.id, label: purchase.pack_id },
-    payload: { credits: purchase.credits },
-  });
+  // ★ Only the settle that made it paid announces it. The webhook can now
+  // settle a purchase a moment before this confirm arrives, and it tells the
+  // merchant itself, so announcing here as well would say it twice.
+  if (claimed) {
+    emitEvent({
+      type: "ai.credits_purchased",
+      storeId: purchase.store_id,
+      actor: { type: "admin", id: userId },
+      subject: { type: "credits", id: purchase.id, label: purchase.pack_id },
+      payload: { credits: purchase.credits },
+    });
+  }
 
   return { success: true, creditsAdded: purchase.credits };
 }

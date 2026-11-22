@@ -11,6 +11,7 @@ import {
   visualQaContext,
   visualQaImageIssueText,
   type VisualQaReport,
+  VISUAL_QA_LIST_MAX,
 } from "./visual-qa-request";
 
 const issue = {
@@ -110,7 +111,12 @@ describe("visual QA request", () => {
     expect(VISUAL_QA_SCHEMA.properties.rejections.items.enum).toEqual(
       REJECTION_CONDITIONS.map((c) => c.key),
     );
-    expect(VISUAL_QA_SCHEMA.properties.rejections.maxItems).toBe(8);
+    // Eight conditions; the list is not counted in the schema (see the last
+    // block of this file), the parser keeps each once.
+    expect(REJECTION_CONDITIONS).toHaveLength(8);
+    expect(VISUAL_QA_SCHEMA.properties.rejections).not.toHaveProperty(
+      "maxItems",
+    );
   });
 
   it("round-trips a passing report through the parser", () => {
@@ -155,10 +161,18 @@ describe("what a review does to Publish", () => {
         rejections: all,
       })?.rejections,
     ).toEqual(all);
+    // A condition named twice is that condition once (it used to refuse
+    // the whole paid review); one that does not exist still refuses it.
     expect(
       parseVisualQaReport({
         ...reviewOf({ verdict: "revise" }),
         rejections: [...all, "copied"],
+      })?.rejections,
+    ).toEqual(all);
+    expect(
+      parseVisualQaReport({
+        ...reviewOf({ verdict: "revise" }),
+        rejections: [...all, "not_a_condition"],
       }),
     ).toBeNull();
   });
@@ -350,5 +364,65 @@ describe("visual QA context", () => {
   it("tells the reviewer to judge unresolved contrast itself", () => {
     expect(VISUAL_QA_SYSTEM_PROMPT).toContain("unresolvedContrast");
     expect(VISUAL_QA_SYSTEM_PROMPT).toContain("unopened or stuck");
+  });
+});
+
+// The first live design review under gemini-3.8-flash (22 Nov 2026) was
+// refused twice with HTTP 400 INVALID_ARGUMENT: counted lists made the schema
+// too complex for structured output.
+describe("★★ the review's schema carries no counted lists", () => {
+  it("has no maxItems and no uniqueItems anywhere", () => {
+    const text = JSON.stringify(VISUAL_QA_SCHEMA);
+    expect(text).not.toContain("maxItems");
+    expect(text).not.toContain("uniqueItems");
+    expect(text).not.toContain("minItems");
+  });
+
+  it("states the bounds to the reviewer instead", () => {
+    expect(VISUAL_QA_SYSTEM_PROMPT).toContain(
+      `Return at most ${VISUAL_QA_LIST_MAX} findings and at most ${VISUAL_QA_LIST_MAX} repairs`,
+    );
+  });
+
+  const scores = Object.fromEntries(
+    Object.keys(
+      (VISUAL_QA_SCHEMA.properties.scores as { properties: object }).properties,
+    ).map((key) => [key, 4]),
+  );
+  const report = (over: Record<string, unknown> = {}) => ({
+    verdict: "revise",
+    scores,
+    rejections: [],
+    findings: ["The hero heading is clipped at 390px."],
+    revisionBrief: "Shorten the hero heading.",
+    repairs: [],
+    imageAssessments: [],
+    ...over,
+  });
+
+  it("keeps the first twenty findings and repairs, where it used to refuse the whole review", () => {
+    const many = Array.from({ length: 27 }, (_, i) => `Finding ${i + 1}.`);
+    const repairs = Array.from({ length: 23 }, (_, i) => ({
+      kind: "settings",
+      target: `/definition/preset/pages/0/sections/${i}/style/scheme`,
+      reason: "Band is hard to read.",
+    }));
+    const parsed = parseVisualQaReport(report({ findings: many, repairs }));
+    expect(parsed?.findings).toEqual(many.slice(0, VISUAL_QA_LIST_MAX));
+    expect(parsed?.repairs).toHaveLength(VISUAL_QA_LIST_MAX);
+  });
+
+  it("counts a rejection named twice once, and still refuses an unknown one", () => {
+    const [first] = (
+      VISUAL_QA_SCHEMA.properties.rejections.items as { enum: string[] }
+    ).enum;
+    expect(
+      parseVisualQaReport(report({ rejections: [first, first] }))?.rejections,
+    ).toEqual([first]);
+    expect(
+      parseVisualQaReport(report({ rejections: [first, "not_a_condition"] })),
+    ).toBeNull();
+    // A malformed finding among the first twenty still refuses the report.
+    expect(parseVisualQaReport(report({ findings: ["ok", ""] }))).toBeNull();
   });
 });

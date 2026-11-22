@@ -99,6 +99,26 @@ describe("the price of one request by where it was served (TS-3D)", () => {
       estimateImageCostMicroUsd({ inputTokens: 1_000, outputTokens: 1_120 }),
     ).toBe(136_400);
   });
+
+  it("★ takes the stated price of a provider that bills by the picture (ElevenLabs, 22 Nov 2026)", () => {
+    // No tokens to price: Google's rates would call the picture free.
+    expect(
+      estimateImageCostMicroUsd({
+        inputTokens: 0,
+        outputTokens: 0,
+        model: "gpt-image-2.5-sunburst",
+        flatCostMicroUsd: 78_850,
+      }),
+    ).toBe(78_850);
+    // A reused picture's price was the original run's: zero stays zero.
+    expect(
+      estimateImageCostMicroUsd({
+        inputTokens: 0,
+        outputTokens: 0,
+        flatCostMicroUsd: 0,
+      }),
+    ).toBe(0);
+  });
 });
 
 const NB21 = "gemini-nano-banana-2.1";

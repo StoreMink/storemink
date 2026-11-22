@@ -47,7 +47,7 @@ export function findMinkGuideElement(
   return (
     candidates.find(
       (element) =>
-        !element.closest(".mink-chat-surface") &&
+        !element.closest(".mink-chat-surface, [data-mink-dock]") &&
         isVisible(element) &&
         pattern.test(accessibleName(element)),
     ) ?? null

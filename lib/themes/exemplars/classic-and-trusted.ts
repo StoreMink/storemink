@@ -6,6 +6,7 @@
 import { DESIGN_FONTS } from "../fonts";
 import { studio } from "../definitions/studio";
 import { catalogueOf, exemplar, exemplarMeta, img, section } from "./shared";
+import { EXEMPLAR_STYLESHEETS } from "./stylesheets";
 
 const ID = "exemplar-classic-and-trusted";
 const pic = (name: string) => img(ID, name);
@@ -539,6 +540,8 @@ export const classicAndTrusted = exemplar(
         { label: "Terms", href: "/terms" },
       ],
     },
+    // The theme's own style rules (./stylesheets.ts, plan Phase 3).
+    stylesheet: EXEMPLAR_STYLESHEETS["classic-and-trusted"],
     sampleData: catalogue,
   },
 );

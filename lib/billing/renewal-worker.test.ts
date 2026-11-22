@@ -43,16 +43,31 @@ const repo = vi.hoisted(() => ({
   ensureRenewalInvoice: vi.fn(),
   finalizeInvoiceClaimed: vi.fn(),
   getCycleInvoice: vi.fn(),
+  getInvoice: vi.fn(),
   amountDueForInvoice: vi.fn(),
 }));
 vi.mock("./invoice-store", () => repo);
 
-const collector = vi.hoisted(() => ({ collectInvoice: vi.fn() }));
+const collector = vi.hoisted(() => ({
+  collectInvoice: vi.fn(),
+  automaticAttemptsOn: vi.fn(),
+}));
 vi.mock("./collect", () => collector);
+// Whether an earlier debit of the invoice took the money after all
+// (earlier-debits.ts, proved in its own test). ★ "clear" unless a test says
+// otherwise, so every case here describes an invoice with nothing held.
+const earlierDebits = vi.hoisted(() => ({
+  earlierDebitsOf: vi.fn(async (): Promise<string> => "clear"),
+  // Whether StoreMink already holds the money for the store's unpaid renewal
+  // (a payment filed for a person). ★ "no" unless a test says otherwise.
+  renewalPaymentHeld: vi.fn(async (): Promise<boolean | null> => false),
+}));
+vi.mock("./earlier-debits", () => earlierDebits);
 
 // Telling the merchant is best-effort and proved by its own suite; here it is a
 // seam, so a test can assert WHO was told and WHEN without sending mail.
 const dunning = vi.hoisted(() => ({
+  notifyAutopayStopped: vi.fn(),
   notifyInvoiceIssued: vi.fn(),
   notifyGraceStarted: vi.fn(),
   notifyDowngraded: vi.fn(),
@@ -61,10 +76,12 @@ vi.mock("./dunning", () => dunning);
 
 import {
   advanceAfterPayment,
+  announceAutopayStopped,
   classify,
   collectDueRenewals,
   downgradeExpired,
   evaluateCycleTurns,
+  MANDATE_CHECK_HOLD_HOURS,
 } from "./renewal-worker";
 import { GRACE_HOURS } from "./cycle";
 
@@ -114,7 +131,17 @@ const priceFor = vi.fn(async () => ({
   planLabel: "Pro",
 }));
 
-const charge = vi.fn() as any;
+/**
+ * The gateway seam the pass is handed (lib/billing/gateway.ts in production).
+ * Here the mandate is chargeable unless a test says otherwise; `notify` and
+ * `debit` are never reached, because `./collect` is a seam too.
+ */
+const charge = {
+  checkMandate: vi.fn(async (): Promise<any> => ({ state: "chargeable" })),
+  notify: vi.fn(),
+  readNotice: vi.fn(),
+  debit: vi.fn(),
+} as any;
 
 const PUNJAB_GSTIN = "03ABCDE1234F1Z5";
 
@@ -191,6 +218,12 @@ beforeEach(() => {
   repo.amountDueForInvoice.mockResolvedValue(7_000_00);
   // No previous cycle by default, so the reprice line stays out of the notice.
   repo.getCycleInvoice.mockResolvedValue(null);
+  // No automatic try made yet, so the retry rule lets the first one through.
+  collector.automaticAttemptsOn.mockResolvedValue({
+    count: 0,
+    starts: 0,
+    lastAt: null,
+  });
   collector.collectInvoice.mockResolvedValue({
     status: "paid",
     attemptId: "att-1",
@@ -720,6 +753,553 @@ describe("collectDueRenewals", () => {
     const s = await collectDueRenewals({ now: NOW, charge, priceFor });
     expect(collector.collectInvoice).not.toHaveBeenCalled();
     expect(s.collected).toBe(1);
+  });
+
+  it("★★ never charges again while a payment on the invoice is unresolved (an unknown outcome)", async () => {
+    // The first debit timed out, so its attempt is `unknown` and the invoice
+    // reads `processing`. The one-in-flight index does not cover `unknown`,
+    // so this pass is what stops a second debit an hour later.
+    repo.ensureRenewalInvoice.mockResolvedValue({
+      id: "inv-1",
+      status: "processing",
+      finalizedAt: "2026-08-28T00:00:00.000Z",
+    });
+    seed([[DUE_ROW]]);
+    const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+    expect(collector.collectInvoice).not.toHaveBeenCalled();
+    // Not even the mandate is asked about: the invoice is not ours to touch
+    // while a payment on it is unresolved.
+    expect(charge.checkMandate).not.toHaveBeenCalled();
+    expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+    expect(s).toMatchObject({ pendingReconcile: 1, collected: 0, failed: 0 });
+  });
+
+  // Owner decision, 21 Nov 2026: three automatic tries, 24 hours apart, then
+  // the merchant is asked to pay by hand. The rule itself is pinned in
+  // cycle.test.ts; this is the pass obeying it.
+  describe("★★ the retry rule: three tries, 24 hours apart", () => {
+    const LIVE_MANDATE = {
+      id: "man-1",
+      status: "active",
+      maxAmountPaise: 10_000_00,
+      providerTokenId: "tok_1",
+      providerCustomerId: "cust_1",
+    };
+    const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+
+    /** An issued, unpaid renewal on a mandate that can carry it. */
+    function openRenewal() {
+      repo.ensureRenewalInvoice.mockResolvedValue({
+        id: "inv-1",
+        status: "open",
+        finalizedAt: "2026-08-28T00:00:00.000Z",
+      });
+      seed([[DUE_ROW], [LIVE_MANDATE]]);
+    }
+
+    it("reads the invoice's automatic tries before it debits", async () => {
+      openRenewal();
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.automaticAttemptsOn).toHaveBeenCalledWith("inv-1");
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    it("★★ the hourly run after a declined debit does NOT debit again", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 1,
+        starts: 1,
+        lastAt: hoursAgo(1),
+      });
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s).toMatchObject({ pendingReconcile: 1, failed: 0 });
+    });
+
+    it("tries again once 24 hours have passed", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 1,
+        starts: 1,
+        lastAt: hoursAgo(24),
+      });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    // PR #303 review, 22 Nov 2026. Razorpay does not treat a failed payment
+    // as final: a debit reported failed can be authorised late by the bank
+    // and captured. Starting the next try then debited one renewal twice.
+    describe("★★ a retry first asks whether an earlier debit took the money after all", () => {
+      const retryDue = () => {
+        openRenewal();
+        collector.automaticAttemptsOn.mockResolvedValue({
+          count: 1,
+          starts: 1,
+          lastAt: hoursAgo(24),
+        });
+      };
+
+      it("asks about this invoice's earlier debits before the next try", async () => {
+        retryDue();
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(earlierDebits.earlierDebitsOf).toHaveBeenCalledWith({
+          invoiceId: "inv-1",
+          storeId: STORE,
+          source: "collect",
+          now: NOW,
+        });
+        expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(["paid", "unsettled", "unknown"])(
+        "★★ an earlier debit that is %s: NO new try this run",
+        async (state) => {
+          retryDue();
+          earlierDebits.earlierDebitsOf.mockResolvedValueOnce(state);
+          const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+          expect(collector.collectInvoice).not.toHaveBeenCalled();
+          expect(s).toMatchObject({ pendingReconcile: 1, failed: 0 });
+        },
+      );
+
+      it("★ a FIRST try asks nothing: no debit was ever sent for this invoice", async () => {
+        openRenewal();
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(earlierDebits.earlierDebitsOf).not.toHaveBeenCalled();
+        expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("★★ after three tries it never debits again: the invoice is the merchant's to pay", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 3,
+        starts: 3,
+        lastAt: hoursAgo(72),
+      });
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s.manualRequired).toBe(1);
+      // Said once, when the third try failed; never by the hourly re-runs.
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("★ a count that cannot be read is 'not this run', never 'no tries yet'", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue(null);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s.pendingReconcile).toBe(1);
+    });
+
+    it("★★ the last attempt the backstop allows, failed at its first step, asks the merchant to pay by hand, once", async () => {
+      openRenewal();
+      // Five attempts before this run, none of which sent a debit; after it,
+      // six, the backstop. The announcement re-reads both the invoice and
+      // the history.
+      collector.automaticAttemptsOn
+        .mockResolvedValueOnce({ count: 0, starts: 5, lastAt: hoursAgo(25) })
+        .mockResolvedValue({ count: 0, starts: 6, lastAt: NOW });
+      collector.collectInvoice.mockResolvedValue({
+        status: "failed",
+        attemptId: "att-6",
+        code: "gateway_rejected",
+      });
+      repo.getInvoice.mockResolvedValue({
+        ...ISSUED,
+        storeId: STORE,
+        kind: "subscription",
+        periodStart: "2026-09-03T00:00:00.000Z",
+      });
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [DUE_ROW],
+          [LIVE_MANDATE],
+          [{ plan: "pro", scheduledPlan: null }],
+        ],
+      });
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(s.failed).toBe(1);
+      expect(dunning.notifyAutopayStopped).toHaveBeenCalledTimes(1);
+      expect(dunning.notifyAutopayStopped).toHaveBeenCalledWith(
+        expect.objectContaining({
+          storeId: STORE,
+          plan: "pro",
+          amountPaise: 7_000_00,
+          invoiceRef: "SM/2026-27/00004",
+          // What the email counts: every attempt that was not withdrawn.
+          attempts: 6,
+          dueAt: new Date("2026-09-03T00:00:00.000Z"),
+        }),
+      );
+    });
+
+    it("★★ an attempt that failed before its debit is NOT one of the three tries: nothing is said and another follows (PR #303 review)", async () => {
+      openRenewal();
+      // The third attempt on this invoice, and the first two never sent a
+      // debit either. The old rule called this the last try.
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 0,
+        starts: 2,
+        lastAt: hoursAgo(30),
+      });
+      collector.collectInvoice.mockResolvedValue({
+        status: "failed",
+        attemptId: "att-3",
+        code: "gateway_rejected",
+      });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      expect(repo.getInvoice).not.toHaveBeenCalled();
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("★★ three debits SENT is the end: no fourth attempt starts", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 3,
+        starts: 3,
+        lastAt: hoursAgo(30),
+      });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+    });
+
+    it("an invoice that cannot be collected automatically is not counted against the rule", async () => {
+      // No mandate: `collectInvoice` answers not_collectable, as before.
+      repo.ensureRenewalInvoice.mockResolvedValue({
+        id: "inv-1",
+        status: "open",
+        finalizedAt: "2026-08-28T00:00:00.000Z",
+      });
+      seed([[{ ...DUE_ROW, mandateId: null }]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.automaticAttemptsOn).not.toHaveBeenCalled();
+    });
+  });
+
+  // 21 Nov 2026: StoreMink's record said `active` from the day a mandate was
+  // authorised, but the customer can cancel or pause it at their bank at any
+  // time, and only a `confirmed` token may be debited.
+  describe("★★ the mandate is checked at the gateway before anything is promised", () => {
+    const LIVE_MANDATE = {
+      id: "man-1",
+      status: "active",
+      maxAmountPaise: 10_000_00,
+      providerTokenId: "tok_1",
+      providerCustomerId: "cust_1",
+      method: "card",
+    };
+    const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+    /** The pass's two reads, then the mandate status write's result. */
+    function seedWith(mandate: unknown, moved: unknown[] = [{ id: "man-1" }]) {
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [DUE_ROW],
+          [mandate],
+          [{ plan: "pro", scheduledPlan: null }],
+        ],
+        returning: moved,
+      });
+    }
+
+    it("asks about this mandate's customer and token before the invoice is issued", async () => {
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(charge.checkMandate).toHaveBeenCalledWith({
+        providerCustomerId: "cust_1",
+        providerTokenId: "tok_1",
+      });
+      expect(charge.checkMandate.mock.invocationCallOrder[0]).toBeLessThan(
+        repo.finalizeInvoiceClaimed.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("★★ a mandate the customer CANCELLED: the one notice says pay by hand, and nothing is collected", async () => {
+      charge.checkMandate.mockResolvedValueOnce({
+        state: "ended",
+        detail: "cancelled",
+      });
+      seedWith(LIVE_MANDATE);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(false);
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      // The mandate handed on is no longer `active`, so step 1 refuses it.
+      expect(collector.collectInvoice.mock.calls[0][0].mandate.status).toBe(
+        "revoked",
+      );
+      // StoreMink's own record follows the gateway.
+      expect(dbHolder.current.calls.set).toContainEqual(
+        expect.objectContaining({ status: "revoked" }),
+      );
+      expect(s.errors).toBe(0);
+    });
+
+    it("★ a PAUSED mandate is not charged now, and is left to be asked about again", async () => {
+      charge.checkMandate.mockResolvedValueOnce({
+        state: "paused",
+        detail: "paused",
+      });
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(false);
+      expect(dbHolder.current.calls.set).toContainEqual(
+        expect.objectContaining({ status: "unknown" }),
+      );
+    });
+
+    /** The pass's reads for a renewal that became due `hours` ago. */
+    function seedDueSince(hours: number) {
+      // Collection opens four days before the cycle begins.
+      const periodEnd = new Date(
+        NOW.getTime() + 4 * 24 * 3_600_000 - hours * 3_600_000,
+      ).toISOString();
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [{ ...DUE_ROW, currentPeriodEnd: periodEnd }],
+          [LIVE_MANDATE],
+          [{ plan: "pro", scheduledPlan: null }],
+        ],
+      });
+    }
+
+    it("★★ a gateway that could not be asked stops the run BEFORE the invoice is issued: no notice on a guess", async () => {
+      charge.checkMandate.mockResolvedValueOnce({ state: "unknown" });
+      seedDueSince(MANDATE_CHECK_HOLD_HOURS - 1);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(repo.finalizeInvoiceClaimed).not.toHaveBeenCalled();
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s.pendingReconcile).toBe(1);
+    });
+
+    // With no invoice the cycle turn has nothing unpaid to open grace on, and
+    // the store would keep its plan for nothing. And "could not be asked" can
+    // be permanent (Razorpay answers a deleted mandate "the id provided does
+    // not exist").
+    it(`★★ but not for ever: after ${MANDATE_CHECK_HOLD_HOURS}h of no answer the invoice is issued to pay by hand`, async () => {
+      charge.checkMandate.mockResolvedValueOnce({ state: "unknown" });
+      seedDueSince(MANDATE_CHECK_HOLD_HOURS);
+      const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(repo.finalizeInvoiceClaimed).toHaveBeenCalledTimes(1);
+      // The one notice asks for payment; it promises no automatic debit.
+      expect(dunning.notifyInvoiceIssued).toHaveBeenCalledTimes(1);
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(false);
+      // No automatic try on a mandate nobody could vouch for.
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
+      expect(s).toMatchObject({ manualRequired: 1, errors: 0 });
+      // ★ The mandate's record is untouched: silence is not a cancellation.
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+    });
+
+    it("★ once issued that way, a later run asks again, and autopay collects on a clear yes", async () => {
+      repo.ensureRenewalInvoice.mockResolvedValue({
+        id: "inv-1",
+        status: "open",
+        finalizedAt: "2026-08-31T00:00:00.000Z",
+      });
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 0,
+        starts: 0,
+        lastAt: null,
+      });
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(charge.checkMandate).toHaveBeenCalledTimes(1);
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      // Issued on an earlier run: no second issue notice.
+      expect(dunning.notifyInvoiceIssued).not.toHaveBeenCalled();
+    });
+
+    it("★ a paused mandate the customer RESUMED is live again", async () => {
+      seedWith({ ...LIVE_MANDATE, status: "unknown" });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(dbHolder.current.calls.set).toContainEqual(
+        expect.objectContaining({ status: "active" }),
+      );
+      expect(dunning.notifyInvoiceIssued.mock.calls[0][0].autopay).toBe(true);
+    });
+
+    it("nothing is asked with no gateway, no mandate, or a mandate already ended", async () => {
+      seedWith(LIVE_MANDATE);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      seed([[{ ...DUE_ROW, mandateId: null }]]);
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      seedWith({ ...LIVE_MANDATE, status: "revoked" });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(charge.checkMandate).not.toHaveBeenCalled();
+    });
+
+    describe("a RETRY asks again, days after the invoice was issued", () => {
+      function issuedAndOwed() {
+        repo.ensureRenewalInvoice.mockResolvedValue({
+          id: "inv-1",
+          status: "open",
+          finalizedAt: "2026-08-28T00:00:00.000Z",
+        });
+        collector.automaticAttemptsOn.mockResolvedValue({
+          count: 1,
+          starts: 1,
+          lastAt: hoursAgo(40),
+        });
+        repo.getInvoice.mockResolvedValue({
+          ...ISSUED,
+          storeId: STORE,
+          kind: "subscription",
+          periodStart: "2026-09-03T00:00:00.000Z",
+        });
+      }
+
+      it("a mandate still confirmed goes on to the next try", async () => {
+        issuedAndOwed();
+        seedWith(LIVE_MANDATE);
+        const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(charge.checkMandate).toHaveBeenCalledTimes(1);
+        expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+        expect(s.errors).toBe(0);
+      });
+
+      it("★★ a mandate cancelled since: no try, and the merchant is asked to pay ONCE", async () => {
+        issuedAndOwed();
+        charge.checkMandate.mockResolvedValueOnce({
+          state: "ended",
+          detail: "cancelled",
+        });
+        seedWith(LIVE_MANDATE);
+        const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(collector.collectInvoice).not.toHaveBeenCalled();
+        expect(s.manualRequired).toBe(1);
+        expect(dunning.notifyAutopayStopped).toHaveBeenCalledTimes(1);
+        expect(dunning.notifyAutopayStopped.mock.calls[0][0]).toMatchObject({
+          cause: "mandate",
+          storeId: STORE,
+        });
+      });
+
+      it("★ a status write another pass already made announces nothing a second time", async () => {
+        issuedAndOwed();
+        charge.checkMandate.mockResolvedValueOnce({
+          state: "ended",
+          detail: "cancelled",
+        });
+        // The conditional status write moved no row: someone got there first.
+        seedWith(LIVE_MANDATE, []);
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(collector.collectInvoice).not.toHaveBeenCalled();
+        expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+      });
+
+      it("a gateway that could not be asked leaves the retry for the next run", async () => {
+        issuedAndOwed();
+        charge.checkMandate.mockResolvedValueOnce({ state: "unknown" });
+        seedWith(LIVE_MANDATE);
+        const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(collector.collectInvoice).not.toHaveBeenCalled();
+        expect(s.pendingReconcile).toBe(1);
+      });
+
+      it("while it is still waiting its 24 hours, the gateway is not asked at all", async () => {
+        issuedAndOwed();
+        collector.automaticAttemptsOn.mockResolvedValue({
+          count: 1,
+          starts: 1,
+          lastAt: hoursAgo(2),
+        });
+        seedWith(LIVE_MANDATE);
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(charge.checkMandate).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("★ a renewal whose order and notice were created counts as notified", async () => {
+    repo.ensureRenewalInvoice.mockResolvedValue({
+      id: "inv-1",
+      status: "open",
+      finalizedAt: "2026-08-28T00:00:00.000Z",
+    });
+    collector.collectInvoice.mockResolvedValue({
+      status: "notified",
+      attemptId: "att-1",
+      debitAfter: new Date("2026-09-02T14:00:00.000Z"),
+    });
+    seed([
+      [DUE_ROW],
+      [
+        {
+          id: "man-1",
+          status: "active",
+          maxAmountPaise: 10_000_00,
+          providerTokenId: "tok_1",
+          providerCustomerId: "cust_1",
+          method: "upi",
+        },
+      ],
+    ]);
+    const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+    expect(s).toMatchObject({ notified: 1, collected: 0, failed: 0 });
+    // The mandate's rail goes with it: it decides the notice period.
+    expect(collector.collectInvoice.mock.calls[0][0].mandate.method).toBe(
+      "upi",
+    );
+  });
+
+  describe("announceAutopayStopped: said only when it is true", () => {
+    const openInvoice = {
+      ...ISSUED,
+      storeId: STORE,
+      kind: "subscription",
+      periodStart: "2026-09-03T00:00:00.000Z",
+    };
+
+    function facts(invoice: unknown, count: number) {
+      repo.getInvoice.mockResolvedValue(invoice);
+      collector.automaticAttemptsOn.mockResolvedValue({ count, lastAt: NOW });
+      seed([[{ plan: "basic", scheduledPlan: "pro" }]]);
+    }
+    const run = () =>
+      announceAutopayStopped({ storeId: STORE, invoiceId: "inv-1", now: NOW });
+
+    it("names the plan the unpaid cycle was priced as (a booked change)", async () => {
+      facts(openInvoice, 3);
+      expect(await run()).toBe(true);
+      expect(dunning.notifyAutopayStopped).toHaveBeenCalledWith(
+        expect.objectContaining({ plan: "pro" }),
+      );
+    });
+
+    it.each(["paid", "processing", "void", "uncollectible", "draft"])(
+      "★ says nothing for an invoice that is %s",
+      async (status) => {
+        facts({ ...openInvoice, status }, 3);
+        expect(await run()).toBe(false);
+        expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+      },
+    );
+
+    it("★ says nothing while a try is still left", async () => {
+      facts(openInvoice, 2);
+      expect(await run()).toBe(false);
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("says nothing for another store's invoice, a pack invoice or a missing one", async () => {
+      for (const invoice of [
+        { ...openInvoice, storeId: "store-2" },
+        { ...openInvoice, kind: "ai_credits" },
+        null,
+      ]) {
+        facts(invoice, 3);
+        expect(await run()).toBe(false);
+      }
+      expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("never throws", async () => {
+      repo.getInvoice.mockRejectedValue(new Error("db down"));
+      expect(await run()).toBe(false);
+    });
   });
 
   it("★ never guesses an amount — a null due figure stops the charge", async () => {
@@ -1353,6 +1933,66 @@ describe("downgradeExpired", () => {
     expect(set.closedByName).toBe("System");
   });
 
+  // PR #303 fifth review, 22 Nov 2026. A renewal debit recorded as failed
+  // and captured later is filed for a person and every further debit is
+  // held, so the invoice stays open. Grace then ran out and the store was
+  // downgraded while StoreMink held its payment for that very invoice.
+  describe("★★ a store whose payment for this renewal StoreMink is holding", () => {
+    it("is NOT downgraded: the claim is never asked, the plan and the till are untouched", async () => {
+      seed([[{ storeId: STORE, plan: "pro", currentCycleSeq: 4 }]]);
+      const execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+      dbHolder.current.db.execute = execute;
+      earlierDebits.renewalPaymentHeld.mockResolvedValueOnce(true);
+
+      const s = await downgradeExpired({ now: NOW });
+      expect(earlierDebits.renewalPaymentHeld).toHaveBeenCalledWith(STORE, 4);
+      expect(s).toMatchObject({
+        downgraded: 0,
+        heldForPayment: 1,
+        shiftsClosed: 0,
+        errors: 0,
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+    });
+
+    it("★★ a check that could not be read is not a reason to take a plan away: left this run, counted as an error", async () => {
+      seed([[{ storeId: STORE, plan: "pro", currentCycleSeq: 4 }]]);
+      const execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+      dbHolder.current.db.execute = execute;
+      earlierDebits.renewalPaymentHeld.mockResolvedValueOnce(null);
+
+      const s = await downgradeExpired({ now: NOW });
+      expect(s).toMatchObject({ downgraded: 0, heldForPayment: 0, errors: 1 });
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it("nothing held: downgraded as for any unpaid renewal", async () => {
+      seed([[{ storeId: STORE, plan: "pro", currentCycleSeq: 4 }]]);
+      dbHolder.current.db.execute = vi.fn(async () => ({
+        rows: [{ ok: true }],
+      }));
+      const s = await downgradeExpired({ now: NOW });
+      expect(s).toMatchObject({ downgraded: 1, heldForPayment: 0 });
+    });
+
+    it("★ a plan the merchant CANCELLED still ends on its day: the question is not asked", async () => {
+      seed([
+        [
+          {
+            storeId: STORE,
+            plan: "pro",
+            cancelAtPeriodEnd: true,
+            currentCycleSeq: 4,
+          },
+        ],
+      ]);
+      dbHolder.current.db.execute = vi.fn(async () => ({ rows: [] }));
+      await downgradeExpired({ now: NOW });
+      expect(earlierDebits.renewalPaymentHeld).not.toHaveBeenCalled();
+    });
+  });
+
   it("★★ takes the plan off the STORE — the claim alone moves only the bill", async () => {
     // It used to be plan_expires_at that removed the plan, from payers and
     // non-payers alike. Paid plans carry no expiry now, so this is the
@@ -1547,10 +2187,12 @@ describe("downgradeExpired", () => {
 
         expect(s).toEqual({
           downgraded: 0,
+          heldForPayment: 0,
           shiftsClosed: 0,
           ended: 1,
           advancedAfterGrace: 0,
           errors: 0,
+          next: null,
         });
         // ★★ The downgrade claim is never asked.
         expect(executed("billing_claim_downgrade")).toHaveLength(0);
@@ -1727,6 +2369,171 @@ describe("downgradeExpired", () => {
         "billing.renewal.advanced_after_grace",
         expect.anything(),
       );
+    });
+  });
+});
+
+// 21 Nov 2026: every pass took "the first 50 rows" with no ORDER BY, and most
+// of those rows are still there on the next run, so past a few hundred
+// subscribers the same 50 could come back every hour and the rest never be
+// reached. Each pass now pages in a fixed order.
+describe("★★ the passes page through every subscription", () => {
+  const CURSOR = {
+    at: "2026-09-03 00:00:00.123456+00",
+    storeId: "a0000000-0000-4000-8000-000000000009",
+  };
+  /** Every WHERE the pass ran, as Postgres would receive it. */
+  const wheres = () =>
+    dbHolder.current.calls.where.map((w: unknown) => render(w));
+  const page = (n: number, make: (i: number) => Record<string, unknown>) =>
+    Array.from({ length: n }, (_, i) => make(i));
+  const storeId = (i: number) =>
+    `a0000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+
+  describe("collectDueRenewals", () => {
+    const due = (i: number) => ({
+      ...DUE_ROW,
+      storeId: storeId(i),
+      mandateId: null,
+      currentPeriodEnd: `2026-09-03 00:00:0${i % 10}+00`,
+    });
+
+    it("a FULL page hands back where it stopped; a short page does not", async () => {
+      seed([page(3, due)]);
+      const full = await collectDueRenewals({
+        now: NOW,
+        limit: 3,
+        charge: null,
+        priceFor,
+      });
+      expect(full.next).toEqual({
+        at: "2026-09-03 00:00:02+00",
+        storeId: storeId(2),
+      });
+
+      seed([page(2, due)]);
+      const short = await collectDueRenewals({
+        now: NOW,
+        limit: 3,
+        charge: null,
+        priceFor,
+      });
+      expect(short.next).toBeNull();
+    });
+
+    it("★★ the next page starts strictly AFTER the cursor, by (cycle end, store)", async () => {
+      seed([[]]);
+      await collectDueRenewals({
+        now: NOW,
+        charge: null,
+        priceFor,
+        after: CURSOR,
+      });
+      const claim = wheres()[0];
+      expect(claim.sql).toContain(
+        '("billing_subscriptions"."current_period_end", "billing_subscriptions"."store_id") > (',
+      );
+      // The cursor's own time string goes back unchanged, so no precision is
+      // lost between pages.
+      expect(claim.params).toContain(CURSOR.at);
+      expect(claim.params).toContain(CURSOR.storeId);
+    });
+
+    it("the first page has no cursor at all", async () => {
+      seed([[]]);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      expect(wheres()[0].sql).not.toContain(") > (");
+    });
+
+    it("★★ a renewal already PAID is not read again every hour until its cycle turns", async () => {
+      seed([[]]);
+      await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      const claim = wheres()[0].sql;
+      expect(claim).toContain("not exists");
+      expect(claim).toContain("paid_next.status = 'paid'");
+      expect(claim).toContain(
+        'paid_next.cycle_seq = "billing_subscriptions"."current_cycle_seq" + 1',
+      );
+    });
+
+    it("a failed read leads nowhere", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+      const s = await collectDueRenewals({ now: NOW, charge: null, priceFor });
+      expect(s).toMatchObject({ errors: 1, next: null });
+    });
+  });
+
+  describe("evaluateCycleTurns", () => {
+    const turned = (i: number) => ({
+      storeId: storeId(i),
+      plan: "pro",
+      period: "monthly",
+      billedLocations: 0,
+      scheduledPlan: null,
+      scheduledPeriod: null,
+      scheduledLocations: null,
+      cancelAtPeriodEnd: false,
+      currentCycleSeq: 3,
+      currentPeriodEnd: `2026-08-30 00:00:0${i}+00`,
+    });
+
+    it("★ a full page of cycles still WAITING on a payment does not hide the ones behind it", async () => {
+      // No invoice rows are seeded, so every row is "waiting": exactly the
+      // rows that stay in the set and used to fill every page.
+      seed([page(2, turned)]);
+      const s = await evaluateCycleTurns({ now: NOW, limit: 2 });
+      expect(s.waiting).toBe(2);
+      expect(s.next).toEqual({
+        at: "2026-08-30 00:00:01+00",
+        storeId: storeId(1),
+      });
+    });
+
+    it("the next page starts after the cursor; a short page ends the pass", async () => {
+      seed([page(1, turned)]);
+      const s = await evaluateCycleTurns({ now: NOW, limit: 2, after: CURSOR });
+      expect(s.next).toBeNull();
+      expect(wheres()[0].sql).toContain(
+        '("billing_subscriptions"."current_period_end", "billing_subscriptions"."store_id") > (',
+      );
+      expect(wheres()[0].params).toContain(CURSOR.at);
+    });
+
+    it("a page that failed leads nowhere", async () => {
+      dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+      const s = await evaluateCycleTurns({ now: NOW, limit: 1 });
+      expect(s).toMatchObject({ errors: 1, next: null });
+    });
+  });
+
+  describe("downgradeExpired", () => {
+    const lapsed = (i: number) => ({
+      storeId: storeId(i),
+      plan: "pro",
+      cancelAtPeriodEnd: false,
+      currentCycleSeq: 3,
+      graceEndsAt: `2026-08-29 00:00:0${i}+00`,
+    });
+
+    it("a full page hands back where it stopped, by (grace end, store)", async () => {
+      seed([page(2, lapsed)]);
+      // The claim refuses both (a payment is in flight): they stay in the set.
+      dbHolder.current.db.execute = vi.fn(async () => ({ rows: [] }));
+      const s = await downgradeExpired({ now: NOW, limit: 2 });
+      expect(s.next).toEqual({
+        at: "2026-08-29 00:00:01+00",
+        storeId: storeId(1),
+      });
+    });
+
+    it("the next page starts after the cursor; a short page ends the pass", async () => {
+      seed([[]]);
+      const s = await downgradeExpired({ now: NOW, limit: 2, after: CURSOR });
+      expect(s.next).toBeNull();
+      expect(wheres()[0].sql).toContain(
+        '("billing_subscriptions"."grace_ends_at", "billing_subscriptions"."store_id") > (',
+      );
+      expect(wheres()[0].params).toContain(CURSOR.storeId);
     });
   });
 });

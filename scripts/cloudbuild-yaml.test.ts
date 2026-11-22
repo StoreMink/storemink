@@ -273,6 +273,45 @@ describe("cloudbuild.yaml, Theme Studio", () => {
     ).toBe(50_000_000);
   });
 
+  // 22 Nov 2026: ElevenLabs draws Theme Studio and redesign photos only when
+  // an operator chooses it AND its key is here, so a deploy with no key
+  // changes nothing.
+  it("★ passes ElevenLabs' image key as a plain substitution that is empty by default", () => {
+    expect(substitutionDefaults().get("_ELEVENLABS_API_KEY")).toBe("");
+    const run = runStep(
+      "deploy",
+      values({
+        _SERVICE: "storemink-web-prod",
+        COMMIT_SHA: SHA,
+        _ELEVENLABS_API_KEY: "sk_test_value",
+      }),
+    );
+    expect(deployedEnv(run.calls).get("ELEVENLABS_API_KEY")).toBe(
+      "sk_test_value",
+    );
+  });
+
+  // PR #303 re-review, 22 Nov 2026: looking for a lost job in the provider's
+  // list is safe only where no other environment uses the key, so it is off
+  // unless a trigger says so.
+  it("★★ the ElevenLabs key is taken as SHARED unless a trigger declares it exclusive", () => {
+    expect(substitutionDefaults().get("_ELEVENLABS_KEY_EXCLUSIVE")).toBe("");
+    const base = { _SERVICE: "storemink-web-prod", COMMIT_SHA: SHA };
+    expect(
+      deployedEnv(runStep("deploy", values(base)).calls).get(
+        "ELEVENLABS_KEY_EXCLUSIVE",
+      ),
+    ).toBe("");
+    expect(
+      deployedEnv(
+        runStep(
+          "deploy",
+          values({ ...base, _ELEVENLABS_KEY_EXCLUSIVE: "true" }),
+        ).calls,
+      ).get("ELEVENLABS_KEY_EXCLUSIVE"),
+    ).toBe("true");
+  });
+
   it("★★ draws every picture with Nano Banana 2.1, and switching back is a trigger substitution and a deploy (owner, 25 Oct 2026)", () => {
     const defaults = substitutionDefaults();
     expect(defaults.get("_THEME_STUDIO_IMAGE_MODEL")).toBe(

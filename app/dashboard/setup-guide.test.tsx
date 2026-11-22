@@ -38,6 +38,20 @@ vi.mock("next/dynamic", () => ({
       );
     },
 }));
+// The question the guide offers the top-bar Mink AI bar, made visible.
+vi.mock("./mink-page-suggestion", () => ({
+  MinkPageSuggestion: ({
+    label,
+    prompt,
+  }: {
+    label: string;
+    prompt: string;
+  }) => (
+    <span data-testid="page-suggestion" data-prompt={prompt}>
+      {label}
+    </span>
+  ),
+}));
 vi.mock("@/app/actions/launch-actions", () => ({
   launchStore: vi.fn(async () => ({ success: true })),
   regenerateStorefrontPassword: vi.fn(async () => ({ password: "newpass22" })),
@@ -314,5 +328,40 @@ describe("SetupGuide", () => {
       "Finish the required steps before going live. Still to do: Choose your storefront theme, Publish your store policies (Refund & Cancellation, Privacy).",
     );
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("offers Mink AI a question about the open unfinished task", () => {
+    renderGuide([
+      item("phone", true, true),
+      item("theme", true, false),
+      item("products", true, false),
+    ]);
+    const offered = screen.getByTestId("page-suggestion");
+    expect(offered.textContent).toBe("How do I choose a theme for my store?");
+    expect(offered.getAttribute("data-prompt")).toBe(
+      "How do I choose a theme for my store?",
+    );
+  });
+
+  it("follows the task the merchant opens, and falls back when it is done", () => {
+    renderGuide([
+      item("phone", true, true),
+      item("theme", true, false),
+      item("products", true, false),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: /Task products/ }));
+    expect(screen.getByTestId("page-suggestion").textContent).toBe(
+      "How do I add my first product?",
+    );
+    // A finished task offers no question: the first unfinished one returns.
+    fireEvent.click(screen.getByRole("button", { name: /Task phone/ }));
+    expect(screen.getByTestId("page-suggestion").textContent).toBe(
+      "How do I choose a theme for my store?",
+    );
+  });
+
+  it("offers nothing once every required task is done", () => {
+    renderGuide([item("phone", true, true), item("theme", true, true)]);
+    expect(screen.queryByTestId("page-suggestion")).toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import { collectThemeImageUrls } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
 import { logWarn } from "@/lib/observability/logger";
 import {
+  BELOW_TARGET_FRACTION,
   type BrowserStateSample,
   acceptanceAssetsDigest,
   acceptanceEvidenceDigest,
@@ -1198,6 +1199,27 @@ describe("severity (severity-v1)", () => {
     ({ pkg, rows } = fixture());
     resize(pkg, rows, c, 1599, 1199);
     expect(integrity(pkg, rows).findings).toEqual([]);
+    // ★ Nor is a picture within 15% of its slot (22 Nov 2026): every wide
+    //   picture drawn at "2K" is 2,239px (21:9) or 2,048px (16:9) for a
+    //   2,400px slot, so the warning fired on every theme and the design
+    //   review listed it as a finding each time.
+    expect(BELOW_TARGET_FRACTION).toBe(0.85);
+    for (const [width, height] of [
+      [2239, 960],
+      [2048, 1152],
+    ]) {
+      ({ pkg, rows } = fixture());
+      resize(pkg, rows, c, width, height);
+      expect(
+        integrity(pkg, rows).findings.map((f) => f.code),
+        `${width}x${height}`,
+      ).not.toContain("below_target");
+    }
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, c, 2000, 1125);
+    expect(integrity(pkg, rows).findings.map((f) => f.code)).toContain(
+      "below_target",
+    );
     // Below the minimum it is too small, which is serious, and only that.
     ({ pkg, rows } = fixture());
     resize(pkg, rows, c, 760, 570);
@@ -1211,6 +1233,59 @@ describe("severity (severity-v1)", () => {
     expect(integrity(pkg, rows).findings.map((f) => f.code)).not.toContain(
       "below_target",
     );
+  });
+
+  it('★ a slide\'s phone photograph is a picture the theme renders, never "unused" (22 Nov 2026)', () => {
+    // The check followed only the key `image_url`, so every opening slide's
+    // `mobile_image_url` was reported "declared but nothing renders it"; the
+    // design review read that as a platform fault and failed finished
+    // designs. Move one section picture to each picture field in turn.
+    for (const key of ["mobile_image_url", "poster_url", "logo_url"]) {
+      const { pkg, rows } = fixture();
+      const text = JSON.stringify(pkg.definition);
+      // A picture one section names, once, and nothing else does.
+      const once = new Set(
+        pkg.assets
+          .map((asset) => asset.path)
+          .filter((path) => text.split(JSON.stringify(path)).length === 2),
+      );
+      let moved: string | null = null;
+      const visit = (value: unknown): void => {
+        if (moved || !value || typeof value !== "object") return;
+        if (Array.isArray(value)) return value.forEach(visit);
+        const record = value as Record<string, unknown>;
+        const url = record.image_url;
+        if (typeof url === "string" && once.has(url)) {
+          moved = url;
+          delete record.image_url;
+          record[key] = url;
+          return;
+        }
+        Object.values(record).forEach(visit);
+      };
+      for (const page of pkg.definition.preset.pages)
+        for (const section of page.sections) visit(section.config);
+      expect(moved, "the fixture has such a section picture").not.toBeNull();
+      const id = pkg.assets.find((asset) => asset.path === moved)!.id;
+      expect(
+        integrity(pkg, rows)
+          .findings.filter((f) => f.code === "unused")
+          .map((f) => f.where),
+        key,
+      ).not.toContain(id);
+    }
+    // A picture nothing names at all is still reported.
+    const { pkg, rows } = fixture();
+    const text = JSON.stringify(pkg.definition);
+    const orphan = pkg.assets.find(
+      (asset) => asset.kind !== "reference" && !text.includes(asset.path),
+    );
+    if (orphan)
+      expect(
+        integrity(pkg, rows).findings.some(
+          (f) => f.code === "unused" && f.where === orphan.id,
+        ),
+      ).toBe(true);
   });
 
   it("keeps every package-level problem serious", () => {

@@ -251,6 +251,25 @@ The merchant still gets exactly the 2-day buffer from the moment their payment
 is known to have failed. They simply do not get punished for the settlement
 window.
 
+**★★ As built since 21 Nov 2026, the debit is a second step, a day or more
+after the notice.** Razorpay accepts a renewal debit only on an order created
+with its pre-debit `notification`, and only once the notice period has passed
+since the customer was sent it (36 hours 5 minutes for a card, 25 hours for
+UPI). So the timeline above is, for a card:
+
+```
+T-4d      finalize invoice; ask the gateway whether the mandate still stands
+          └─ create the order WITH its notification (Razorpay sends the notice)
+          └─ attempt recorded `processing`, with `debit_after`; no money moves
+T-2.5d    the debit pass sends the debit of that order (once, claimed)
+          ├─ captured → invoice paid
+          └─ failed   → second try: new order, new notice, debit at about T-1d;
+                        a third lands just after T0, the invoice `processing`
+                        meanwhile, so no grace starts on a payment in flight
+```
+
+§7 "Renewal" has the rules; docs/autopay-verification.md has the test runs.
+
 **A consequence worth stating, because it resolves an ambiguity:** the amount is
 frozen at T-4d, so a location added at T-2d bills on the **next** invoice. That
 is deterministic and it is what the merchant is told.
@@ -441,6 +460,17 @@ unknown ──(verification)──▶ active | failed
 
 **`unknown` triggers verification, never an assumption.** A newly created
 mandate is `pending` until the token reports `confirmed`.
+
+**★★ The gateway is asked again before every automatic try and before every
+debit** (`verifyMandate`, `lib/billing/mandate-check.ts`, 21 Nov 2026). The
+customer can cancel or pause a mandate at their bank at any time, and only a
+`confirmed` token may be debited. The record follows the answer, each move one
+conditional write on the status it was read with: cancelled or rejected
+becomes `revoked` or `failed`, a token past its expiry `expired`, paused
+`unknown` (and `active` again once the customer resumes it, unless a newer
+mandate has taken its place). An answer that could not be read changes
+nothing. The call that takes a mandate off `active` is the one moment the
+merchant is told ("Autopay is no longer active").
 
 ---
 
@@ -699,6 +729,8 @@ amount_paise     bigint not null,
 provider_order_id, provider_payment_id, provider_token_id  text,
 mandate_max_paise bigint,              -- exact token.max_amount at checkout
 failure_code, failure_reason  text,
+debit_after      timestamptz,          -- 0281: a notified renewal's earliest debit time
+debit_sent_at    timestamptz,          -- 0281: set by the ONE claim that sends the debit
 
 create unique index one_attempt_in_flight on payment_attempts (invoice_id)
   where state in ('created','processing','authorized');
@@ -873,6 +905,92 @@ collectionStartsAt(cycleStart))`). A scheduled GST start that falls inside
   `billing.renewal_place_of_supply_fallback` or `billing.renewal_outside_india`
   (WARNING): each is a store to contact.
 
+- **★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY HAND**
+  (owner decision, 21 Nov 2026). The collect pass re-reads every subscription
+  inside the lead window each hour, and a declined debit leaves its invoice
+  `open`, so with no rule it debited the mandate on every run. Now
+  `autoCollectDecision` (`cycle.ts`) allows at most
+  `AUTO_COLLECT_MAX_ATTEMPTS` (3) automatic attempts on one invoice, at least
+  `AUTO_COLLECT_RETRY_HOURS` (24) apart, counted from the attempts table
+  (`automaticAttemptsOn`). So the timeline for a mandate that declines is:
+  T-4d first try, T-3d second, T-2d third, then the "Automatic payment didn't
+  go through" email (`announceAutopayStopped`) asking the merchant to pay the
+  invoice on Plans & Billing; at T0 the unpaid invoice opens the ordinary
+  48-hour grace. A try whose outcome is unknown blocks the next one until
+  reconciliation settles it (the pass never charges a `processing` invoice),
+  and a debit the gateway itself reports failed is settled failed on the next
+  reconcile pass, not after 72 hours.
+
+- **★★ AN AUTOMATIC RENEWAL IS TWO STEPS: THE NOTICE, THEN THE DEBIT**
+  (21 Nov 2026, migration 0281). Step 1 is the collect pass: `collectInvoice`
+  asks the gateway (`RecurringGateway.notify`) for an order with
+  `payment_capture` and `notification { token_id, payment_after }`, and
+  records the attempt `processing` with the order and `debit_after`. Step 2 is
+  its own pass in the same hourly job, after collect and before reconcile:
+  `sendDueDebits` (`lib/billing/debit-pass.ts`) takes each automatic attempt
+  whose `debit_after` has passed and, before sending anything, re-reads the
+  invoice (still owed), the plan (`cycleRefusal`: not cancelled, not ended),
+  StoreMink's mandate record (`active`), the mandate at the gateway
+  (`verifyMandate`) and the notice (`readNotice`: delivered, and its period
+  passed by the gateway's own clock). Then it claims the debit, one
+  conditional write of `debit_sent_at`, and only the claimant calls
+  `POST /payments/create/recurring`.
+  - **A try is now a notice plus a debit**, so the three tries of the rule
+    above fall about a day and a half apart for a card, the third debit just
+    after T0. The 24 hours of `AUTO_COLLECT_RETRY_HOURS` is still the minimum.
+  - **Every write that ends a notified attempt without debiting it** (plan
+    cancelled, invoice closed, mandate gone, notice never delivered) moves it
+    only while `debit_sent_at` is null (`settleAttempt`'s `onlyIfUnsent`). A
+    closed attempt never reopens, so without that a second run could close an
+    attempt whose debit the first run had just sent, and the capture would be
+    ignored.
+  - **Waiting ends.** No answer from the gateway decides nothing for that
+    run, but a notified attempt keeps its invoice `processing`, which holds
+    off grace. So after `GATEWAY_SILENCE_DEADLINE_HOURS` (24) past its debit
+    time the try is failed (`gateway_unreachable`), and a notice still
+    undelivered `NOTICE_DELIVERY_DEADLINE_HOURS` (12) past it likewise. At
+    issue, a mandate the gateway will not vouch for holds the invoice back at
+    most `MANDATE_CHECK_HOLD_HOURS` (24) from T-4d; then it is issued to pay
+    by hand, the mandate's record untouched.
+  - **Reconcile leaves a waiting attempt alone** (`debit_after` set,
+    `debit_sent_at` null) and runs its 6-hour and 72-hour clocks from
+    `debit_sent_at`.
+  - **The merchant may pay a scheduled renewal by hand** ("Pay now
+    instead", 22 Nov 2026). `startInvoicePayment` with `insteadOfAutopay`
+    withdraws the scheduled debit through the same guarded write
+    (`withdrawUnsentDebits`), after every refusal that applies to any
+    invoice, then opens an ordinary checkout; a debit already sent is never
+    replaced. A checkout opened and closed without paying is reopened on its
+    SAME gateway order ("Continue payment"; `PayableInvoice.resumable`) once
+    the gateway's record shows nobody has paid it and no payment is waiting
+    for approval (`orderIsUntouched`, `lib/billing/order-state.ts`, the rule
+    enrolment already used).
+  - **Plans & Billing** lists such an invoice as "Your renewal is scheduled",
+    "Autopay on or after <date>" (`PayableInvoice.autopayAt`), and the cancel
+    wording reads it as an unpaid invoice that won't be charged
+    (`readNextInvoice`), never as a payment that cannot be stopped.
+
+- **★★ THE PASSES PAGE THROUGH EVERY SUBSCRIPTION** (21 Nov 2026). Collect,
+  evaluate and downgrade each sort oldest first and hand back a cursor when a
+  page of 50 is full; the cron's `drain` keeps reading pages (up to 40, inside
+  180 seconds) and reports `more` only when it stopped with pages still ahead.
+  Collect skips a subscription whose next invoice is already paid.
+- **★★ THE WEBHOOK SETTLES A PAYMENT RESULT AT ONCE** (21 Nov 2026).
+  `POST /api/webhooks/razorpay` hands `payment.captured` and `payment.failed`
+  to `applyBillingPaymentEvent` (`lib/billing/webhook.ts`), which settles the
+  attempt made on that gateway order through the same conditional claim
+  reconcile uses. It skips a payment on an unissued invoice (an on-session
+  purchase finishing in its own checkout), a failed try in a manual checkout
+  and an amount that differs from the attempt's. The hourly reconcile remains
+  the source of truth: a missed delivery costs latency, never correctness.
+  Both events are ticked on the live webhook in StoreMink's Razorpay dashboard
+  (owner, 21 Nov 2026).
+- **An attempt with no gateway order, or an automatic debit whose order never
+  got a payment, no longer waits for ever or for 72 hours** (reconcile:
+  `closeOrderlessAttempts` after 15 minutes, and
+  `AUTO_NO_PAYMENT_FAIL_AFTER_HOURS`, 6). A manual payment is refused while an
+  earlier payment on the invoice is `unknown` (`hasUnknownAttempt`).
+
 ### Issuing an invoice: the GST in force at issue
 
 Every issue goes through `issueInvoice` (`lib/billing/invoice-store.ts`;
@@ -1016,7 +1134,10 @@ history by itself.
 
 Cancelling sets `cancel_at_period_end` and revokes the mandate; it is allowed at
 any time, including after T-4d with the renewal invoice issued, its payment
-under way or already paid. The plan runs to the end of the cycle (or of grace)
+under way or already paid. A renewal debit that is scheduled but not sent (its
+bank notice out, its notice period still running) is withdrawn at once
+(`withdrawUnsentDebits`), and the debit pass refuses a cancelled plan's debit
+by itself, so the mandate revoke being best-effort lets nothing through. The plan runs to the end of the cycle (or of grace)
 and then ends: `endSubscription` closes every invoice above the last cycle
 reached as `void` in the same transaction (§4), and the refund pass, which runs
 last in the same hourly job, owes a refund (`cycle_not_reached`) for each
@@ -1205,9 +1326,14 @@ continue`). A merchant who paid in that window can never be credited by any
    purchase is `paid` with no credits, and reconcile filters on
    `status='pending'` so nothing ever retries it. Fix: one transaction, or a
    `credit_granted_at` column that reconciliation targets.
-3. **No `payment.captured` webhook.** Everything rests on the merchant's browser
-   returning plus a reconcile-on-page-load. Adding the webhook removes both the
-   window and the dependence on a page nobody may visit.
+3. **No `payment.captured` webhook.** Everything rested on the merchant's
+   browser returning plus a reconcile-on-page-load. **Closed 21 Nov 2026:**
+   the settle moved to `lib/ai/credit-purchase.ts` and is reached by the
+   webhook (`settleCreditPurchaseByOrder`, for a captured payment no billing
+   attempt owns), by the hourly billing job
+   (`reconcilePendingCreditPurchases`, purchases 3 minutes to 3 days old) and
+   by the page-load pass. One conditional claim, so one grant and one notice;
+   a captured amount that differs from the order's grants nothing.
 
 ---
 

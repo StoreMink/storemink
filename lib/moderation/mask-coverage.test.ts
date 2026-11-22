@@ -13,7 +13,7 @@ import ts from "typescript";
 // without it would show the blocked file again with nothing failing, so this
 // file holds four lines:
 //
-// 1. Every export of the five reader modules is classified: MASKED (its body
+// 1. Every export of the six reader modules is classified: MASKED (its body
 //    calls `maskBlockedMedia` or `maskBlockedMediaWith`, imported from
 //    lib/moderation/blocked-objects, and never inside a database scope's
 //    callback or an `unstable_cache`) or EXEMPT, each with its reason. A new
@@ -86,6 +86,15 @@ const READERS: Record<string, Classification> = {
         "a pure mapper over a settings object the caller already holds; the Branding editor and Mink's design reads take the stored values on purpose, and Mink's campaign brand snapshot drops a blocked logo itself (readBrand)",
       getStoreBrandForEditing:
         "the Website Builder saves logoUrl back with every brand change, so masking it would erase a blocked logo from the store's settings for good",
+    },
+  },
+  // PR #303 review, 22 Nov 2026: the quick view's product, with its
+  // gallery, variant photos and colour photos, went out unmasked.
+  "app/actions/quick-add-actions.ts": {
+    masked: ["getQuickViewProduct"],
+    exempt: {
+      getQuickAddProduct:
+        "narrows getQuickViewProduct's masked answer to the chooser's fields; it reads nothing itself",
     },
   },
   "app/api/storefront/search/route.ts": {

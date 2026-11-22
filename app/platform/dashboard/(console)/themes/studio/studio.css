@@ -137,6 +137,11 @@
   line-height: 1.35;
 }
 
+/* The release that stays live while a change to a published theme is worked
+   on, beside the status words. */
+.studio-badge-live {
+  margin-inline-start: 6px;
+}
 .studio-badge::before {
   content: "";
   flex-shrink: 0;
@@ -176,6 +181,15 @@
 }
 .studio-badge[data-tone="danger"]::before {
   background: var(--dash-red);
+}
+
+/* ---------- The design plan: what was decided before the build ---------- */
+.studio-plan {
+  padding: 14px 16px;
+  border: 1px solid var(--dash-border);
+  border-radius: var(--dash-radius-sm);
+  background: var(--dash-surface);
+  color: var(--dash-text);
 }
 
 /* ---------- Notices: a banner or a boxed note ---------- */

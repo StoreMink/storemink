@@ -10740,6 +10740,301 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261110_0277_mink_rail_help",
+      "description": "Help Centre: the dashboard Mink AI guide names the yellow Mink AI face in the top bar and the Ask Mink AI pop-out under it, and points Website Builder users at the Mink AI button in the builder's own top bar. Four sentences corrected in place. Content only.",
+      "file": "sql/20261110_0277_mink_rail_help.sql",
+      "transaction": true,
+      "requires": ["20261031_0276_theme_chosen_once_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the open steps name the Ask Mink AI pop-out under the face",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%or, on a computer, point at <strong>Ask Mink AI</strong> under it and type your question%' and body not like '%Select the Mink AI button in the top bar, or use%'",
+            "equals": "1"
+          },
+          {
+            "name": "the top bar opener is the yellow Mink AI face",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%The yellow Mink AI face in the top bar opens Mink AI.%' and body not like '%The purple robot mark in the dashboard header%'",
+            "equals": "1"
+          },
+          {
+            "name": "in Website Builder the Mink AI button is in the builder's top bar",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%Open Website Builder and select the Mink AI button in the builder''s top bar.%' and body not like '%click the purple Mink AI icon in the shared top header%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Website Builder troubleshooting step points at the builder's button",
+            "sql": "select count(*)::text from help_articles where slug='use-mink-ai-in-your-dashboard' and status='published' and body like '%select the Mink AI button in the builder''s top bar again.%' and body not like '%try the top-header icon again%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261121_0278_mink_credits_store_cycle",
+      "description": "Included Mink credits refresh on the store's own date: a store with no paid plan cycle counts its 30-day window from the day it was created instead of the UTC calendar month. Carries this month's recorded usage to the new window key where that window already covered the whole month (0114's rule), and corrects one sentence of the credits Help guide in place. Data and content only.",
+      "file": "sql/20261121_0278_mink_credits_store_cycle.sql",
+      "transaction": true,
+      "requires": ["20261031_0276_theme_chosen_once_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the credits guide says which date each store's 30 days are counted from",
+            "sql": "select count(*)::text from help_articles where slug='understand-ai-usage-and-credits' and status='published' and body like '%A store with no paid plan cycle counts them from the day the store was created.%' and body not like '%counted from the paid plan cycle start.%'",
+            "equals": "1"
+          },
+          {
+            "name": "no carried usage is filed under a key the meter cannot build",
+            "sql": "select count(*)::text from ai_usage where period like 'cycle:%' and period !~ '^cycle:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$'",
+            "equals": "0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261121_0279_payment_robustness",
+      "description": "Adds store_payment_providers.webhook_last_event_at, the time Razorpay last delivered a verified event to a store's payment webhook, so the dashboard says a webhook is receiving events only when it is. Help Centre: five sentences corrected in place (webhook status, no disconnect or account change while a payment is in progress, offer use released with an unpaid order, a returning customer's unfinished payment is checked first, three automatic renewal tries then pay by hand).",
+      "file": "sql/20261121_0279_payment_robustness.sql",
+      "transaction": true,
+      "requires": ["20261121_0278_mink_credits_store_cycle"],
+      "verify": {
+        "columns": ["store_payment_providers.webhook_last_event_at"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the Razorpay guide says what the webhook status means",
+            "sql": "select count(*)::text from help_articles where slug='connect-razorpay-and-accept-online-payments' and status='published' and body like '%until Razorpay delivers its first event, usually your next online payment%'",
+            "equals": "1"
+          },
+          {
+            "name": "the Razorpay guide says an account cannot be changed while a payment is in progress",
+            "sql": "select count(*)::text from help_articles where slug='connect-razorpay-and-accept-online-payments' and status='published' and body like '%while a customer''s online payment is still in progress: pause online payments first%'",
+            "equals": "1"
+          },
+          {
+            "name": "the pending payments guide says offer use is released",
+            "sql": "select count(*)::text from help_articles where slug='understand-pending-and-failed-online-payments' and status='published' and body like '%Reserved stock, coupon use and offer use are released through the order workflow.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the pending payments guide says a returning customer's unfinished payment is checked first",
+            "sql": "select count(*)::text from help_articles where slug='understand-pending-and-failed-online-payments' and status='published' and body like '%a payment that went through confirms the order, and no second order is started.%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says three automatic tries, then pay by hand",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%StoreMink tries up to three times, a day apart, then emails you to pay that invoice here yourself.%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261121_0280_orders_razorpay_key_id",
+      "description": "Adds orders.razorpay_key_id: the public Razorpay key id an online order was created with, so a refused gateway read can be told apart as keys changed since the order was placed or the same keys being refused. Nullable, no backfill. Schema only.",
+      "file": "sql/20261121_0280_orders_razorpay_key_id.sql",
+      "transaction": true,
+      "requires": ["20261121_0279_payment_robustness"],
+      "verify": {
+        "columns": ["orders.razorpay_key_id"]
+      },
+      "applyVerify": {
+        "queries": []
+      }
+    },
+    {
+      "id": "20261122_0281_autopay_two_step_debit",
+      "description": "The renewal debit as two steps: adds billing_payment_attempts.debit_after (the earliest instant a notified order may be debited) and debit_sent_at (the claim taken before the debit call), with a partial index for the hourly debit pass. Help Centre: one sentence of the invoices guide corrected in place (a notice before each automatic renewal; up to three tries over the following days).",
+      "file": "sql/20261122_0281_autopay_two_step_debit.sql",
+      "transaction": true,
+      "requires": ["20261121_0280_orders_razorpay_key_id"],
+      "verify": {
+        "columns": [
+          "billing_payment_attempts.debit_after",
+          "billing_payment_attempts.debit_sent_at"
+        ],
+        "queries": [
+          {
+            "name": "the debit pass has its partial index",
+            "sql": "select count(*)::text from pg_indexes where schemaname='public' and indexname='billing_payment_attempts_debit_due_idx'",
+            "equals": "1"
+          }
+        ]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the invoices guide says a notice comes before each automatic renewal",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%StoreMink tries up to three times over the following days, with a new notice each time%' and body not like '%tries up to three times, a day apart%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261122_0282_pay_now_instead_help",
+      "description": "Help Centre: the invoices guide's three sentences about a scheduled automatic renewal and a Processing invoice corrected in place (Pay now instead while a renewal is scheduled; Continue payment for a payment window that was closed without paying).",
+      "file": "sql/20261122_0282_pay_now_instead_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0281_autopay_two_step_debit"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the invoices guide says a scheduled renewal can be paid by hand",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%you can choose <strong>Pay now instead</strong> to pay it yourself%'",
+            "equals": "1"
+          },
+          {
+            "name": "the invoices guide says an unfinished payment can be continued",
+            "sql": "select count(*)::text from help_articles where slug='view-and-pay-storemink-invoices' and status='published' and body like '%the invoice shows <strong>Continue payment</strong>, which reopens that same payment%' and body like '%or choose <strong>Continue payment</strong> when it is offered%' and body not like '%StoreMink does not offer a second Pay button%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261122_0283_autopay_limit_help",
+      "description": "Help Centre: the plan guide's section on how renewals are charged gains one paragraph on the upper limit the payment window shows for automatic payments (a ceiling, not what is charged). Content only.",
+      "file": "sql/20261122_0283_autopay_limit_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0282_pay_now_instead_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the plan guide says what the payment window's upper limit is",
+            "sql": "select count(*)::text from help_articles where slug='manage-your-storemink-plan-and-subscription' and status='published' and body like '%It is a ceiling, not what you pay: StoreMink charges only your renewal amount, once in each billing cycle%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261122_0284_image_provider_settings",
+      "description": "A second image provider for Theme Studio and the storefront redesign: image_generation_settings (one operator-edited row: provider google or elevenlabs, and ElevenLabs' quality and resolution) and image_provider_generations (one row per job submitted to the async provider, so a job already paid for is collected by the next try and never drawn twice). Expand only.",
+      "file": "sql/20261122_0284_image_provider_settings.sql",
+      "transaction": true,
+      "requires": ["20261122_0283_autopay_limit_help"],
+      "verify": {
+        "tables": ["image_generation_settings", "image_provider_generations"],
+        "columns": [
+          "image_generation_settings.provider",
+          "image_generation_settings.elevenlabs_quality",
+          "image_generation_settings.elevenlabs_resolution",
+          "image_provider_generations.scope",
+          "image_provider_generations.request_digest",
+          "image_provider_generations.generation_id",
+          "image_provider_generations.state",
+          "image_provider_generations.claimed_at"
+        ],
+        "constraints": [
+          "image_generation_settings_id_check",
+          "image_generation_settings_provider_check",
+          "image_generation_settings_quality_check",
+          "image_generation_settings_resolution_check",
+          "image_provider_generations_state_check",
+          "image_provider_generations_generation_key"
+        ],
+        "rlsTables": ["image_generation_settings", "image_provider_generations"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the image provider defaults to Google, so nothing changes until an operator switches",
+            "sql": "select provider || ' ' || elevenlabs_quality || ' ' || elevenlabs_resolution from image_generation_settings where id=true",
+            "equals": "google low 1K"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261122_0285_image_provider_submits",
+      "description": "Finding an image job whose answer was lost: image_provider_submits, one row per submit to the async image provider, written before the request leaves and deleted when it is answered. A submit that gets no answer keeps its row and the window it was out for, so its job can be found in the provider's list by its creation time and collected, where the next try would otherwise pay for the picture twice. Expand only.",
+      "file": "sql/20261122_0285_image_provider_submits.sql",
+      "transaction": true,
+      "requires": ["20261122_0284_image_provider_settings"],
+      "verify": {
+        "tables": ["image_provider_submits"],
+        "columns": [
+          "image_provider_submits.scope",
+          "image_provider_submits.request_digest",
+          "image_provider_submits.state",
+          "image_provider_submits.sent_at",
+          "image_provider_submits.lost_at",
+          "image_provider_submits.generation_id"
+        ],
+        "constraints": [
+          "image_provider_submits_provider_check",
+          "image_provider_submits_state_check",
+          "image_provider_submits_found_check",
+          "image_provider_submits_lost_check"
+        ],
+        "rlsTables": ["image_provider_submits"]
+      }
+    },
+    {
+      "id": "20261122_0286_shopping_extras_help",
+      "description": "Help Centre: one step added in place to the branding and layout guide's Website Builder list, for the Shopping extras a merchant can keep or switch off (Saved items, Recently viewed, the Our stores page).",
+      "file": "sql/20261122_0286_shopping_extras_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0285_image_provider_submits"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the branding and layout guide names the three shopping extras",
+            "sql": "select count(*)::text from help_articles where slug='change-your-storefront-branding-and-layout' and status='published' and body like '%Under <strong>Shopping extras</strong>, keep or switch off three things your shoppers see.%' and body like '%a warehouse is never listed.</li><li>Preview desktop, tablet, and mobile widths.</li>%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261122_0287_quick_view_help",
+      "description": "Help Centre: the branding and layout guide's Shopping extras step, edited in place to add Quick view (an eye on every product photo that opens the product in a pop-up).",
+      "file": "sql/20261122_0287_quick_view_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0286_shopping_extras_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the branding and layout guide names Quick view among four shopping extras",
+            "sql": "select count(*)::text from help_articles where slug='change-your-storefront-branding-and-layout' and status='published' and body like '%keep or switch off four things your shoppers see.%' and body like '%needs no sign-in. <strong>Quick view</strong> puts an eye on every product photo%' and body not like '%three things your shoppers see%'",
+            "equals": "1"
+          }
+        ]
+      }
+    },
+    {
+      "id": "20261122_0288_theme_studio_change_published",
+      "description": "Changing a published theme: the Theme Studio project guard admits a published project taking a change (published to generating or ready, and back to published only while its current design is one a publication published), and a project may publish once per design instead of once ever, so a change to a live theme becomes its next release while installed stores keep the release they pinned. No Help edit: operator-only.",
+      "file": "sql/20261122_0288_theme_studio_change_published.sql",
+      "transaction": true,
+      "requires": ["20261122_0287_quick_view_help"],
+      "verify": {
+        "functions": ["theme_studio_project_guard()"]
+      },
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "a project publishes once per design, not once ever",
+            "sql": "select count(*)::text from pg_indexes where schemaname='public' and indexname='theme_studio_publications_one_published' and indexdef like '%(project_id, version_id)%' and indexdef like '%published%'",
+            "equals": "1"
+          },
+          {
+            "name": "the project guard lets a published project take a change",
+            "sql": "select count(*)::text from pg_proc where proname='theme_studio_project_guard' and prosrc like '%OLD.status = ''published'' AND NEW.status IN (''generating'', ''ready'', ''archived'')%' and prosrc like '%published only by a publication%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

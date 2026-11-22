@@ -755,6 +755,22 @@ export const billingPaymentAttempts = pgTable(
      *  ordinary/manual payments. Persisted before checkout so confirmation can
      *  activate the token with the ceiling the merchant actually authorised. */
     mandateMaxPaise: bigint("mandate_max_paise", { mode: "number" }),
+    /**
+     * An AUTOMATIC attempt's two-step debit (0281). Razorpay accepts a
+     * renewal debit only for an order created with a pre-debit notification,
+     * and only once the notice period has passed. `debitAfter` is the earliest
+     * instant the debit may be sent, set when the notified order is created;
+     * `debitSentAt` is the claim taken just before the debit call, so one
+     * attempt can never send two. Both null on every manual checkout.
+     */
+    debitAfter: timestamp("debit_after", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    debitSentAt: timestamp("debit_sent_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     failureCode: text("failure_code"),
     failureReason: text("failure_reason"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
@@ -778,6 +794,12 @@ export const billingPaymentAttempts = pgTable(
       .using("btree", table.updatedAt.asc().nullsLast().op("timestamptz_ops"))
       .where(
         sql`(state = ANY (ARRAY['processing'::text, 'authorized'::text, 'unknown'::text]))`,
+      ),
+    // The debit pass's scan: attempts notified and still waiting to be debited.
+    index("billing_payment_attempts_debit_due_idx")
+      .using("btree", table.debitAfter.asc().nullsLast().op("timestamptz_ops"))
+      .where(
+        sql`((debit_after IS NOT NULL) AND (debit_sent_at IS NULL) AND (state = 'processing'::text))`,
       ),
     // ★★ Three clicks on Pay, or a retry racing a manual payment, cannot make
     // two in-flight attempts — the second INSERT fails (§28, §36).
@@ -2472,6 +2494,11 @@ export const orders = pgTable(
     taxInclusive: boolean("tax_inclusive").default(false).notNull(),
     razorpayOrderId: text("razorpay_order_id"),
     razorpayPaymentId: text("razorpay_payment_id"),
+    // The public Razorpay key id the order was created with (0280). Null on
+    // orders placed before it existed. Never a secret: it says which
+    // connected account an order waiting for payment belongs to, so a refused
+    // read can be told apart as "the keys changed since" rather than guessed.
+    razorpayKeyId: text("razorpay_key_id"),
     // POS Phase 2. In-person sales share this table,
     // tagged sales_channel='pos'. shippingAddress stays null for POS;
     // customerId remains nullable in storage for legacy rows and other channels.
@@ -3363,6 +3390,143 @@ export const minkVoiceSettings = pgTable(
       "mink_voice_settings_speech_provider_check",
       sql`speech_provider = ANY (ARRAY['gemini_3_8_flash_lite_tts'::text, 'bulbul_v4_flash'::text])`,
     ),
+  ],
+);
+
+/**
+ * Which provider draws Theme Studio's and the storefront redesign's photos
+ * (one row, operator-edited; migration 0284). Default Google.
+ */
+export const imageGenerationSettings = pgTable(
+  "image_generation_settings",
+  {
+    id: boolean().default(true).primaryKey().notNull(),
+    provider: text().default("google").notNull(),
+    elevenlabsQuality: text("elevenlabs_quality").default("low").notNull(),
+    elevenlabsResolution: text("elevenlabs_resolution").default("1K").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedBy: text("updated_by"),
+  },
+  () => [
+    check("image_generation_settings_id_check", sql`id`),
+    check(
+      "image_generation_settings_provider_check",
+      sql`provider = ANY (ARRAY['google'::text, 'elevenlabs'::text])`,
+    ),
+    check(
+      "image_generation_settings_quality_check",
+      sql`elevenlabs_quality = ANY (ARRAY['low'::text, 'medium'::text])`,
+    ),
+    check(
+      "image_generation_settings_resolution_check",
+      sql`elevenlabs_resolution = ANY (ARRAY['1K'::text, '2K'::text])`,
+    ),
+  ],
+);
+
+/**
+ * One row per job submitted to the async image provider (migration 0284): a
+ * job is paid for once submitted, so a draw that was cut off is COLLECTED by
+ * the next try for the same picture, never drawn again.
+ */
+export const imageProviderGenerations = pgTable(
+  "image_provider_generations",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    provider: text().notNull(),
+    scope: text().notNull(),
+    requestDigest: text("request_digest").notNull(),
+    generationId: text("generation_id").notNull(),
+    state: text().default("submitted").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true, mode: "string" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "image_provider_generations_provider_check",
+      sql`provider = 'elevenlabs'`,
+    ),
+    check(
+      "image_provider_generations_state_check",
+      sql`state = ANY (ARRAY['submitted'::text, 'delivered'::text, 'failed'::text])`,
+    ),
+    check(
+      "image_provider_generations_digest_check",
+      sql`request_digest ~ '^[0-9a-f]{64}$'`,
+    ),
+    unique("image_provider_generations_generation_key").on(
+      table.provider,
+      table.generationId,
+    ),
+    index("image_provider_generations_pending_idx")
+      .on(table.provider, table.scope, table.requestDigest, table.createdAt)
+      .where(sql`state = 'submitted'`),
+    index("image_provider_generations_created_idx").on(table.createdAt),
+  ],
+);
+
+/**
+ * One row per submit to the async image provider (migration 0285), written
+ * before the request leaves and deleted when it is answered. A submit that
+ * gets no answer keeps its row and the window it was out for, so its job can
+ * be found in the provider's list by its creation time.
+ */
+export const imageProviderSubmits = pgTable(
+  "image_provider_submits",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    provider: text().notNull(),
+    scope: text().notNull(),
+    requestDigest: text("request_digest").notNull(),
+    state: text().default("sending").notNull(),
+    sentAt: timestamp("sent_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    lostAt: timestamp("lost_at", { withTimezone: true, mode: "string" }),
+    generationId: text("generation_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "image_provider_submits_provider_check",
+      sql`provider = 'elevenlabs'`,
+    ),
+    check(
+      "image_provider_submits_state_check",
+      sql`state = ANY (ARRAY['sending'::text, 'lost'::text, 'found'::text, 'given_up'::text])`,
+    ),
+    check(
+      "image_provider_submits_digest_check",
+      sql`request_digest ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "image_provider_submits_found_check",
+      sql`(state = 'found') = (generation_id IS NOT NULL)`,
+    ),
+    check(
+      "image_provider_submits_lost_check",
+      sql`state = 'sending' OR lost_at IS NOT NULL`,
+    ),
+    index("image_provider_submits_open_idx")
+      .on(table.provider, table.sentAt)
+      .where(sql`state <> 'found'`),
+    index("image_provider_submits_picture_idx")
+      .on(table.provider, table.scope, table.requestDigest, table.sentAt)
+      .where(sql`state = ANY (ARRAY['sending'::text, 'lost'::text])`),
+    index("image_provider_submits_created_idx").on(table.createdAt),
   ],
 );
 
@@ -5421,6 +5585,14 @@ export const storePaymentProviders = pgTable(
     // Razorpay HMACs the request body, so this must be reversible (encrypted)
     // rather than hashed like the logistics webhook token.
     webhookSecretEnc: text("webhook_secret_enc"),
+    // When Razorpay last delivered an event signed with that secret (0279).
+    // Null until the first one arrives, and again after a new secret is
+    // generated: it is what lets the dashboard say "receiving events" only
+    // once Razorpay really has the address and the secret.
+    webhookLastEventAt: timestamp("webhook_last_event_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
     enabled: boolean().default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
       .defaultNow()

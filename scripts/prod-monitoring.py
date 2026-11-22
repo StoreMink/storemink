@@ -109,6 +109,7 @@ SET_UP_23_OCT = "Set up 23 Oct 2026 (owner-approved)."
 THEME_STUDIO_ORIGIN = "Theme Studio alert (plan P6), defined 25 Oct 2026 and applied after the Theme Studio release with the owner's OK."
 REFUNDS_ORIGIN = "Set up with the refunds release (owner-approved)."
 GST_ORIGIN = "Set up with the GST release (owner-approved)."
+PAYMENTS_ORIGIN = "Defined 22 Nov 2026 with the payments release (PR #303); it exists in production only once the owner applies this script after that release."
 TAKEDOWN_ORIGIN = "Set up with the content takedown release (owner-approved, decision D12, production step P4)."
 
 UPTIME_CHECKS = [
@@ -618,6 +619,20 @@ def policies(uptime_check_ids):
             f"Cloud Scheduler's own attempt log (there is no app line): an every-minute call of {SEND_EMAILS_SCHEDULE} (/api/cron/send-emails) failed. The route answered an error (it re-throws when an email queue throws, after the takedown follow-ups have run; 401 when the shared secret does not match) or did not answer within the attempt deadline. Queued emails, SMS and WhatsApp messages wait for the next call that succeeds, a minute later; nothing is lost.",
             f"Cloud Scheduler, {SEND_EMAILS_SCHEDULE}: its last attempts and their status. Then Logs Explorer in storemink-prod at that minute for the route's error. If the attempts keep failing for 10 minutes and \"moderation: follow-ups ran\" stops too, \"Takedown: follow-ups stopped\" opens.",
             TAKEDOWN_ORIGIN),
+        log_based=True,
+    ))
+    # A payment StoreMink holds and has not recorded on its invoice
+    # (lib/billing/collect.ts fileClosedAttemptPayment): the line is written
+    # once, when the reconciliation item is filed, by the web service. ":"
+    # (has), so the "_file" line (the item could not be written) fires too.
+    found.append(policy(
+        "Billing: a payment landed on a closed payment attempt", "ERROR",
+        [log_match("billing.payment_on_closed_attempt",
+                   f'{WEB_LOGS} AND jsonPayload.message:"billing.payment_on_closed_attempt"')],
+        doc("StoreMink: a merchant's payment is held and not recorded on their invoice",
+            "The billing.payment_on_closed_attempt log line: a payment was captured on a payment attempt StoreMink had already closed. Either a renewal debit the bank reported failed and captured later, or a checkout left open in another tab after it was replaced. The money is with StoreMink and the invoice still reads unpaid. StoreMink takes no further debit or payment for that invoice and does not downgrade the store while the item is open, but the merchant sees an unpaid renewal until a person settles it. The line names the storeId, invoiceId, attemptId and providerPaymentId. A line ending in _file means the item could not be written: look the payment up by hand.",
+            "storemink.com console, Billing & tax, Reconciliation: the item \"A renewal debit recorded as failed was captured later\" or \"Payment made on a checkout that had been closed\". Settle the invoice with that payment, or refund it in the Razorpay dashboard, then close the item with what you did. Do it within two days: the merchant is being asked to pay meanwhile.",
+            PAYMENTS_ORIGIN),
         log_based=True,
     ))
     return found

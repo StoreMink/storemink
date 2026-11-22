@@ -15,6 +15,7 @@ vi.mock("@/lib/observability/logger", () => ({
 }));
 vi.mock("@/lib/payments/store-webhook", () => ({
   loadPaymentWebhookSecret: vi.fn(),
+  markPaymentWebhookReceived: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/orders/mark-paid", () => ({ markOrderPaid: vi.fn() }));
 
@@ -24,7 +25,10 @@ vi.mock("@/lib/db/client", () => ({
 }));
 
 import { POST } from "./[storeId]/route";
-import { loadPaymentWebhookSecret } from "@/lib/payments/store-webhook";
+import {
+  loadPaymentWebhookSecret,
+  markPaymentWebhookReceived,
+} from "@/lib/payments/store-webhook";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import { makeDbMock } from "@/app/actions/_test-helpers";
 
@@ -119,7 +123,9 @@ describe("scope", () => {
     // fails no test here. What IS covered is its consequence, in the next case:
     // when the scoped lookup finds nothing, nothing is marked paid.
     await post(captured());
-    expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_1");
+    expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_1", {
+      strict: true,
+    });
   });
 
   it("★ an order that does not belong here is acknowledged, not actioned", async () => {
@@ -134,7 +140,9 @@ describe("what it does with a verified delivery", () => {
   it("marks the matched order paid through the shared choke point", async () => {
     const res = await post(captured("order_rzp_1", "pay_abc"));
     expect(res.status).toBe(200);
-    expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_abc");
+    expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_abc", {
+      strict: true,
+    });
   });
 
   it("also handles order.paid", async () => {
@@ -144,7 +152,9 @@ describe("what it does with a verified delivery", () => {
         payment: { entity: { id: "pay_2", order_id: "order_rzp_1" } },
       },
     });
-    expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_2");
+    expect(markOrderPaid).toHaveBeenCalledWith("order-1", "pay_2", {
+      strict: true,
+    });
   });
 
   it("★ ignores events it does not act on, with a 200", async () => {
@@ -153,6 +163,20 @@ describe("what it does with a verified delivery", () => {
     const res = await post({ event: "refund.created", payload: {} });
     expect(res.status).toBe(200);
     expect(markOrderPaid).not.toHaveBeenCalled();
+  });
+
+  // 21 Nov 2026: the dashboard says "receiving events" only on this proof.
+  it("★★ any VERIFIED delivery is noted as proof Razorpay has the webhook, even an ignored event", async () => {
+    await post({ event: "refund.created", payload: {} });
+    expect(markPaymentWebhookReceived).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(markPaymentWebhookReceived).mock.calls[0][0]).toMatch(
+      /^[0-9a-f-]{36}$/i,
+    );
+  });
+
+  it("★★ a delivery that did not verify proves nothing", async () => {
+    await post(captured(), { sign: false });
+    expect(markPaymentWebhookReceived).not.toHaveBeenCalled();
   });
 
   it("★ an event with no payment id is acknowledged, not actioned", async () => {
@@ -185,6 +209,15 @@ describe("what it does with a verified delivery", () => {
     vi.mocked(markOrderPaid).mockRejectedValue(new Error("db down"));
     const res = await post(captured());
     expect(res.status).toBe(503);
+  });
+
+  it("★★ asks for a write failure to THROW, so a payment it could not record is delivered again", async () => {
+    // Without `strict` a failed write came back as "unchanged", which reads
+    // exactly like a replay: the delivery was acknowledged and never retried.
+    await post(captured());
+    expect(vi.mocked(markOrderPaid).mock.calls[0][2]).toEqual({
+      strict: true,
+    });
   });
 
   it("★ a REPLAY is safe because the claim inside markOrderPaid is conditional", async () => {

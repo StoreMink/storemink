@@ -236,12 +236,6 @@ function props(
   return {
     project: base,
     initialProgress: progress(),
-    buildTime: {
-      fromMinutes: 35,
-      toMinutes: 75,
-      basedOn: 0,
-      source: "default",
-    },
     tab: "preview",
     explicitTab: false,
     versionId: "v2",
@@ -689,6 +683,56 @@ describe('the "..." menu', () => {
     expect(
       screen.queryByRole("button", { name: /Remove from list/ }),
     ).toBeNull();
+  });
+
+  it("★ a live theme takes a change in the chat, and says what publishing it means (migration 0288)", () => {
+    const release = { version: "1.0.0", publishedAt: NOW, offered: true };
+    setLive(
+      status({
+        row: 1,
+        words: "Live, v1.0.0",
+        tone: "success",
+        primary: { kind: "open_live_demo", label: "Open live demo" },
+        secondary: [{ kind: "delete", label: "Delete" }],
+      }),
+      { projectStatus: "published", release },
+    );
+    page({ project: { ...base, status: "published" } });
+    const composer = screen.getByRole("textbox", {
+      name: "Message Theme Studio",
+    }) as HTMLTextAreaElement;
+    // It was locked, with "Live themes can't be changed yet."
+    expect(composer.disabled).toBe(false);
+    expect(screen.queryByText(/can't be changed yet/)).toBeNull();
+    expect(
+      screen.getByText(
+        /v1\.0\.0 is live\. A change you publish becomes a new version, and stores already using this theme keep the version they have\./,
+      ),
+    ).toBeTruthy();
+  });
+
+  it("★ while a live theme's change is worked on, the header names the release that stays live", () => {
+    setLive(
+      status({
+        row: 15,
+        words: "Ready to publish",
+        tone: "success",
+        primary: { kind: "publish", label: "Publish" },
+        secondary: [{ kind: "delete", label: "Delete" }],
+        liveVersion: "1.0.0",
+      }),
+      {
+        projectStatus: "candidate",
+        release: { version: "1.0.0", publishedAt: NOW, offered: true },
+      },
+    );
+    page({ project: { ...base, status: "candidate" } });
+    expect(screen.getAllByText("v1.0.0 stays live").length).toBeGreaterThan(0);
+    // A theme that never published shows no such badge.
+    cleanup();
+    setLive(status());
+    page();
+    expect(screen.queryByText(/stays live/)).toBeNull();
   });
 
   it("deletes behind the dialog that asks for the theme ID", () => {
@@ -1355,6 +1399,32 @@ describe("words", () => {
       "Design 4 is current. Checking it now, about 3 to 5 minutes.",
     );
     expect(restoredMessage(4, "ready")).toBe("Design 4 is current.");
+    // The published design made current on a live theme (migration 0288).
+    expect(restoredMessage(1, "live")).toBe(
+      "Design 1 is current. It is the published design, so the theme is live on it.",
+    );
+    // ★ An EARLIER published design made current (PR #303 review): the
+    //   words never say it is what new stores get, because Make current does
+    //   not move the catalogue.
+    expect(
+      restoredMessage(3, "earlier_release", true, {
+        version: "1.0.0",
+        liveVersion: "1.1.0",
+      }),
+    ).toBe(
+      "Design 3 is current. It was published as v1.0.0. New stores still get v1.1.0, and a change you send now starts from this design.",
+    );
+    expect(
+      restoredMessage(3, "earlier_release", false, {
+        version: "1.0.0",
+        liveVersion: "1.1.0",
+      }),
+    ).toBe(
+      "Design 3 is already current. It was published as v1.0.0. New stores still get v1.1.0, and a change you send now starts from this design.",
+    );
+    expect(restoredMessage(3, "earlier_release")).toBe(
+      "Design 3 is current. It was published as an earlier version, and a change you send now starts from this design.",
+    );
     expect(restoredMessage(4, "ready", false)).toBe(
       "Design 4 is already current.",
     );

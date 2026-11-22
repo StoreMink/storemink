@@ -199,6 +199,12 @@ export async function ReleaseControls({
       !!actor &&
       actor.email.trim().toLowerCase() ===
         project.createdByEmail.trim().toLowerCase(),
+    // A theme that already has a release: this publish is its next version.
+    replaces:
+      release.catalog?.releaseVersion ??
+      release.publications.find((p) => p.status === "published")
+        ?.releaseVersion ??
+      null,
   };
   return <ReleasePanel {...common} live={null} publish={publish} />;
 }
