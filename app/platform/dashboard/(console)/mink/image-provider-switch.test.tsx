@@ -61,7 +61,11 @@ describe("image provider choice", () => {
     await waitFor(() =>
       expect(h.success).toHaveBeenCalledWith("Image provider updated."),
     );
-    expect(screen.getByRole("radio", { name: "Medium" })).not.toBeDisabled();
+    // The toast is called inside the save's transition, so the choices are
+    // still locked for a moment after it: wait for them, never read at once.
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: "Medium" })).not.toBeDisabled(),
+    );
   });
 
   it("★★ quality is low or medium only, and each choice is saved", async () => {

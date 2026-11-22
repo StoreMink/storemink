@@ -542,6 +542,9 @@ describe("HelpAssistant: language, ratings, recent chats and launching", () => {
     openDrawer();
     await askStarter();
 
+    // The chat is saved once with the question and again with the answer, so
+    // wait for the second save before reading it.
+    await waitFor(() => expect(savedChats()[0]?.messages).toHaveLength(2));
     const [saved] = savedChats();
     expect(savedChats()).toHaveLength(1);
     expect(saved).toMatchObject({ title: QUESTION, language: null });
