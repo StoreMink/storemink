@@ -16,7 +16,7 @@ import {
   validateThemePackageV2,
 } from "@/lib/theme-studio/contracts";
 import { homepageOpeningIssues } from "@/lib/theme-studio/opening";
-import { DESIGN_DIRECTION_IDS } from "@/lib/theme-studio/design-directions";
+import { STUDIO_DESIGN_DIRECTION_IDS } from "@/lib/theme-studio/design-directions";
 import { VISIBLE_SECTION_CHOICES } from "@/lib/theme-studio/style-choices";
 import { THEME_STUDIO_SECTION_TYPES } from "@/lib/theme-studio/schemas";
 import { RENDERER_ENGINE_VERSIONS } from "../runtime-registry";
@@ -25,6 +25,7 @@ import type { ProductBlock } from "../templates";
 import {
   compileStylesheet,
   normalizeStylesheet,
+  saleColourIssues,
   stylesheetDistance,
   stylesheetIssues,
 } from "../stylesheet";
@@ -59,11 +60,13 @@ function jsonbRoundTrip(value: unknown): unknown {
   );
 }
 
-describe("the seven exemplar themes", () => {
+describe("the fourteen exemplar themes", () => {
   it("cover every design direction exactly once, outside the bundled catalogue", () => {
     const directions = EXEMPLAR_THEMES.map((t) => EXEMPLAR_DIRECTION[t.id]);
-    expect([...directions].sort()).toEqual([...DESIGN_DIRECTION_IDS].sort());
-    expect(new Set(EXEMPLAR_THEMES.map((t) => t.id)).size).toBe(7);
+    expect([...directions].sort()).toEqual(
+      [...STUDIO_DESIGN_DIRECTION_IDS].sort(),
+    );
+    expect(new Set(EXEMPLAR_THEMES.map((t) => t.id)).size).toBe(14);
     for (const theme of EXEMPLAR_THEMES) {
       expect(theme.id.startsWith("exemplar-")).toBe(true);
       expect(THEME_META.some((m) => m.id === theme.id)).toBe(false);
@@ -223,7 +226,15 @@ describe("the seven exemplar themes", () => {
       ]),
     );
     expect(new Set(layouts.map((l) => l.card))).toEqual(
-      new Set(["framed", "overlay", "centered", "quick_add", "soft", "wide"]),
+      new Set([
+        "framed",
+        "overlay",
+        "centered",
+        "quick_add",
+        "soft",
+        "wide",
+        "classic",
+      ]),
     );
     expect(new Set(layouts.map((l) => l.footer))).toEqual(
       new Set(["minimal", "compact", "editorial", "rich", "centered"]),
@@ -270,7 +281,7 @@ describe("the seven exemplar themes", () => {
     expect(EXEMPLAR_THEMES.some((t) => !t.preset.announcement?.href)).toBe(
       true,
     );
-    // 2a: seven distinct pairings across the directions, and a declared
+    // 2a: a distinct pairing for every direction, and a declared
     // scheme, typography, buttons, page and motion on every one.
     expect(
       new Set(
@@ -279,7 +290,7 @@ describe("the seven exemplar themes", () => {
             `${t.preset.design.fonts.display}/${t.preset.design.fonts.body}`,
         ),
       ).size,
-    ).toBe(7);
+    ).toBe(EXEMPLAR_THEMES.length);
     for (const theme of EXEMPLAR_THEMES) {
       const design = theme.preset.design;
       expect(design.typography, theme.id).toBeDefined();
@@ -290,8 +301,8 @@ describe("the seven exemplar themes", () => {
   });
 });
 
-// Plan Phase 3's exit evidence: the same renderer vocabulary, re-styled seven
-// ways by the themes' own style rules (./stylesheets.ts).
+// Plan Phase 3's exit evidence: the same renderer vocabulary, re-styled once
+// per direction by the themes' own style rules (./stylesheets.ts).
 describe("★★ the exemplars' own style rules", () => {
   it.each(EXEMPLAR_THEMES.map((theme) => [theme.id, theme] as const))(
     "%s is styled by rules that read in its own palette and pass a new theme's floor",
@@ -302,6 +313,8 @@ describe("★★ the exemplars' own style rules", () => {
         brandPrimary: theme.preset.brand.primaryColor,
       };
       expect(stylesheetIssues(rules, context)).toEqual([]);
+      // A sale price reads on its page and cards (no package gate checks it).
+      expect(saleColourIssues(theme.preset.design)).toEqual([]);
       // What the Studio would accept from Stage B as a new theme's own hand.
       const issues: string[] = [];
       const parsed = parseStylesheetJson(

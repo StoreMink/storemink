@@ -44,6 +44,7 @@ import {
   layoutCommitments,
 } from "./commitments";
 import { stylesheetPrompt } from "./style-rules";
+import { saleColourIssues } from "@/lib/themes/stylesheet";
 import {
   addUsage,
   ZERO_USAGE,
@@ -1064,6 +1065,21 @@ async function generate(
           : { package: compiled.package, issues: [] as string[] };
       if (claims.length || opened.issues.length) {
         issuesB = [...claims, ...opened.issues];
+        continue;
+      }
+      // v34+: a sale price in a colour that does not read on this theme's
+      // page or cards is a repair while repairs remain (stylesheet.ts
+      // saleColourIssues). Never the reason a theme fails: on the last
+      // attempt the draft goes on and the browser stage has the last word.
+      // A revision keeps its base palette unless the operator asked.
+      const sale =
+        stylesheetFeature &&
+        !input.revision &&
+        attempt < THEME_STUDIO_LIMITS.repairAttempts
+          ? saleColourIssues(opened.package.definition.preset.design)
+          : [];
+      if (sale.length) {
+        issuesB = sale;
         continue;
       }
       // v34+: a first draft that leaves its layout commitments is sent back

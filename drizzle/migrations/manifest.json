@@ -10977,6 +10977,23 @@
         ],
         "rlsTables": ["image_provider_submits"]
       }
+    },
+    {
+      "id": "20261122_0286_shopping_extras_help",
+      "description": "Help Centre: one step added in place to the branding and layout guide's Website Builder list, for the Shopping extras a merchant can keep or switch off (Saved items, Recently viewed, the Our stores page).",
+      "file": "sql/20261122_0286_shopping_extras_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0285_image_provider_submits"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the branding and layout guide names the three shopping extras",
+            "sql": "select count(*)::text from help_articles where slug='change-your-storefront-branding-and-layout' and status='published' and body like '%Under <strong>Shopping extras</strong>, keep or switch off three things your shoppers see.%' and body like '%a warehouse is never listed.</li><li>Preview desktop, tablet, and mobile widths.</li>%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }

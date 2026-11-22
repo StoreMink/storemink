@@ -59,14 +59,15 @@ function WhatsappIcon() {
 /**
  * The store's footer.
  *
- * @param {{ credit?: import("@/lib/store/footer-credit").FooterCredit }} props
+ * @param {{ credit?: import("@/lib/store/footer-credit").FooterCredit, storesLink?: boolean }} props
  *   `credit` is the footer's last line, decided by the storefront layout on
  *   the server from the store's effective plan: StoreMink's badge on Free, the
  *   store's own line or nothing on Basic and Pro (lib/store/footer-credit.ts).
  *   The footer only draws it, and never reads the plan or brand.creditLine
- *   itself; with no answer it draws nothing there.
+ *   itself; with no answer it draws nothing there. `storesLink` is whether
+ *   the store has an "Our stores" page to link (the layout decides).
  */
-export default function Footer({ credit }) {
+export default function Footer({ credit, storesLink = false }) {
   const currentYear = new Date().getFullYear();
   const router = useRouter();
   const pathname = usePathname();
@@ -81,6 +82,13 @@ export default function Footer({ credit }) {
   const { footer: footerCfg } = useChrome();
   const footerGroups = footerCfg.groups;
   const footerLegal = footerCfg.legal;
+  // The "Our stores" page leads the legal row when the store has one (the
+  // layout decides: a shop location exists and the merchant keeps the page
+  // on), unless the merchant already links it themselves.
+  const legalLinks =
+    storesLink && !footerLegal.some((link) => link.href === "/stores")
+      ? [{ label: "Our stores", href: "/stores" }, ...footerLegal]
+      : footerLegal;
 
   // Social links: render only the platforms this store has configured.
   const socialLinks = [
@@ -281,7 +289,7 @@ export default function Footer({ credit }) {
               &copy; {currentYear} {legalName}. All rights reserved.
             </p>
             <div className={styles.legalLinks}>
-              {footerLegal.map((link, i) => (
+              {legalLinks.map((link, i) => (
                 <span key={`${link.href}|${link.label}`}>
                   {i > 0 && <span className={styles.legalDivider}>·</span>}
                   <Link href={link.href}>{link.label}</Link>

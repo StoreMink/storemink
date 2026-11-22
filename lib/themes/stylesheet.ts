@@ -1227,6 +1227,32 @@ function contrast(a: string | undefined, b: string | undefined): number | null {
 export const STYLE_TEXT_CONTRAST = 4.5;
 export const STYLE_LARGE_TEXT_CONTRAST = 3;
 
+/**
+ * The sale price is drawn in the palette's `error` colour on the page and on
+ * cards (storefront-theme.css `--sm-sale`), as small text. Nothing in the
+ * package contract checks that pair, so a mustard or clay page with a stock
+ * red passed every offline gate and failed in the browser (found 2026-11-22
+ * on two exemplars, 3.89:1 and 4.16:1). Empty when it reads on both.
+ */
+export function saleColourIssues(
+  design: Pick<ThemeDesign, "palette"> | undefined,
+): string[] {
+  const palette = design?.palette;
+  if (!palette) return [];
+  const issues: string[] = [];
+  for (const [key, what] of [
+    ["cream", "the page background"],
+    ["surface", "cards"],
+  ] as const) {
+    const ratio = contrast(palette.error, palette[key]);
+    if (ratio !== null && ratio < STYLE_TEXT_CONTRAST)
+      issues.push(
+        `design.palette.error "${palette.error}" is the colour of a sale price and reads at ${ratio.toFixed(2)}:1 on ${what} (design.palette.${key} "${palette[key]}"); it needs ${STYLE_TEXT_CONTRAST}:1. Choose a deeper error colour on a light page, or a lighter one on a dark page.`,
+      );
+  }
+  return issues;
+}
+
 export interface StylesheetContext {
   /** The theme's design, for the colour checks. Without it only the
    *  vocabulary is checked (a merchant palette is checked in the browser). */
@@ -1450,6 +1476,15 @@ function ruleColourIssues(
       STYLE_TEXT_CONTRAST,
       "against the theme's soft text colour",
     );
+    // A product card also carries the sale price, in the error colour.
+    if (hook.base === "product-card" && contrast(surface, palette.error))
+      say(
+        "fill",
+        fill,
+        contrast(surface, palette.error),
+        STYLE_TEXT_CONTRAST,
+        "against the sale price colour (design.palette.error)",
+      );
   }
 
   const colour = rule.declarations.color;

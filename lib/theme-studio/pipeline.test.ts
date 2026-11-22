@@ -2144,6 +2144,68 @@ describe("the Stage B request a run sends, against the golden pins", () => {
     expect(olderDrafts[0].system).not.toContain("Layout commitments:");
   });
 
+  it("★★ under v34 a sale price that does not read on the page is repaired, and never the reason a theme fails", async () => {
+    // The draft's error colour set to the page's own: a sale price nobody
+    // could read, which no package gate checks (found on two exemplars).
+    const run = async (
+      promptVersion: string,
+      spoil: (n: number) => boolean,
+    ) => {
+      const fake = createFakeModelClient(base);
+      const seen: StructuredRequest[] = [];
+      let drafts = 0;
+      const client: ThemeStudioModelClient = {
+        provider: "fake",
+        async generate(request, signal) {
+          seen.push(request);
+          const response = await fake.generate(request, signal);
+          if (
+            request.stage === "draft" &&
+            response.kind === "ok" &&
+            spoil(drafts++)
+          ) {
+            const palette = (
+              response.value as {
+                design: { palette: { error: string; cream: string } };
+              }
+            ).design.palette;
+            palette.error = palette.cream;
+          }
+          return response;
+        },
+      };
+      const result = await runThemeGeneration(
+        client,
+        { ...input(), promptVersion },
+        new AbortController().signal,
+      );
+      return { result, drafts: seen.filter((r) => r.stage === "draft") };
+    };
+
+    const repaired = await run("theme-studio-v34", (n) => n === 0);
+    expect(repaired.result.kind).toBe("version");
+    expect(repaired.drafts).toHaveLength(2);
+    expect(textOf(repaired.drafts[1])).toMatch(
+      /design\.palette\.error "#[0-9a-f]{6}" is the colour of a sale price/i,
+    );
+    expect(repaired.drafts[0].system).toContain(
+      "A sale price is drawn in design.palette.error",
+    );
+
+    // Every draft spoiled: the repairs are spent and the theme still
+    // completes, because the browser stage has the last word on colour.
+    const stubborn = await run("theme-studio-v34", () => true);
+    expect(stubborn.result.kind).toBe("version");
+    expect(stubborn.drafts).toHaveLength(
+      THEME_STUDIO_LIMITS.repairAttempts + 1,
+    );
+
+    // An earlier revision is not held to it.
+    const older = await run("theme-studio-v33", () => true);
+    expect(older.result.kind).toBe("version");
+    expect(older.drafts).toHaveLength(1);
+  });
+
   it("sends the templates as one JSON string under v33, for a new theme and a change of either base", async () => {
     const built = await build("theme-studio-v33");
     expect(sha(JSON.stringify(built.stageB.schema))).toBe(

@@ -157,6 +157,7 @@ export function ChromeProvider({
       `sm-footer-${appearance.footer}`,
     );
     if (appearance.cardQuickAdd) root.classList.add("sm-card-quickadd");
+    root.classList.toggle("sm-wishlist", appearance.wishlist);
     if (appearance.cardPhoto === "square")
       root.classList.add("sm-cardphoto-square");
     if (

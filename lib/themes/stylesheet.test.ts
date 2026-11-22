@@ -24,6 +24,7 @@ import {
   styleHookNames,
   stylesheetDistance,
   stylesheetFacts,
+  saleColourIssues,
   stylesheetIssues,
   type ThemeStyleRule,
 } from "./stylesheet";
@@ -290,6 +291,47 @@ describe("★★ colour is always a readable pair", () => {
     const issues = issuesOf([rule("product-card", { fill: "sand" })]);
     expect(issues.join("\n")).toMatch(/soft text colour/);
     expect(issuesOf([rule("product-card", { fill: "soft" })])).toEqual([]);
+  });
+
+  it("★ a sale price reads on the page, on cards and on a product card's fill", () => {
+    // The stock red on a mustard page (the Mor Bagh exemplar's first draft).
+    const mustard = {
+      ...design,
+      palette: {
+        ...design.palette,
+        cream: "#f2c14e",
+        surface: "#fff6dc",
+        tile: "#f2c14e",
+        ink: "#2a0f3d",
+        inkSoft: "#44245a",
+        error: "#b3261e",
+      },
+    };
+    const issues = saleColourIssues(mustard);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatch(/design\.palette\.error "#b3261e"/);
+    expect(issues[0]).toMatch(/3\.89:1 on the page background/);
+    expect(
+      saleColourIssues({
+        palette: { ...mustard.palette, error: "#8c1016" },
+      }),
+    ).toEqual([]);
+    expect(saleColourIssues(undefined)).toEqual([]);
+    // A card filled with a colour the sale price does not read on.
+    const filled = stylesheetIssues(
+      [rule("product-card", { fill: "tile" })],
+      { design: mustard, brandPrimary: "#741449" },
+      "s",
+    );
+    expect(filled.join("\n")).toMatch(/sale price colour/);
+    // Only the product card carries a price.
+    expect(
+      stylesheetIssues(
+        [rule("testimonial", { fill: "tile" })],
+        { design: mustard, brandPrimary: "#741449" },
+        "s",
+      ),
+    ).toEqual([]);
   });
 
   it("★ text inside a box is checked against that box's own fill", () => {

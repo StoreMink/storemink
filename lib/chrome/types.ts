@@ -127,6 +127,19 @@ export interface StorefrontAppearance {
   cardPhoto: CardPhoto;
   /** Merchant-only: one shop-grid card per product, or per colour. */
   productCards: ProductCards;
+  /**
+   * Shopping extras every store has unless its merchant switches one off
+   * (owner, 22 Nov 2026: "on for every store"). Merchant-only, no theme
+   * value. Absent on every row saved before they existed, which reads as on.
+   * - wishlist: a heart on product cards and the product page, and the
+   *   "Saved items" page; the list lives on the shopper's device.
+   * - recentlyViewed: the products a shopper looked at, under a product.
+   * - storeLocator: the "Our stores" page and its footer link, when the
+   *   store has at least one shop location.
+   */
+  wishlist: boolean;
+  recentlyViewed: boolean;
+  storeLocator: boolean;
   /** Page templates (plan Phase 2e): the product page's gallery and blocks
    *  and the collection page's filters, paging and promo tiles. `theme`
    *  inherits the pinned preset's (or the composition its layout implies). */
@@ -144,6 +157,10 @@ export interface ResolvedStorefrontAppearance {
   cardQuickAdd: boolean;
   cardPhoto: CardPhoto;
   productCards: ProductCards;
+  /** The merchant's shopping extras (StorefrontAppearance). */
+  wishlist: boolean;
+  recentlyViewed: boolean;
+  storeLocator: boolean;
   /** Theme-driven only: hover-swap is orthogonal to the merchant's card
    *  choice, so a `card` override neither enables nor cancels it. */
   cardHoverImage: boolean;
@@ -220,6 +237,9 @@ export const DEFAULT_CHROME: StoreChrome = {
     footer: "theme",
     cardPhoto: "portrait",
     productCards: "product",
+    wishlist: true,
+    recentlyViewed: true,
+    storeLocator: true,
     templates: {
       product: "theme",
       collection: "theme",
@@ -424,6 +444,11 @@ function cleanAppearance(raw: unknown): StorefrontAppearance {
     // Absent on every row saved before this setting existed: portrait.
     cardPhoto: r.cardPhoto === "square" ? "square" : "portrait",
     productCards: r.productCards === "colour" ? "colour" : "product",
+    // On unless the merchant switched it off: absent (every row saved before
+    // 22 Nov 2026) is on.
+    wishlist: r.wishlist !== false,
+    recentlyViewed: r.recentlyViewed !== false,
+    storeLocator: r.storeLocator !== false,
     templates: cleanTemplateOverrides(r.templates),
   };
 }
@@ -551,6 +576,9 @@ export function resolveStorefrontAppearance(
     cardQuickAdd,
     cardPhoto: overrides.cardPhoto === "square" ? "square" : "portrait",
     productCards: overrides.productCards === "colour" ? "colour" : "product",
+    wishlist: overrides.wishlist !== false,
+    recentlyViewed: overrides.recentlyViewed !== false,
+    storeLocator: overrides.storeLocator !== false,
     cardHoverImage: theme?.cardHoverImage === true,
     // One truth: the phone sticky bar is a product-page block (the default
     // blocks carry it exactly when the layout asked for it).

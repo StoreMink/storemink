@@ -417,9 +417,9 @@ ${headerCss}
         return [token, value ?? true];
       }),
     ]);
-  // Every theme release this build ships (lib/themes/definitions), the seven
-  // exemplars (lib/themes/exemplars) and the un-themed default (globals.css),
-  // copied 2026-10-24. A release is immutable (new colours are a new
+  // Every theme release this build ships (lib/themes/definitions), the
+  // fourteen exemplars (lib/themes/exemplars) and the un-themed default
+  // (globals.css), copied 2026-10-24. A release is immutable (new colours are a new
   // version), so a store pinned to one keeps exactly these. `accent` is the
   // palette's fixed accent, else the preset's brand colour.
   const BUNDLED = {
@@ -458,6 +458,29 @@ ${headerCss}
     ),
     "exemplar-classic-and-trusted@0.1.0": palette(
       "cream=#ffffff creamDeep=#f3f4f6 surface=#ffffff sand=#f3f4f6 tile=#f3f4f6 butter=#fef3c7 ink=#1f2937 inkSoft=#4b5563 inkFaint=#9ca3af onInk=#ffffff onAccent=#ffffff accent=#1d4ed8 border=#e5e7eb shadowRgb=31,41,55 error=#b91c1c highlight=#1d4ed8 accentWarm=#b45309 header=utility card=wide",
+    ),
+    // The seven later directions' exemplars (later-directions.ts), copied
+    // 2026-11-22.
+    "exemplar-brutalist@0.1.0": palette(
+      "cream=#f1f1ee creamDeep=#e4e4df surface=#ffffff sand=#deded8 tile=#e9e9e4 butter=#fff36b ink=#0b0b0b inkSoft=#3d3d3d inkFaint=#8b8b86 onInk=#f1f1ee onAccent=#0b0b0b accent=#ff4a1c border=#bdbdb6 shadowRgb=0,0,0 error=#b3261e highlight=#d43a12 accentWarm=#d43a12 header=hamburger card=wide",
+    ),
+    "exemplar-scandinavian-utility@0.1.0": palette(
+      "cream=#dcd8cf creamDeep=#d0ccc2 surface=#f4f2ec sand=#d3cec3 tile=#e6e3db butter=#e9dfb8 ink=#22262a inkSoft=#454b52 inkFaint=#7d8187 onInk=#f4f2ec onAccent=#ffffff accent=#264f54 border=#bdb8ac shadowRgb=34,38,42 error=#b3261e highlight=#264f54 accentWarm=#264f54 header=minimal",
+    ),
+    "exemplar-maximal-pattern@0.1.0": palette(
+      "cream=#f2c14e creamDeep=#e9b53b surface=#fff6dc sand=#f7d98a tile=#f8dfa0 butter=#ffe9a8 ink=#2a0f3d inkSoft=#44245a inkFaint=#7a5f86 onInk=#fff6dc onAccent=#ffffff accent=#741449 border=#c9962a shadowRgb=42,15,61 error=#8c1016 highlight=#741449 accentWarm=#741449 header=stacked card=soft",
+    ),
+    "exemplar-dark-luxury@0.1.0": palette(
+      "cream=#100f11 creamDeep=#18171a surface=#1b1a1d sand=#1f1e22 tile=#1d1c1f butter=#2b261c ink=#f1ece3 inkSoft=#c4bdb1 inkFaint=#857f76 onInk=#100f11 onAccent=#100f11 accent=#c9a56a border=#34312f shadowRgb=0,0,0 error=#ff7b72 highlight=#c9a56a accentWarm=#c9a56a header=transparent card=framed dark",
+    ),
+    "exemplar-retro-catalogue@0.1.0": palette(
+      "cream=#e6d9bd creamDeep=#dccdab surface=#f6eeda sand=#decfa9 tile=#efe5cb butter=#f3e2a6 ink=#2a2016 inkSoft=#4f4234 inkFaint=#8c7c68 onInk=#f6eeda onAccent=#ffffff accent=#8f2916 border=#b9a67f shadowRgb=42,32,22 error=#b3261e highlight=#8f2916 accentWarm=#8f2916 header=utility card=framed",
+    ),
+    "exemplar-tech-spec@0.1.0": palette(
+      "cream=#0d1317 creamDeep=#131b20 surface=#161f25 sand=#18222a tile=#121a1f butter=#1f2a22 ink=#e7edf1 inkSoft=#aab7c0 inkFaint=#6f7d87 onInk=#0d1317 onAccent=#06100f accent=#35d0ba border=#2a3741 shadowRgb=0,0,0 error=#ff7b72 highlight=#35d0ba accentWarm=#35d0ba header=utility dark",
+    ),
+    "exemplar-artisan-craft@0.1.0": palette(
+      "cream=#d8cdbb creamDeep=#cdc1ac surface=#efe8da sand=#d2c6b0 tile=#e6dece butter=#ead9a9 ink=#2d231b inkSoft=#4e4034 inkFaint=#8b7b6a onInk=#efe8da onAccent=#ffffff accent=#6f4226 border=#b3a58e shadowRgb=45,35,27 error=#9a1a14 highlight=#6f4226 accentWarm=#6f4226 header=centered card=centered",
     ),
   };
   // Two palettes the design contract allows a Studio theme and the bundled

@@ -1,5 +1,5 @@
 /**
- * The seven exemplar themes (lib/themes/exemplars/) through the acceptance
+ * The fourteen exemplar themes (lib/themes/exemplars/) through the acceptance
  * gates, offline and without a Studio project — plan Phase 2's exit evidence.
  *
  *   npm run theme-studio:exemplars

@@ -6608,6 +6608,65 @@ review-first and do not persist the raw image. Migration
 paragraph in place to describe this one-click private-draft and follow-up image
 handoff; it adds no Help Centre section.
 
+### Shopping extras: saved items, recently viewed, Our stores (2026-11-22)
+
+Owner: the storefront lacked three things premium themes have, and they are
+"on for every store" (the wishlist "on the shopper's device"; currency and
+language switching deliberately left out). Each is a merchant switch in the
+Website Builder's Brand row, under **Shopping extras**
+(`StorefrontAppearance.wishlist` / `recentlyViewed` / `storeLocator`,
+merchant-only like `cardPhoto`; `cleanAppearance` reads anything but a real
+`false` as on, so every row saved before reads as on).
+★★ THE LISTS LIVE ON THE SHOPPER'S DEVICE (`lib/storefront/device-lists.ts`,
+client-safe): product SLUGS only, in localStorage, which the browser scopes to
+the store's own origin (so no store id, and one store never reads another's).
+Saved items hold 60, recently viewed 12; every read and write is guarded, so
+blocked or full storage is an empty list, never an error, and a save storage
+refused is not shown as saved. Nothing is kept on a server.
+★★ THE CARDS COME FROM `POST /api/storefront/products` (`{ slugs }`). A POST so
+the list is in no access log (in a query string it would be in every one); it
+writes nothing. Like the search route: a route handler, the store from the
+Host, the shop grid's own catalogue (`getPublishedProducts`, so a product no
+longer sold is simply left out), masked (takedown), nothing for a store that
+has not opened, `no-store`.
+★ SAVED ITEMS: `WishlistButton` (`components/wishlist-button.tsx`) is rendered
+by every `ShopCard` (inside the photo frame, a `role="button"` that stops the
+card's link, as the quick-add button does) and on the product page, and shown
+only under the root class `sm-wishlist` (`storefront-theme.css`; the layout
+adds it, and `ChromeProvider` toggles it live in the builder). It paints its
+own surface chip (it lies over the photograph), is 44px, and badges never run
+under it. The page is `/wishlist` (`components/saved-products.tsx`, noindex,
+disallowed in robots), linked as **Saved items** in the account menu whether
+or not the shopper is signed in.
+★ RECENTLY VIEWED: `RecentlyViewed` (`shop/[slug]/recently-viewed.tsx`) under a
+product's recommendations, in both product layouts: the earlier products
+newest first, never the current one, and NOTHING (no heading, no gap) for a
+first visit, on the server, or when none is still sold.
+★ OUR STORES: `/stores` lists the store's shop locations with address lines
+and a maps directions link (`lib/storefront/store-locations.ts`). ★★ ONLY
+`type = shop`, ONLY active, ONLY a row with an address: a warehouse or dark
+store is never listed, and no other column (GSTIN, capabilities, stock) leaves
+the reader. `store_locations` is admin-only under RLS, so it is a service read
+of the public columns, cached five minutes (`unstable_cache`, so a new shop
+appears within five minutes); a failed read is "no shops". The storefront
+layout reads it for the footer's **Our stores** link (first in the legal row;
+not at all in the bare shell or when switched off).
+★★ A MERCHANT'S OWN PAGE ALWAYS WINS (`(pages)/[pageSlug]/built-in.tsx`).
+`/stores` and `/wishlist` are NOT static routes and NOT reserved: the merchant
+page route answers them only when the store has no page of its own at that
+address. A static route would hide a page a merchant already built there, and
+reserving the names would change `RESERVED_PAGE_SLUGS`, which every Theme
+Studio prompt since v19 prints (pinned byte for byte). ⚠ A store with its own
+page at `/wishlist` has no built-in saved-items page.
+Tests: `lib/storefront/device-lists.test.ts`, `store-locations.test.ts`,
+`app/api/storefront/products/route.test.ts`, `components/wishlist.test.tsx`
+(heart, saved page, recently viewed), `[pageSlug]/built-in.test.tsx`, the
+footer and `lib/chrome/types.test.ts` cases; the stylesheet browser check
+draws the heart on every card. Help: `20261122_0286_shopping_extras_help` adds
+one step to the branding and layout guide. ⚠ Not built: `/stores` in the
+sitemap; saved items in a customer's account (owner chose the device); a
+privacy-policy sentence for the device lists (owner's lawyer to decide).
+
 ### ElevenLabs image provider: GPT Image 2.5 Sunburst for Theme Studio and redesign photos (2026-11-22)
 
 Owner's ask: "build the elevenlabs image provider with gpt image 2.5
@@ -9172,6 +9231,10 @@ wholesip/
 │   ├── images/elevenlabs-theme-client.ts # server-only: the ThemeStudioImageClient over
 │   │                          # it (prompt with reference labels, shrunk references,
 │   │                          # five in flight)
+│   ├── storefront/device-lists.ts # client-safe: the shopper's own saved items and
+│   │                          # recently viewed, as product slugs in localStorage
+│   ├── storefront/store-locations.ts # server-only: a store's SHOP locations for
+│   │                          # shoppers (never a warehouse), cached five minutes
 │   ├── http/byte-range.ts     # PURE: one HTTP Range header against a size (single
 │   │                          # range, suffix; several ranges → the whole file;
 │   │                          # "unsatisfiable" → 416). Used by the inbox media route
@@ -10234,7 +10297,8 @@ wholesip/
 │   │                          # catalogue, property allowlist, value scales),
 │   │                          # stylesheetIssues (vocabulary + contrast),
 │   │                          # compileStylesheet (scoped CSS), salvage, facts
-│   ├── themes/exemplars/stylesheets.ts # one hand-written stylesheet per exemplar
+│   ├── themes/exemplars/stylesheets.ts # one hand-written stylesheet per exemplar (14)
+│   ├── themes/exemplars/later-directions.ts # the seven later directions' exemplars
 │   ├── help/                   # ★ Public Help reads/types plus Mink AI retrieval (§21):
 │   │                          # assistant-input.ts rejects low-signal turns; chunks.ts
 │   │                          # creates heading-aware plain-text sections; embeddings.ts
@@ -11133,7 +11197,9 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0286 (0285 = image_provider_submits,
+│                              # Next free: 0287 (0286 = Help: the Shopping
+│                              # extras step in the branding and layout guide;
+│                              # 0285 = image_provider_submits,
 │                              # the record of submits that lets a lost image
 │                              # job be found by its creation time, no Help;
 │                              # 0284 = the ElevenLabs image
@@ -11478,7 +11544,7 @@ wholesip/
 │   │                          # storefront CSS in local Chrome (every rule in
 │   │                          # effect, contrast, no sideways scroll); in CI's
 │   │                          # renderer job. --shots=<dir> saves screenshots.
-│   ├── theme-studio-exemplar-check.ts # ★ The seven exemplar themes (lib/themes/
+│   ├── theme-studio-exemplar-check.ts # ★ The fourteen exemplar themes (lib/themes/
 │   │                          # exemplars/) through the acceptance gates without a
 │   │                          # Studio project: the real package gates over a slot-form
 │   │                          # package with a digested manifest (no DB, no network);
@@ -15500,14 +15566,32 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     same). A first draft that departs is sent back once with the list; the
     second is accepted either way. Never for a revision or a reference-led
     theme; never the grocery renderer.
-    Evidence: the seven exemplars each carry a hand-written stylesheet
-    (`lib/themes/exemplars/stylesheets.ts`; every pair differs in at least 79%
-    of what it says; 4 to 6 KB of CSS each) and pass the real package gates
-    (`npm run theme-studio:exemplars`, 6/6 for all seven).
+    Evidence: the fourteen exemplars, one per direction (the first seven, and
+    since 2026-11-22 the seven later directions in
+    `lib/themes/exemplars/later-directions.ts`: KERB, Hylla, Mor Bagh,
+    Nocturne, Ganapati Provisions, Lumen Works, Mitti & Marigold, each
+    following its direction's layout signature and borrowing a bundled
+    theme's pictures and catalogue through a linked `public/themes/exemplar-*`
+    folder), each carry a hand-written stylesheet
+    (`lib/themes/exemplars/stylesheets.ts`; every pair of the 91 differs in at
+    least 77% of what it says; 4 to 7.5 KB of CSS each) and pass the real
+    package gates (`npm run theme-studio:exemplars`, 6/6 for all fourteen).
+    ⚠ `EXEMPLAR_THEMES` is append-only: frozen request pins read the first
+    entries by position.
+    ★ A SALE PRICE MUST READ (found by the new exemplars, 2026-11-22): the
+    sale price is drawn in `palette.error` on the page and on cards, and no
+    package gate checked that pair, so a mustard and a clay page with the
+    stock red passed everything offline and failed in the browser (3.89:1
+    and 4.16:1). `saleColourIssues` (`lib/themes/stylesheet.ts`) checks it
+    against the page and cards; a product card's `fill` is checked against it
+    too; the v34 prompt says so; and the pipeline sends a new theme's draft
+    back with it while repairs remain (never the reason a theme fails, never
+    for a revision, never before v34). The seven new palettes are in
+    `scripts/theme-studio-contrast-check.mjs` (882 cases).
     `npm run theme-studio:stylesheets`
     (`scripts/theme-studio-stylesheet-check.ts`, in CI's renderer job) lays
     each one over the PRODUCTION storefront CSS in local Chrome at 390 and
-    1440px: every rule in effect (398 to 747 declarations a theme; nothing of
+    1440px: every rule in effect (398 to 899 declarations a theme; nothing of
     the storefront's wins over a rule), axe colour contrast clean with dark,
     soft and tinted bands on the page, no sideways scroll.
     `lib/themes/stylesheet-hooks.test.ts` reads the component sources so a
@@ -15517,9 +15601,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `commitments.test.ts`, `design-directions.test.ts`, the v34 cases of
     `pipeline.test.ts`, `publication.test.ts` and the opt-in
     `publication-postgres.test.ts`; `stage-b-request.golden.json` holds v34's
-    pins and every v19 to v33 pin is unchanged. ⚠ Not built: a builder panel
-    listing a theme's rules; exemplars for the seven later directions; a
-    merchant switch for the rules. No migration. No Help Centre change: no
+    pins and every v19 to v33 pin is unchanged. The Website Builder's brand
+    panel lists a styled theme's rules read-only under **Theme styles**
+    (`ThemeDesignDefaults.styleRules`, `describeStyleRule`; at most 80; test
+    `app/dashboard/builder/theme-styles.test.tsx`). ⚠ Not built: a merchant
+    switch for the rules. No migration. No Help Centre change: no
     merchant step changes (a theme simply arrives styled).
     **Phase 2e, second slice (same day; still prompt v32, unused by any
     run).** The rest of the plan's `templates` field. A `size_guide` product

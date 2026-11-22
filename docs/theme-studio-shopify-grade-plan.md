@@ -163,8 +163,11 @@
 > (`STUDIO_DESIGN_DIRECTIONS`; the redesign keeps its seven), the fingerprint's
 > styling axis, and publication blocked under 0.50 against the public
 > catalogue. Still open: the first live Gemini batch under v34 (which is also
-> where Phase 4's exit, G4, is measured), the blind test (item 4), a builder
-> panel for the rules, and exemplars for the seven later directions.
+> where Phase 4's exit, G4, is measured) and the blind test (item 4). Built
+> since (2026-11-22): the builder's read-only list of a theme's rules, and an
+> exemplar for each of the seven later directions
+> (`lib/themes/exemplars/later-directions.ts`), fourteen in all, every pair
+> at least 77% apart in what its stylesheet says.
 >
 > **Audience:** StoreMink platform engineers and the owner. Not merchant-facing.
 

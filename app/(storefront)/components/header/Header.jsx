@@ -24,6 +24,7 @@ import {
   LogOut,
   Bell,
   ChevronRight,
+  Heart,
 } from "lucide-react";
 import { getMyCustomerUnreadCount } from "@/app/actions/customer-notification-actions";
 
@@ -43,7 +44,7 @@ export default function Header() {
   // The header config the merchant edits in the website builder: which links
   // appear, and whether the search box, account and cart show at all. A
   // catalogue-only (enquiry-led B2B) store turns the cart off entirely.
-  const { header: headerCfg } = useChrome();
+  const { header: headerCfg, appearance } = useChrome();
   const navLinks = headerCfg.links;
 
   const isLoggedIn = !!user && !!customer;
@@ -317,6 +318,24 @@ export default function Header() {
                       />
                     </Link>
                   </>
+                )}
+                {/* The shopper's saved products (wishlist), kept on this
+                    device, so it is offered whether or not they are signed
+                    in; absent when the merchant switched the wishlist off. */}
+                {appearance?.wishlist !== false && (
+                  <Link
+                    href="/wishlist"
+                    className={styles.profileDropdownItem}
+                    role="menuitem"
+                    onClick={() => setIsProfileOpen(false)}
+                  >
+                    <Heart size={18} strokeWidth={1.75} />
+                    Saved items
+                    <ChevronRight
+                      size={16}
+                      className={styles.profileItemArrow}
+                    />
+                  </Link>
                 )}
                 <Link
                   href="/track-order"

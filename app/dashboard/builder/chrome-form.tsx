@@ -856,6 +856,20 @@ function DesignForm({
           );
         })}
       </Group>
+
+      {themeDefaults.styleRules.length > 0 ? (
+        <Group title="Theme styles" defaultOpen={false}>
+          <p className="sm-b-hint">
+            Finishing touches that come with your theme. They follow your
+            colours, fonts and corners, and cannot be edited here.
+          </p>
+          <ul className="sm-b-stylerules">
+            {themeDefaults.styleRules.map((rule) => (
+              <li key={rule}>{rule}</li>
+            ))}
+          </ul>
+        </Group>
+      ) : null}
     </>
   );
 }
@@ -1789,6 +1803,27 @@ export function BrandForm({
             <option value="compact">Compact row</option>
           </select>
         </label>
+      </Group>
+
+      <Group title="Shopping extras" defaultOpen={false}>
+        <Toggle
+          label="Saved items (wishlist)"
+          hint="A heart on every product. Shoppers keep their list on their own device, with no sign-in."
+          checked={appearance.wishlist}
+          onChange={(wishlist) => patchAppearance({ wishlist })}
+        />
+        <Toggle
+          label="Recently viewed"
+          hint="Under a product, the products that shopper looked at before."
+          checked={appearance.recentlyViewed}
+          onChange={(recentlyViewed) => patchAppearance({ recentlyViewed })}
+        />
+        <Toggle
+          label="Our stores page"
+          hint="Lists your shop locations with their addresses, linked from the footer. Shown once you have a shop location."
+          checked={appearance.storeLocator}
+          onChange={(storeLocator) => patchAppearance({ storeLocator })}
+        />
       </Group>
 
       <TemplatesForm

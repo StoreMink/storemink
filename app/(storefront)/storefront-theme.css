@@ -1114,6 +1114,131 @@
 .shop-card-img {
   position: relative;
 }
+/* ------------------------------------------------------------------------
+   The wishlist heart (wishlist-button.tsx; owner, 22 Nov 2026).
+   ★ RENDERED BY EVERY CARD, SHOWN ONLY UNDER `.sm-wishlist` (the merchant's
+     switch, on unless they turn it off), the way the quick-add button is: a
+     hidden control costs nothing and the builder can show and hide it live.
+   ★ IT PAINTS ITS OWN SURFACE. It lies over the product photograph, so the
+     heart is ink on a near-opaque surface chip, never an icon straight on a
+     picture. 44px: a full tap target on a phone.
+   ------------------------------------------------------------------------ */
+.shop-card-wish,
+.pdp-wish {
+  display: none;
+}
+.sm-wishlist .shop-card-wish {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--sm-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sm-surface) 94%, transparent);
+  color: var(--sm-ink);
+  cursor: pointer;
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease;
+}
+.sm-wishlist .shop-card-wish:hover {
+  transform: scale(1.06);
+  background: var(--sm-surface);
+}
+.sm-wishlist .shop-card-wish:focus-visible,
+.sm-wishlist .pdp-wish:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+/* A badge never runs under the heart. */
+.sm-wishlist .shop-card-flag {
+  max-width: calc(100% - 72px);
+}
+.sm-wishlist .pdp-wish {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 8px 4px;
+  border: 0;
+  background: none;
+  color: var(--sm-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+/* The saved-items page (wishlist/saved-products.tsx). */
+.sm-saved .sm-saved-cta {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  padding: 10px 22px;
+  text-decoration: none;
+}
+.sm-saved .sm-saved-clear {
+  margin: 32px 0 0;
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sm-wishlist .shop-card-wish {
+    transition: none;
+  }
+}
+
+/* The "Our stores" page (stores/page.tsx): one card per shop location. */
+.sm-stores-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 20px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sm-stores-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-card, 16px);
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+}
+.sm-stores-name {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.sm-stores-address {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--sm-ink-soft);
+  font-style: normal;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.sm-stores-directions {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  align-self: flex-start;
+  margin-top: auto;
+  color: var(--sm-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+
 .shop-card-flag {
   position: absolute;
   top: 10px;

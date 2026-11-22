@@ -51,6 +51,7 @@ import {
   withThemeChromeDefaults,
 } from "@/lib/themes/footer";
 import { activeAnnouncement } from "@/lib/themes/announcement";
+import { getPublicShopLocations } from "@/lib/storefront/store-locations";
 import {
   STYLESHEET_ROOT_CLASS,
   themeStylesheetCss,
@@ -265,6 +266,13 @@ export default async function StorefrontLayout({
     design?.layout,
     chrome.appearance,
   );
+  // The store's shops, for the footer's "Our stores" link (cached five
+  // minutes; a failed read is "none"). Not read at all where there is no
+  // footer, or where the merchant switched the page off.
+  const shopLocations =
+    bareShell || !appearance.storeLocator
+      ? []
+      : await getPublicShopLocations(store.id);
   const rootClass = [
     "storefront-root",
     `sm-header-${appearance.header}`,
@@ -305,6 +313,9 @@ export default async function StorefrontLayout({
     // hook measures (storefront-theme.css); the bar itself keeps it live in
     // the builder (header/announcement-bar.jsx).
     activeAnnouncement(chrome) ? "sm-announce" : "",
+    // The merchant's wishlist switch: every card renders its heart, and this
+    // class is what shows it (storefront-theme.css).
+    appearance.wishlist ? "sm-wishlist" : "",
     // The scope every compiled theme style rule is written under.
     themeCss ? STYLESHEET_ROOT_CLASS : "",
     appearance.card === "grocery" ||
@@ -363,7 +374,14 @@ export default async function StorefrontLayout({
                   <Header />
                   <StorefrontRefresh />
                   {children}
-                  <Footer credit={footerCredit} />
+                  <Footer
+                    credit={footerCredit}
+                    // The "Our stores" page exists only for a store with a
+                    // shop location whose merchant keeps the page on.
+                    storesLink={
+                      appearance.storeLocator && shopLocations.length > 0
+                    }
+                  />
                   {whatsappChat ? (
                     <WhatsAppChatButton href={whatsappChat.href} />
                   ) : null}

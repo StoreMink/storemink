@@ -11,6 +11,7 @@ import {
   swatchAxis,
 } from "@/lib/products/options";
 import { QuickAddButton } from "./quick-add-button";
+import { WishlistButton } from "./wishlist-button";
 
 // Card background falls back to this when a product has no card_color set.
 // (Per-product colour is the source of truth.)
@@ -128,6 +129,8 @@ export function ShopCard({
       }
     >
       <div className="shop-card-img">
+        {/* Hidden unless the store keeps its wishlist (.sm-wishlist). */}
+        <WishlistButton slug={p.slug} name={p.name} />
         {p.image_url ? (
           <>
             <Image

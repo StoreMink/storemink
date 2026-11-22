@@ -462,6 +462,7 @@ export default async function ProductDetailPage({
         grocery={layout.productDetail === "grocery"}
         template={template}
         storeLowStockThreshold={lowStockThreshold as number}
+        recentlyViewed={layout.recentlyViewed}
         offerMarker={offerMarker}
         requestedVariantId={requestedVariant}
       />
