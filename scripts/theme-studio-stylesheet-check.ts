@@ -240,6 +240,101 @@ ${productionCss.join("\n")}
         if (report.checked === 0)
           failures.push(`${label}: no declaration was checked`);
       }
+
+      // ★ THE NEWSLETTER'S OWN PANEL (22 Nov 2026). A theme may colour every
+      //   section eyebrow, and that colour is checked against the page and
+      //   the colour schemes; the newsletter then paints a panel of its own,
+      //   soft or ink, that no such check covers. The "Volt" theme's blue
+      //   eyebrow read 3.43:1 on the ink panel and stopped the theme at its
+      //   layout check. With an accent eyebrow rule added to each exemplar,
+      //   the eyebrow inside both panels must read, and must be the panel's
+      //   colour, not the theme's.
+      {
+        const eyebrowCss = themeStylesheetCss([
+          { hook: "section.eyebrow", declarations: { color: "accent" } },
+        ] as Parameters<typeof themeStylesheetCss>[0]);
+        const panel = (tone: string) =>
+          `<section class="home-section"><div class="home-newsletter theme-${tone} align-left"><div class="home-newsletter-copy"><p class="home-section-eyebrow">Stay in the loop</p><h2 class="home-newsletter-heading">Letters from the studio</h2><p class="home-newsletter-sub">New work, once a month.</p></div></div></section>`;
+        const context = await browser.newContext({
+          viewport: { width: 1440, height: 900 },
+        });
+        await context.route("**/*", (route: { abort(): Promise<void> }) =>
+          route.abort(),
+        );
+        const page = await context.newPage();
+        await page.setContent(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${theme.name}</title><style>
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 Arial, sans-serif}
+${productionCss.join("\n")}
+</style><style id="theme-styles">${eyebrowCss}</style></head><body><main class="${rootClass}" style="${style};--sm-accent:var(--brand-primary);background:var(--sm-cream);color:var(--sm-ink)"><div class="home-sections">${panel("dark")}${panel("light")}<section class="home-section"><div class="home-section-head"><p class="home-section-eyebrow" id="plain-eyebrow">Outside any panel</p></div></section></div></main></body></html>`);
+        await page.addScriptTag({ content: axe });
+        await page.evaluate("globalThis.__name = (fn) => fn");
+        const panels: { contrast: string[]; themed: number; plain: boolean } =
+          await page.evaluate(async () => {
+            const colourOf = (el: Element) => getComputedStyle(el).color;
+            const plain = document.getElementById("plain-eyebrow")!;
+            const inPanels = Array.from(
+              document.querySelectorAll(
+                ".home-newsletter .home-section-eyebrow",
+              ),
+            );
+            const result = await (
+              window as unknown as {
+                axe: {
+                  run(
+                    node: Document,
+                    options: object,
+                  ): Promise<{
+                    violations: {
+                      nodes: { target: string[]; failureSummary?: string }[];
+                    }[];
+                  }>;
+                };
+              }
+            ).axe.run(document, {
+              runOnly: { type: "rule", values: ["color-contrast"] },
+            });
+            return {
+              contrast: result.violations.flatMap((v) =>
+                v.nodes
+                  .filter((n) => n.target.join(" ").includes("home-newsletter"))
+                  .map(
+                    (n) =>
+                      `${n.target.join(" ")}: ${(n.failureSummary ?? "").replace(/\s+/g, " ").slice(0, 160)}`,
+                  ),
+              ),
+              // How many panel eyebrows took the theme's own colour.
+              themed: inPanels.filter((el) => colourOf(el) === colourOf(plain))
+                .length,
+              // The rule does reach an eyebrow outside a panel.
+              plain:
+                colourOf(plain) ===
+                (() => {
+                  const probe = document.createElement("i");
+                  probe.style.color = "var(--sm-accent)";
+                  plain.appendChild(probe);
+                  const colour = colourOf(probe);
+                  probe.remove();
+                  return colour;
+                })(),
+            };
+          });
+        await context.close();
+        const label = `${theme.id} newsletter panels`;
+        const problems = [
+          ...panels.contrast.map((line) => `contrast: ${line}`),
+          ...(panels.themed
+            ? [
+                `${panels.themed} eyebrow(s) inside a newsletter panel took the theme's colour instead of the panel's`,
+              ]
+            : []),
+          ...(panels.plain
+            ? []
+            : ["the eyebrow rule did not reach an eyebrow outside a panel"]),
+        ];
+        console.log(`${problems.length ? "FAIL" : "pass"}  ${label}`);
+        for (const problem of problems) console.log(`      ${problem}`);
+        failures.push(...problems.map((problem) => `${label}: ${problem}`));
+      }
     }
   } finally {
     await browser.close();

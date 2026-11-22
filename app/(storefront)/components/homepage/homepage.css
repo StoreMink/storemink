@@ -2146,6 +2146,30 @@ a.home-gallery-card:hover .home-gallery-image {
 .home-newsletter.theme-light .home-newsletter-sub {
   color: color-mix(in srgb, var(--sm-on-ink) 72%, transparent);
 }
+/* ★★ INSIDE THE NEWSLETTER'S OWN PANEL THE EYEBROW TAKES THE PANEL'S
+   COLOUR, whatever a theme's style rules say (22 Nov 2026). A theme may
+   colour every section eyebrow (lib/themes/stylesheet.ts `section.eyebrow`),
+   and that colour is checked against the page and the section colour
+   schemes. The newsletter paints a panel of its own on top of those, soft or
+   ink, which no such check covers: the "Volt" theme's electric blue eyebrow
+   read 3.43:1 on the ink panel, the layout check failed it three times, and
+   the automatic repair had no setting that could change it, so a theme
+   stopped before a single picture was drawn. The theme still sets the
+   eyebrow's type; only its colour here is the panel's. One class more than a
+   compiled style rule carries (.storefront-root, twice its own class, and
+   the hook), so this wins by weight, never by order. */
+.storefront-root
+  .home-section
+  .home-newsletter.home-newsletter.home-newsletter
+  .home-section-eyebrow {
+  color: var(--sm-ink-soft);
+}
+.storefront-root
+  .home-section
+  .home-newsletter.home-newsletter.theme-light
+  .home-section-eyebrow {
+  color: color-mix(in srgb, var(--sm-on-ink) 72%, transparent);
+}
 .home-newsletter-form {
   display: flex;
   flex-direction: column;

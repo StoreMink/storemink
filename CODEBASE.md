@@ -15949,6 +15949,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     still fails the probe's own `brokenImages`. Tests:
     `capture-job.test.mjs` (the wait itself, and the order measure, wait,
     screenshot).
+    ★ A PHONE PHOTOGRAPH IS NOT "UNUSED", AND A 2K PICTURE IS NOT "TOO
+    NARROW" (same day). The picture check (`acceptance-gates.ts`,
+    `assets.integrity`) listed a theme's pictures by following only the key
+    `image_url`, so every opening slide's `mobile_image_url` was reported
+    "declared but nothing renders it", on every theme since each slide got a
+    phone photograph. The design review is handed that line, and three times
+    on the first live theme it read it as a platform fault
+    (`renderer_fix_required`) and failed a finished design.
+    `lib/themes/image-keys.ts` `isImageUrlKey` (`image_url`, any
+    `*_image_url`, `poster_url`, `logo_url`; never `video_url`) is now what
+    both `collectThemeImageUrls` (themes/validation.ts and
+    theme-studio/contracts.ts) follow. And `below_target` warns only when a
+    stored picture is more than 15% narrower than its slot
+    (`BELOW_TARGET_FRACTION` 0.85): a wide picture at "2K" is 2,239px (21:9)
+    or 2,048px (16:9) for a 2,400px slot from every provider setting, so it
+    fired on every wide picture of every theme. Tests: `image-keys.test.ts`,
+    `acceptance-gates.test.ts` (mutation-checked).
+    ★★ INSIDE THE NEWSLETTER'S OWN PANEL THE EYEBROW TAKES THE PANEL'S
+    COLOUR (same day; it stopped the second live theme, "Volt", at its
+    layout check before a picture was drawn). A theme's `section.eyebrow`
+    style rule colours every `.home-section-eyebrow`, and the colour is
+    checked against the page and the section colour schemes; the newsletter
+    then paints a panel of its own, soft or ink, that no such check covers.
+    Volt's electric blue read 3.43:1 on the ink panel, the layout check
+    failed three designs running, and the automatic repair had no setting
+    that could change it (`qa_no_progress`). `homepage.css` now gives an
+    eyebrow inside `.home-newsletter` the panel's colour by weight (one
+    class more than a compiled rule carries); the theme still sets its type.
+    `scripts/theme-studio-stylesheet-check.ts` adds an accent eyebrow rule
+    to each exemplar and lays both panels out: the eyebrow must read and must
+    be the panel's colour (14 cases; all fail without the rule). ⚠ Any other
+    component that paints its own panel under a themed text hook needs the
+    same; the newsletter is the only one today.
     ★ THE OPENING SITS FLUSH UNDER THE HEADER (same day). `opening.ts`
     `enforceHomepageOpening(..., { flush })` sets the opening section's
     `style.padding_y` to `none` on v34 new themes: Roast's model wrote "sm",

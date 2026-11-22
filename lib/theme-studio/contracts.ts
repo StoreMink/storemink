@@ -1,3 +1,4 @@
+import { isImageUrlKey } from "@/lib/themes/image-keys";
 import { templateIssues } from "@/lib/themes/templates";
 import { announcementIssues } from "@/lib/themes/announcement";
 import {
@@ -1051,9 +1052,11 @@ function collectThemeImageUrls(theme: ThemeDefinition): string[] {
     }
     if (!isRecord(value)) return;
     for (const [key, nested] of Object.entries(value)) {
-      if (key === "image_url" && typeof nested === "string" && nested)
-        urls.add(nested);
-      else visit(nested);
+      if (isImageUrlKey(key) && typeof nested === "string") {
+        // Every picture field (themes/image-keys.ts): a slide's phone
+        // photograph is `mobile_image_url`, and it is rendered.
+        if (nested) urls.add(nested);
+      } else visit(nested);
     }
   };
   for (const page of theme.preset.pages) visit(page.sections);

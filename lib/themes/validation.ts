@@ -1,3 +1,4 @@
+import { isImageUrlKey } from "./image-keys";
 import { validatePageSlug, validateSections } from "@/lib/sections/registry";
 import { contrastRatio } from "@/lib/chrome/design";
 import {
@@ -146,7 +147,8 @@ function hasDuplicates(values: readonly string[]): boolean {
 }
 
 /** Every image URL a theme can render: catalog art, sample catalogue, and any
- * `image_url` nested in a section config. */
+ * picture field nested in a section config (`image_url`, a slide's
+ * `mobile_image_url`, a poster, a logo: image-keys.ts). */
 export function collectThemeImageUrls(theme: ThemeDefinition): Set<string> {
   const urls = new Set<string>([
     theme.catalog.previewImage,
@@ -173,8 +175,9 @@ export function collectThemeImageUrls(theme: ThemeDefinition): Set<string> {
     }
     if (!value || typeof value !== "object") return;
     for (const [key, nested] of Object.entries(value)) {
-      if (key === "image_url" && typeof nested === "string" && nested) {
-        urls.add(nested);
+      if (isImageUrlKey(key) && typeof nested === "string") {
+        // Every picture field (image-keys.ts), a phone photograph included.
+        if (nested) urls.add(nested);
       } else {
         visit(nested);
       }
