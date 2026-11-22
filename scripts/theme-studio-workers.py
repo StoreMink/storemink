@@ -44,7 +44,13 @@ def worker_spec(web, worker, image_digest):
     if not image_digest or "@sha256:" not in image_digest:
         raise ValueError("Workers must use the serving web image digest")
     container = template["spec"]["containers"][0]
-    allowed = {"CRON_SECRET", "NEXT_PUBLIC_ROOT_DOMAIN", "NEXT_PUBLIC_APP_URL", "GCP_PROJECT_ID", "DOMAIN_ENV"}
+    # ELEVENLABS_API_KEY: Theme Studio's photos are drawn by ElevenLabs when
+    # an operator chooses it (lib/images); without it the workers draw with
+    # Google whatever the setting says. ELEVENLABS_KEY_EXCLUSIVE goes with
+    # it: the workers share the web service's key and its record of jobs, so
+    # they follow the same answer to "is this key used by no other
+    # environment?" (off unless the trigger says true).
+    allowed = {"CRON_SECRET", "NEXT_PUBLIC_ROOT_DOMAIN", "NEXT_PUBLIC_APP_URL", "GCP_PROJECT_ID", "DOMAIN_ENV", "ELEVENLABS_API_KEY", "ELEVENLABS_KEY_EXCLUSIVE"}
     env = [copy.deepcopy(e) for e in container.get("env", []) if e["name"] in allowed or e["name"].startswith(("DB_", "THEME_STUDIO_"))]
     env = [e for e in env if e["name"] not in {"DB_ADMIN_PASSWORD", "DB_ADMIN_USER", "THEME_STUDIO_WORKER_ONLY", "THEME_STUDIO_WORKER_ROLE", "DB_POOL_MAX"}]
     # Honour the web's explicit build override; a worker's K_REVISION would

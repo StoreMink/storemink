@@ -18,7 +18,7 @@ import "server-only";
  */
 
 import { randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { storePaymentProviders } from "@/drizzle/schema";
 import { decryptSecret, encryptSecret } from "@/lib/payments/crypto";
@@ -63,7 +63,12 @@ export async function rotatePaymentWebhookSecret(
   const updated = await withService((db) =>
     db
       .update(storePaymentProviders)
-      .set({ webhookSecretEnc: encryptSecret(secret) })
+      // ★ A new secret has not been proved yet: Razorpay still signs with the
+      // old one until the merchant pastes this one in.
+      .set({
+        webhookSecretEnc: encryptSecret(secret),
+        webhookLastEventAt: null,
+      })
       .where(
         and(
           eq(storePaymentProviders.storeId, storeId),
@@ -96,10 +101,15 @@ export async function loadPaymentWebhookSecret(
           and(
             eq(storePaymentProviders.storeId, storeId),
             eq(storePaymentProviders.provider, "razorpay"),
-            // A paused gateway must not have its webhook honoured: the merchant
-            // has deliberately stopped taking online payments, and an order
-            // marked paid from a channel they switched off is a surprise.
-            eq(storePaymentProviders.enabled, true),
+            // ★★ A PAUSED GATEWAY'S WEBHOOK IS STILL HONOURED (21 Nov 2026).
+            // It used to be refused, on the thought that an order marked paid
+            // from a channel the merchant switched off is a surprise. But
+            // pausing only stops NEW online checkouts: an order placed while
+            // it was on can still be paid, and the money is real. Refusing
+            // meant a 503 for every delivery while paused, which left that
+            // paid order to the scheduled passes and, kept up, makes Razorpay
+            // disable the webhook altogether. The route only ever marks an
+            // order this store already has, so nothing new is accepted.
           ),
         )
         .limit(1),
@@ -129,4 +139,83 @@ export async function hasPaymentWebhook(storeId: string): Promise<boolean> {
       .limit(1),
   );
   return !!rows[0]?.enc;
+}
+
+/**
+ * What the dashboard may say about the webhook.
+ *
+ * ★★ "A SECRET EXISTS" IS NOT "IT WORKS" (21 Nov 2026). The panel used to read
+ * "active" the moment a secret was generated, although the merchant still had
+ * to paste the address and the secret into Razorpay by hand; one who never
+ * did was told their orders were being confirmed instantly when nothing was
+ * arriving at all. `lastEventAt` is set only by a delivery whose signature
+ * verified, so it is proof Razorpay has both.
+ */
+export interface PaymentWebhookStatus {
+  /** A signing secret has been generated. Never the secret itself. */
+  configured: boolean;
+  /** When Razorpay last delivered a verified event; null if none has yet. */
+  lastEventAt: string | null;
+}
+
+export async function paymentWebhookStatus(
+  storeId: string,
+): Promise<PaymentWebhookStatus> {
+  const rows = await withService((db) =>
+    db
+      .select({
+        enc: storePaymentProviders.webhookSecretEnc,
+        lastEventAt: storePaymentProviders.webhookLastEventAt,
+      })
+      .from(storePaymentProviders)
+      .where(
+        and(
+          eq(storePaymentProviders.storeId, storeId),
+          eq(storePaymentProviders.provider, "razorpay"),
+        ),
+      )
+      .limit(1),
+  );
+  const row = rows[0];
+  return {
+    configured: !!row?.enc,
+    lastEventAt: row?.enc ? (row.lastEventAt ?? null) : null,
+  };
+}
+
+/** How often the "last event" time is rewritten for a busy store. */
+const WEBHOOK_SEEN_REFRESH_MS = 60 * 60_000;
+
+/**
+ * Note that Razorpay has just delivered an event whose signature verified.
+ *
+ * At most one write an hour per store (the WHERE refuses a fresher stamp), so
+ * a busy store's webhook does not turn every payment into an extra UPDATE.
+ * Best-effort: it never throws, because a missed stamp costs a status line
+ * and must never cost the delivery it rides on.
+ */
+export async function markPaymentWebhookReceived(
+  storeId: string,
+  now: Date = new Date(),
+): Promise<void> {
+  const stale = new Date(now.getTime() - WEBHOOK_SEEN_REFRESH_MS).toISOString();
+  try {
+    await withService((db) =>
+      db
+        .update(storePaymentProviders)
+        .set({ webhookLastEventAt: now.toISOString() })
+        .where(
+          and(
+            eq(storePaymentProviders.storeId, storeId),
+            eq(storePaymentProviders.provider, "razorpay"),
+            or(
+              isNull(storePaymentProviders.webhookLastEventAt),
+              lt(storePaymentProviders.webhookLastEventAt, stale),
+            ),
+          ),
+        ),
+    );
+  } catch {
+    // Deliberately silent: see the docblock.
+  }
 }

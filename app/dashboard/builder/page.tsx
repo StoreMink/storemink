@@ -112,6 +112,7 @@ export default async function BuilderPage() {
   const themeDefaults = themeDesignDefaults(
     themeDefinition?.preset.design ?? null,
     themeDefinition ? themeTemplates(themeDefinition.preset) : undefined,
+    themeDefinition?.preset.stylesheet,
   );
   // The colours each section scheme is built from, so the Style tab can show
   // real swatches. The merchant's own palette edits are layered on in the

@@ -19,12 +19,15 @@ import { effectivePlan, limitsFor } from "@/lib/plans";
 import { encryptSecret } from "@/lib/payments/crypto";
 import { validateCredentials } from "@/lib/payments/razorpay";
 import {
-  hasPaymentWebhook,
+  paymentWebhookStatus,
   paymentWebhookUrl,
   rotatePaymentWebhookSecret,
 } from "@/lib/payments/store-webhook";
 import { getCurrentStore } from "@/lib/store/resolve";
 import { IS_PRODUCTION_PLATFORM } from "@/lib/store/host";
+import { lookupStoreGateway } from "@/lib/payments/provider";
+import type { RazorpayCreds } from "@/lib/payments/razorpay";
+import { settleBeforeGatewayChange } from "@/lib/orders/pending-payments";
 
 export interface ChannelState {
   connected: boolean;
@@ -35,6 +38,12 @@ export interface ChannelState {
   planAllowsOnlinePayments: boolean;
   /** Whether a webhook signing secret has been generated. NEVER the secret. */
   webhookConfigured: boolean;
+  /**
+   * When Razorpay last delivered an event signed with that secret, or null if
+   * none has arrived. A secret alone proves nothing: the merchant still has to
+   * paste it into Razorpay, and only a delivery shows they did.
+   */
+  webhookLastEventAt: string | null;
   /** The address the merchant registers with Razorpay. Not a secret. */
   webhookUrl: string | null;
 }
@@ -90,18 +99,20 @@ export async function getChannelState(): Promise<ChannelState> {
   // Only meaningful once a gateway is connected — there is nothing to attach a
   // webhook to otherwise, and showing a URL for it would invite the merchant to
   // register one that can never verify.
-  const [webhookConfigured, store] = row
+  const NO_WEBHOOK = { configured: false, lastEventAt: null };
+  const [webhook, store] = row
     ? await Promise.all([
-        hasPaymentWebhook(storeId).catch(() => false),
+        paymentWebhookStatus(storeId).catch(() => NO_WEBHOOK),
         getCurrentStore().catch(() => null),
       ])
-    : [false, null];
+    : [NO_WEBHOOK, null];
   return {
     connected: !!row,
     keyId: row?.key_id ?? null,
     enabled: !!row?.enabled,
     planAllowsOnlinePayments: planOk,
-    webhookConfigured,
+    webhookConfigured: webhook.configured,
+    webhookLastEventAt: webhook.lastEventAt,
     webhookUrl: store ? paymentWebhookUrl(store as never) : null,
   };
 }
@@ -140,6 +151,95 @@ export async function generateWebhookSecret(): Promise<
 export interface ChannelActionResult {
   success?: boolean;
   error?: string;
+}
+
+/** "3:45 pm IST", for telling a merchant when to try again. */
+function istTime(iso: string): string {
+  const time = new Date(iso).toLocaleTimeString("en-IN", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+  return `${time} IST`;
+}
+
+/** Set the gateway's switch, best-effort. Returns whether a row moved. */
+async function writeEnabled(
+  storeId: string,
+  enabled: boolean,
+): Promise<boolean> {
+  try {
+    const rows = await withService((db) =>
+      db
+        .update(storePaymentProviders)
+        .set({ enabled, updatedAt: new Date().toISOString() })
+        .where(
+          and(
+            eq(storePaymentProviders.storeId, storeId),
+            eq(storePaymentProviders.provider, "razorpay"),
+          ),
+        )
+        .returning({ store_id: storePaymentProviders.storeId }),
+    );
+    return rows.length > 0;
+  } catch (err) {
+    console.error("writeEnabled:", err instanceof Error ? err.message : err);
+    return false;
+  }
+}
+
+/**
+ * May this store's connected Razorpay account be disconnected, or replaced
+ * with `replacement`, right now? Null means yes; otherwise the message to
+ * show, and nothing has been changed.
+ *
+ * ★★ THE KEYS ON FILE ARE THE ONLY ONES THAT CAN SAY WHETHER A WAITING ORDER
+ * WAS PAID (21 Nov 2026). Removing them used to be unconditional: the reaper
+ * then cancelled a waiting order without asking Razorpay, so a captured
+ * payment ended up on a cancelled order, and after a switch to another
+ * account every read failed and the order and its stock stayed held. Every
+ * waiting order is now settled with the current keys first
+ * (`settleBeforeGatewayChange`): paid ones are confirmed, dead ones are
+ * cancelled, and one still inside its payment window blocks the change until
+ * that window closes. New keys on the SAME Razorpay account read the same
+ * orders, so rotating a key never waits.
+ *
+ * ★ PAUSED WHILE IT CHECKS, so no new online order can start between the
+ * check and the change. A refusal puts the switch back exactly as it was.
+ *
+ * A connection that cannot be read at all (a stored secret that no longer
+ * decrypts) protects nothing, so it never blocks its own replacement.
+ */
+async function gatewayChangeBlocked(
+  storeId: string,
+  replacement: RazorpayCreds | null,
+): Promise<string | null> {
+  const lookup = await lookupStoreGateway(storeId);
+  if (lookup.status !== "connected") return null;
+
+  const wasEnabled = lookup.gateway.enabled;
+  if (wasEnabled) await writeEnabled(storeId, false);
+
+  const check = await settleBeforeGatewayChange(
+    storeId,
+    lookup.gateway.creds,
+    replacement,
+  );
+  if (check.ok) return null;
+
+  if (wasEnabled) await writeEnabled(storeId, true);
+
+  if (check.waiting > 0) {
+    const count =
+      check.waiting === 1
+        ? "1 online payment is"
+        : `${check.waiting} online payments are`;
+    const until = check.clearBy ? ` after ${istTime(check.clearBy)}` : " later";
+    return replacement
+      ? `${count} still in progress on the Razorpay account connected now, and a different account can't confirm them. Pause online payments so no new ones start, then connect the new keys${until}. Nothing was changed.`
+      : `${count} still in progress on this Razorpay account, and disconnecting now would lose them. Pause online payments so no new ones start, then disconnect${until}. Nothing was changed.`;
+  }
+  return "We couldn't check your in-progress payments with Razorpay just now, so nothing was changed. Please try again in a minute.";
 }
 
 export async function saveRazorpayCredentials(
@@ -187,6 +287,15 @@ export async function saveRazorpayCredentials(
       error: `Razorpay rejected these credentials: ${check.error}`,
     };
   }
+
+  // ★ Settle what is waiting on the account connected NOW before its keys
+  // are overwritten (see gatewayChangeBlocked). Saving the same account's
+  // keys again, or a rotated key, passes straight through.
+  const blocked = await gatewayChangeBlocked(storeId, {
+    keyId: id,
+    keySecret: secret,
+  });
+  if (blocked) return { error: blocked };
 
   const updateFields = {
     provider: "razorpay",
@@ -261,6 +370,12 @@ export async function disconnectRazorpay(): Promise<ChannelActionResult> {
   if (!userId) return { error: "You don't have permission to do this." };
 
   const storeId = await getActingStoreId();
+
+  // ★ Never while an order is still waiting on this account: its payment
+  // could only be confirmed with these keys (see gatewayChangeBlocked).
+  const blocked = await gatewayChangeBlocked(storeId, null);
+  if (blocked) return { error: blocked };
+
   try {
     await withService((db) =>
       db

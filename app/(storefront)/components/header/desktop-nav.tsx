@@ -73,7 +73,7 @@ export function DesktopNav({ links }: { links: readonly NavLink[] }) {
         const kind = navPanelKind(link);
         if (kind === "none") {
           return (
-            <Link key={key} href={link.href}>
+            <Link key={key} href={link.href} data-sm="nav-link">
               {link.label}
             </Link>
           );
@@ -114,6 +114,7 @@ export function DesktopNav({ links }: { links: readonly NavLink[] }) {
                 triggers.current[index] = el;
               }}
               className={styles.navTrigger}
+              data-sm="nav-link"
               aria-expanded={isOpen}
               aria-controls={panelId}
               onClick={() => {

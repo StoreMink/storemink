@@ -157,6 +157,28 @@ jobs:
         if: ${{ !cancelled() && (success() || steps.layouts.outcome == 'failure') }}
         run: node scripts/theme-studio-contrast-check.mjs
 
+      # ★ THEME STYLE RULES IN A REAL BROWSER (22 Nov 2026). Each exemplar
+      # theme's own style rules (lib/themes/stylesheet.ts), compiled and laid
+      # over the production storefront CSS: every rule must be in effect (the
+      # storefront's own CSS must not be winning over it), text must still
+      # read, and the page must not scroll sideways. A change to the
+      # storefront's CSS that quietly switches off part of every theme's
+      # styling fails here. Runs whatever the two steps above did.
+      - name: Check theme style rules
+        if: ${{ !cancelled() }}
+        run: npm run theme-studio:stylesheets
+
+      # ★ THE HEADER AND WHAT OPENS THE PAGE (in CI since 22 Nov 2026). The
+      # header's height, the height every page reserves for it before the
+      # browser has measured it, and where the opening section and its
+      # photograph start, under every header style and width. It existed and
+      # was not run here: when the bar was slimmed from 80px to 68px the
+      # reserved heights stayed at 80px and 88px, 87 of its cases failed, and
+      # nothing said so. Offline Chromium, the same setup as the steps above.
+      - name: Check the storefront header and page opening
+        if: ${{ !cancelled() }}
+        run: node scripts/storefront-header-layout-check.mjs
+
   shuffle:
     name: Test order independence (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest

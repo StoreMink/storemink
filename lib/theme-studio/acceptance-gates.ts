@@ -501,6 +501,10 @@ export function isPlaceholderAsset(
   return asset.licenseNote === PLACEHOLDER_LICENSE_NOTE;
 }
 
+/** A stored picture this fraction of its slot's width or wider is not
+ * reported as soft (`below_target`). */
+export const BELOW_TARGET_FRACTION = 0.85;
+
 /** Every declared asset resolves to a stored row with the same bytes. */
 export function assetIntegrityFindings(
   pkg: ThemePackageV2,
@@ -580,11 +584,16 @@ export function assetIntegrityFindings(
       // soft on a large screen: a warning. Below the storefront minimum it
       // is `too_small` above, which is serious. image-vertex.ts only logs
       // the small draw; this reads the stored width.
+      // ★ Only when it is more than 15% narrower. A wide picture at "2K"
+      //   comes back 2,239px (21:9) or 2,048px (16:9) for a 2,400px slot
+      //   from every provider setting there is, so the warning fired on
+      //   every wide picture of every theme and told nobody anything they
+      //   could act on; the design review listed it as a finding each time.
       const target = slotTargetSize(asset);
       if (
         target &&
         row.width >= THEME_IMAGE_RULES.minWidth &&
-        row.width + 1 < target.width
+        row.width < target.width * BELOW_TARGET_FRACTION
       ) {
         findings.push({
           code: "below_target",

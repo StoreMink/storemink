@@ -75,6 +75,37 @@ import {
  * accepted range and well past any plan we sell.
  */
 const MANDATE_YEARS = 5;
+
+/**
+ * How often a mandate lets StoreMink debit: whenever a renewal is presented,
+ * inside the ceiling and the expiry above.
+ *
+ * ★★ NOT `monthly` OR `yearly` (they were, until 22 Nov 2026). A mandate with
+ * a calendar frequency allows ONE successful debit in each of its own cycles
+ * (Razorpay's UPI page states NPCI's rule), and StoreMink's cycles do not line
+ * up with a calendar:
+ *   • a monthly plan renews every 30 days, so its debits creep a day earlier
+ *     through every 31-day month until two fall in one month (the 1st and the
+ *     31st), and the second is refused;
+ *   • a yearly plan renews every 365 days, a day short of a leap year;
+ *   • a merchant who moves from yearly to monthly billing keeps the mandate
+ *     they authorised, and a `yearly` one would refuse eleven renewals of
+ *     every twelve.
+ * `as_presented` has no such cycle. What limits a debit is unchanged: the
+ * mandate's ceiling, RBI's ₹15,000 limit for a debit without a second factor,
+ * and the bank's own notice before every one.
+ *
+ * ⚠ Razorpay's payment window words this as a limit that can be charged
+ * "anytime" where it said "per month", so the review step says in StoreMink's
+ * own words what is actually charged. ⚠ A mandate authorised before this
+ * keeps the frequency it was registered with; nothing can change it. A
+ * renewal of one that is refused for falling in the same month is tried again
+ * about a day and a half later, by which time the month has usually turned.
+ *
+ * Authorised end to end on both rails in Razorpay's test Checkout on 22 Nov
+ * 2026 (docs/autopay-verification.md).
+ */
+export const MANDATE_FREQUENCY = "as_presented" as const;
 import { RECURRING_CHARGE_VERIFIED } from "./gateway";
 import { resolveBillingEmail } from "@/lib/email/billing-emails";
 import {
@@ -98,10 +129,12 @@ import {
   capturedAttemptForInvoice,
   capturedDraftPurchases,
   fileRecoveredPurchase,
+  type PurchaseCompletion,
+  recordGatewayOrder,
   settleAttempt,
   verifyRecoveredCapture,
-  type PurchaseCompletion,
 } from "./collect";
+import { orderIsUntouched } from "./order-state";
 import { notifyPlanActivated } from "./receipts";
 
 type BillingPeriod = "monthly" | "yearly";
@@ -743,7 +776,7 @@ export async function startEnrolment(input: {
                 now.getTime() + MANDATE_YEARS * 365 * 86_400_000,
               ).getTime() / 1000,
             ),
-            frequency: input.period === "yearly" ? "yearly" : "monthly",
+            frequency: MANDATE_FREQUENCY,
           },
           receipt: invoice.invoiceRef ?? invoice.id.slice(0, 30),
           description: "StoreMink subscription",
@@ -763,10 +796,22 @@ export async function startEnrolment(input: {
     };
   }
 
-  await settleAttempt(attempt.attemptId, "processing", {
+  // ★ The order id leaves the server only once the attempt holds it
+  // (`recordGatewayOrder`): an order the attempt does not know about must
+  // never be payable.
+  const recorded = await recordGatewayOrder({
+    attemptId: attempt.attemptId,
     providerOrderId: order.data.id,
+    invoiceId: invoice.id,
+    storeId: input.storeId,
     now,
   });
+  if (!recorded) {
+    return {
+      ok: false,
+      error: "Couldn't start the payment. Please try again.",
+    };
+  }
 
   return {
     ok: true,
@@ -1002,38 +1047,6 @@ async function inspectResumable(
     method: existing.ok && existing.data.method === "upi" ? "upi" : "card",
     untouched: await orderIsUntouched(creds, existing),
   };
-}
-
-/**
- * Has any payment ever succeeded, or could one still, against this order?
- *
- * ★ The cheap proof is `created` with zero attempts: nothing has been presented
- * at all, so no extra call is needed and the ordinary path pays nothing.
- *
- * ★★ BUT A TRIED ORDER IS NOT NECESSARILY A PAID ONE. A merchant who scans a
- * UPI QR and never approves it leaves the order `attempted` with three FAILED
- * payments and `amount_paid: 0` — measured on production 2026-09-06. Treating
- * that as untouchable strands them behind their own abandoned attempt until
- * reconciliation gives up 72 hours later. A `failed` payment is terminal and
- * can never be captured, so an order whose payments have ALL failed is as safe
- * to abandon as one nobody ever opened.
- *
- * ★ Anything else is refused: money already paid, a payment still `created` or
- * `authorized` (the shopper is mid-approval in their UPI app), or a read we
- * could not make. "We could not check" is never "nobody paid".
- */
-async function orderIsUntouched(
-  creds: Parameters<typeof rzpFetchOrder>[0],
-  order: Awaited<ReturnType<typeof rzpFetchOrder>>,
-): Promise<boolean> {
-  if (!order.ok) return false;
-  if (order.data.amount_paid) return false;
-  if (order.data.status === "created" && (order.data.attempts ?? 0) === 0) {
-    return true;
-  }
-  const payments = await rzpFetchOrderPayments(creds, order.data.id);
-  if (!payments.ok) return false;
-  return payments.data.every((payment) => payment.status === "failed");
 }
 
 async function resumableAttempt(

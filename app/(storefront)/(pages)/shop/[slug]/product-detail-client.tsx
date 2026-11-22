@@ -19,6 +19,8 @@ import { useCart } from "@/app/(storefront)/components/cart/CartProvider";
 import { ShareButtons } from "@/app/(storefront)/components/share-buttons";
 import { ProductDeliveryEstimator } from "@/app/(storefront)/components/delivery/product-delivery-estimator";
 import { RelatedProducts, type RelatedProduct } from "./related-products";
+import { RecentlyViewed } from "./recently-viewed";
+import { WishlistButton } from "@/app/(storefront)/components/wishlist-button";
 import { productGallery } from "@/lib/products/gallery";
 import { GroceryProductDetail } from "./grocery-product-detail";
 import { ProductGallery, ProductLightbox } from "./product-gallery";
@@ -111,6 +113,7 @@ export default function ProductDetailClient({
   grocery = false,
   template = defaultTemplates(undefined).product,
   storeLowStockThreshold = 0,
+  recentlyViewed = false,
   offerMarker = null,
   requestedVariantId = null,
 }: {
@@ -129,6 +132,8 @@ export default function ProductDetailClient({
   // Store-wide default (inventory.lowStockThreshold), resolved by the page; a
   // per-SKU threshold overrides it. Drives the "Only X left" badge.
   storeLowStockThreshold?: number;
+  /** The merchant's switch: show the shopper's earlier products below. */
+  recentlyViewed?: boolean;
   /**
    * "20% off" or "Buy 1, get 1 free" — resolved on the SERVER by the offers
    * engine, so it is what the cart will actually do.
@@ -358,6 +363,12 @@ export default function ProductDetailClient({
             />
           ),
         )}
+        {recentlyViewed ? (
+          <RecentlyViewed
+            currentSlug={product.slug}
+            storeLowStockThreshold={storeLowStockThreshold}
+          />
+        ) : null}
         {zoomIndex !== null && gallery.length > 0 && (
           <ProductLightbox
             images={gallery}
@@ -514,6 +525,12 @@ export default function ProductDetailClient({
                 Buy Now
               </button>
             </div>
+            {/* Hidden unless the store keeps its wishlist (.sm-wishlist). */}
+            <WishlistButton
+              slug={product.slug}
+              name={product.name}
+              variant="page"
+            />
           </div>
         );
       case "description":
@@ -693,6 +710,13 @@ export default function ProductDetailClient({
           />
         ),
       )}
+      {/* The shopper's own earlier products, from their device. */}
+      {recentlyViewed ? (
+        <RecentlyViewed
+          currentSlug={product.slug}
+          storeLowStockThreshold={storeLowStockThreshold}
+        />
+      ) : null}
 
       {/* Zoom lightbox */}
       {zoomIndex !== null && gallery.length > 0 && (

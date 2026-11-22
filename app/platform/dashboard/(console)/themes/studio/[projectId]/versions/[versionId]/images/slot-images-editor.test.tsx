@@ -349,9 +349,14 @@ describe("saving uploads", () => {
     await screen.findByRole("button", {
       name: "Save 1 picture as a new design",
     });
-    const event = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(true);
+    // The page starts listening in an effect, a moment after the button is
+    // on screen: asked at once, a slow machine found nobody listening yet
+    // (CI's shuffled run, 22 Nov 2026). Ask until it answers.
+    await waitFor(() => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    });
     cleanup();
     renderEditor();
     const calm = new Event("beforeunload", { cancelable: true });

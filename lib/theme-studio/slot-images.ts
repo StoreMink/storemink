@@ -235,7 +235,9 @@ export async function slotUploadTarget(
   return { slot, target, byteLimit: slotByteLimit(slot) };
 }
 
-const EDITABLE_STATES: readonly string[] = ["ready", "candidate"];
+// `published` since 0288: a live theme's picture can be replaced. It becomes
+// a new design; the release stores installed keeps its own picture.
+const EDITABLE_STATES: readonly string[] = ["ready", "candidate", "published"];
 
 /** Store one prepared upload as an `image` asset of the project. */
 export async function storeThemeStudioSlotImage(
@@ -258,7 +260,7 @@ export async function storeThemeStudioSlotImage(
     if (!EDITABLE_STATES.includes(project.status)) {
       throw new ThemeStudioError(
         "illegal_state",
-        "Images can be changed only while the project is ready or a candidate.",
+        "Images can be changed once the theme has a finished design and nothing is working on it.",
       );
     }
     const [existing] = await db
@@ -446,7 +448,7 @@ export async function replaceThemeStudioSlotImages(
         "illegal_state",
         project.status === "generating"
           ? "Wait for the active run to finish before changing images."
-          : "Images can be changed only while the project is ready or a candidate.",
+          : "Images can be changed once the theme has a finished design and nothing is working on it.",
       );
     }
     const [base] = await db

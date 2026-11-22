@@ -7,13 +7,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type {
-  ThemeStudioBuildTimeRange,
   ThemeStudioProgress,
   ThemeStudioProgressStep,
 } from "@/lib/theme-studio/progress";
 import type { StudioStatus } from "../studio-status";
 import { plainText } from "../studio-ui";
-import { buildTimeWords, clockWords, durationWords } from "../studio-words";
+import { clockWords, durationWords } from "../studio-words";
 
 // ---------------------------------------------------------------------------
 // The progress card (wave TS-2, plan section 4 "Theme page, building"). It
@@ -84,19 +83,6 @@ function heading(progress: ThemeStudioProgress, status: StudioStatus): string {
     default:
       return "What Theme Studio did last";
   }
-}
-
-function footer(
-  progress: ThemeStudioProgress,
-  buildTime: ThemeStudioBuildTimeRange,
-  notifiesViewer: boolean,
-): string | null {
-  const kind = progress.status.working?.kind;
-  if (!kind) return null;
-  const tell = notifiesViewer ? " We'll let you know when it's ready." : "";
-  if (kind === "building" || kind === "waiting")
-    return `${buildTimeWords(buildTime)} You can leave this page.${tell}`;
-  return `About 3 to 5 minutes. You can leave this page.${tell}`;
 }
 
 function Steps({
@@ -183,16 +169,11 @@ function PlanLine({ plan }: { plan: StudioPlan }) {
 export function ProgressCard({
   progress,
   status,
-  buildTime,
   plan,
-  notifiesViewer,
 }: {
   progress: ThemeStudioProgress;
   status: StudioStatus;
-  buildTime: ThemeStudioBuildTimeRange;
   plan: StudioPlan | null;
-  /** The viewer started this theme, so Theme Studio's notices reach them. */
-  notifiesViewer: boolean;
 }) {
   const { steps } = progress;
   const working = progress.status.working !== null;
@@ -204,7 +185,6 @@ export function ProgressCard({
     ) : null;
   }
   const title = heading(progress, status);
-  const foot = footer(progress, buildTime, notifiesViewer);
   const stopped = steps.some((step) => step.state === "failed");
   const body = (
     <>
@@ -213,7 +193,6 @@ export function ProgressCard({
       ) : (
         <p className="studio-progress-foot">{status.words}</p>
       )}
-      {foot ? <p className="studio-progress-foot">{foot}</p> : null}
       {plan ? <PlanLine plan={plan} /> : null}
     </>
   );

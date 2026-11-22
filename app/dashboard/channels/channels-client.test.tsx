@@ -74,6 +74,7 @@ const PAYMENT = {
   enabled: false,
   planAllowsOnlinePayments: true,
   webhookConfigured: false,
+  webhookLastEventAt: null,
   webhookUrl: null,
 };
 const SHIPROCKET = {

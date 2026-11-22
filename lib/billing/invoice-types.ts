@@ -51,6 +51,20 @@ export interface PayableInvoice {
   taxRateBps: number | null;
   /** The GST is inside the total (prices include GST). */
   taxInclusive: boolean;
+  /**
+   * Set while an automatic renewal is SCHEDULED for this invoice: the bank's
+   * notice has gone out and the debit has not been sent yet. The earliest
+   * instant the debit may be sent, as an ISO string. The panel then says
+   * autopay is scheduled, where "payment in progress" would be untrue for the
+   * day or more the notice period lasts. Null otherwise.
+   */
+  autopayAt: string | null;
+  /**
+   * True while the invoice holds a checkout the merchant opened and did not
+   * finish (a manual attempt still `processing` with its gateway order). The
+   * panel then offers "Continue payment", which reopens that same order.
+   */
+  resumable: boolean;
 }
 
 /**

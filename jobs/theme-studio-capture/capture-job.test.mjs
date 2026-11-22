@@ -15,6 +15,10 @@ import {
   WAKE_TIMEOUT_MS,
   errorSurface,
   wakeReviews,
+  waitForPictures,
+  PICTURE_WAIT_MS,
+  MAX_QA_SCREENSHOT_BYTES,
+  QA_SCREENSHOT_QUALITIES,
 } from "./capture-job.mjs";
 
 const claim = {
@@ -46,6 +50,8 @@ function fakeBrowser({
   failOn,
   routeHtml,
   redirect = false,
+  /** Bytes a screenshot weighs at a JPEG quality (default: a few bytes). */
+  weigh,
 } = {}) {
   const contexts = [];
   const browser = {
@@ -91,7 +97,11 @@ function fakeBrowser({
             async addStyleTag(style) {
               context.styles.push(style.content);
             },
-            async evaluate() {
+            async evaluate(fn, arg) {
+              // What ran in the page, in order, with the screenshots.
+              (context.steps ??= []).push(
+                fn === waitForPictures ? `pictures:${arg}` : "measure",
+              );
               return {
                 path: "/",
                 width: options.viewport.width,
@@ -110,6 +120,9 @@ function fakeBrowser({
             async waitForTimeout() {},
             async screenshot(opts) {
               context.screenshot = opts;
+              (context.steps ??= []).push("screenshot");
+              (context.qualities ??= []).push(opts.quality);
+              if (weigh) return Buffer.alloc(weigh(opts.quality));
               return Buffer.from(`${options.viewport.width}`);
             },
             async close() {},
@@ -348,6 +361,10 @@ describe("taking the shots", () => {
       quality: 55,
       fullPage: true,
     });
+    // ★ Each page is measured, then waits for its photographs, then is
+    //   photographed for the review: never photographed first.
+    const page = ["measure", `pictures:${PICTURE_WAIT_MS}`, "screenshot"];
+    expect(contexts[0].steps).toEqual([...page, ...page]);
   });
 });
 
@@ -893,5 +910,154 @@ describe("waking the design review when the captures are done", () => {
         designReview: "waiting",
       },
     ]);
+  });
+});
+
+// The reviewer's screenshot waits for the page's photographs (22 Nov 2026:
+// a story picture still loading was photographed as an empty box, and the
+// design review failed a design whose page was fine).
+describe("★ waiting for pictures before a review screenshot", () => {
+  /** A stand-in <img>: `loadsAfter` ms after it is (re)asked for. */
+  function picture({
+    loaded = false,
+    failed = false,
+    lazy = false,
+    box = 400,
+    src = "/_next/image?url=a&w=750",
+    loadsAfter = null,
+  } = {}) {
+    const img = {
+      src,
+      currentSrc: loaded ? src : "",
+      complete: loaded || failed,
+      naturalWidth: loaded ? 720 : 0,
+      loading: lazy ? "lazy" : "eager",
+      asked: 0,
+      getBoundingClientRect: () => ({ width: box, height: box }),
+      getAttribute: (name) =>
+        name === "src" ? src : name === "srcset" ? `${src} 750w` : null,
+      setAttribute() {
+        img.asked += 1;
+        img.complete = false;
+        arrive();
+      },
+    };
+    const arrive = () => {
+      if (loadsAfter === null) return;
+      setTimeout(() => {
+        img.complete = true;
+        img.naturalWidth = 720;
+        img.currentSrc = src;
+      }, loadsAfter);
+    };
+    // A lazy picture starts only once it is no longer held back.
+    if (lazy) {
+      let mode = "lazy";
+      Object.defineProperty(img, "loading", {
+        get: () => mode,
+        set(value) {
+          mode = value;
+          if (value === "eager") arrive();
+        },
+      });
+    } else if (!loaded && !failed) arrive();
+    return img;
+  }
+  const inPage = async (images, ms) => {
+    vi.stubGlobal("document", { images });
+    try {
+      return await waitForPictures(ms);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it("returns at once when every picture has loaded", async () => {
+    const started = Date.now();
+    expect(await inPage([picture({ loaded: true })], 5_000)).toBe(0);
+    expect(Date.now() - started).toBeLessThan(120);
+  });
+
+  it("waits for a picture still on its way", async () => {
+    const img = picture({ loadsAfter: 200 });
+    expect(await inPage([img], 5_000)).toBe(0);
+    expect(img.naturalWidth).toBe(720);
+  });
+
+  it("asks once more for a picture whose first request failed", async () => {
+    const img = picture({ failed: true, loadsAfter: 100 });
+    expect(await inPage([img], 5_000)).toBe(0);
+    expect(img.asked).toBeGreaterThan(0);
+  });
+
+  it("starts a picture still held back as lazy", async () => {
+    const img = picture({ lazy: true, loadsAfter: 100 });
+    expect(await inPage([img], 5_000)).toBe(0);
+    expect(img.loading).toBe("eager");
+  });
+
+  it("gives up after its time and says how many are missing", async () => {
+    const started = Date.now();
+    expect(await inPage([picture(), picture({ loaded: true })], 300)).toBe(1);
+    expect(Date.now() - started).toBeLessThan(900);
+  });
+
+  it("ignores a picture with no box on the page, and one with no source", async () => {
+    const hidden = picture({ lazy: true, box: 0 });
+    const empty = picture({ src: "" });
+    expect(await inPage([hidden, empty], 5_000)).toBe(0);
+    expect(hidden.loading).toBe("lazy");
+  });
+
+  it("is a bounded wait", () => {
+    expect(PICTURE_WAIT_MS).toBeGreaterThanOrEqual(5_000);
+    expect(PICTURE_WAIT_MS).toBeLessThanOrEqual(10_000);
+  });
+});
+
+// A long page full of photographs (22 Nov 2026: the "Volt" theme's final
+// check failed `qa_screenshot_too_large` and stopped a finished theme).
+describe("★ a review screenshot over the size limit is taken again, smaller", () => {
+  const qa = {
+    ...claim,
+    qa: {
+      pages: [{ surface: "home", path: "/" }],
+      viewports: { desktop1440: { width: 1440, height: 900 } },
+    },
+  };
+
+  it("keeps the first quality when the page fits", async () => {
+    const { browser, contexts } = fakeBrowser({ weigh: () => 100_000 });
+    const result = await takeQaScreenshots(browser, qa, { settleMs: 0 });
+    expect(result.screenshots).toHaveLength(1);
+    expect(contexts[0].qualities).toEqual([QA_SCREENSHOT_QUALITIES[0]]);
+  });
+
+  it("steps the quality down until the page fits, and sends that picture", async () => {
+    // Over the limit at 55 and 40, under it at 28.
+    const { browser, contexts } = fakeBrowser({
+      weigh: (quality) => (quality > 28 ? 700 * 1024 : 400 * 1024),
+    });
+    const result = await takeQaScreenshots(browser, qa, { settleMs: 0 });
+    expect(contexts[0].qualities).toEqual([55, 40, 28]);
+    expect(Buffer.from(result.screenshots[0].base64, "base64").byteLength).toBe(
+      400 * 1024,
+    );
+  });
+
+  it("still refuses a page that fits at no quality", async () => {
+    const { browser, contexts } = fakeBrowser({ weigh: () => 900 * 1024 });
+    await expect(
+      takeQaScreenshots(browser, qa, { settleMs: 0 }),
+    ).rejects.toMatchObject({ code: "qa_screenshot_too_large" });
+    expect(contexts[0].qualities).toEqual(QA_SCREENSHOT_QUALITIES);
+  });
+
+  it("uses the web app's own limit, best quality first", () => {
+    expect(MAX_QA_SCREENSHOT_BYTES).toBe(512 * 1024);
+    expect(QA_SCREENSHOT_QUALITIES[0]).toBe(55);
+    expect([...QA_SCREENSHOT_QUALITIES]).toEqual(
+      [...QA_SCREENSHOT_QUALITIES].sort((a, b) => b - a),
+    );
   });
 });

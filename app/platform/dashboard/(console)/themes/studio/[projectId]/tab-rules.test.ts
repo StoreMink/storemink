@@ -75,9 +75,9 @@ describe("changeBlockedReason (Describe a fix, Describe a change)", () => {
     expect(changeBlockedReason(project("generating"), on)).toMatch(
       /working on this theme/,
     );
-    expect(changeBlockedReason(project("published"), on)).toMatch(
-      /Live themes can't be changed yet/,
-    );
+    // ★ A live theme takes a change (migration 0288): publishing it is the
+    //   theme's next release, and stores keep the one they installed.
+    expect(changeBlockedReason(project("published"), on)).toBeNull();
     expect(changeBlockedReason(project("archived"), on)).toMatch(
       /removed from the list/,
     );
@@ -101,13 +101,15 @@ describe("changeBlockedReason (Describe a fix, Describe a change)", () => {
 });
 
 describe("picture changes", () => {
-  it("are taken while the theme is ready or Ready to publish", () => {
+  it("are taken while the theme is ready, Ready to publish or live", () => {
     expect(pictureEditBlockedReason(project("ready"))).toBeNull();
     expect(pictureEditBlockedReason(project("candidate"))).toBeNull();
+    // A live theme's pictures can be changed (migration 0288).
+    expect(pictureEditBlockedReason(project("published"))).toBeNull();
+    expect(pictureDrawBlockedReason(project("published"), on)).toBeNull();
     for (const status of [
       "generating",
       "approved",
-      "published",
       "archived",
       "blocked",
       "draft",

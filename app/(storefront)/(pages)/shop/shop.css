@@ -1377,6 +1377,13 @@
   }
   .sm-gallery.mode-thumbs-left .sm-gallery-frame {
     order: 2;
+    /* Named, never left to auto-placement: with the thumbnails absent the
+       frame would otherwise fall into the 72px column. */
+    grid-column: 2;
+  }
+  /* One photograph: no thumbnails, so no thumbnail column either. */
+  .sm-gallery.mode-thumbs-left.is-single {
+    display: block;
   }
   .sm-gallery.mode-thumbs-left .pdp-thumbs,
   .sm-gallery.mode-thumbs-left .gpdp-thumbs {

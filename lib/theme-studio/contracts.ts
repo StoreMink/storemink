@@ -1,5 +1,10 @@
+import { isImageUrlKey } from "@/lib/themes/image-keys";
 import { templateIssues } from "@/lib/themes/templates";
 import { announcementIssues } from "@/lib/themes/announcement";
+import {
+  stylesheetIssues,
+  type StylesheetContext,
+} from "@/lib/themes/stylesheet";
 import { THEME_RELEASE_OBJECT_ROOT } from "@/lib/storage/paths";
 import {
   HOMEPAGE_SECTION_TYPES,
@@ -22,11 +27,12 @@ import { cleanPage } from "@/lib/themes/page";
 import { cleanTypography } from "@/lib/themes/typography";
 import { parseThemeStudioModelKey, type ThemeStudioModelKey } from "./models";
 import { resolveOptionRows } from "@/lib/products/options";
+import { parseDesignPlan, type DesignPlan } from "./design-plan";
 import {
-  DESIGN_DIRECTION_IDS,
   PALETTE_FAMILIES,
-  type DesignDirection,
+  STUDIO_DESIGN_DIRECTION_IDS,
   type PaletteFamily,
+  type StudioDesignDirection,
 } from "./design-directions";
 
 export const THEME_INTENT_SCHEMA_VERSION = 1 as const;
@@ -83,15 +89,31 @@ const STATE_TRANSITIONS: Record<
   readonly ThemeStudioProjectState[]
 > = {
   draft: ["generating", "archived"],
-  generating: ["ready", "failed", "blocked"],
-  ready: ["generating", "candidate", "blocked", "archived"],
+  // generating -> published: a change to a live theme that did not finish
+  // leaves the published design current (migration 0288).
+  generating: ["ready", "failed", "blocked", "published"],
+  // ready, candidate, blocked -> published: the published design made
+  // current again (0288). The database allows it only while the current
+  // version has a published publication.
+  ready: ["generating", "candidate", "blocked", "archived", "published"],
   // candidate -> ready: failed or superseded acceptance evidence demotes a
   // candidate without calling it blocked (migration 0131).
-  candidate: ["generating", "ready", "approved", "blocked", "archived"],
+  candidate: [
+    "generating",
+    "ready",
+    "approved",
+    "blocked",
+    "archived",
+    "published",
+  ],
   approved: ["generating", "published", "blocked", "archived"],
-  published: ["archived"],
+  // ★ A published theme can be changed (0288, owner 22 Nov 2026): a change
+  //   or new pictures (generating), a replaced picture or another design
+  //   made current (ready). Publishing the result stores the theme's next
+  //   release; stores that installed an earlier one keep it.
+  published: ["generating", "ready", "archived"],
   failed: ["generating", "archived"],
-  blocked: ["generating", "ready", "archived"],
+  blocked: ["generating", "ready", "archived", "published"],
   archived: [],
 };
 
@@ -130,7 +152,7 @@ export interface ThemeIntent {
   schemaVersion:
     | typeof THEME_INTENT_SCHEMA_VERSION
     | typeof THEME_VARIETY_INTENT_SCHEMA_VERSION;
-  designDirection?: DesignDirection;
+  designDirection?: StudioDesignDirection;
   paletteFamily?: PaletteFamily;
   summary: string;
   audiences: string[];
@@ -182,6 +204,13 @@ export interface ThemeIntent {
   }[];
   assumptions: string[];
   capabilityGaps: ThemeCapabilityGap[];
+  /**
+   * The design decided before anything was built (design-plan.ts; prompt
+   * v34, new themes only): colours, fonts, buttons, layout and how the theme
+   * sets its type, checked against every published theme. Absent on every
+   * intent before it and on a revision's.
+   */
+  designPlan?: DesignPlan;
 }
 
 export interface ThemePackageAsset {
@@ -304,6 +333,7 @@ const ROOT_INTENT_KEYS = [
   "referenceAnalysis",
   "assumptions",
   "capabilityGaps",
+  "designPlan",
 ] as const;
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -528,7 +558,9 @@ export function validateThemeIntent(
     input.schemaVersion === 2 || input.designDirection !== undefined
       ? enumValue(
           input.designDirection,
-          DESIGN_DIRECTION_IDS,
+          // All fourteen (v34); an earlier request's schema offers only the
+          // first seven, so it can never carry a later one.
+          STUDIO_DESIGN_DIRECTION_IDS,
           "designDirection",
           issues,
         )
@@ -961,6 +993,12 @@ export function validateThemeIntent(
     issues,
   );
 
+  // Optional, and absent on every intent before prompt v34.
+  const designPlan =
+    input.designPlan === undefined || input.designPlan === null
+      ? null
+      : parseDesignPlan(input.designPlan, "designPlan", issues);
+
   if (issues.length > 0 || !density || !shape || !motion)
     return { ok: false, issues };
   return {
@@ -987,6 +1025,7 @@ export function validateThemeIntent(
       referenceAnalysis,
       assumptions,
       capabilityGaps,
+      ...(designPlan ? { designPlan } : {}),
     },
   };
 }
@@ -1013,9 +1052,11 @@ function collectThemeImageUrls(theme: ThemeDefinition): string[] {
     }
     if (!isRecord(value)) return;
     for (const [key, nested] of Object.entries(value)) {
-      if (key === "image_url" && typeof nested === "string" && nested)
-        urls.add(nested);
-      else visit(nested);
+      if (isImageUrlKey(key) && typeof nested === "string") {
+        // Every picture field (themes/image-keys.ts): a slide's phone
+        // photograph is `mobile_image_url`, and it is rendered.
+        if (nested) urls.add(nested);
+      } else visit(nested);
     }
   };
   for (const page of theme.preset.pages) visit(page.sections);
@@ -1233,6 +1274,7 @@ function validateThemeDefinition(
       "sampleData",
       "templates",
       "announcement",
+      "stylesheet",
     ],
     "definition.preset",
     issues,
@@ -1244,6 +1286,27 @@ function validateThemeDefinition(
   // The announcement bar (plan Phase 2c): optional, judged as written.
   if (preset.announcement !== undefined)
     issues.push(...announcementIssues(preset.announcement));
+  // The theme's own style rules (plan Phase 3): optional, judged as written,
+  // their colours against this package's own palette.
+  if (preset.stylesheet !== undefined) {
+    const styleDesign = isRecord(preset.design) ? preset.design : null;
+    const styleBrand = isRecord(preset.brand)
+      ? preset.brand.primaryColor
+      : null;
+    issues.push(
+      ...stylesheetIssues(
+        preset.stylesheet,
+        styleDesign && isRecord(styleDesign.palette)
+          ? {
+              design: styleDesign as unknown as StylesheetContext["design"],
+              ...(typeof styleBrand === "string"
+                ? { brandPrimary: styleBrand }
+                : {}),
+            }
+          : {},
+      ),
+    );
+  }
   const brand = isRecord(preset.brand) ? preset.brand : {};
   if (!isRecord(preset.brand))
     issues.push("definition.preset.brand must be an object.");
@@ -2043,12 +2106,17 @@ export const THEME_INTENT_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ROOT_INTENT_KEYS.filter(
-    (key) => key !== "designDirection" && key !== "paletteFamily",
+    (key) =>
+      key !== "designDirection" &&
+      key !== "paletteFamily" &&
+      key !== "designPlan",
   ),
   properties: {
     schemaVersion: { type: "integer", enum: [1, 2] },
-    designDirection: { type: "string", enum: DESIGN_DIRECTION_IDS },
+    designDirection: { type: "string", enum: STUDIO_DESIGN_DIRECTION_IDS },
     paletteFamily: { type: "string", enum: PALETTE_FAMILIES },
+    // The plan's own reader is authoritative (design-plan.ts).
+    designPlan: { type: "object" },
     summary: { type: "string", maxLength: 1_000 },
     audiences: {
       type: "array",

@@ -285,3 +285,25 @@ describe("the credit line's styles", () => {
     }
   });
 });
+
+// The "Our stores" page (owner, 22 Nov 2026): the layout tells the footer
+// whether the store has one (a shop location exists and the merchant keeps
+// the page on); the footer only draws the link.
+describe("the Our stores link", () => {
+  const storesLinks = (storesLink?: boolean) => {
+    const { container } = render(
+      <BrandProvider brand={BRAND}>
+        <Footer credit={{ kind: "none" }} storesLink={storesLink} />
+      </BrandProvider>,
+    );
+    return [...container.querySelectorAll('a[href="/stores"]')].map(
+      (a) => a.textContent,
+    );
+  };
+
+  it("leads the footer's legal row when the store has the page, and is absent otherwise", () => {
+    expect(storesLinks(true)).toEqual(["Our stores"]);
+    expect(storesLinks(false)).toEqual([]);
+    expect(storesLinks()).toEqual([]);
+  });
+});
