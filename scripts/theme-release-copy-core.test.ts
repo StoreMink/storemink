@@ -133,6 +133,16 @@ describe("planCopy", () => {
     expect(plan.problems.join(" ")).toContain("is not a demo store");
   });
 
+  it("★ a theme id the target deleted for good refuses the copy", () => {
+    const plan = planCopy(file(), target({ deleted: true }));
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    expect(plan.problems).toEqual([
+      "roast was permanently deleted in the target. Its id stays reserved there, so it cannot be copied in again.",
+    ]);
+    expect(planCopy(file(), target({ deleted: false })).ok).toBe(true);
+  });
+
   it("★ --visibility hidden copies without offering; a change of visibility alone moves the pointer", () => {
     const [hidden] = themesOf(
       planCopy(file(), target(), { visibility: "hidden" }),

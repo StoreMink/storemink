@@ -31,6 +31,10 @@
 //   version of the theme than the copy carries, the pointer is not moved.
 // ★ A DEMO SLUG HELD BY A REAL STORE REFUSES THE COPY, as it does at Publish:
 //   seeding resets the store it is given.
+// ★ A THEME ID THE TARGET DELETED FOR GOOD REFUSES THE COPY (23 Nov 2026).
+//   Theme Studio's deletion keeps the releases stores still use (migration
+//   0289) and reserves the id: the target refuses any new store on it, its
+//   demo store included, so a copy would store releases and then fail.
 // ---------------------------------------------------------------------------
 
 export const COPY_FORMAT = "storemink-theme-release-copy-v1";
@@ -67,6 +71,8 @@ export interface TargetTheme {
   catalog: { version: string; visibility: CatalogVisibility } | null;
   /** The store holding the theme's demo slug, if any. */
   demoStore: { isDemo: boolean } | null;
+  /** The target's Theme Studio deleted this theme id for good. */
+  deleted?: boolean;
 }
 
 export interface ReleaseStep {
@@ -181,6 +187,12 @@ export function planCopy(
       catalog: null,
       demoStore: null,
     };
+    if (at.deleted) {
+      problems.push(
+        `${theme.themeId} was permanently deleted in the target. Its id stays reserved there, so it cannot be copied in again.`,
+      );
+      continue;
+    }
     const notes: string[] = [];
     const releases: ReleaseStep[] = [...theme.releases]
       .sort((a, b) => compareVersions(a.version, b.version))

@@ -187,26 +187,74 @@ it.skipIf(process.env.THEME_STUDIO_DELETE_DB_TEST !== "1")(
           ])
         ).rows[0].count,
       ).toBe("0");
+      // A theme no store uses: every release goes with it (0161).
+      const unused = await fixture();
+      const unusedRelease = randomUUID(),
+        unusedEvidence = randomUUID();
+      await db.query(
+        "insert into theme_studio_acceptance_runs(id,project_id,version_id,package_digest,assets_digest,build_id,created_by_email,status,evidence_digest,completed_at) values($1,$2,$3,$4,$4,'test','test@example.com','passed',$4,now())",
+        [unusedEvidence, unused.p, unused.v, digest],
+      );
+      await db.query(
+        "insert into theme_releases(id,theme_id,version,release_status,package_json,manifest_digest) values($1,$2,'1.0.0','published','{}',$3)",
+        [unusedRelease, unused.theme, digest],
+      );
+      await db.query(
+        "insert into theme_studio_publications(project_id,version_id,acceptance_run_id,theme_id,release_version,release_id,manifest_digest,status,created_by_email,completed_at) values($1,$2,$3,$4,'1.0.0',$5,$6,'published','test@example.com',now())",
+        [
+          unused.p,
+          unused.v,
+          unusedEvidence,
+          unused.theme,
+          unusedRelease,
+          digest,
+        ],
+      );
+      await db.query(
+        "insert into theme_catalog_entries(theme_id,current_release_id,visibility) values($1,$2,'public')",
+        [unused.theme, unusedRelease],
+      );
+      expect(await remove(unused)).toEqual({
+        ok: true,
+        themeId: unused.theme,
+        storesKept: 0,
+      });
+      await db.query("set constraints all immediate");
+      expect(
+        (
+          await db.query(
+            "select count(*) from theme_releases where theme_id=$1",
+            [unused.theme],
+          )
+        ).rows[0].count,
+      ).toBe("0");
+
+      // ★ A theme stores use (owner, 23 Nov 2026): it is deleted, and each
+      //   store keeps the release it pinned.
       const released = await fixture();
       const release = randomUUID(),
+        newer = randomUUID(),
         evidence = randomUUID(),
         demo = randomUUID(),
-        store = randomUUID();
+        store = randomUUID(),
+        legacy = randomUUID(),
+        other = randomUUID();
       await db.query(
         "insert into theme_studio_acceptance_runs(id,project_id,version_id,package_digest,assets_digest,build_id,created_by_email,status,evidence_digest,completed_at) values($1,$2,$3,$4,$4,'test','test@example.com','passed',$4,now())",
         [evidence, released.p, released.v, digest],
       );
       await db.query(
-        "insert into theme_releases(id,theme_id,version,release_status,package_json,manifest_digest) values($1,$2,'1.0.0','published','{}',$3)",
-        [release, released.theme, digest],
+        "insert into theme_releases(id,theme_id,version,release_status,package_json,manifest_digest) values($1,$2,'1.0.0','published','{}',$3),($4,$2,'1.1.0','published','{}',$3)",
+        [release, released.theme, digest, newer],
       );
       await db.query(
         "insert into theme_studio_publications(project_id,version_id,acceptance_run_id,theme_id,release_version,release_id,manifest_digest,status,created_by_email,completed_at) values($1,$2,$3,$4,'1.0.0',$5,$6,'published','test@example.com',now())",
         [released.p, released.v, evidence, released.theme, release, digest],
       );
+      // New stores get 1.1.0; the merchant below installed 1.0.0.
       await db.query(
         "insert into theme_catalog_entries(theme_id,current_release_id,visibility) values($1,$2,'public')",
-        [released.theme, release],
+        [released.theme, newer],
       );
       await db.query(
         "insert into theme_catalog_audit(theme_id,action,release_id,visibility,project_id,created_by_email) values($1,'publish',$2,'public',$3,'test@example.com')",
@@ -220,42 +268,101 @@ it.skipIf(process.env.THEME_STUDIO_DELETE_DB_TEST !== "1")(
           { demo: true, template: released.theme },
         ],
       );
+      const merchantSettings = {
+        theme: { presetId: released.theme, presetVersion: "1.0.0" },
+        brand: { name: "Merchant" },
+      };
       await db.query(
         "insert into stores(id,name,slug,settings) values($1,'Merchant',$2,$3)",
-        [
-          store,
-          `test-${store}`,
-          { theme: { presetId: released.theme, presetVersion: "1.0.0" } },
-        ],
+        [store, `test-${store}`, merchantSettings],
       );
-      expect((await remove(released)).error).toMatch(/store is using/);
+      await db.query(
+        "insert into stores(id,name,slug,settings) values($1,'Other',$2,'{}')",
+        [other, `test-${other}`],
+      );
+      // A store with no pinned release renders the catalogue's current one,
+      // which the deletion removes: refused, and nothing is deleted.
+      await db.query(
+        "insert into stores(id,name,slug,settings) values($1,'Legacy',$2,$3)",
+        [legacy, `test-${legacy}`, { template: released.theme }],
+      );
+      expect((await remove(released)).error).toMatch(/without a fixed release/);
       expect(
         (
-          await db.query("select count(*) from theme_releases where id=$1", [
-            release,
-          ])
-        ).rows[0].count,
-      ).toBe("1");
-      await db.query("update stores set settings='{}' where id=$1", [store]);
-      expect((await remove(released)).ok).toBe(true);
+          await db.query(
+            "select (select count(*) from theme_releases where theme_id=$1) || '/' || (select count(*) from theme_catalog_entries where theme_id=$1) || '/' || (select count(*) from theme_studio_projects where id=$2) || '/' || (select count(*) from stores where id=$3) as state",
+            [released.theme, released.p, demo],
+          )
+        ).rows[0].state,
+      ).toBe("2/1/1/1");
+      await db.query(
+        "update stores set settings=$2 where id=$1 and settings ? 'template'",
+        [legacy, { theme: { presetId: released.theme, presetVersion: "x" } }],
+      );
+      expect((await remove(released)).error).toMatch(/without a fixed release/);
+      await db.query("delete from stores where id=$1", [legacy]);
+
+      expect(await remove(released)).toEqual({
+        ok: true,
+        themeId: released.theme,
+        storesKept: 1,
+      });
       // Force deferred constraints to check the entire deletion, not just statements.
       await db.query("set constraints all immediate");
+      // The merchant's pinned release stays; the one only new stores got goes.
       expect(
         (
-          await db.query("select count(*) from theme_releases where id=$1", [
-            release,
-          ])
+          await db.query(
+            "select version from theme_releases where theme_id=$1 order by version",
+            [released.theme],
+          )
+        ).rows,
+      ).toEqual([{ version: "1.0.0" }]);
+      expect(
+        (
+          await db.query(
+            "select count(*) from theme_catalog_entries where theme_id=$1",
+            [released.theme],
+          )
         ).rows[0].count,
       ).toBe("0");
       expect(
         (await db.query("select count(*) from stores where id=$1", [demo]))
           .rows[0].count,
       ).toBe("0");
+      // The store itself is exactly as it was, and keeps working: a settings
+      // write that keeps its theme is allowed.
+      expect(
+        (await db.query("select settings from stores where id=$1", [store]))
+          .rows[0].settings,
+      ).toEqual(merchantSettings);
+      await db.query(
+        "update stores set settings = settings || '{\"note\":1}' where id=$1",
+        [store],
+      );
+      // ★ No store may take the deleted theme up, although a release remains.
       await refused("update stores set settings=$2 where id=$1", [
-        store,
+        other,
+        { theme: { presetId: released.theme, presetVersion: "1.0.0" } },
+      ]);
+      await refused("update stores set settings=$2 where id=$1", [
+        other,
         { template: released.theme },
       ]);
-      expect((await remove(released)).ok).toBe(true);
+      await refused(
+        "insert into stores(id,name,slug,settings) values($1,'New',$2,$3)",
+        [
+          randomUUID(),
+          `test-new-${other}`,
+          { theme: { presetId: released.theme, presetVersion: "1.0.0" } },
+        ],
+      );
+      // Deleting it again (a second click) answers the same.
+      expect(await remove(released)).toEqual({
+        ok: true,
+        themeId: released.theme,
+        storesKept: 1,
+      });
       expect((await remove(f)).ok).toBe(true);
       await db.query("set constraints all immediate");
       for (const table of [
@@ -346,11 +453,11 @@ it.skipIf(process.env.THEME_STUDIO_DELETE_DB_TEST !== "1")(
       await db.query("reset role");
       // Private previews can use the fresh ID while the deleted one stays blocked.
       await db.query("update stores set settings=$2 where id=$1", [
-        store,
+        other,
         { template: `${released.theme}-2` },
       ]);
       await refused("update stores set settings=$2 where id=$1", [
-        store,
+        other,
         { template: released.theme },
       ]);
       // The deletion exception must not grant ordinary updates to surviving history.

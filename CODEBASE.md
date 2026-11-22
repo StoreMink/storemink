@@ -11347,7 +11347,11 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0289 (0288 = a published Theme
+│                              # Next free: 0290 (0289 = deleting a Theme
+│                              # Studio theme stores use keeps the releases
+│                              # they pinned, and the install guard refuses
+│                              # a deleted id even with releases left, no
+│                              # Help; 0288 = a published Theme
 │                              # Studio theme can be changed: the project
 │                              # guard's new moves and one published
 │                              # publication per design, no Help; 0287 =
@@ -12930,8 +12934,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and `applyThemeDefinition` with reset), with `--root-domain` the demo's
     four pages fetched, and only then the catalogue pointer with a
     `theme_catalog_audit` row. It refuses a release that exists with
-    different content and a demo slug held by a real store, and never moves a
-    catalogue that already offers a newer version. `--visibility hidden`
+    different content, a demo slug held by a real store and (since 23 Nov 2026) a theme id the target's Theme Studio deleted for good, and never
+    moves a catalogue that already offers a newer version. `--visibility hidden`
     copies without offering. ⚠ It copies the RELEASES, not the Theme Studio
     project: in the target the theme has no project, so it cannot be changed
     from that environment's Theme Studio (change it where the project lives
@@ -12993,9 +12997,42 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     session-gated `deleteThemeStudioProjectAction` call migration
     `20261005_0161_theme_permanent_deletion`'s bounded service function. It
     locks the project and store installations, rejects stale revisions, active
-    generation/capture/QA/acceptance/publication, shared release projects and
-    installed merchant themes, then removes project history, private reference
-    bytes, preview/demo stores and its release/catalog records atomically.
+    generation/capture/QA/acceptance/publication and shared release projects,
+    then removes project history, private reference bytes, preview/demo stores
+    and its catalog records atomically.
+    ★★ A THEME STORES USE CAN BE DELETED, AND THEY KEEP IT (owner, 23 Nov 2026:
+    "store which uses this theme should remain as it is"; migration
+    `20261123_0289_theme_delete_keeps_store_releases`). Until then the
+    function refused while any merchant store used the theme ("Switch its
+    theme before permanently deleting it"), and a store cannot switch themes,
+    so an installed theme could never be deleted. Every store pins the release
+    it installed (`settings.theme.presetId` + `presetVersion`, written by
+    `lib/themes/apply.ts` and `switch.ts`) and renders it by id and version
+    straight from `theme_releases` (`resolveInstalledThemeDefinition`), never
+    through the catalogue, so the deletion now keeps each release a remaining
+    store is pinned to and deletes the theme's other releases (all of them when
+    no store uses it). It never writes to a store that keeps the theme. It
+    still refuses, deleting nothing, when a store uses the theme WITHOUT a
+    pinned release (only a legacy `template`, or no major.minor.patch
+    `presetVersion`): that store renders the catalogue's current release,
+    which the deletion removes; no store installed through StoreMink's install
+    paths is in that state. The answer gains `storesKept`; the action returns
+    it and the toast says "Theme deleted. The store using it keeps it as it
+    is." (or "The N stores using it keep it as it is."). The dialog says the
+    theme leaves the library so no new store can choose it, and that stores
+    already using it keep it exactly as it is, pictures included. The
+    merchant's Storefront page (`app/dashboard/storefront/page.tsx`
+    `keptCard`) shows such a theme's own name and picture from the kept
+    release, with "Your store uses a theme that is no longer in the library.
+    It keeps working." and no preview (its demo store is gone); it reads the
+    release only when the library no longer has the theme, and a failed read
+    falls back to the theme's id as before. ★ The install guard
+    (`theme_studio_deleted_install_guard`) now refuses a new store, or a store
+    moving, onto any id in the deletion receipt, even while releases remain
+    (0161 refused only once none remained); a store already on the theme is
+    untouched. `npm run theme-release:copy` refuses a theme id the target
+    deleted for good (`TargetTheme.deleted`), since the guard would refuse
+    its demo store after its releases were stored.
     Internal Studio FKs are immediate by default and deferred during removal
     to handle the run/version history cycles. Ordinary immutable history guards
     remain enforced; only the function owner's exact transaction scope permits
@@ -13013,8 +13050,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     images remain available because merchant content may reuse them independently
     of its installed theme. The confirmation dialog lives in
     `themes/studio/[projectId]/delete-theme-button.tsx`; rollback-only local
-    PostgreSQL tests cover role boundaries, FKs and refusals. Operator-only:
-    no merchant-visible change, no Help Centre update.
+    PostgreSQL tests cover role boundaries, FKs and refusals
+    (`THEME_STUDIO_DELETE_DB_TEST=1`; since 0289 also the kept release, the
+    unpinned refusal and the refused new installs, mutation-checked against
+    0161's functions). Operator-only: the merchant's step does not change, no
+    Help Centre update.
 
     **Mink AI Theme Studio Phase 3 (2026-09-23; Gemini generation
     pipeline, NOT yet run against a live model):** `pipeline.ts` runs Stage A

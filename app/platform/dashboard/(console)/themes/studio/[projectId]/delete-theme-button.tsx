@@ -16,14 +16,26 @@ import {
 
 // Delete a theme for good, behind a dialog that asks for its theme ID. The
 // theme page opens the dialog from its "..." menu (DeleteThemeDialog); the
-// server refuses, in a sentence shown in the dialog, while a store uses the
-// theme or while work holds it (migration 0161).
+// server refuses, in a sentence shown in the dialog, while work holds it
+// (migration 0161).
+// ★ A theme stores use can be deleted (owner, 23 Nov 2026: "store which uses
+//   this theme should remain as it is"): it leaves the library, and each of
+//   those stores keeps the release it installed (migration 0289). The toast
+//   says how many stores kept it.
 
 export interface DeleteThemeProps {
   projectId: string;
   themeId: string;
   name: string;
   revision: number;
+}
+
+/** The toast after a deletion: whether any store kept the theme. */
+export function deletedMessage(storesKept: number): string {
+  if (storesKept <= 0) return "Theme deleted for good.";
+  return storesKept === 1
+    ? "Theme deleted. The store using it keeps it as it is."
+    : `Theme deleted. The ${storesKept} stores using it keep it as it is.`;
 }
 
 /** The Delete dialog on its own, opened by a control elsewhere (the "..."
@@ -66,7 +78,7 @@ export function DeleteThemeDialog({
           setError(result.error ?? "The theme could not be deleted.");
           return;
         }
-        toast.success("Theme deleted for good.");
+        toast.success(deletedMessage(result.storesKept ?? 0));
         onOpenChange(false);
         router.push("/dashboard/themes/studio");
         router.refresh();
@@ -86,9 +98,10 @@ export function DeleteThemeDialog({
         <DialogHeader>
           <DialogTitle>Delete {name} for good?</DialogTitle>
           <DialogDescription>
-            This erases the theme, its chat, designs, checks and release. It
-            can&apos;t be undone. A theme a store uses can&apos;t be deleted.
-            Published pictures are kept.
+            This erases the theme, its chat, designs and checks, and takes it
+            out of the theme library, so no new store can choose it. Stores
+            already using it keep it exactly as it is, pictures included. It
+            can&apos;t be undone.
           </DialogDescription>
         </DialogHeader>
         <label
