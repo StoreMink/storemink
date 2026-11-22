@@ -6667,6 +6667,62 @@ one step to the branding and layout guide. ⚠ Not built: `/stores` in the
 sitemap; saved items in a customer's account (owner chose the device); a
 privacy-policy sentence for the device lists (owner's lawyer to decide).
 
+### Quick view: the product over the page, from an eye on its card (2026-11-22)
+
+Owner: "build quick view", the last of the storefront extras premium themes
+have. A fourth **Shopping extras** switch, `StorefrontAppearance.quickView`,
+on for every store like the other three (absent or anything but a real `false`
+reads as on).
+★ THE EYE (`components/quick-view-button.tsx`) is rendered by every `ShopCard`
+inside the photo frame and shown only under the root class `sm-quickview` (the
+layout adds it; `ChromeProvider` toggles it live in the builder). The heart's
+own chip, 44px, a `role="button"` that stops the card's link. It sits under
+the heart (`.sm-wishlist.sm-quickview`, top 60px) and takes the heart's place
+when the wishlist is off: top right is the one corner no card style uses (the
+flag is top left, the overlay card's name runs along the bottom), and a badge
+never runs under it. ★ On a mouse it shows only while its card is hovered or
+holds focus (`hover: hover` and `pointer: fine`), so a grid is not a wall of
+eyes; on a touch screen it is always shown.
+★ THE DIALOG (`components/quick-view-dialog.tsx`) exists, and reads its
+product, only while open. It shows the photographs (the chosen variant's own,
+else its colour's, else the product's: the product page's rule; at most
+`QUICK_VIEW_THUMBS` 8 thumbnails), the category, name, price with its struck
+MRP and saving, the first lines of the description, the product page's size
+and colour pickers (`OptionPicker`), **Add to cart**, **Save for later** (the
+page heart, shown only under `sm-wishlist`) and **View full details**. It opens
+on the variant a per-colour card stands for (`variantOfHref` reads the card's
+`?variant=`), else the first variant that can be bought. Add to cart adds one,
+closes, and says so when the cart already holds every one there is. It follows
+the quick-add chooser's two rules (portalled into `.storefront-root`, where
+the theme's tokens live; its root stops propagation, because React bubbles a
+portal's events to the card's link) and adds a third: ★ Tab stays inside (a
+control the stylesheet hides is no stop), Escape and the backdrop close it,
+and focus returns to the eye. A bottom sheet on a phone, photo first, with
+Add to cart held at the sheet's foot while the rest scrolls under it; from
+768px a centred two-column panel.
+★ THE READ: `getQuickViewProduct` (`app/actions/quick-add-actions.ts`) is the
+chooser's read widened: one published product of the HOST's store under the
+anonymous role, nothing the product page does not show, with `gallery`
+(`productGallery`: distinct, primary first), `excerpt`
+(`lib/products/excerpt.ts`: the plain-text description folded to one line and
+cut on a word at 280 characters, so the whole text is never sent) and the
+product's own price and stock for one sold without variants.
+`getQuickAddProduct` now calls it and returns only the chooser's seven fields.
+Prices only preview: the cart re-prices at checkout.
+Tests: `components/quick-view.test.tsx` (the eye, the dialog, Tab, and a
+stylesheet guard that every rule for the eye is under the switch),
+`app/actions/quick-add-actions.test.ts`, `lib/products/excerpt.test.ts`,
+`lib/chrome/types.test.ts`. In local Chrome over the production CSS: the
+browser contrast check gained the dialog on every palette (its buy button is
+left out, as the chooser's is: the accent pair is the design contract's), the
+stylesheet check draws the eye on every card of all fourteen exemplars, and
+the eye and dialog were measured at 390 and 1280px on four themes (inside the
+photo, clear of the heart and the flag, nothing off screen). ⚠ Not run in a
+real storefront page by hand. ⚠ No quantity stepper, reviews, offers or
+low-stock note in the dialog: the product page has them. Help:
+`20261122_0287_quick_view_help` edits the Shopping extras step in place to
+name four.
+
 ### ElevenLabs image provider: GPT Image 2.5 Sunburst for Theme Studio and redesign photos (2026-11-22)
 
 Owner's ask: "build the elevenlabs image provider with gpt image 2.5
@@ -7785,6 +7841,7 @@ wholesip/
 │   │       ├── structured-data.tsx  # homepage Organization + WebSite JSON-LD
 │   │       ├── json-ld.tsx          # generic <JsonLd> renderer; escapes through
 │   │       │                        # lib/seo/json-ld.ts (builders: lib/seo/schema.ts)
+│   │       ├── quick-view-button.tsx # the eye on product cards that opens the quick view (quick-view-dialog.tsx); shown under .sm-quickview
 │   │       ├── quick-add-button.tsx # "+ Add" on product cards (theme layout.card
 │   │       │                        # = "quick_add"; hidden by CSS otherwise)
 │   │       ├── studio-acceptance-probe.tsx # Theme Studio acceptance

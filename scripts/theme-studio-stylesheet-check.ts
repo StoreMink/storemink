@@ -64,7 +64,7 @@ const fill = (className: string) =>
   `<img class="${className}" alt="Stoneware bowl" src="${picture(1200, 1500)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover">`;
 
 const card = (name: string) =>
-  `<a class="shop-card" href="/shop"><div class="shop-card-img"><span role="button" tabindex="0" class="shop-card-wish" aria-pressed="false" aria-label="Save ${name} for later"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></svg></span>${fill("shop-card-img-el")}<span class="shop-card-flag shop-card-flag--offer">Offer</span></div><div class="shop-card-body"><div class="shop-card-head"><span class="shop-card-cat">Tableware</span><h3 class="shop-card-name">${name}</h3></div><div class="shop-card-price"><span class="shop-card-current"><span class="shop-card-sell">Rs. 1,450</span></span></div></div></a>`;
+  `<a class="shop-card" href="/shop"><div class="shop-card-img"><span role="button" tabindex="0" class="shop-card-wish" aria-pressed="false" aria-label="Save ${name} for later"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21.2l7.8-7.7 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></svg></span><span role="button" tabindex="0" class="shop-card-view" aria-haspopup="dialog" aria-label="Quick view: ${name}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></span>${fill("shop-card-img-el")}<span class="shop-card-flag shop-card-flag--offer">Offer</span></div><div class="shop-card-body"><div class="shop-card-head"><span class="shop-card-cat">Tableware</span><h3 class="shop-card-name">${name}</h3></div><div class="shop-card-price"><span class="shop-card-current"><span class="shop-card-sell">Rs. 1,450</span></span></div></div></a>`;
 const head = `<div class="home-section-head"><p class="home-section-eyebrow">New this season</p><h2 class="home-section-title">Thoughtfully made for every day</h2><p class="home-section-sub">Durable pieces with considered details and natural materials.</p></div>`;
 const cards = `<div class="shop-listing"><div class="shop-grid">${["Speckled bowl", "Ash serving board", "Linen runner", "Stoneware mug"].map(card).join("")}</div></div>`;
 
@@ -112,6 +112,8 @@ async function main() {
         STYLESHEET_ROOT_CLASS,
         // The wishlist heart is on for every store unless switched off.
         "sm-wishlist",
+        // So is the quick view eye, under it.
+        "sm-quickview",
         `sm-card-${layout.card ?? "classic"}`,
         `sm-header-${layout.header ?? "classic"}`,
         `sm-pdp-${layout.productDetail ?? "classic"}`,

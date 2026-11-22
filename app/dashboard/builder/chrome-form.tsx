@@ -1813,6 +1813,12 @@ export function BrandForm({
           onChange={(wishlist) => patchAppearance({ wishlist })}
         />
         <Toggle
+          label="Quick view"
+          hint="An eye on every product photo opens the product in a pop-up, where a shopper can see its photos, pick a size or colour and add it to the cart without leaving the page."
+          checked={appearance.quickView}
+          onChange={(quickView) => patchAppearance({ quickView })}
+        />
+        <Toggle
           label="Recently viewed"
           hint="Under a product, the products that shopper looked at before."
           checked={appearance.recentlyViewed}

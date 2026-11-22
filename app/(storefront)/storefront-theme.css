@@ -1193,6 +1193,71 @@
   }
 }
 
+/* ------------------------------------------------------------------------
+   The quick view eye (quick-view-button.tsx; owner, 22 Nov 2026).
+   ★ RENDERED BY EVERY CARD, SHOWN ONLY UNDER `.sm-quickview` (the merchant's
+     switch, on unless they turn it off), exactly as the heart is.
+   ★ THE SAME CHIP AS THE HEART, UNDER IT. Top right is the one corner no
+     card style puts anything else: the flag is top left and the overlay
+     card's name lies along the bottom. With the wishlist off it takes the
+     heart's place.
+   ★ ON A MOUSE IT WAITS FOR THE CARD. It appears when the card is hovered or
+     holds focus, so a grid is not a wall of eyes; a touch screen has no
+     hover, so there it is always shown.
+   ------------------------------------------------------------------------ */
+.shop-card-view {
+  display: none;
+}
+.sm-quickview .shop-card-view {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--sm-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sm-surface) 94%, transparent);
+  color: var(--sm-ink);
+  cursor: pointer;
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease,
+    background-color 150ms ease;
+}
+.sm-wishlist.sm-quickview .shop-card-view {
+  top: 60px;
+}
+.sm-quickview .shop-card-view:hover {
+  transform: scale(1.06);
+  background: var(--sm-surface);
+}
+.sm-quickview .shop-card-view:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+/* A badge never runs under the eye. */
+.sm-quickview .shop-card-flag {
+  max-width: calc(100% - 72px);
+}
+@media (hover: hover) and (pointer: fine) {
+  .sm-quickview .shop-card-view {
+    opacity: 0;
+  }
+  .sm-quickview .shop-card:hover .shop-card-view,
+  .sm-quickview .shop-card:focus-within .shop-card-view {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sm-quickview .shop-card-view {
+    transition: none;
+  }
+}
+
 /* The "Our stores" page (stores/page.tsx): one card per shop location. */
 .sm-stores-list {
   display: grid;
@@ -2055,6 +2120,233 @@
   font-size: 14px;
   color: var(--sm-ink-soft);
   text-decoration: underline;
+}
+
+/* Quick view (components/quick-view-dialog.tsx). The quick-add chooser's
+   frame, wider: a bottom sheet on a phone, photo first; from 768px a centred
+   panel with the photographs beside the words. */
+.sm-qv {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: rgba(var(--sm-shadow-rgb), 0.45);
+}
+.sm-qv-panel {
+  position: relative;
+  width: 100%;
+  max-height: 92dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+  border-radius: var(--sm-radius-card) var(--sm-radius-card) 0 0;
+  background: var(--sm-surface);
+  color: var(--sm-ink);
+  box-shadow: 0 -12px 40px rgba(var(--sm-shadow-rgb), 0.18);
+  outline: none;
+  text-align: left;
+}
+/* It lies over the photograph on a phone, so it paints its own surface. */
+.sm-qv-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--sm-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sm-surface) 94%, transparent);
+  color: var(--sm-ink);
+  cursor: pointer;
+}
+.sm-qv-close:hover {
+  background: var(--sm-surface);
+}
+.sm-qv-msg {
+  padding: 40px 0;
+  color: var(--sm-ink-soft);
+  text-align: center;
+}
+.sm-qv-grid {
+  display: grid;
+  gap: 18px;
+}
+.sm-qv-media,
+.sm-qv-info {
+  min-width: 0;
+}
+.sm-qv-photo {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-height: 42dvh;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--sm-radius-sm);
+  background: var(--sm-tile);
+}
+.sm-qv-photo img,
+.sm-qv-thumb img {
+  object-fit: contain;
+}
+.sm-qv-nophoto {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sm-ink-soft);
+}
+.sm-qv-thumbs {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 2px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.sm-qv-thumb {
+  position: relative;
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--sm-border);
+  border-radius: var(--sm-radius-sm);
+  background: var(--sm-tile);
+  cursor: pointer;
+}
+.sm-qv-thumb.is-active {
+  border-color: var(--sm-ink);
+  box-shadow: 0 0 0 1px var(--sm-ink);
+}
+.sm-qv-cat {
+  margin-bottom: 4px;
+  color: var(--sm-ink-soft);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.sm-qv-name {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: break-word;
+}
+.sm-h-font.storefront-root .sm-qv-name {
+  font-family: var(--sm-heading-font), sans-serif;
+}
+.sm-qv-price {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.sm-qv-was {
+  margin-left: 8px;
+  font-weight: 400;
+  /* Ink-soft, the card's and the product page's struck-price rule. */
+  color: var(--sm-ink-soft);
+  text-decoration: line-through;
+}
+.sm-qv-off {
+  margin-left: 8px;
+  font-size: 14px;
+}
+.sm-qv-text {
+  margin-top: 12px;
+  color: var(--sm-ink-soft);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+.sm-qv .sm-opts {
+  margin-top: 16px;
+}
+.sm-qv-add {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 18px;
+  border: 0;
+  border-radius: var(--sm-radius-control);
+  background: var(--brand-primary);
+  color: var(--sm-on-accent);
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sm-qv-add:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* On a phone the sheet is taller than the screen once a product has a
+   description and options, so the buy button stays at the sheet's foot while
+   the rest scrolls under it. The two shadows are the sheet's own surface
+   around and below the button, so nothing shows through beside it. */
+@media (max-width: 767px) {
+  .sm-qv-add {
+    position: sticky;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 1;
+    box-shadow:
+      0 0 0 12px var(--sm-surface),
+      0 40px 0 12px var(--sm-surface);
+  }
+  /* A disabled button is see-through; the surface under it is not. */
+  .sm-qv-add:disabled {
+    opacity: 1;
+    background: color-mix(in srgb, var(--brand-primary) 55%, var(--sm-surface));
+  }
+}
+.sm-qv .pdp-wish {
+  margin-top: 6px;
+}
+.sm-qv-add:focus-visible,
+.sm-qv-close:focus-visible,
+.sm-qv-thumb:focus-visible,
+.sm-qv-details:focus-visible {
+  outline: 2px solid var(--sm-ink);
+  outline-offset: 2px;
+}
+.sm-qv-details {
+  display: block;
+  min-height: 44px;
+  margin-top: 4px;
+  padding: 12px 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--sm-ink-soft);
+  text-decoration: underline;
+}
+@media (min-width: 768px) {
+  .sm-qv {
+    align-items: center;
+    padding: 24px;
+  }
+  .sm-qv-panel {
+    max-width: 880px;
+    padding: 28px;
+    border-radius: var(--sm-radius-card);
+  }
+  .sm-qv-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 32px;
+    align-items: start;
+  }
+  .sm-qv-photo {
+    aspect-ratio: 4 / 5;
+    max-height: none;
+  }
+  /* The close button sits over this column's top corner here. */
+  .sm-qv-cat,
+  .sm-qv-name {
+    padding-right: 44px;
+  }
 }
 
 /* ── Password page (a store that has not opened yet) ─────────────────────

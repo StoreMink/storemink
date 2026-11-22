@@ -5,6 +5,8 @@ import { withAnon } from "@/lib/db/client";
 import { categories, productVariants, products } from "@/drizzle/schema";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
 import { normalizeOptions, type ProductOption } from "@/lib/products/options";
+import { productGallery } from "@/lib/products/gallery";
+import { productExcerpt } from "@/lib/products/excerpt";
 
 // ---------------------------------------------------------------------------
 // The one product a card's "+ Add" needs when it has variants: its option
@@ -45,11 +47,40 @@ export interface QuickAddProduct {
   variants: QuickAddVariant[];
 }
 
+/**
+ * What the quick view shows (the eye on a product card): the chooser's
+ * product plus its photographs, the first lines of its description and, for
+ * a product sold without variants, its own price and stock. Still nothing
+ * the public product page does not show.
+ */
+export interface QuickViewProduct extends QuickAddProduct {
+  /** Every distinct photograph, primary first (lib/products/gallery.ts). */
+  gallery: string[];
+  /** The first lines of the description, plain text, or null. */
+  excerpt: string | null;
+  base_price: number;
+  selling_price: number;
+  track_inventory: boolean;
+  stock: number;
+  low_stock_threshold: number | null;
+  allow_backorder: boolean;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function getQuickAddProduct(
   productId: string,
 ): Promise<QuickAddProduct | null> {
+  const product = await getQuickViewProduct(productId);
+  if (!product) return null;
+  // The chooser's own shape: it has no use for the rest, so none is sent.
+  const { id, slug, name, image_url, category, options, variants } = product;
+  return { id, slug, name, image_url, category, options, variants };
+}
+
+export async function getQuickViewProduct(
+  productId: string,
+): Promise<QuickViewProduct | null> {
   if (typeof productId !== "string" || !UUID.test(productId)) return null;
   const store = await getCurrentStoreOrNull();
   if (!store) return null;
@@ -62,6 +93,14 @@ export async function getQuickAddProduct(
           slug: products.slug,
           name: products.name,
           image_url: products.imageUrl,
+          images: products.images,
+          description: products.description,
+          base_price: products.basePrice,
+          selling_price: products.sellingPrice,
+          track_inventory: products.trackInventory,
+          stock: products.onlineStock,
+          low_stock_threshold: products.lowStockThreshold,
+          allow_backorder: products.allowBackorder,
           options: products.options,
           category: categories.name,
         })
@@ -97,15 +136,18 @@ export async function getQuickAddProduct(
         .orderBy(asc(productVariants.sortOrder));
 
       const normalized = normalizeOptions(row.options);
+      const { images, description, ...fields } = row;
       return {
-        ...row,
+        ...fields,
+        gallery: productGallery(row.image_url, images),
+        excerpt: productExcerpt(description),
         options: "options" in normalized ? normalized.options : [],
         variants,
       };
     });
   } catch (err) {
     console.error(
-      "getQuickAddProduct:",
+      "getQuickViewProduct:",
       err instanceof Error ? err.message : err,
     );
     return null;

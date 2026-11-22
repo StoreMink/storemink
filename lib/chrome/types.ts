@@ -136,10 +136,13 @@ export interface StorefrontAppearance {
    * - recentlyViewed: the products a shopper looked at, under a product.
    * - storeLocator: the "Our stores" page and its footer link, when the
    *   store has at least one shop location.
+   * - quickView: an eye on product cards that opens the product over the
+   *   page, with its photos, options and Add to cart.
    */
   wishlist: boolean;
   recentlyViewed: boolean;
   storeLocator: boolean;
+  quickView: boolean;
   /** Page templates (plan Phase 2e): the product page's gallery and blocks
    *  and the collection page's filters, paging and promo tiles. `theme`
    *  inherits the pinned preset's (or the composition its layout implies). */
@@ -161,6 +164,7 @@ export interface ResolvedStorefrontAppearance {
   wishlist: boolean;
   recentlyViewed: boolean;
   storeLocator: boolean;
+  quickView: boolean;
   /** Theme-driven only: hover-swap is orthogonal to the merchant's card
    *  choice, so a `card` override neither enables nor cancels it. */
   cardHoverImage: boolean;
@@ -240,6 +244,7 @@ export const DEFAULT_CHROME: StoreChrome = {
     wishlist: true,
     recentlyViewed: true,
     storeLocator: true,
+    quickView: true,
     templates: {
       product: "theme",
       collection: "theme",
@@ -449,6 +454,7 @@ function cleanAppearance(raw: unknown): StorefrontAppearance {
     wishlist: r.wishlist !== false,
     recentlyViewed: r.recentlyViewed !== false,
     storeLocator: r.storeLocator !== false,
+    quickView: r.quickView !== false,
     templates: cleanTemplateOverrides(r.templates),
   };
 }
@@ -579,6 +585,7 @@ export function resolveStorefrontAppearance(
     wishlist: overrides.wishlist !== false,
     recentlyViewed: overrides.recentlyViewed !== false,
     storeLocator: overrides.storeLocator !== false,
+    quickView: overrides.quickView !== false,
     cardHoverImage: theme?.cardHoverImage === true,
     // One truth: the phone sticky bar is a product-page block (the default
     // blocks carry it exactly when the layout asked for it).

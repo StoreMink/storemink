@@ -316,6 +316,9 @@ export default async function StorefrontLayout({
     // The merchant's wishlist switch: every card renders its heart, and this
     // class is what shows it (storefront-theme.css).
     appearance.wishlist ? "sm-wishlist" : "",
+    // The merchant's quick view switch, shown the same way: every card
+    // renders its eye, and this class is what shows it.
+    appearance.quickView ? "sm-quickview" : "",
     // The scope every compiled theme style rule is written under.
     themeCss ? STYLESHEET_ROOT_CLASS : "",
     appearance.card === "grocery" ||

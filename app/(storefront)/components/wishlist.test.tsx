@@ -34,6 +34,7 @@ vi.mock("next/link", () => ({
   ),
 }));
 vi.mock("./quick-add-button", () => ({ QuickAddButton: () => null }));
+vi.mock("./quick-view-button", () => ({ QuickViewButton: () => null }));
 vi.mock("@/app/(storefront)/components/homepage/horizontal-carousel", () => ({
   HorizontalCarousel: ({ children }: { children: ReactNode }) => (
     <div data-testid="row">{children}</div>

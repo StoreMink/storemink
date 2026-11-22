@@ -737,6 +737,33 @@ ${broken}</style></head><body><div class="storefront-root ${rootClass}" style="$
     near(2.47),
   );
 
+  // ── The quick view (the eye on a card; on for every store) ──────────────
+  // Its words on the panel's surface: the category, the price with its
+  // struck MRP and saving, the first lines of the description and the link.
+  // Every palette, as a sheet and as a panel. Its buy button is left out, as
+  // the quick-add dialog's is: its label is the theme's accent pair, which
+  // the design contract governs, not shared CSS.
+  const quickViewBody = `<div class="sm-qv"><div class="sm-qv-panel" role="dialog" aria-modal="true" aria-label="Stoneware jug"><button type="button" class="sm-qv-close" aria-label="Close"></button><div class="sm-qv-grid"><div class="sm-qv-media"><div class="sm-qv-photo"></div></div><div class="sm-qv-info"><p class="sm-qv-cat" data-s="qv-cat">Ceramics</p><h2 class="sm-qv-name">Stoneware jug</h2><p class="sm-qv-price" data-s="qv-price">₹1,900<span class="sm-qv-was" data-s="qv-was">₹2,400</span><span class="sm-qv-off" data-s="qv-off">21% off</span></p><p class="sm-qv-text" data-s="qv-text">Thrown by hand in small batches and glazed twice.</p><a href="#" class="sm-qv-details" data-s="qv-details">View full details</a></div></div></div></div>`;
+  for (const [name, p] of Object.entries(ALL))
+    for (const width of [390, 1024])
+      await expectReadable(
+        `quick-view/${name}`,
+        width,
+        storefront({ p, rootClass: skinClass(p.card), body: quickViewBody }),
+      );
+  await expectBroken(
+    "the quick view's ink-faint description (Basket)",
+    390,
+    storefront({
+      p: BUNDLED["basket@1.0.0"],
+      rootClass: skinClass("grocery"),
+      body: quickViewBody,
+      broken: ".sm-qv-text{color:var(--sm-ink-faint)}",
+    }),
+    "qv-text",
+    near(2.47),
+  );
+
   // ── Product page: eyebrow, struck price, variant prices, photo counter ──
   // The PIN-code delivery card both product pages carry: before a check (its
   // hint), with a courier's answer, and with a refusal. Its Check button stays

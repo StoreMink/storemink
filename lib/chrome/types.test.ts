@@ -179,6 +179,7 @@ describe("resolveStorefrontAppearance", () => {
       wishlist: true,
       recentlyViewed: true,
       storeLocator: true,
+      quickView: true,
       cardHoverImage: false,
       stickyAddToCart: false,
       gridColumnsMobile: 1,
@@ -290,6 +291,7 @@ describe("resolveStorefrontAppearance", () => {
       wishlist: true,
       recentlyViewed: true,
       storeLocator: true,
+      quickView: true,
       cardHoverImage: false,
       stickyAddToCart: false,
       gridColumnsMobile: 1,
@@ -501,29 +503,33 @@ describe("product cards per colour", () => {
 
 describe("the merchant's shopping extras (owner, 22 Nov 2026: on for every store)", () => {
   it("are on for a store that has never saved them, and off only when switched off", () => {
-    // Every row saved before the switches existed has none of the three.
+    // Every row saved before the switches existed has none of them.
     const untouched = normalizeChrome({ appearance: { card: "classic" } });
     expect(untouched.appearance).toMatchObject({
       wishlist: true,
       recentlyViewed: true,
       storeLocator: true,
+      quickView: true,
     });
     expect(DEFAULT_CHROME.appearance).toMatchObject({
       wishlist: true,
       recentlyViewed: true,
       storeLocator: true,
+      quickView: true,
     });
     const off = normalizeChrome({
       appearance: {
         wishlist: false,
         recentlyViewed: false,
         storeLocator: false,
+        quickView: false,
       },
     });
     expect(off.appearance).toMatchObject({
       wishlist: false,
       recentlyViewed: false,
       storeLocator: false,
+      quickView: false,
     });
     // Only a real `false` switches one off: nothing else reads as off.
     for (const value of [null, 0, "", "false", "off", undefined])
@@ -531,6 +537,17 @@ describe("the merchant's shopping extras (owner, 22 Nov 2026: on for every store
         normalizeChrome({ appearance: { wishlist: value } }).appearance
           .wishlist,
       ).toBe(true);
+    // Quick view came after the other three: a row saved with those and
+    // without it still reads as on.
+    expect(
+      normalizeChrome({
+        appearance: {
+          wishlist: false,
+          recentlyViewed: true,
+          storeLocator: true,
+        },
+      }).appearance.quickView,
+    ).toBe(true);
   });
 
   it("reach the storefront through the resolved appearance", () => {
@@ -538,6 +555,7 @@ describe("the merchant's shopping extras (owner, 22 Nov 2026: on for every store
       wishlist: true,
       recentlyViewed: true,
       storeLocator: true,
+      quickView: true,
     });
     expect(
       resolveStorefrontAppearance(undefined, {
@@ -549,6 +567,7 @@ describe("the merchant's shopping extras (owner, 22 Nov 2026: on for every store
       wishlist: false,
       recentlyViewed: true,
       storeLocator: false,
+      quickView: true,
     });
   });
 });

@@ -10994,6 +10994,23 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261122_0287_quick_view_help",
+      "description": "Help Centre: the branding and layout guide's Shopping extras step, edited in place to add Quick view (an eye on every product photo that opens the product in a pop-up).",
+      "file": "sql/20261122_0287_quick_view_help.sql",
+      "transaction": true,
+      "requires": ["20261122_0286_shopping_extras_help"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the branding and layout guide names Quick view among four shopping extras",
+            "sql": "select count(*)::text from help_articles where slug='change-your-storefront-branding-and-layout' and status='published' and body like '%keep or switch off four things your shoppers see.%' and body like '%needs no sign-in. <strong>Quick view</strong> puts an eye on every product photo%' and body not like '%three things your shoppers see%'",
+            "equals": "1"
+          }
+        ]
+      }
     }
   ]
 }
