@@ -42,15 +42,15 @@ import { getThemeCatalog } from "@/lib/themes/runtime-registry";
 const STANDARD_ITEMS = [
   {
     title: "Composed for every screen",
-    body: "Layouts are shaped for mobile from the start, with tap targets, typography and merchandising that feel intentional at every size.",
+    body: "Designed for mobile, with intuitive layouts and seamless shopping at every size.",
   },
   {
     title: "Built around the buying journey",
-    body: "Discovery, product options, cart states and content extremes are reviewed with real catalog data before release.",
+    body: "Discovery, product options and cart flows are tested with real catalog data.",
   },
   {
     title: "Made to become yours",
-    body: "Change color, type, imagery and sections without code, while the theme keeps the details coherent.",
+    body: "Customize colors, fonts, imagery and sections without code.",
   },
 ] as const;
 
@@ -171,8 +171,8 @@ export default async function ThemesPage({
           <h1>Make your store impossible to scroll past.</h1>
           <div className="themes-hero-aside">
             <p>
-              Pick a theme, preview the real storefront, then make every detail
-              yours without touching code.
+              Choose a theme, preview your store, and customize every detail
+              without code.
             </p>
             <Link href={`${PLATFORM_URL}/signup`} className="themes-button">
               Start your store
