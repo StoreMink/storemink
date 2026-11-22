@@ -44,6 +44,18 @@ describe("unsupported claims", () => {
     expect(issues.some((m) => m.includes("Award-winning serums"))).toBe(true);
   });
 
+  it('★ "organic" is a claim by itself, as the first live review found, unless the brief says so', () => {
+    const pkg = pkgWith((def) =>
+      setHeading(def, "Only the good stuff. Organic beans, craft roasted."),
+    );
+    const issues = unsupportedClaimIssues(pkg, "A bold coffee brand.");
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("an organic claim");
+    expect(
+      unsupportedClaimIssues(pkg, "We sell organic, shade-grown coffee."),
+    ).toEqual([]);
+  });
+
   it("the same claim passes when the brief supports it", () => {
     const pkg = pkgWith((def) =>
       setHeading(def, "Award-winning serums for every skin"),

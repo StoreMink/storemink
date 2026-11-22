@@ -10349,6 +10349,14 @@ wholesip/
 │   │                          # holds Stage B to it
 │   ├── theme-studio/reference-colours.ts # v34: a reference screenshot's colours,
 │   │                          # measured from its pixels for the planning stage
+│   ├── theme-studio/copy-tidy.ts # v34: a draft's long dashes rewritten and its
+│   │                          # title-style menu labels shortened, before compiling
+│   ├── themes/scheme-settle.ts # section colour schemes that narrowly fail to
+│   │                          # read, settled by shade (never hue) before a
+│   │                          # draft is judged
+│   ├── theme-studio/frame-shapes.ts # v34: a picture's shape comes from the frame
+│   │                          # it is shown in, and every opening slide gets a
+│   │                          # portrait photograph for phones
 │   ├── theme-studio/commitments.ts # v34: layout commitments for a new theme: what
 │   │                          # its direction allows and the catalogue uses
 │   │                          # least (header, card, product page, footer, page
@@ -11602,6 +11610,18 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
+│   ├── theme-studio-local.mjs # ★ `npm run theme-studio:local`: Theme Studio's
+│   │                          # schedulers for localhost. With a real provider a
+│   │                          # theme is moved along by a scheduler calling the
+│   │                          # worker and review routes and by the capture job;
+│   │                          # a laptop has none, so this loops all three
+│   │                          # against the dev server (node:http, since a build
+│   │                          # step answers after up to 19 minutes). Refuses a
+│   │                          # non-local origin (it sends CRON_SECRET), an
+│   │                          # expired Google sign-in and the fake provider;
+│   │                          # calls the review route once first so the stale
+│   │                          # capture sweep runs before its browser loop.
+│   │                          # Starts nothing itself. docs/theme-studio-local.md
 │   ├── theme-studio-stylesheet-check.ts # ★ `npm run theme-studio:stylesheets`: each
 │   │                          # exemplar's style rules over the production
 │   │                          # storefront CSS in local Chrome (every rule in
@@ -15730,6 +15750,117 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     screenshot region by region, repair; `theme-studio-variety-and-fidelity.md`
     T-F4) is still not built, so how closely a result follows its
     screenshots is still unmeasured during a build.
+    ★★ THE FIRST LIVE v34 BUILD, AND WHAT IT FIXED (22 Nov 2026, "Roast", on
+    localhost; `docs/theme-studio-local.md`). Stage A wrote a valid plan
+    first time (read from six screenshots; it cleared the plan check). Stage
+    B then spent every repair and the run failed `invalid_output` after 12
+    minutes and five paid calls, on one line: "Muted text in the Brand
+    scheme is hard to read (4.35:1, needs 4.5:1)". The saved answers were
+    replayed offline through the real pipeline to find it. Three fixes:
+    (a) `lib/themes/scheme-settle.ts` `settleSchemeContrast`: muted text is
+    76% of a band's text over its background, a colour no model writes, so
+    a scheme the theme uses or declares that fails the validator's own pairs
+    is settled by SHADE (text toward black or white, then the band's
+    background away from its text in 4% steps, then a card or button colour
+    dropped for the derived one). Only a failing scheme is touched, it
+    becomes a declared scheme so the palette and every other band are as
+    written, and a scheme it cannot settle is left for the ordinary repair.
+    `prepareDraft` applies it (option `settleSchemes`, v34) BEFORE the style
+    rules are judged against the bands. 1,000 random palettes all end
+    readable by `schemeProblems`.
+    (b) Every problem in one round: `assemblePackage` returns a `candidate`
+    (a structurally whole package that still has issues), and under v34 the
+    brief's unsupported claims are read from it, so an invented founding
+    year is reported WITH a style rule to mend, not a round later.
+    (c) A run that spends every repair records what its last draft failed on
+    (`outcome_detail.issues`, bounded); before, it said only
+    `invalid_output`.
+    Replayed with these, the same five saved answers end in a version, 75%
+    from the nearest published theme. Tests: `scheme-settle.test.ts` and the
+    last block of `design-plan-pipeline.test.ts`.
+    ★★ THE RETRY REACHED A FINISHED DESIGN, AND FOUND FIVE MORE (same day).
+    Design 1 was built in 6.5 minutes with one repair round; 18 photographs
+    were drawn by ElevenLabs (GPT Image 2.5 Sunburst, Medium, 2K; its first
+    live use) in 4.5 minutes, every one passing its check first time; the
+    final browser checks passed every gate.
+    (d) ★★ THE DESIGN REVIEW WAS REFUSED BY VERTEX, EVERY TIME. Its request
+    answered HTTP 400 INVALID_ARGUMENT twice and the theme stopped at its
+    last step (`qa_provider_failed`). Bisected with text-only calls: each
+    property of `VISUAL_QA_SCHEMA` is accepted alone, the whole is refused,
+    and it is accepted the moment `imageAssessments.maxItems: 64` (or every
+    `maxItems`) is removed. Structured output compiles a schema into a
+    grammar and a counted list multiplies its states. The schema now carries
+    NO `maxItems` or `uniqueItems`; the prompt states the bounds and
+    `parseVisualQaReport` keeps them by keeping the first
+    `VISUAL_QA_LIST_MAX` (20) findings and repairs and counting a rejection
+    once (it used to throw a whole paid review away for a twenty-first
+    finding). ⚠ The same schema is what production sends: check there.
+    (e) ★ THE LAYOUT CHECK NEEDS A PRODUCTION BUILD LOCALLY. On the dev
+    server it failed four times (`qa_probe_missing`, `capture_timeout`,
+    `capture_network`): Webpack dev compiles each page on demand (4 to 38 s)
+    and restarts itself when its 2 GB heap fills on an 8 GB machine. On
+    `npm run build && npm run start` the same pages took under half a second
+    and the check passed in under a minute. `docs/theme-studio-local.md`.
+    (f) `copy-tidy.ts` `tidyDraftCopy` (v34, every Stage B draft): long
+    dashes are rewritten with StoreMink's own rule (inside `...Json` fields
+    by parse and re-write, never as text) and a menu label written as a page
+    title ("Our Story | Roast Specialty Coffee") keeps the words before the
+    bar. Neither spends a model round. The reviewer had blamed the overflowing
+    labels on the platform (`renderer_fix_required`), which ends automatic
+    repairs.
+    (g) `CLAIMS_PROMPT` (`claims.ts`, appended to Stage B from v34) tells the
+    model the honest-copy rule BEFORE it breaks it (both live drafts invented
+    "EST. <year>"), and the plain word "organic" is now a claim the brief
+    must support (the review rejected "ORGANIC BEANS"; the check had let it
+    through). The stylesheet prompt names `button.secondary` among the hooks
+    that need a tone with a background (both drafts wrote "outline").
+    (h) `portraitProductBriefs` (`compiler.ts`, v34 new themes): a product
+    photography brief asked for in landscape is drawn at 4:5. A card never
+    crops a photograph, so the theme's 4:3 product photos sat inside their
+    portrait frames as small rectangles.
+    Tests: `visual-qa-request.test.ts` (no counted list may come back),
+    `copy-tidy.test.ts`, `claims.test.ts`, `design-plan-pipeline.test.ts`.
+    ★★ WHAT IS THE SAME IN EVERY THEME IS A RULE, NEVER A MODEL'S CHOICE
+    (owner, same day: "product photos, the nav bar design and all are the
+    things which are important in every theme, so these should be in the
+    params"). The storefront already knew each answer; Theme Studio had
+    never written them down, and the offline provider's hand-written answers
+    happened to be right, so no test could show a real model's habits.
+    (i) `frame-shapes.ts` `briefsInFrameShapes` (v34 new themes, after Stage
+    B has placed the pictures): a picture's shape is its FRAME's. A product
+    brief is portrait, a slideshow or banner picture wide, a category tile
+    square, and a section with a ratio setting (`image_ratio`,
+    `media_ratio`, `aspect_ratio`) draws that; orientation is what is held
+    (a 3:2 picture in a landscape frame keeps its ratio; one in the wrong
+    orientation takes the frame's canonical 4:5, 1:1, 4:3 or 21:9, the
+    ratios the storefront's own CSS uses). A tile grid's frames depend on
+    its layout, so nothing is claimed for them.
+    (j) `withPhoneOpening` (same file, same gate): every slide of the
+    homepage's opening gets a portrait brief of the same scene
+    (`<slot>-phone`, 4:5) and its `mobile_image_url`. A wide photograph in a
+    phone's tall band showed a third of its frame; the reviewer held the
+    theme at "responsive composition 3", and the only repair it could name
+    (a shorter band) is one `opening.ts` refuses. The storefront had the
+    field all along and the model, told it "may" use it, never did.
+    Measured on the theme: 390x487 photographs in a 390x460 band.
+    (k) `menuLabelIssues` (`copy-tidy.ts`, every v34 draft): a menu label is
+    at most `NAV_LABEL_MAX` (28) characters, after the title-bar shortening.
+    ★★ A STOREFRONT BUG THE THEME EXPOSED: A ONE-PHOTO PRODUCT UNDER THE
+    `thumbs-left` GALLERY SHOWED A 72px PHOTOGRAPH. The shape is a two-column
+    grid (72px thumbnails, then the photo) and a product with one photograph
+    renders no thumbnails, so the frame was the grid's only item and took
+    the thumbnail column. The owner saw it in the preview ("no product
+    picture") and the reviewer rejected it as an unfinished surface.
+    `product-gallery.tsx` marks the gallery `is-single` and `shop.css` drops
+    the grid for it and names the frame's column. The browser layout check
+    only ever laid galleries out with three photographs:
+    `theme-studio-renderer-check.mjs` now also lays every shape out with one
+    (1,283 cases; without the fix it fails "the only photograph is 72px wide
+    in a 420px gallery").
+    ★ RESULT: "Roast" reached Ready to publish on design 12, review 38 of 40
+    (29, then 36, then 38), from six reference screenshots. ⚠ Its nine
+    product photographs were drawn 4:3 before rule (i) existed and still sit
+    letterboxed in their portrait frames; redrawing them is the owner's call.
     `npm run theme-studio:stylesheets`
     (`scripts/theme-studio-stylesheet-check.ts`, in CI's renderer job) lays
     each one over the PRODUCTION storefront CSS in local Chrome at 390 and

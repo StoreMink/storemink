@@ -81,7 +81,7 @@ type Rewrite = (
   request: StructuredRequest,
   answer: () => Promise<StructuredResult>,
   seen: StructuredRequest[],
-) => Promise<StructuredResult> | StructuredResult | undefined;
+) => Promise<StructuredResult | undefined> | StructuredResult | undefined;
 
 /** The offline provider, with every request recorded and one hook. */
 function scripted(referenceCount: number, rewrite?: Rewrite) {
@@ -446,5 +446,238 @@ describe("★★ alikeness is settled before anything is drawn (v34)", () => {
     );
     expect(drilled.kind).toBe("version");
     expect(stage(drill.seen, "intent")).toHaveLength(1);
+  });
+});
+
+// The first live build under v34 (22 Nov 2026) spent every repair and failed
+// on "Muted text in the Brand scheme is hard to read (4.35:1, needs 4.5:1)",
+// having been told about an invented founding year only in its third round.
+describe("★★ what the first live v34 build taught", () => {
+  type Draft = {
+    design: { schemes?: Record<string, unknown> };
+    stylesheetJson?: string;
+    pages: { sections: { type: string; configJson: string }[] }[];
+  };
+  /** The offline provider's draft, changed before the pipeline reads it. */
+  const spoiling = (
+    spoil: (draft: Draft, nth: number) => void,
+    referenceCount = 0,
+  ) => {
+    let drafts = 0;
+    return scripted(referenceCount, async (request, answer) => {
+      if (request.stage !== "draft" || isCorrection(request)) return undefined;
+      const response = await answer();
+      if (response.kind === "ok") spoil(response.value as Draft, drafts++);
+      return response;
+    });
+  };
+  /** The band of the build that failed: white on burnt orange. */
+  const brandBand = (draft: Draft) => {
+    draft.design.schemes = {
+      ...draft.design.schemes,
+      accent: { background: "#a63e0d", text: "#ffffff" },
+    };
+  };
+  const claim = (draft: Draft) => {
+    for (const page of draft.pages)
+      for (const section of page.sections) {
+        const config = JSON.parse(section.configJson);
+        if (typeof config.heading === "string") {
+          // The real run's own invention.
+          config.heading = "EST. 2021";
+          section.configJson = JSON.stringify(config);
+          return;
+        }
+      }
+    throw new Error("the fixture has no heading to spoil");
+  };
+
+  it("settles a band that narrowly fails to read by shade, without a model round, from v34 only", async () => {
+    const current = spoiling(brandBand);
+    const result = await run(current.client, input());
+    if (result.kind !== "version") throw new Error(JSON.stringify(result));
+    for (const request of stage(current.seen, "draft"))
+      expect(text(request)).not.toContain("Brand scheme");
+    const band = result.package.definition.preset.design.schemes!.accent!;
+    expect(band.text).toBe("#ffffff");
+    expect(band.background).not.toBe("#a63e0d");
+
+    // v33 keeps its behaviour: the model is asked to fix it.
+    const older = spoiling((draft, nth) => {
+      if (nth === 0) brandBand(draft);
+    });
+    const before = await run(
+      older.client,
+      input({ promptVersion: "theme-studio-v33" }),
+    );
+    expect(before.kind).toBe("version");
+    expect(text(stage(older.seen, "draft")[1])).toContain(
+      "Muted text in the Brand scheme is hard to read (4.35:1, needs 4.5:1).",
+    );
+  });
+
+  it("reports an unsupported claim in the same round as a style rule to mend", async () => {
+    const { client, seen } = spoiling((draft, nth) => {
+      if (nth !== 0) return;
+      draft.stylesheetJson = JSON.stringify([
+        { hook: "no.such.hook", declarations: { weight: "bold" } },
+      ]);
+      claim(draft);
+    });
+    const result = await run(client, input());
+    expect(result.kind).toBe("version");
+    const second = text(stage(seen, "draft")[1]);
+    expect(second).toContain("stylesheetJson");
+    expect(second).toContain('Copy claims a founding year ("EST. 2021")');
+  });
+
+  it("says what the last draft still failed on when every repair is spent", async () => {
+    const { client, seen } = spoiling(claim);
+    const result = await run(client, input());
+    if (result.kind !== "failed") throw new Error(result.kind);
+    expect(result.errorCode).toBe("invalid_output");
+    expect(stage(seen, "draft")).toHaveLength(
+      THEME_STUDIO_LIMITS.repairAttempts + 1,
+    );
+    expect(result.detail.stage).toBe("draft");
+    expect((result.detail.issues as string[]).join(" ")).toContain(
+      "Copy claims a founding year",
+    );
+  });
+});
+
+describe("★ a draft's copy is tidied without a model round (v34)", () => {
+  // What tidying does to a draft is copy-tidy.test.ts; this is the wiring.
+  type Draft = { pages: { sections: { configJson: string }[] }[] };
+  const DASH = String.fromCharCode(0x2014);
+  const untidy = () =>
+    scripted(0, async (request, answer) => {
+      if (request.stage !== "draft" || isCorrection(request)) return undefined;
+      const response = await answer();
+      if (response.kind !== "ok") return response;
+      // The first heading a section carries, as the claim fixture does.
+      spoil: for (const page of (response.value as Draft).pages)
+        for (const section of page.sections) {
+          const config = JSON.parse(section.configJson);
+          if (typeof config.heading !== "string") continue;
+          config.heading = `Slow made ${DASH} never rushed`;
+          section.configJson = JSON.stringify(config);
+          break spoil;
+        }
+      return response;
+    });
+
+  it("rewrites a long dash inside a section's JSON, and spends no repair round on it", async () => {
+    const { client, seen } = untidy();
+    const result = await run(client, input());
+    if (result.kind !== "version") throw new Error(JSON.stringify(result));
+    const whole = JSON.stringify(result.package);
+    expect(whole).not.toContain(DASH);
+    expect(whole).toContain("Slow made, never rushed");
+    for (const request of stage(seen, "draft").slice(1))
+      expect(text(request)).not.toMatch(/long dash/i);
+  });
+
+  it("leaves an earlier version's draft exactly as the model wrote it", async () => {
+    const { client } = untidy();
+    const result = await run(
+      client,
+      input({ promptVersion: "theme-studio-v33" }),
+    );
+    if (result.kind !== "version") throw new Error(JSON.stringify(result));
+    expect(JSON.stringify(result.package)).toContain(
+      `Slow made ${DASH} never rushed`,
+    );
+  });
+});
+
+describe("★ a picture is drawn in the shape of the frame it is shown in (v34)", () => {
+  type Intent = { assetBriefs: { id: string; aspectRatio: string }[] };
+  const landscape = () =>
+    scripted(0, async (request, answer) => {
+      if (request.stage !== "intent") return undefined;
+      const response = await answer();
+      if (response.kind !== "ok") return response;
+      const intent = (response.value as { intent: Intent }).intent;
+      for (const brief of intent.assetBriefs) brief.aspectRatio = "4:3";
+      return response;
+    });
+
+  it("makes landscape product photography portrait and a slideshow photograph wide, whatever was planned", async () => {
+    const result = await run(landscape().client, input());
+    if (result.kind !== "version") throw new Error(JSON.stringify(result));
+    const ratio = (id: string) =>
+      result.intent.assetBriefs.find((brief) => brief.id === id)?.aspectRatio;
+    // Every brief was planned at 4:3. The product card is portrait, and the
+    // opening slideshow fills a wide band (frame-shapes.ts).
+    expect(ratio("product-photo")).toBe("4:5");
+    expect(ratio("home-hero")).toBe("21:9");
+    expect(ratio("home-hero-2")).toBe("21:9");
+  });
+
+  it("is not applied before v34", async () => {
+    const result = await run(
+      landscape().client,
+      input({ promptVersion: "theme-studio-v33" }),
+    );
+    if (result.kind !== "version") throw new Error(JSON.stringify(result));
+    expect(
+      result.intent.assetBriefs.find((brief) => brief.id === "product-photo")
+        ?.aspectRatio,
+    ).toBe("4:3");
+  });
+});
+
+describe("★ every opening slide of a new theme has a phone photograph (v34)", () => {
+  const openingSlides = (pkg: {
+    definition: { preset: { pages: { slug: string; sections: unknown[] }[] } };
+  }) => {
+    const home = pkg.definition.preset.pages.find((page) => page.slug === "")!;
+    const first = home.sections[0] as {
+      type: string;
+      config: { slides?: { image_url: string; mobile_image_url?: string }[] };
+    };
+    return first.config.slides ?? [];
+  };
+
+  it("adds a portrait brief for each slide and the slide shows it on a phone", async () => {
+    const result = await run(scripted(0).client, input());
+    if (result.kind !== "version") throw new Error(JSON.stringify(result));
+    const slides = openingSlides(result.package);
+    expect(slides.length).toBeGreaterThan(1);
+    for (const slide of slides) {
+      const wide = slide.image_url.replace("theme-asset://", "");
+      expect(slide.mobile_image_url).toBe(`theme-asset://${wide}-phone`);
+      expect(
+        result.intent.assetBriefs.find((b) => b.id === `${wide}-phone`)
+          ?.aspectRatio,
+      ).toBe("4:5");
+    }
+    // Each phone photograph is a picture of the package, to be drawn.
+    const assets = result.package.assets.map((asset) => asset.id);
+    for (const slide of slides)
+      expect(assets).toContain(
+        slide.mobile_image_url!.replace("theme-asset://", ""),
+      );
+  });
+
+  it("is not added before v34, nor by a change to an existing theme", async () => {
+    const older = await run(
+      scripted(0).client,
+      input({ promptVersion: "theme-studio-v33" }),
+    );
+    if (older.kind !== "version") throw new Error(JSON.stringify(older));
+    for (const slide of openingSlides(older.package))
+      expect(slide.mobile_image_url).toBeUndefined();
+    const revised = await run(
+      scripted(0).client,
+      input({
+        messages: [{ kind: "revision", body: "Make the footer simpler." }],
+        revision: { baseIntent: older.intent, basePackage: older.package },
+      }),
+    );
+    if (revised.kind !== "version") throw new Error(JSON.stringify(revised));
+    for (const slide of openingSlides(revised.package))
+      expect(slide.mobile_image_url).toBeUndefined();
   });
 });

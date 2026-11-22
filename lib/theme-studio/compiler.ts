@@ -8,6 +8,7 @@ import {
   pairingFonts,
 } from "@/lib/themes/fonts";
 import { explicitDraftStyleIssues } from "./style-choices";
+import { settleSchemeContrast } from "@/lib/themes/scheme-settle";
 import { paletteFamilyIssues } from "./fingerprint";
 import type { PageSectionItem } from "@/lib/sections/registry";
 import type {
@@ -62,6 +63,7 @@ import {
   isSectionScheme,
   SCHEMELESS_SECTION_TYPES,
   SECTION_SCHEMES,
+  schemesUsed,
   type ThemeColorScheme,
   type ThemeColorSchemes,
 } from "@/lib/themes/schemes";
@@ -232,6 +234,13 @@ export interface SlotAsset {
 
 export interface CompileResult {
   package: ThemePackageV2 | null;
+  /**
+   * The package as it stands when it is structurally whole but still has
+   * issues (a style rule to repair, a content floor): never saved, only read
+   * by the checks that need a package (the brief's claims), so they can be
+   * reported in the SAME repair round instead of the next one.
+   */
+  candidate?: ThemePackageV2;
   /** Slots the package references, each needing a stored placeholder. */
   slots: string[];
   issues: string[];
@@ -758,6 +767,37 @@ function assetKind(
   return "content";
 }
 
+/** The shape a product photograph is drawn in when its brief asked for a
+ *  landscape one. */
+export const PRODUCT_PHOTO_RATIO = "4:5";
+
+/**
+ * The intent's briefs with product photography made portrait (prompt v34+).
+ * ★ A product card's frame is portrait or square, and the card never crops a
+ *   merchant's photograph, so a landscape product photo sits inside it as a
+ *   small rectangle with the tile's colour above and below. The first live
+ *   v34 theme (22 Nov 2026) asked for 4:3 product photography and every card
+ *   showed that box. A model has no way to know the frame's shape, so the
+ *   shape is settled here: a landscape product brief is drawn at 4:5.
+ * A square or portrait brief is left as written, and so is every other kind
+ * of picture.
+ */
+export function portraitProductBriefs(
+  intent: ThemeIntent,
+): ThemeIntent["assetBriefs"] {
+  return intent.assetBriefs.map((brief) => {
+    const [width, height] = brief.aspectRatio.split(":").map(Number);
+    return isProductBrief(brief.id, intent) && width > height
+      ? { ...brief, aspectRatio: PRODUCT_PHOTO_RATIO }
+      : brief;
+  });
+}
+
+/** Whether a brief is product photography (its frame is the product card). */
+export function isProductBrief(briefId: string, intent: ThemeIntent): boolean {
+  return assetKind(briefId, intent) === "product";
+}
+
 /** A product photograph's shape when its brief was not written for products
  *  (a model pointing a product at the hero brief): square, which every
  *  product card crops cleanly. */
@@ -1095,12 +1135,30 @@ export function prepareDraft(
   const briefIds = new Set(intent.assetBriefs.map((b) => b.id));
   const used = new Set<string>(Object.keys(SYSTEM_SLOTS));
   const productSlots = new Map<string, ProductSlot>();
-  const design = buildDesign(draftInput.design, issues, draftInput.fontPairing);
-  if (intent.schemaVersion === 2 && design)
+  const written = buildDesign(
+    draftInput.design,
+    issues,
+    draftInput.fontPairing,
+  );
+  if (intent.schemaVersion === 2 && written)
     issues.push(
-      ...paletteFamilyIssues(intent.paletteFamily, design.palette.cream),
+      ...paletteFamilyIssues(intent.paletteFamily, written.palette.cream),
     );
   const pages = buildPages(draftInput.pages, known, used, issues);
+  // v34: a section colour scheme that narrowly fails to read is settled
+  // here, by shade alone, before anything is judged against it
+  // (lib/themes/scheme-settle.ts). A model cannot aim a derived colour such
+  // as muted text, and the first live v34 run failed a whole theme on one.
+  const design =
+    written && styleOptions.settleSchemes
+      ? settleSchemeContrast(
+          written,
+          (isRec(draftInput.brand) && text(draftInput.brand.primaryColor)) ||
+            written.palette.accent ||
+            "",
+          schemesUsed(pages),
+        ).design
+      : written;
   const catalogue = buildCatalogue(
     draftInput,
     known,
@@ -1356,6 +1414,9 @@ export function assemblePackage(
   if (validated.ok) issues.push(...contentFloorIssues(validated.value));
   return {
     package: issues.length === 0 && validated.ok ? validated.value : null,
+    ...(issues.length > 0 && validated.ok
+      ? { candidate: validated.value }
+      : {}),
     slots: [...slotAssets.keys()],
     issues,
   };

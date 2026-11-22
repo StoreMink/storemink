@@ -62,6 +62,14 @@ const CLAIM_RULES: readonly ClaimRule[] = [
     label: "a certification",
     evidence: /\bcertif/i,
   },
+  // "Organic" is a certified status, with or without the word "certified":
+  // the first live design review (22 Nov 2026) rejected "ORGANIC BEANS" on a
+  // brand whose brief never said so, after this check had let it through.
+  {
+    re: /\borganic(?:ally)?\b/i,
+    label: "an organic claim",
+    evidence: /\borganic/i,
+  },
   {
     re: /\btrusted by (?:over |more than )?[\d,]+\+?/i,
     label: "a customer count",
@@ -93,6 +101,18 @@ const CLAIM_RULES: readonly ClaimRule[] = [
     numeric: true,
   },
 ];
+
+/**
+ * Appended to the Stage B system prompt (v34+). Both of the first two live
+ * v34 drafts (22 Nov 2026) put "EST. 2021" and "EST. 2024" on a brand that
+ * gave no founding year, and one a "certified organic" the brief never
+ * claimed: each cost a repair round the prompt could have saved, because
+ * until now the model was told about this rule only after breaking it.
+ */
+export const CLAIMS_PROMPT = `
+
+Honest copy: the draft's customer copy is checked against the brief, and a claim the brief does not state is sent back. Never invent a founding year or date ("Est. 2021", "since 1998", "established in 2015"), an award, press coverage, a ranking, a rating or review count, a customer count, a percentage statistic, clinical or expert endorsement, or a certification ("certified organic", or the word "organic" by itself). Write none of these unless the brief itself states it; say what the store sells and how, not what it has won or how long it has run.
+Plain copy: a menu label is the short name a shopper taps ("Our Story", "Brewing Guide"), never a page's title with the brand after a bar. Use no long dash in any copy: a comma, a colon or a full stop instead.`;
 
 function numbersIn(text: string): Set<string> {
   return new Set(

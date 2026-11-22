@@ -167,7 +167,7 @@ Theme stylesheet: write a top-level "stylesheetJson" string that holds exactly o
       ? `This is a revision: the current theme's stylesheetJson is shown with it. Copy it unchanged unless the operator asked for a change in styling, and then change only what was asked. A theme that has none ("[]") keeps none unless the operator asks for styling.`
       : `Write ${STYLESHEET_MIN_RULES} to ${STYLESHEET_DRAFT_MAX_RULES} rules across at least ${STYLESHEET_MIN_AREAS} different areas (the part of a hook before the dot), always including the product card, the main button and the section heading. Decide the theme's hand first (how names are set, how things are framed, how they move) and apply it consistently, so the rules read as one designer's decisions and not a list of effects.`
   }
-- Colour is never free: a label takes a "tone" (its background and the text colour that goes with it), a box takes a "fill", and text takes a "color" of ink, inkSoft or accent. Every one is the theme's own palette, and each is checked for contrast against this draft's palette, so choose ones that read. A sale price is drawn in design.palette.error on the page, on cards and on any fill you give the product card, so that colour must read at 4.5:1 on each. Hooks marked "no colour" take type only: the storefront colours them over photographs and bands.
+- Colour is never free: a label takes a "tone" (its background and the text colour that goes with it), a box takes a "fill", and text takes a "color" of ink, inkSoft or accent. Every one is the theme's own palette, and each is checked for contrast against this draft's palette, so choose ones that read. A sale price is drawn in design.palette.error on the page, on cards and on any fill you give the product card, so that colour must read at 4.5:1 on each. Hooks marked "no colour" take type only: the storefront colours them over photographs and bands. A hook marked "needs a tone with a background" (button.secondary is one) can lie over a photograph: give it ink, accent, surface, page, soft or sand, never "outline" or "ghost", which are see-through.
 - A hover or active rule may only change how something looks or moves a little (tone, border, shadow, a small transform); state rules are allowed only on hooks that list states. The hover of a product photo or a category photo is its card's hover. Give a hovering element a "transition" in its base rule.
 - A variant filter styles one layout only, written after the first part of the hook: ${variantLines().replace(/\n/g, "; ")}. Use it when a rule only suits that layout; most rules need none.
 - Never write the same hook, state and viewport twice; merge them into one rule. Do not restate the storefront's defaults: a rule exists because this theme differs.${
@@ -208,6 +208,9 @@ export interface StylesheetDraftOptions {
   salvage?: boolean;
   /** A new theme must say enough to be its own; a revision need not. */
   requireOwnHand?: boolean;
+  /** v34: settle section colour schemes that narrowly fail to read, by
+   *  shade alone, before the draft is judged (compiler.ts prepareDraft). */
+  settleSchemes?: boolean;
 }
 
 /**

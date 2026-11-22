@@ -9,6 +9,8 @@ import {
 import {
   assemblePackage,
   normalizeIntent,
+  isProductBrief,
+  portraitProductBriefs,
   prepareDraft,
   reservedBriefIssues,
   slotSpec,
@@ -53,7 +55,7 @@ import {
   type ThemeStudioContentBlock,
   type ThemeStudioModelClient,
 } from "./provider";
-import { customerCopy, unsupportedClaimIssues } from "./claims";
+import { CLAIMS_PROMPT, customerCopy, unsupportedClaimIssues } from "./claims";
 import {
   STAGE_A_ENVELOPE_SCHEMA,
   stageASchemaFor,
@@ -86,6 +88,8 @@ import {
   VISIBLE_SECTION_CHOICES,
 } from "./style-choices";
 import { themePromptFeatures } from "./prompt-features";
+import { menuLabelIssues, tidyDraftCopy } from "./copy-tidy";
+import { briefsInFrameShapes, withPhoneOpening } from "./frame-shapes";
 import {
   completeDesignPlan,
   designPlanBuildPrompt,
@@ -929,6 +933,10 @@ async function generate(
         intent = planned
           ? { ...parsed.value, designPlan: planned }
           : parsed.value;
+        // v34, a new theme: product photography is drawn in the shape a
+        // product card shows it (compiler.ts portraitProductBriefs).
+        if (planFeature)
+          intent = { ...intent, assetBriefs: portraitProductBriefs(intent) };
         break;
       }
       issuesA = problems;
@@ -1042,6 +1050,7 @@ async function generate(
           (heroContrast ? heroContrastPrompt(fullBleedOpening) : "") +
           // v34+: appended last, so every earlier version's text is as it
           // was.
+          (stylesheetFeature ? CLAIMS_PROMPT : "") +
           (stylesheetFeature
             ? stylesheetPrompt(
                 intent.designDirection,
@@ -1099,13 +1108,49 @@ async function generate(
     // ★ A stylesheet never fails a theme on its own: while repairs remain
     //   its faults are repair issues; on the last attempt the sound rules
     //   are kept and the rest dropped.
-    const prepared = prepareDraft(expanded.value, intent, {
+    // v34: long dashes and title-style menu labels are mended here, not by
+    // a model round (copy-tidy.ts).
+    let tidied = themePromptFeatures(input.promptVersion).designPlan
+      ? tidyDraftCopy(expanded.value)
+      : expanded.value;
+    // v34, a new theme: every opening slide gets a portrait photograph for
+    // phones (frame-shapes.ts withPhoneOpening). Idempotent across repair
+    // rounds: a brief it added once is found again.
+    if (planFeature) {
+      const phone = withPhoneOpening(
+        tidied,
+        intent,
+        THEME_STUDIO_LIMITS.assetBriefs,
+      );
+      tidied = phone.draft;
+      intent = phone.intent;
+    }
+    const prepared = prepareDraft(tidied, intent, {
       salvage: attempt >= THEME_STUDIO_LIMITS.repairAttempts,
       requireOwnHand: !input.revision,
+      settleSchemes: themePromptFeatures(input.promptVersion).designPlan,
     });
     if (!prepared.parts) {
       issuesB = prepared.issues;
       continue;
+    }
+    // v34: what is the same in every theme is a rule here, never a model's
+    // choice (owner, 22 Nov 2026). A menu label has a length; and for a new
+    // theme each picture takes the shape of the frame the build just placed
+    // it in (frame-shapes.ts), where it used to keep whatever the planning
+    // stage guessed before any frame existed.
+    if (themePromptFeatures(input.promptVersion).designPlan)
+      prepared.issues.push(...menuLabelIssues(prepared.parts.draft));
+    if (planFeature) {
+      const planned: ThemeIntent = intent;
+      intent = {
+        ...planned,
+        assetBriefs: briefsInFrameShapes(
+          planned,
+          prepared.parts.pages,
+          (briefId) => isProductBrief(briefId, planned),
+        ),
+      };
     }
     const color = String(
       (isRec(expanded.value) &&
@@ -1428,8 +1473,34 @@ async function generate(
       };
     }
     issuesB = compiled.issues;
+    // v34: every problem in ONE repair round. Claims the brief does not
+    // support used to be looked for only once a draft compiled clean, so a
+    // draft with a style rule to mend AND an invented founding year spent
+    // two paid rounds on them (the first live v34 run spent its last two
+    // that way). A draft that is structurally whole is read for them now.
+    if (
+      themePromptFeatures(input.promptVersion).designPlan &&
+      compiled.candidate
+    )
+      issuesB = [
+        ...issuesB,
+        ...unsupportedClaimIssues(
+          compiled.candidate,
+          [
+            ...input.messages.map((m) => m.body),
+            ...(input.revision ? customerCopy(input.revision.basePackage) : []),
+          ].join("\n"),
+        ),
+      ];
   }
-  return fail("invalid_output", { stage: "draft" });
+  // What the last draft still failed on, bounded: without it a run that
+  // spends every repair says only "invalid_output", and the one draft
+  // nobody was told about is the one that decided it (the first live v34
+  // run, 22 Nov 2026).
+  return fail("invalid_output", {
+    stage: "draft",
+    issues: issuesB.slice(0, 12).map((issue) => issue.slice(0, 400)),
+  });
 }
 
 /** The corrections a draft under the publish floor gets before it stops. */
