@@ -10952,6 +10952,31 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261122_0285_image_provider_submits",
+      "description": "Finding an image job whose answer was lost: image_provider_submits, one row per submit to the async image provider, written before the request leaves and deleted when it is answered. A submit that gets no answer keeps its row and the window it was out for, so its job can be found in the provider's list by its creation time and collected, where the next try would otherwise pay for the picture twice. Expand only.",
+      "file": "sql/20261122_0285_image_provider_submits.sql",
+      "transaction": true,
+      "requires": ["20261122_0284_image_provider_settings"],
+      "verify": {
+        "tables": ["image_provider_submits"],
+        "columns": [
+          "image_provider_submits.scope",
+          "image_provider_submits.request_digest",
+          "image_provider_submits.state",
+          "image_provider_submits.sent_at",
+          "image_provider_submits.lost_at",
+          "image_provider_submits.generation_id"
+        ],
+        "constraints": [
+          "image_provider_submits_provider_check",
+          "image_provider_submits_state_check",
+          "image_provider_submits_found_check",
+          "image_provider_submits_lost_check"
+        ],
+        "rlsTables": ["image_provider_submits"]
+      }
     }
   ]
 }

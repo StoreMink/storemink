@@ -16,7 +16,10 @@ import "server-only";
  *    2. A submit is retried only after an answer that PROVES no job was made
  *       (HTTP 429: refused for rate or concurrency). A submit that timed out,
  *       dropped or met a 5xx may have made a job, so it is never sent again
- *       by this module; the caller is told a job may exist.
+ *       by this module. Its job is LOOKED FOR instead, in the provider's own
+ *       list, by the time it was made (elevenlabs-lost-jobs.ts); when it is
+ *       found it is waited on like any other, and when the search cannot be
+ *       sure the caller is told a job may exist.
  *    3. Once a job id is known, nothing here submits again. A slow or failing
  *       status read is read again; a failed download asks for a fresh URL.
  *    4. `quality` and `resolution` are sent on every request. The API's own
@@ -35,7 +38,9 @@ import { logInfo, logWarn } from "@/lib/observability/logger";
 import {
   postgresGenerationStore,
   type GenerationStore,
+  type LostSubmit,
 } from "./elevenlabs-generations";
+import { findLostJob } from "./elevenlabs-lost-jobs";
 import type {
   ElevenLabsImageQuality,
   ElevenLabsImageResolution,
@@ -79,7 +84,19 @@ export const ELEVENLABS_WAIT_CEILING_MS = 150_000;
 /** Submits refused with 429 (no job was made) that are sent again. */
 export const ELEVENLABS_RATE_LIMIT_RETRIES = 3;
 export const ELEVENLABS_RATE_LIMIT_WAIT_MS = { min: 2_000, max: 6_000 };
+/** After a submit got no answer: how often, and how far apart, its job is
+ *  looked for before the draw gives up (a later try looks once more). */
+export const ELEVENLABS_LOST_LOOKS = 3;
+export const ELEVENLABS_LOST_LOOK_WAIT_MS = 3_000;
+/** How far a found job's picture may be from the shape that was asked for. */
+export const ELEVENLABS_SHAPE_TOLERANCE = 0.03;
 const DOWNLOAD_TRIES = 3;
+/** "Not found" answers in a row before a job is taken to be gone: one alone
+ *  may be their read lagging behind their write, and treating it as "no
+ *  job" would have the picture drawn, and paid for, a second time. */
+export const ELEVENLABS_GONE_READS = 3;
+/** The largest picture kept (a 4K PNG is under 40 MB). */
+export const ELEVENLABS_MAX_PICTURE_BYTES = 60 * 1024 * 1024;
 
 export interface ElevenLabsReference {
   mediaType: "image/jpeg" | "image/png" | "image/webp";
@@ -124,6 +141,8 @@ export type ElevenLabsDrawOutcome = (
   jobMayExist: boolean;
   /** True when the picture came from a job an earlier try had submitted. */
   adopted: boolean;
+  /** True when the job's id was lost with its answer and found again. */
+  recovered: boolean;
   /** Submits sent by THIS call (0 when a job was collected or nothing sent). */
   submits: number;
   durationMs: number;
@@ -136,6 +155,10 @@ export interface ElevenLabsDeps {
   now?: () => number;
   random?: () => number;
   store?: GenerationStore;
+  /** The width and height of a picture (a found job's shape is checked). */
+  sizeOf?: (
+    bytes: Uint8Array,
+  ) => Promise<{ width: number; height: number } | null>;
   /** Re-encode (and for 1K enlarge) the provider's picture. Null keeps it. */
   finish?:
     | ((
@@ -357,12 +380,17 @@ async function download(
   fetchFn: typeof fetch,
 ): Promise<Uint8Array | null> {
   try {
+    // Only ever a secure address, and never a file of unbounded size.
+    if (new URL(url).protocol !== "https:") return null;
     const response = await fetchFn(url, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
       cache: "no-store",
     });
     if (!response.ok) return null;
+    const declared = Number(response.headers.get("content-length") ?? 0);
+    if (declared > ELEVENLABS_MAX_PICTURE_BYTES) return null;
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > ELEVENLABS_MAX_PICTURE_BYTES) return null;
     return sniff(bytes) ? bytes : null;
   } catch {
     return null;
@@ -410,6 +438,31 @@ export async function finishElevenLabsPicture(
   }
 }
 
+async function pictureSize(
+  bytes: Uint8Array,
+): Promise<{ width: number; height: number } | null> {
+  try {
+    const sharp = (await import("sharp")).default;
+    const meta = await sharp(bytes).metadata();
+    return meta.width && meta.height
+      ? { width: meta.width, height: meta.height }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a picture has the shape that was asked for ("4:5"). */
+export function hasShape(
+  size: { width: number; height: number },
+  aspectRatio: ElevenLabsAspectRatio,
+): boolean {
+  const [w, h] = aspectRatio.split(":").map(Number);
+  const asked = w / h;
+  const got = size.width / size.height;
+  return Math.abs(got - asked) / asked <= ELEVENLABS_SHAPE_TOLERANCE;
+}
+
 /**
  * Draw one picture. Never throws: every outcome is a value, and each says
  * whether a job exists for it (`jobMayExist`).
@@ -426,9 +479,11 @@ export async function drawElevenLabsImage(
   const finish =
     options.finish === undefined ? finishElevenLabsPicture : options.finish;
   const deps = { apiKey: options.apiKey, fetch: options.fetch ?? fetch };
+  const sizeOf = options.sizeOf ?? pictureSize;
   const startedAt = now();
   let submits = 0;
   let adopted = false;
+  let recovered = false;
   const end = (
     outcome:
       | {
@@ -444,9 +499,37 @@ export async function drawElevenLabsImage(
     ...outcome,
     jobMayExist,
     adopted,
+    recovered,
     submits,
     durationMs: Math.max(0, now() - startedAt),
   });
+
+  /**
+   * Look for the job of a submit that got no answer, and take it when it is
+   * found. `finding` says what the last look saw.
+   */
+  const recover = async (
+    lost: LostSubmit,
+  ): Promise<{ id: string | null; finding: "found" | "none" | "unsure" }> => {
+    const search = await findLostJob(lost, signal, {
+      ...deps,
+      apiBase: ELEVENLABS_API_BASE,
+      store,
+      scope: input.scope,
+    });
+    if (search.kind !== "found") return { id: null, finding: search.kind };
+    const mine = await store.adoptFound(
+      lost,
+      input.scope,
+      digest,
+      search.generationId,
+      new Date(now()),
+    );
+    // Another try took it first: it is collecting that picture.
+    return mine
+      ? { id: search.generationId, finding: "found" }
+      : { id: null, finding: "unsure" };
+  };
 
   if (signal.aborted) return end({ kind: "error", code: "cancelled" }, false);
   if (
@@ -472,21 +555,52 @@ export async function drawElevenLabsImage(
       scope: input.scope,
       generationId,
     });
+  } else {
+    // ── 1b. An earlier submit for this picture that got no answer? Its job
+    //    may exist: look for it before paying for another. ────────────────
+    const lost = await store.findLostSubmit(
+      input.scope,
+      digest,
+      new Date(now()),
+    );
+    if (lost && !signal.aborted) {
+      const found = await recover(lost);
+      if (found.id) {
+        generationId = found.id;
+        adopted = true;
+        recovered = true;
+      } else if (found.finding === "none") {
+        // A clear view, and nothing there: that submit made no job.
+        await store.giveUpSubmit(lost.id, new Date(now()));
+      }
+    }
   }
 
   for (;;) {
     // ── 2. Otherwise submit ONE job ────────────────────────────────────────
     if (!generationId) {
       let answer: SubmitAnswer = { kind: "rate_limited" };
+      let submitId: string | null = null;
+      let sentAt = now();
       for (let attempt = 0; ; attempt += 1) {
         if (signal.aborted) {
           return end({ kind: "error", code: "cancelled" }, false);
         }
+        // ★ Written down BEFORE it leaves: if its answer is lost, this row is
+        //   how its job is found (elevenlabs-generations.ts).
+        sentAt = now();
+        submitId = await store.openSubmit(
+          input.scope,
+          digest,
+          new Date(sentAt),
+        );
         submits += 1;
         answer = await submit(input, signal, deps);
         if (answer.kind !== "rate_limited") break;
         // 429: no job was made, so asking again cannot make two.
         submits -= 1;
+        if (submitId) await store.dropSubmit(submitId);
+        submitId = null;
         if (attempt >= ELEVENLABS_RATE_LIMIT_RETRIES) break;
         const wait =
           ELEVENLABS_RATE_LIMIT_WAIT_MS.min +
@@ -501,6 +615,7 @@ export async function drawElevenLabsImage(
         return end({ kind: "error", code: "rate_limited" }, false);
       }
       if (answer.kind === "rejected" || answer.kind === "auth") {
+        if (submitId) await store.dropSubmit(submitId);
         logWarn("images.elevenlabs: submit refused", {
           scope: input.scope,
           status: answer.status,
@@ -517,27 +632,51 @@ export async function drawElevenLabsImage(
         logWarn("images.elevenlabs: submit got no answer", {
           scope: input.scope,
         });
-        return end(
-          {
-            kind: "error",
-            code: signal.aborted ? "cancelled" : "timeout",
-          },
-          true,
+        const lostAt = now();
+        if (submitId) await store.markSubmitLost(submitId, new Date(lostAt));
+        // ★★ Look for it. A job made in the seconds this submit was out,
+        //    that the record does not hold and no other unanswered submit
+        //    could have made, is this submit's job: wait on it like any
+        //    other. A caller that has stopped is not kept waiting; the next
+        //    try for this picture looks (1b).
+        let foundId: string | null = null;
+        if (submitId && !signal.aborted) {
+          const lost = { id: submitId, sentAt, lostAt };
+          for (let look = 0; look < ELEVENLABS_LOST_LOOKS; look += 1) {
+            await sleep(ELEVENLABS_LOST_LOOK_WAIT_MS, signal);
+            if (signal.aborted) break;
+            foundId = (await recover(lost)).id;
+            if (foundId) break;
+          }
+        }
+        if (!foundId) {
+          return end(
+            {
+              kind: "error",
+              code: signal.aborted ? "cancelled" : "timeout",
+            },
+            true,
+          );
+        }
+        generationId = foundId;
+        recovered = true;
+      } else {
+        generationId = answer.id;
+        await store.recordSubmitted(
+          input.scope,
+          digest,
+          generationId,
+          new Date(now()),
+          submitId,
         );
       }
-      generationId = answer.id;
-      await store.recordSubmitted(
-        input.scope,
-        digest,
-        generationId,
-        new Date(now()),
-      );
     }
 
     // ── 3. Wait for THAT job. Nothing below submits again. ─────────────────
     const waitFrom = now();
     let interval = ELEVENLABS_POLL_INTERVAL_MS;
     let gone = false;
+    let missing = 0;
     for (;;) {
       if (signal.aborted) {
         // The job goes on and is paid for: leave it for the next try.
@@ -555,6 +694,15 @@ export async function drawElevenLabsImage(
       await sleep(interval, signal);
       if (signal.aborted) continue;
       const state = await readJob(generationId, signal, deps);
+      if (state.kind === "gone") {
+        // ★ One "not found" is not proof: ask again before giving the job up.
+        missing += 1;
+        if (missing < ELEVENLABS_GONE_READS) continue;
+        await store.settle(generationId, "failed", new Date(now()));
+        gone = true;
+        break;
+      }
+      missing = 0;
       if (state.kind === "retry") {
         if (state.slow) {
           interval = Math.min(interval * 2, ELEVENLABS_POLL_MAX_INTERVAL_MS);
@@ -566,11 +714,6 @@ export async function drawElevenLabsImage(
           interval = Math.min(interval * 2, ELEVENLABS_POLL_MAX_INTERVAL_MS);
         }
         continue;
-      }
-      if (state.kind === "gone") {
-        await store.settle(generationId, "failed", new Date(now()));
-        gone = true;
-        break;
       }
       if (state.kind === "failed") {
         // "Failed generations are not charged."
@@ -617,6 +760,19 @@ export async function drawElevenLabsImage(
           true,
         );
       }
+      if (recovered) {
+        // ★ A job found by its time was never tied to this request by the
+        //   provider. Its picture must at least have the shape asked for.
+        const size = await sizeOf(raw);
+        if (!size || !hasShape(size, input.aspectRatio)) {
+          await store.settle(generationId, "failed", new Date(now()));
+          logWarn("images.elevenlabs: a found job has another shape", {
+            scope: input.scope,
+            generationId,
+          });
+          return end({ kind: "error", code: "unavailable" }, true);
+        }
+      }
       const finished = finish ? await finish(raw, input.resolution) : null;
       const picture = finished ?? { bytes: raw, mediaType: sniff(raw)! };
       await store.settle(generationId, "delivered", new Date(now()));
@@ -624,6 +780,7 @@ export async function drawElevenLabsImage(
         scope: input.scope,
         generationId,
         adopted,
+        recovered,
         ms: Math.max(0, now() - startedAt),
         quality: input.quality,
         resolution: input.resolution,
@@ -642,13 +799,18 @@ export async function drawElevenLabsImage(
 
     // A job that was COLLECTED and turned out to be gone was never this
     // call's to count: submit the one job this call is owed. A job this call
-    // submitted itself and that then vanished is an error, not a second try.
+    // submitted itself and that then vanished is an error, not a second try;
+    // ★ and it WAS accepted, so it may have been billed: the caller counts it.
     if (gone && adopted && submits === 0) {
       adopted = false;
       generationId = null;
       continue;
     }
-    return end({ kind: "error", code: "unavailable" }, false);
+    logWarn("images.elevenlabs: an accepted job is no longer there", {
+      scope: input.scope,
+      generationId,
+    });
+    return end({ kind: "error", code: "unavailable" }, true);
   }
 }
 

@@ -6654,11 +6654,16 @@ a job once it is accepted. So:
    and waited on (below).
 2. A submit is sent again only after HTTP 429, which proves no job was made
    (three more tries, 2 to 6 s apart, growing). A submit that timed out,
-   dropped or met a 5xx may have made a job and is never sent again; the
-   caller is told a job may exist (`jobMayExist`).
+   dropped or met a 5xx may have made a job and is never sent again; its job
+   is looked for instead (next paragraph but one), and when the search cannot
+   be sure the caller is told a job may exist (`jobMayExist`).
 3. Once a job id is known nothing submits again: a failed status read is read
    again (every 2 s, backing off to 10 s after 30 s, as their guide asks), and
-   a failed download asks the job for a fresh URL (three tries).
+   a failed download asks the job for a fresh URL (three tries). A job is
+   taken to be gone only after three "not found" answers in a row
+   (`ELEVENLABS_GONE_READS`), and an accepted job that vanished is reported
+   as one that may have been billed. A picture is fetched only over https
+   and never above 60 MB.
 4. `model`, `aspect_ratio`, `resolution` and `quality` are sent on every
    request: the API's own default quality is `high`.
 5. A job the provider failed or moderated was not charged ("Failed
@@ -6678,9 +6683,54 @@ try for the same picture in the same scope claims it (one conditional write
 with `for update skip locked`, so two tries never collect one job; a claim
 older than 4 minutes belongs to a dead process) and waits for that job. A
 delivered picture is never handed out again, so the same request later is a
-deliberate redraw. Collectable for 6 hours; rows are pruned after 14 days
-(`lib/retention/prune.ts`). Every write is best effort: a database that
+deliberate redraw. Collectable for 6 hours; rows of both tables are pruned
+after 14 days (`lib/retention/prune.ts`). Every write is best effort: a database that
 cannot be reached costs the saving, never the picture.
+
+★★ A SUBMIT WHOSE ANSWER WAS LOST IS FOUND BY WHEN ITS JOB WAS MADE (owner,
+22 Nov 2026: "check it and fix it"; `lib/images/elevenlabs-lost-jobs.ts`,
+table `image_provider_submits`, migration `20261122_0285`). With no answer
+there is no job id, so the record above cannot help, and the next try used to
+pay for the picture a second time. Their job list shows no prompt (a row is an
+id, a status and the picture's address), but, read from the live API with free
+calls: it is ordered newest first by CREATION time, and the paging cursor
+after a page is that page's last row, `<creation time>|<job id>` in base64
+(five jobs submitted at once and finished 13 to 16 s apart were stamped within
+half a second of each other, so it is the creation time). So:
+
+- every submit is written down BEFORE it leaves (`openSubmit`), and an
+  answered one deletes its row in the same transaction that records its job
+  (`recordSubmitted`), so a row left behind is a submit that was never
+  answered, with the seconds it was out for (`lost`; a `sending` row older
+  than a minute was left by a process that died, and counts the same);
+- `findLostJob` reads the list one row a page, back to the start of that
+  window, and takes a job ONLY when it was made inside the window (widened by
+  5 s of clock slack each side, `SUBMIT_CLOCK_SLACK_MS`), the record of
+  submitted jobs does not hold it, no other unanswered submit was out at the
+  same time, and it is the only such job. Anything less is `unsure` and takes
+  nothing: a wrong picture on a store is worse than a picture paid for twice;
+- the draw looks three times, 3 s apart, straight after the lost answer, and
+  a found job is waited on like any other (the photo does not fail); a caller
+  that has stopped is not kept waiting, and the next try for the same picture
+  looks once more before it submits. A clear view with nothing in it closes
+  the submit for good (`given_up`);
+- a found job is taken by one conditional insert on the job id's unique key,
+  so two tries never take one job, and its picture must have the shape that
+  was asked for (`hasShape`, within 3%) or it is not used.
+
+⚠ What is left: a job a search cannot attribute (two unanswered submits in
+the same seconds, as in a provider outage; more than 40 jobs since; an
+unreadable list) is still not collected, and a later try draws again. The
+cursor's shape is theirs and undocumented: every read of it is checked, and a
+cursor that does not parse makes the search `unsure`. ⚠ The record is one
+environment's: a job made in the same seconds by another environment on the
+same ElevenLabs workspace would pass, if our own submit made nothing; the
+shape check and the photo review stand behind that, and production should not
+share a workspace with a busy test environment. Tests:
+`elevenlabs-lost-jobs.test.ts`, the "answer was lost" block of
+`elevenlabs-images.test.ts` (each rule mutation-checked), and the opt-in
+`elevenlabs-generations.local.test.ts` (`IMAGE_PROVIDER_LOCAL_TEST=1`, the
+real statements as `app_service` on local Postgres; no call to ElevenLabs).
 
 ★★ A 1K PICTURE IS ENLARGED ONCE, HERE, SO NOTHING REDRAWS IT FOR SIZE
 (`finishElevenLabsPicture`). The redesign draws a photo smaller than its frame
@@ -9115,6 +9165,10 @@ wholesip/
 │   ├── images/elevenlabs-generations.ts # server-only: the record of submitted jobs
 │   │                          # (image_provider_generations), so a paid job is
 │   │                          # collected by the next try, never drawn again
+│   ├── images/elevenlabs-lost-jobs.ts # server-only: findLostJob, the job of a submit
+│   │                          # whose answer was lost, found in the provider's list
+│   │                          # by its creation time (image_provider_submits); takes
+│   │                          # a job only when nothing else could have made it
 │   ├── images/elevenlabs-theme-client.ts # server-only: the ThemeStudioImageClient over
 │   │                          # it (prompt with reference labels, shrunk references,
 │   │                          # five in flight)
@@ -11063,7 +11117,10 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0285 (0284 = the ElevenLabs image
+│                              # Next free: 0286 (0285 = image_provider_submits,
+│                              # the record of submits that lets a lost image
+│                              # job be found by its creation time, no Help;
+│                              # 0284 = the ElevenLabs image
 │                              # provider: image_generation_settings and
 │                              # image_provider_generations, no Help;
 │                              # 0283 = Help: the payment

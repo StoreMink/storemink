@@ -3472,6 +3472,64 @@ export const imageProviderGenerations = pgTable(
   ],
 );
 
+/**
+ * One row per submit to the async image provider (migration 0285), written
+ * before the request leaves and deleted when it is answered. A submit that
+ * gets no answer keeps its row and the window it was out for, so its job can
+ * be found in the provider's list by its creation time.
+ */
+export const imageProviderSubmits = pgTable(
+  "image_provider_submits",
+  {
+    id: uuid().defaultRandom().primaryKey().notNull(),
+    provider: text().notNull(),
+    scope: text().notNull(),
+    requestDigest: text("request_digest").notNull(),
+    state: text().default("sending").notNull(),
+    sentAt: timestamp("sent_at", {
+      withTimezone: true,
+      mode: "string",
+    }).notNull(),
+    lostAt: timestamp("lost_at", { withTimezone: true, mode: "string" }),
+    generationId: text("generation_id"),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    check(
+      "image_provider_submits_provider_check",
+      sql`provider = 'elevenlabs'`,
+    ),
+    check(
+      "image_provider_submits_state_check",
+      sql`state = ANY (ARRAY['sending'::text, 'lost'::text, 'found'::text, 'given_up'::text])`,
+    ),
+    check(
+      "image_provider_submits_digest_check",
+      sql`request_digest ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "image_provider_submits_found_check",
+      sql`(state = 'found') = (generation_id IS NOT NULL)`,
+    ),
+    check(
+      "image_provider_submits_lost_check",
+      sql`state = 'sending' OR lost_at IS NOT NULL`,
+    ),
+    index("image_provider_submits_open_idx")
+      .on(table.provider, table.sentAt)
+      .where(sql`state <> 'found'`),
+    index("image_provider_submits_picture_idx")
+      .on(table.provider, table.scope, table.requestDigest, table.sentAt)
+      .where(sql`state = ANY (ARRAY['sending'::text, 'lost'::text])`),
+    index("image_provider_submits_created_idx").on(table.createdAt),
+  ],
+);
+
 export const productReviews = pgTable(
   "product_reviews",
   {

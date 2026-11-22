@@ -20,17 +20,16 @@ vi.mock("@/lib/observability/logger", () => ({
   logInfo: vi.fn(),
   logWarn: vi.fn(),
 }));
-vi.mock("./elevenlabs-generations", () => ({
-  postgresGenerationStore: {
-    claimUndelivered: async () => null,
-    recordSubmitted: async () => {},
-    settle: async () => {},
-    release: async () => {},
-  },
-}));
+vi.mock("./elevenlabs-generations", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("./elevenlabs-generations")>();
+  return { ...actual, postgresGenerationStore: actual.noGenerationStore };
+});
+vi.mock("@/lib/db/client", () => ({ withService: vi.fn() }));
 
 import {
   ELEVENLABS_IMAGE_MODEL,
+  ELEVENLABS_LOST_LOOKS,
   ELEVENLABS_RATE_LIMIT_RETRIES,
   ELEVENLABS_WAIT_CEILING_MS,
   drawElevenLabsImage,
@@ -39,9 +38,15 @@ import {
   elevenLabsRequestBody,
   elevenLabsRequestDigest,
   finishElevenLabsPicture,
+  hasShape,
   type ElevenLabsDrawInput,
 } from "./elevenlabs-images";
-import type { GenerationStore } from "./elevenlabs-generations";
+import {
+  SUBMIT_CLOCK_SLACK_MS,
+  SUBMIT_OUT_MS,
+  noGenerationStore,
+  type GenerationStore,
+} from "./elevenlabs-generations";
 
 const PNG = new Uint8Array([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
@@ -68,7 +73,74 @@ function memoryStore() {
     state: string;
     claimed: boolean;
   }[] = [];
+  /** Submits written down before they leave (migration 0285). */
+  const submits: {
+    id: string;
+    scope: string;
+    digest: string;
+    state: "sending" | "lost" | "found" | "given_up";
+    sentAt: number;
+    lostAt: number | null;
+  }[] = [];
   const store: GenerationStore = {
+    async openSubmit(scope, digest, now) {
+      const id = `submit_${submits.length + 1}`;
+      submits.push({
+        id,
+        scope,
+        digest,
+        state: "sending",
+        sentAt: now.getTime(),
+        lostAt: null,
+      });
+      return id;
+    },
+    async dropSubmit(id) {
+      const at = submits.findIndex((s) => s.id === id);
+      if (at >= 0) submits.splice(at, 1);
+    },
+    async markSubmitLost(id, now) {
+      const row = submits.find((s) => s.id === id);
+      if (row && row.state === "sending") {
+        row.state = "lost";
+        row.lostAt = now.getTime();
+      }
+    },
+    async findLostSubmit(scope, digest) {
+      const row = submits
+        .filter(
+          (s) => s.scope === scope && s.digest === digest && s.state === "lost",
+        )
+        .sort((x, y) => y.sentAt - x.sentAt)[0];
+      return row
+        ? { id: row.id, sentAt: row.sentAt, lostAt: row.lostAt! }
+        : null;
+    },
+    async inspectWindow(submit, ids) {
+      const from = submit.sentAt - 2 * SUBMIT_CLOCK_SLACK_MS;
+      const to = submit.lostAt + 2 * SUBMIT_CLOCK_SLACK_MS;
+      return {
+        known: new Set(rows.map((r) => r.id).filter((id) => ids.includes(id))),
+        rivals: submits.filter(
+          (s) =>
+            s.id !== submit.id &&
+            s.state !== "found" &&
+            s.sentAt <= to &&
+            (s.lostAt ?? s.sentAt + SUBMIT_OUT_MS) >= from,
+        ).length,
+      };
+    },
+    async adoptFound(submit, scope, digest, id) {
+      if (rows.some((r) => r.id === id)) return false;
+      rows.push({ scope, digest, id, state: "submitted", claimed: true });
+      const row = submits.find((s) => s.id === submit.id);
+      if (row) row.state = "found";
+      return true;
+    },
+    async giveUpSubmit(id) {
+      const row = submits.find((s) => s.id === id);
+      if (row && row.state !== "found") row.state = "given_up";
+    },
     async claimUndelivered(scope, digest) {
       const row = rows.find(
         (r) =>
@@ -81,8 +153,10 @@ function memoryStore() {
       row.claimed = true;
       return row.id;
     },
-    async recordSubmitted(scope, digest, id) {
+    async recordSubmitted(scope, digest, id, _now, submitId) {
       rows.push({ scope, digest, id, state: "submitted", claimed: true });
+      const at = submits.findIndex((s) => s.id === submitId);
+      if (at >= 0) submits.splice(at, 1);
     },
     async settle(id, state) {
       const row = rows.find((r) => r.id === id);
@@ -96,7 +170,7 @@ function memoryStore() {
       if (row && row.state === "submitted") row.claimed = false;
     },
   };
-  return { store, rows };
+  return { store, rows, submits };
 }
 
 type Job = {
@@ -104,7 +178,15 @@ type Job = {
   /** Reads answered before the job is done. */
   readsBeforeDone: number;
   failure?: string;
+  /** When the provider made it (its list is ordered by this). */
+  createdAt?: number;
 };
+
+/** A list cursor as theirs: `<creation time>|<job id>`, base64. */
+const cursorOf = (id: string, createdAt: number) =>
+  Buffer.from(
+    `${new Date(createdAt).toISOString().replace("Z", "000+00:00")}|${id}`,
+  ).toString("base64");
 
 /** A fake of the three calls: submit, read, download. */
 function api() {
@@ -115,7 +197,23 @@ function api() {
     downloads: [] as string[],
     jobs: new Map<string, Job>(),
     /** What the next submits answer, in order; then "ok". */
-    submitPlan: [] as ("ok" | 429 | 500 | 422 | 401 | "throw" | "no-id")[],
+    submitPlan: [] as (
+      | "ok"
+      | 429
+      | 500
+      | 422
+      | 401
+      | "throw"
+      | "no-id"
+      /** The job IS made, and its answer never arrives. */
+      | "lost"
+      | "lost-500"
+    )[],
+    /** What the next list reads answer before the list itself. */
+    listPlan: [] as (500 | "throw")[],
+    lists: 0,
+    /** The provider's clock (the test's own, set by deps()). */
+    clock: (() => 0) as () => number,
     /** What the next reads answer before the job's own state. */
     readPlan: [] as (429 | 500 | "throw" | 404)[],
     downloadPlan: [] as ("fail" | "ok")[],
@@ -145,8 +243,42 @@ function api() {
         status: "pending",
         readsBeforeDone: 1,
         ...state.nextJob,
+        createdAt: state.clock(),
       } as Job);
+      if (plan === "lost") throw new Error("socket hang up");
+      if (plan === "lost-500") return json(500, { detail: "oops" });
       return json(200, { id, status: "pending" });
+    }
+    if (href.includes("/v1/flows/image?")) {
+      state.lists += 1;
+      const plan = state.listPlan.shift();
+      if (plan === "throw") throw new Error("network");
+      if (plan === 500) return json(500, {});
+      const query = new URL(href).searchParams;
+      const size = Number(query.get("page_size") ?? 30);
+      // Newest first, as theirs.
+      const all = [...state.jobs.entries()]
+        .map(([id, job], index) => ({ id, job, index }))
+        .sort(
+          (x, y) =>
+            (y.job.createdAt ?? 0) - (x.job.createdAt ?? 0) ||
+            y.index - x.index,
+        );
+      let from = 0;
+      const cursor = query.get("cursor");
+      if (cursor) {
+        const after = Buffer.from(cursor, "base64")
+          .toString("utf8")
+          .split("|")[1];
+        from = all.findIndex((row) => row.id === after) + 1;
+      }
+      const page = all.slice(from, from + size);
+      const last = page.at(-1);
+      return json(200, {
+        generations: page.map((row) => ({ id: row.id, status: "completed" })),
+        next_cursor: last ? cursorOf(last.id, last.job.createdAt ?? 0) : null,
+        has_more: from + size < all.length,
+      });
     }
     if (href.includes("/v1/flows/image/")) {
       const id = decodeURIComponent(href.split("/").pop()!);
@@ -206,7 +338,7 @@ function deps(
   over: Record<string, unknown> = {},
 ) {
   const c = clock();
-  return {
+  const made = {
     apiKey: "key",
     fetch: a.fetchFn as any,
     now: c.now,
@@ -214,8 +346,13 @@ function deps(
     random: () => 0,
     store,
     finish: null,
+    // A found job's picture has the shape that was asked for (4:5).
+    sizeOf: async () => ({ width: 832, height: 1040 }),
     ...over,
   };
+  // The provider stamps a job with the same clock the draw reads.
+  a.state.clock = made.now as () => number;
+  return made;
 }
 
 const live = () => new AbortController().signal;
@@ -572,6 +709,61 @@ describe("★★ a job that was paid for is collected, never drawn twice", () =>
     expect(a.state.posts).toHaveLength(2);
   });
 
+  it("★★ one 'not found' for a job just accepted is asked again, never taken as no job", async () => {
+    const a = api();
+    const { store } = memoryStore();
+    // Their read lags their write: the first two reads do not find the job.
+    a.state.readPlan = [404, 404];
+    const out = await drawElevenLabsImage(input(), live(), deps(a, store));
+    expect(out).toMatchObject({
+      kind: "ok",
+      generationId: "gen_1",
+      submits: 1,
+    });
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("★★ an accepted job that stays missing is an error the caller counts, and is not drawn again", async () => {
+    const a = api();
+    const { store, rows } = memoryStore();
+    a.state.readPlan = [404, 404, 404];
+    const out = await drawElevenLabsImage(input(), live(), deps(a, store));
+    // It was accepted, so it may have been billed.
+    expect(out).toMatchObject({
+      kind: "error",
+      code: "unavailable",
+      jobMayExist: true,
+      submits: 1,
+    });
+    expect(a.state.posts).toHaveLength(1);
+    expect(rows[0].state).toBe("failed");
+  });
+
+  it("a picture is only ever fetched from a secure address", async () => {
+    const a = api();
+    const { store } = memoryStore();
+    const insecure = vi.fn(async (url: any, init: any = {}) => {
+      const response = await a.fetchFn(url, init);
+      if (!String(url).includes("/v1/flows/image/")) return response;
+      const body = await response.json();
+      return new Response(
+        JSON.stringify(
+          body.content_url
+            ? { ...body, content_url: "http://files.test/x.png" }
+            : body,
+        ),
+        { status: response.status },
+      );
+    });
+    const out = await drawElevenLabsImage(input(), live(), {
+      ...deps(a, store),
+      fetch: insecure as any,
+    });
+    expect(out).toMatchObject({ kind: "error", jobMayExist: true });
+    expect(a.state.downloads).toEqual([]);
+    expect(a.state.posts).toHaveLength(1);
+  });
+
   it("★ a picture that cannot be downloaded is left to be collected, not drawn again", async () => {
     const a = api();
     const { store, rows } = memoryStore();
@@ -590,14 +782,274 @@ describe("★★ a job that was paid for is collected, never drawn twice", () =>
 
   it("a record that cannot be written costs the saving, never the picture", async () => {
     const a = api();
-    const broken: GenerationStore = {
-      claimUndelivered: async () => null,
-      recordSubmitted: async () => {},
-      settle: async () => {},
-      release: async () => {},
-    };
+    const broken: GenerationStore = noGenerationStore;
     const out = await drawElevenLabsImage(input(), live(), deps(a, broken));
     expect(out.kind).toBe("ok");
+  });
+});
+
+describe("★★ a submit whose answer was lost: its job is found by when it was made", () => {
+  // ElevenLabs takes no idempotency key and its list shows no prompt, but
+  // the list is ordered by creation time and its cursor carries that time.
+  // Every submit is written down before it leaves, so a job made in the
+  // seconds an unanswered submit was out, that the record does not hold and
+  // no other unanswered submit could have made, is that submit's job.
+
+  it.each([
+    ["the connection dropped", "lost"],
+    ["a 500 came back", "lost-500"],
+  ] as const)(
+    "the job was made and %s: it is found, waited on and delivered, with ONE submit",
+    async (_name, plan) => {
+      const a = api();
+      const { store, rows, submits } = memoryStore();
+      a.state.submitPlan = [plan];
+      const out = await drawElevenLabsImage(input(), live(), deps(a, store));
+      expect(out).toMatchObject({
+        kind: "ok",
+        generationId: "gen_1",
+        recovered: true,
+        submits: 1,
+        jobMayExist: true,
+      });
+      expect(a.state.posts).toHaveLength(1);
+      expect(rows).toEqual([
+        expect.objectContaining({ id: "gen_1", state: "delivered" }),
+      ]);
+      expect(submits).toEqual([expect.objectContaining({ state: "found" })]);
+    },
+  );
+
+  it("★★ no job was made: nothing is taken, a job 'may exist' is reported, and the next try looks once more and draws ONE", async () => {
+    const a = api();
+    const { store, submits } = memoryStore();
+    const c = clock();
+    const shared = { now: c.now, sleep: c.sleep };
+    a.state.submitPlan = ["throw"];
+    const first = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(first).toMatchObject({
+      kind: "error",
+      code: "timeout",
+      jobMayExist: true,
+      recovered: false,
+    });
+    expect(a.state.lists).toBe(ELEVENLABS_LOST_LOOKS);
+    expect(a.state.jobs.size).toBe(0);
+    expect(submits[0].state).toBe("lost");
+
+    const second = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(second).toMatchObject({
+      kind: "ok",
+      adopted: false,
+      recovered: false,
+      submits: 1,
+    });
+    // A clear view found nothing, so that submit is closed for good.
+    expect(submits[0].state).toBe("given_up");
+    expect(a.state.jobs.size).toBe(1);
+  });
+
+  it("★★ a caller that stopped during the submit is not kept waiting, and the next try finds the job with no new submit", async () => {
+    const a = api();
+    const { store } = memoryStore();
+    const c = clock();
+    const shared = { now: c.now, sleep: c.sleep };
+    const stop = new AbortController();
+    a.state.submitPlan = ["lost"];
+    const dropping = vi.fn(async (url: any, init: any = {}) => {
+      try {
+        return await a.fetchFn(url, init);
+      } catch (error) {
+        if (init.method === "POST") stop.abort();
+        throw error;
+      }
+    });
+    const first = await drawElevenLabsImage(input(), stop.signal, {
+      ...deps(a, store, shared),
+      fetch: dropping as any,
+    });
+    expect(first).toMatchObject({
+      kind: "error",
+      code: "cancelled",
+      jobMayExist: true,
+    });
+    expect(a.state.lists).toBe(0);
+
+    const second = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(second).toMatchObject({
+      kind: "ok",
+      generationId: "gen_1",
+      adopted: true,
+      recovered: true,
+      submits: 0,
+    });
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("★★ a job another unanswered submit could have made is taken by neither", async () => {
+    const a = api();
+    const { store, rows } = memoryStore();
+    const c = clock();
+    // Another draw's submit went unanswered in the same seconds.
+    const other = await store.openSubmit(
+      "revamp:other",
+      "b".repeat(64),
+      new Date(c.now()),
+    );
+    await store.markSubmitLost(other!, new Date(c.now() + 1_000));
+    a.state.submitPlan = ["lost"];
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, { now: c.now, sleep: c.sleep }),
+    );
+    expect(out).toMatchObject({
+      kind: "error",
+      code: "timeout",
+      jobMayExist: true,
+    });
+    expect(rows).toEqual([]);
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("★★ two jobs nobody holds in the window: neither is taken", async () => {
+    const a = api();
+    const { store, rows } = memoryStore();
+    const c = clock();
+    // Made by something this environment has no record of.
+    a.state.jobs.set("foreign_1", {
+      status: "completed",
+      readsBeforeDone: 0,
+      createdAt: c.now(),
+    });
+    a.state.submitPlan = ["lost"];
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, { now: c.now, sleep: c.sleep }),
+    );
+    expect(out).toMatchObject({ kind: "error", jobMayExist: true });
+    expect(rows).toEqual([]);
+  });
+
+  it("★★ a job the record already holds is never taken: another draw's job made in the same seconds", async () => {
+    const a = api();
+    const { store, rows } = memoryStore();
+    const c = clock();
+    const shared = { now: c.now, sleep: c.sleep };
+    await drawElevenLabsImage(
+      input({ prompt: "Another photograph" }),
+      live(),
+      deps(a, store, shared),
+    );
+    a.state.submitPlan = ["throw"];
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(out).toMatchObject({ kind: "error", code: "timeout" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "gen_1", state: "delivered" });
+  });
+
+  it("★ a job made before the submit left is not its job", async () => {
+    const a = api();
+    const { store, rows } = memoryStore();
+    const c = clock();
+    a.state.jobs.set("foreign_1", {
+      status: "completed",
+      readsBeforeDone: 0,
+      createdAt: c.now() - 60_000,
+    });
+    a.state.submitPlan = ["throw"];
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, { now: c.now, sleep: c.sleep }),
+    );
+    expect(out).toMatchObject({ kind: "error", code: "timeout" });
+    expect(rows).toEqual([]);
+  });
+
+  it("★★ a found job whose picture has another shape is not used", async () => {
+    const a = api();
+    const { store, rows } = memoryStore();
+    a.state.submitPlan = ["lost"];
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, { sizeOf: async () => ({ width: 1280, height: 720 }) }),
+    );
+    expect(out).toMatchObject({
+      kind: "error",
+      code: "unavailable",
+      jobMayExist: true,
+    });
+    expect(rows[0]).toMatchObject({ id: "gen_1", state: "failed" });
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("★ a list that cannot be read takes nothing; the next try reads it and collects the job", async () => {
+    const a = api();
+    const { store } = memoryStore();
+    const c = clock();
+    const shared = { now: c.now, sleep: c.sleep };
+    a.state.submitPlan = ["lost"];
+    a.state.listPlan = [500, "throw", 500];
+    const first = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(first).toMatchObject({ kind: "error", jobMayExist: true });
+    const second = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(second).toMatchObject({
+      kind: "ok",
+      generationId: "gen_1",
+      recovered: true,
+      submits: 0,
+    });
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("a submit that is answered leaves no row behind", async () => {
+    const a = api();
+    const { store, submits } = memoryStore();
+    a.state.submitPlan = [429, "ok"];
+    await drawElevenLabsImage(input(), live(), deps(a, store));
+    expect(submits).toEqual([]);
+    a.state.submitPlan = [422];
+    await drawElevenLabsImage(
+      input({ prompt: "Refused" }),
+      live(),
+      deps(a, store),
+    );
+    expect(submits).toEqual([]);
+  });
+
+  it("the shape check allows the model's own rounding and no more", () => {
+    expect(hasShape({ width: 832, height: 1040 }, "4:5")).toBe(true);
+    expect(hasShape({ width: 1664, height: 2080 }, "4:5")).toBe(true);
+    expect(hasShape({ width: 1280, height: 720 }, "16:9")).toBe(true);
+    expect(hasShape({ width: 1024, height: 1024 }, "4:5")).toBe(false);
+    expect(hasShape({ width: 1280, height: 720 }, "4:5")).toBe(false);
   });
 });
 

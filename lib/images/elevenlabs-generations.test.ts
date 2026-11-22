@@ -27,7 +27,10 @@ import {
   noGenerationStore,
   postgresGenerationStore as store,
 } from "./elevenlabs-generations";
-import { imageProviderGenerations } from "@/drizzle/schema";
+import {
+  imageProviderGenerations,
+  imageProviderSubmits,
+} from "@/drizzle/schema";
 
 const NOW = new Date("2026-11-22T10:00:00.000Z");
 const DIGEST = "a".repeat(64);
@@ -130,6 +133,54 @@ describe("settle and release", () => {
     dbHolder.fail = true;
     await expect(store.settle("gen_1", "failed", NOW)).resolves.toBeUndefined();
     await expect(store.release("gen_1", NOW)).resolves.toBeUndefined();
+  });
+});
+
+describe("★★ the record of submits (migration 0285)", () => {
+  const LOST = {
+    id: "s1",
+    sentAt: NOW.getTime(),
+    lostAt: NOW.getTime() + 4_000,
+  };
+
+  it("a submit is written down before it leaves", async () => {
+    dbHolder.current = makeDbMock({ returning: [{ id: "s1" }] });
+    expect(await store.openSubmit("revamp:r1", DIGEST, NOW)).toBe("s1");
+    expect(dbHolder.current.calls.insert[0]).toBe(imageProviderSubmits);
+    expect(dbHolder.current.calls.values[0]).toMatchObject({
+      provider: "elevenlabs",
+      scope: "revamp:r1",
+      requestDigest: DIGEST,
+      state: "sending",
+      sentAt: NOW.toISOString(),
+    });
+  });
+
+  it("★★ an answered submit is closed in the same scope that records its job", async () => {
+    await store.recordSubmitted("revamp:r1", DIGEST, "gen_1", NOW, "s1");
+    expect(dbHolder.current.calls.insert).toEqual([imageProviderGenerations]);
+    expect(dbHolder.current.calls.delete).toEqual([imageProviderSubmits]);
+    const { withService } = await import("@/lib/db/client");
+    expect(withService).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no submit row, the job is still recorded and nothing is deleted", async () => {
+    await store.recordSubmitted("revamp:r1", DIGEST, "gen_1", NOW);
+    expect(dbHolder.current.calls.delete).toEqual([]);
+  });
+
+  it("★★ a database that cannot be reached never stops a draw, and never lets a search take a job", async () => {
+    dbHolder.fail = true;
+    expect(await store.openSubmit("revamp:r1", DIGEST, NOW)).toBeNull();
+    await expect(store.dropSubmit("s1")).resolves.toBeUndefined();
+    await expect(store.markSubmitLost("s1", NOW)).resolves.toBeUndefined();
+    await expect(store.giveUpSubmit("s1", NOW)).resolves.toBeUndefined();
+    expect(await store.findLostSubmit("revamp:r1", DIGEST, NOW)).toBeNull();
+    // Unreadable is "cannot tell", which a search treats as unsure.
+    expect(await store.inspectWindow(LOST, ["gen_1"])).toBeNull();
+    expect(
+      await store.adoptFound(LOST, "revamp:r1", DIGEST, "gen_1", NOW),
+    ).toBe(false);
   });
 });
 

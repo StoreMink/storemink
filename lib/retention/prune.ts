@@ -40,6 +40,7 @@ import {
   dataJobs,
   emailLogs,
   imageProviderGenerations,
+  imageProviderSubmits,
   minkCsvFiles,
   notifications,
   posParkedSales,
@@ -256,6 +257,7 @@ function batchDeleter(
     | typeof emailLogs
     | typeof dataJobs
     | typeof imageProviderGenerations
+    | typeof imageProviderSubmits
     | typeof minkCsvFiles
     | typeof dataJobIssues
     | typeof billingWebhookEvents
@@ -648,6 +650,20 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       imageProviderGenerations,
       imageProviderGenerations.id,
       imageProviderGenerations.createdAt,
+    ),
+  },
+  {
+    table: "image_provider_submits",
+    days: 14,
+    reason:
+      "One row per submit to ElevenLabs that was never answered (an answered " +
+      "one deletes its own row), kept so the job it may have made can be " +
+      "found by its creation time and collected. A submit is looked for " +
+      "within six hours, so 14 days is history for support.",
+    deleteBatch: batchDeleter(
+      imageProviderSubmits,
+      imageProviderSubmits.id,
+      imageProviderSubmits.createdAt,
     ),
   },
   // ── Help Centre answer ratings ─────────────────────────────────────────
