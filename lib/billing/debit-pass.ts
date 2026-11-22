@@ -308,12 +308,19 @@ async function debitOne(
     });
     // Not ours to end: another run sent the debit, or the attempt moved on.
     if (settled !== "failed") return "waiting";
-    await announceAutopayStopped({
-      storeId: row.storeId,
-      invoiceId: row.invoiceId,
-      cause: "mandate",
-      now,
-    });
+    // ★ SAID ONCE, BY THE CALL THAT RECORDED THE MANDATE AS UNUSABLE
+    // (`verdict.changed`), as `announceAutopayStopped` documents and the
+    // collect pass already does. This used to send whenever this attempt was
+    // the one failed, so each invoice that met the same revoked mandate sent
+    // the "autopay is no longer active" email again (PR #303 review).
+    if (verdict.changed) {
+      await announceAutopayStopped({
+        storeId: row.storeId,
+        invoiceId: row.invoiceId,
+        cause: "mandate",
+        now,
+      });
+    }
     return "failed";
   }
 

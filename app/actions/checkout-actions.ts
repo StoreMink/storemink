@@ -215,6 +215,12 @@ export type CheckoutResult =
       /** Present for online payments — everything the client needs to open
        *  Razorpay Standard Checkout. The amount is the SERVER-computed total. */
       payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
+      /**
+       * True when NO new order was placed: the shopper already has an order
+       * for this same cart inside its payment window, and `payment` reopens
+       * that order's own Razorpay order.
+       */
+      resumed?: true;
     }
   | {
       error: string;
@@ -1043,6 +1049,37 @@ export async function placeOrder(
         ? `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. You have not been charged again.`
         : `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. Check your cart before you place another order.`,
       paidOrder: earlier.paid,
+    };
+  }
+  // ★★ AND ONE STILL WAITING, FOR THIS SAME CART, IS RESUMED, NEVER
+  // DUPLICATED (PR #303 review, 22 Nov 2026). The check above stops a second
+  // order only once the first is PAID. A shopper whose UPI approval was still
+  // pending could come back, press Place order again, and get a second order
+  // with a second Razorpay order; when both approvals completed they had
+  // paid twice for one cart. The page already reopens the same order when it
+  // knows about it ("Retry Payment"), but only from its own memory or its
+  // check on load, and the server is what must hold the rule. One Razorpay
+  // order takes one payment, so reopening it cannot charge twice.
+  // Online payments only, and only while the store still takes them: a
+  // shopper who now chooses another way to pay gets a new order as before,
+  // and the abandoned one lapses at the end of its payment window.
+  if (
+    paymentMethod === "razorpay" &&
+    earlier.waiting?.sameCart &&
+    earlier.waiting.enabled &&
+    earlier.waiting.order.razorpay_order_id
+  ) {
+    const waiting = earlier.waiting.order;
+    return {
+      success: true,
+      orderId: waiting.id,
+      orderRef: waiting.order_ref ?? "",
+      resumed: true,
+      payment: {
+        rzpOrderId: waiting.razorpay_order_id!,
+        keyId: earlier.waiting.keyId,
+        amountPaise: expectedGatewayPaise(waiting),
+      },
     };
   }
 

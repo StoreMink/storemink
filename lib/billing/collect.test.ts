@@ -1364,12 +1364,15 @@ describe("★★ withdrawUnsentDebits: a cancelled plan's scheduled debit", () =
 });
 
 describe("automaticAttemptsOn: what the retry rule counts", () => {
-  it("returns the count and when the newest automatic try was opened", async () => {
+  it("returns the tries, the starts and when the newest automatic attempt was opened", async () => {
     seed({
-      selects: [[{ count: 2, lastAt: "2026-11-20 10:20:03.123456+00" }]],
+      selects: [
+        [{ count: 2, starts: 4, lastAt: "2026-11-20 10:20:03.123456+00" }],
+      ],
     });
     expect(await automaticAttemptsOn(INVOICE)).toEqual({
       count: 2,
+      starts: 4,
       lastAt: new Date("2026-11-20T10:20:03.123Z"),
     });
     // Scoped to this invoice's AUTOMATIC attempts: a manual checkout the
@@ -1382,10 +1385,35 @@ describe("automaticAttemptsOn: what the retry rule counts", () => {
     expect(where.params).toEqual([INVOICE, "automatic"]);
   });
 
+  it("★★ a TRY is a debit that was sent; an attempt withdrawn before its debit is nothing (PR #303 review)", async () => {
+    seed({ selects: [[{ count: 0, starts: 0, lastAt: null }]] });
+    await automaticAttemptsOn(INVOICE);
+    const projection = dbHolder.current.calls.select[0] as Record<
+      string,
+      unknown
+    >;
+    const text = (key: string) =>
+      new PgDialect()
+        .sqlToQuery(projection[key] as never)
+        .sql.replace(/\s+/g, " ");
+    // A try: the debit was sent, or a payment exists.
+    expect(text("count")).toBe(
+      'count(*) filter (where "billing_payment_attempts"."debit_sent_at" is not null or "billing_payment_attempts"."provider_payment_id" is not null)::int',
+    );
+    // A start: everything except an attempt cancelled before its debit (the
+    // plan was cancelled, or "Pay now instead").
+    expect(text("starts")).toBe(
+      'count(*) filter (where not ("billing_payment_attempts"."state" = \'cancelled\' and "billing_payment_attempts"."debit_sent_at" is null and "billing_payment_attempts"."provider_payment_id" is null))::int',
+    );
+    // The spacing reads every attempt, whatever became of it.
+    expect(text("lastAt")).toBe('max("billing_payment_attempts"."created_at")');
+  });
+
   it("no tries yet is a count of zero with no time", async () => {
-    seed({ selects: [[{ count: 0, lastAt: null }]] });
+    seed({ selects: [[{ count: 0, starts: 0, lastAt: null }]] });
     expect(await automaticAttemptsOn(INVOICE)).toEqual({
       count: 0,
+      starts: 0,
       lastAt: null,
     });
   });

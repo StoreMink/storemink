@@ -438,6 +438,27 @@ describe("★★ the mandate is asked about at the gateway before the debit", ()
     expect(s).toMatchObject({ failed: 1 });
   });
 
+  it("★★ the email is said by the call that RECORDED the mandate as unusable, and only that one (PR #303 review)", async () => {
+    // Another call already took this mandate off `active` (`changed` false).
+    // This attempt still ends, but the merchant was told when it changed:
+    // each invoice that met the same revoked mandate used to send it again.
+    seed([dueRow()]);
+    mandates.verifyMandate.mockResolvedValue({
+      result: "unusable",
+      mandate: {},
+      changed: false,
+      reason: "ended",
+    });
+    const s = await sendDueDebits({ gateway: gatewayOk(), now: NOW });
+    expect(collector.settleAttempt).toHaveBeenCalledWith(
+      "att-1",
+      "failed",
+      expect.objectContaining({ failureCode: "mandate_unusable" }),
+    );
+    expect(worker.announceAutopayStopped).not.toHaveBeenCalled();
+    expect(s).toMatchObject({ failed: 1 });
+  });
+
   it("★ when that write moved nothing, nobody is told", async () => {
     seed([dueRow()]);
     mandates.verifyMandate.mockResolvedValue({

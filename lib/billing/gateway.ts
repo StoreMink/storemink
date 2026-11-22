@@ -31,9 +31,7 @@ import "server-only";
  * nobody was ever downgraded, and every subscriber got free service.)
  */
 
-import { and, eq } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
-import { admins } from "@/drizzle/schema";
+import { resolveBillingEmail } from "@/lib/email/billing-emails";
 import { logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
@@ -368,20 +366,23 @@ export const razorpayRecurringGateway: RecurringGateway = {
  *
  * Both are MANDATORY per the API reference. A store with neither cannot be
  * charged automatically, which the caller reports as a rejection.
+ *
+ * ★★ THE SAME RESOLVER ENROLMENT USES (`resolveBillingEmail`), on purpose
+ * (PR #303 review, 22 Nov 2026). This used to read `admins.email` and
+ * `admins.phone` alone, while enrolment falls back to the store's validated
+ * invoice contact phone, because a store made by the signup wizard often has
+ * no `admins.phone` (2 of 3 production superadmins on 6 Sep 2026). Such a
+ * store could set autopay up and then had every renewal refused here, after
+ * the debit was claimed, one of its three tries a day until it was moved to
+ * the Free plan. One resolver means a store that can enrol can be debited.
  */
 async function resolveBillingContact(
   storeId: string,
 ): Promise<{ email: string; phone: string } | null> {
   try {
-    const [row] = await withService((db) =>
-      db
-        .select({ email: admins.email, phone: admins.phone })
-        .from(admins)
-        .where(and(eq(admins.storeId, storeId), eq(admins.role, "superadmin")))
-        .limit(1),
-    );
-    if (!row?.email || !row.phone) return null;
-    return { email: row.email, phone: row.phone };
+    const to = await resolveBillingEmail(storeId);
+    if (!to?.email || !to.phone) return null;
+    return { email: to.email, phone: to.phone };
   } catch {
     return null;
   }

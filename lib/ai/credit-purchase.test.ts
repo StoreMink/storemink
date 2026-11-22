@@ -210,6 +210,30 @@ describe("settleCreditPurchaseByOrder: StoreMink's own Razorpay webhook", () => 
     expect(notif.recordEvent).not.toHaveBeenCalled();
   });
 
+  it("★★ a captured payment on a FAILED purchase is never 'already': nothing is granted and it is logged for a person (PR #303 review)", async () => {
+    // A purchase is failed only when its Razorpay order or its draft invoice
+    // could not be made, and then the payment window is never opened, so
+    // this should be impossible. If it happens it must not be buried.
+    pending({ status: "failed" });
+    expect(await deliver()).toBe("captured_on_failed");
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(creditGrants()).toHaveLength(0);
+    expect(invoice.issueCreditInvoice).not.toHaveBeenCalled();
+    expect(notif.recordEvent).not.toHaveBeenCalled();
+    const logged = vi
+      .mocked(logError)
+      .mock.calls.find(
+        (call) => call[0] === "billing.credit_pack_captured_on_failed",
+      );
+    expect(logged?.[2]).toMatchObject({
+      purchaseId: "pur-1",
+      storeId: STORE,
+      providerOrderId: "order_1",
+      paymentId: "pay_1",
+      amountPaise: 6_962,
+    });
+  });
+
   it("★ a delivery that lost the claim to the browser's confirm announces nothing", async () => {
     db({ rows: [[{ ...PENDING, status: "pending" }]], claimed: [] });
     expect(await deliver()).toBe("already");

@@ -53,8 +53,9 @@ import {
   type Plan,
 } from "@/lib/plans";
 import {
-  AUTO_COLLECT_MAX_ATTEMPTS,
+  AUTO_COLLECT_MAX_STARTS,
   autoCollectDecision,
+  autoCollectExhausted,
   collectionCutoff,
   collectionRoute,
   collectionStartsAt,
@@ -608,12 +609,16 @@ async function collectOne(
   // collected automatically is answered by `collectInvoice` as before.
   // ★ A count that could not be read is "leave it this run", never "no tries
   // yet".
-  let triesBefore = 0;
+  // ★ A TRY IS A DEBIT THAT WAS SENT (`autoCollectDecision`): an attempt
+  // withdrawn before its debit is not counted at all, and one that ended
+  // before its debit for another reason counts toward the backstop only.
+  let startsBefore = 0;
   if (route.auto) {
     const history = await automaticAttemptsOn(invoice.id);
     if (!history) return "pending";
     const decision = autoCollectDecision({
       attempts: history.count,
+      starts: history.starts,
       lastAttemptAt: history.lastAt,
       now,
     });
@@ -621,7 +626,7 @@ async function collectOne(
     // turn opens grace on it as for any unpaid renewal.
     if (decision === "exhausted") return "manual";
     if (decision === "wait") return "pending";
-    triesBefore = history.count;
+    startsBefore = history.starts;
 
     // ★★ A RETRY ASKS THE GATEWAY ABOUT THE MANDATE AGAIN. The check above
     // ran when the invoice was issued, days ago for a second or third try,
@@ -661,12 +666,15 @@ async function collectOne(
     now,
   });
 
-  // ★ The last try has just failed at its first step (the gateway refused the
-  // notified order): say so once, now. A try that fails at its debit is
-  // announced by the debit pass or by reconciliation, whichever records it.
+  // ★ An attempt has just failed at its first step (the gateway refused the
+  // notified order). No debit was sent, so it is not one of the three tries;
+  // when it is the last attempt the backstop allows, say so once, now
+  // (`announceAutopayStopped` re-reads the history itself). A try that fails
+  // at its debit is announced by the debit pass or by reconciliation,
+  // whichever records it.
   if (
     outcome.status === "failed" &&
-    triesBefore + 1 >= AUTO_COLLECT_MAX_ATTEMPTS
+    startsBefore + 1 >= AUTO_COLLECT_MAX_STARTS
   ) {
     await announceAutopayStopped({
       storeId: row.storeId,
@@ -716,7 +724,12 @@ export async function announceAutopayStopped(input: {
     const cause = input.cause ?? "exhausted";
     const history = await automaticAttemptsOn(input.invoiceId);
     if (!history) return false;
-    if (cause === "exhausted" && history.count < AUTO_COLLECT_MAX_ATTEMPTS) {
+    // The same rule that stops the next try: three debits sent, or the
+    // backstop on attempts that ended before their debit.
+    if (
+      cause === "exhausted" &&
+      !autoCollectExhausted({ attempts: history.count, starts: history.starts })
+    ) {
       return false;
     }
 
@@ -742,7 +755,8 @@ export async function announceAutopayStopped(input: {
       // The cycle this invoice opens; null on a row with no period.
       dueAt: invoice.periodStart ? new Date(invoice.periodStart) : null,
       invoiceRef: invoice.invoiceRef,
-      attempts: history.count,
+      // What the email counts: every attempt that was not withdrawn.
+      attempts: history.starts,
       cause,
       now,
     });

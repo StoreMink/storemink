@@ -227,6 +227,24 @@ describe("settlePendingOrder: the gateway decides", () => {
     expect(releaseCancelledOrder).not.toHaveBeenCalled();
   });
 
+  // ★★ PR #303 review, 22 Nov 2026. Captured at the gateway while the write
+  // that marks the order paid throws used to return "unknown", the value for
+  // "Razorpay could not be read", and the reaper cancels an order it has been
+  // unable to ask about for a week: a paid order was cancelled.
+  it("★★ captured at the gateway but not recorded is its OWN outcome, never 'unknown'", async () => {
+    vi.mocked(settleOrderPayment).mockResolvedValue(CAPTURED as any);
+    vi.mocked(markOrderPaid).mockRejectedValue(new Error("write failed"));
+    const old = order({ created_at: minutesAgo(9 * 24 * 60) });
+    expect(
+      await settlePendingOrder(old, CREDS, { expire: "after_grace", now: NOW }),
+    ).toBe("captured_unrecorded");
+    // However old it is, nothing it held is given back.
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+    expect(releaseOrderOfferUses).not.toHaveBeenCalled();
+    vi.mocked(markOrderPaid).mockResolvedValue("paid");
+  });
+
   it("a payment someone else recorded first leaves the order alone", async () => {
     vi.mocked(settleOrderPayment).mockResolvedValue(CAPTURED as any);
     vi.mocked(markOrderPaid).mockResolvedValue("unchanged");
@@ -483,6 +501,16 @@ describe("settleShopperPendingOrders: the shopper's own waiting orders", () => {
     expect(markOrderPaid).toHaveBeenCalledWith("old", "pay_1", {
       strict: true,
     });
+  });
+
+  it("★★ a payment captured but not yet recorded still counts as paid for the shopper: they are not sent to pay again", async () => {
+    db({ rows: [[order({ id: "held" })]] });
+    vi.mocked(settleOrderPayment).mockResolvedValue(CAPTURED as any);
+    vi.mocked(markOrderPaid).mockRejectedValue(new Error("write failed"));
+    const res = await settleShopperPendingOrders("s1", "c1", CREDS, NOW);
+    expect(res.paid?.id).toBe("held");
+    expect(res.waiting).toBeNull();
+    vi.mocked(markOrderPaid).mockResolvedValue("paid");
   });
 
   it("★ cancels their own abandoned attempt once it is past the payment window", async () => {

@@ -256,6 +256,32 @@ describe("expire-pending-payments", () => {
     expect(releaseCancelledOrder).toHaveBeenCalledTimes(1);
   });
 
+  it("★★ NEVER expires an order Razorpay has captured, even when marking it paid has failed for over a week (PR #303 review)", async () => {
+    vi.mocked(settleOrderPayment).mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_held",
+    } as never);
+    vi.mocked(markOrderPaid).mockRejectedValue(new Error("write failed"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    seed([
+      pending({
+        created_at: new Date(Date.now() - 9 * 24 * HOUR).toISOString(),
+      }),
+    ]);
+    const body = await (await run()).json();
+    // Not expired, nothing it held given back, and counted for a person.
+    expect(body.expired).toBe(0);
+    expect(body.capturedUnrecorded).toBe(1);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+    expect(
+      errors.mock.calls.some((call) =>
+        String(call[0]).includes("captured payment could not be recorded"),
+      ),
+    ).toBe(true);
+    errors.mockRestore();
+    vi.mocked(markOrderPaid).mockResolvedValue("paid");
+  });
+
   describe("★★ young orders whose money has landed are confirmed first", () => {
     const young = () =>
       pending({

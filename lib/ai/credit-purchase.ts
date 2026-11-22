@@ -323,6 +323,12 @@ export type CreditWebhookOutcome =
   | "unmatched"
   /** The amount or currency differs from the purchase's: nothing is granted. */
   | "mismatch"
+  /**
+   * A captured payment arrived on a purchase that was closed as FAILED:
+   * nothing is granted, and it is logged as an error for a person to follow
+   * up (see `settleCreditPurchaseByOrder`).
+   */
+  | "captured_on_failed"
   /** It could not be read; the reconcile passes settle it. */
   | "error";
 
@@ -360,9 +366,35 @@ export async function settleCreditPurchaseByOrder(input: {
     return "error";
   }
   if (!row) return "unmatched";
-  // Paid already, or failed: there is nothing for a delivery to change. A
-  // paid one re-issues its receipt inside the settle only on a real claim
-  // race, so it is simply reported here.
+  // ★★ A CAPTURED PAYMENT ON A FAILED PURCHASE IS NEVER REPORTED AS "ALREADY"
+  // (PR #303 review, 22 Nov 2026). A purchase is closed as failed in exactly
+  // two places, both in `startCreditPurchase`: the Razorpay order could not
+  // be created (no order id, so this lookup cannot find it), or its draft
+  // invoice could not be written, in which case the payment window is never
+  // returned to the browser and the order should stay unpaid. Closing the
+  // window does NOT fail a purchase: it stays pending and is settled above.
+  // So money on a failed purchase should be impossible; if it ever arrives
+  // it is a paid order with no invoice behind it. Granting credits here would
+  // break the rule that a payment has its tax invoice (GST design 5.5), and
+  // saying "already" would bury it. It is logged as an error, with what a
+  // person needs to refund it or issue the pack by hand.
+  if (row.status === "failed") {
+    logError(
+      "billing.credit_pack_captured_on_failed",
+      new Error("a captured payment arrived on a failed credit purchase"),
+      {
+        purchaseId: row.id,
+        storeId: row.store_id,
+        providerOrderId: input.providerOrderId,
+        paymentId: input.providerPaymentId,
+        amountPaise: input.amountPaise,
+      },
+    );
+    return "captured_on_failed";
+  }
+  // Paid already: there is nothing for a delivery to change. It re-issues
+  // its receipt inside the settle only on a real claim race, so it is simply
+  // reported here.
   if (row.status !== "pending") return "already";
 
   try {

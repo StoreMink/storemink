@@ -2669,13 +2669,67 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
       });
     });
 
-    it("an order still waiting does not stop a new one being placed", async () => {
+    // ★★ PR #303 review, 22 Nov 2026. The guard above stops a second order
+    // only once the first is PAID. With a UPI approval still pending, Place
+    // order created a second order and a second Razorpay order, and when
+    // both approvals completed the shopper had paid twice for one cart.
+    it("★★ an order still waiting for THIS cart is resumed on its own Razorpay order: no second order, nothing written", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+      expect(res).toEqual({
+        success: true,
+        orderId: "order-old",
+        orderRef: "ORD100110001",
+        resumed: true,
+        payment: {
+          rzpOrderId: "rzp_order_old",
+          keyId: "rzp_live_store",
+          amountPaise: 20000,
+        },
+      });
+      // The second order was never started: no order row, no stock reserve,
+      // no coupon use, and no second Razorpay order.
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+      expect(dbHolder.current.calls.execute).toHaveLength(0);
+      expect(rzpCreateOrder).not.toHaveBeenCalled();
+    });
+
+    it("★ a waiting order for a DIFFERENT cart is not resumed: this is another purchase", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(orderHoldsCart).mockResolvedValue(false);
+      const res = await placeOrder(validForm, [oneItem()], null, "cod");
+      expect("success" in res && res.success).toBe(true);
+      expect("resumed" in res && res.resumed).toBeFalsy();
+    });
+
+    it("★ a store that has paused online payments has nothing to resume on", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(getStoreGateway).mockResolvedValue({
+        creds: { keyId: "rzp_live_store", keySecret: "s" },
+        enabled: false,
+      } as any);
+      const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+      expect("resumed" in res && res.resumed).toBeFalsy();
+    });
+
+    it("a shopper who now chooses another way to pay gets a new order, as before", async () => {
       vi.mocked(settleShopperPendingOrders).mockResolvedValue({
         paid: null,
         waiting: WAITING_ORDER,
       } as any);
       const res = await placeOrder(validForm, [oneItem()], null, "cod");
       expect("success" in res && res.success).toBe(true);
+      expect("resumed" in res && res.resumed).toBeFalsy();
+      expect(dbHolder.current.calls.insert.length).toBeGreaterThan(0);
     });
 
     it("★ with nothing waiting, no gateway is read and Razorpay is never asked", async () => {

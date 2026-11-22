@@ -209,7 +209,11 @@ beforeEach(() => {
   // No previous cycle by default, so the reprice line stays out of the notice.
   repo.getCycleInvoice.mockResolvedValue(null);
   // No automatic try made yet, so the retry rule lets the first one through.
-  collector.automaticAttemptsOn.mockResolvedValue({ count: 0, lastAt: null });
+  collector.automaticAttemptsOn.mockResolvedValue({
+    count: 0,
+    starts: 0,
+    lastAt: null,
+  });
   collector.collectInvoice.mockResolvedValue({
     status: "paid",
     attemptId: "att-1",
@@ -794,6 +798,7 @@ describe("collectDueRenewals", () => {
       openRenewal();
       collector.automaticAttemptsOn.mockResolvedValue({
         count: 1,
+        starts: 1,
         lastAt: hoursAgo(1),
       });
       const s = await collectDueRenewals({ now: NOW, charge, priceFor });
@@ -805,6 +810,7 @@ describe("collectDueRenewals", () => {
       openRenewal();
       collector.automaticAttemptsOn.mockResolvedValue({
         count: 1,
+        starts: 1,
         lastAt: hoursAgo(24),
       });
       await collectDueRenewals({ now: NOW, charge, priceFor });
@@ -815,6 +821,7 @@ describe("collectDueRenewals", () => {
       openRenewal();
       collector.automaticAttemptsOn.mockResolvedValue({
         count: 3,
+        starts: 3,
         lastAt: hoursAgo(72),
       });
       const s = await collectDueRenewals({ now: NOW, charge, priceFor });
@@ -832,17 +839,18 @@ describe("collectDueRenewals", () => {
       expect(s.pendingReconcile).toBe(1);
     });
 
-    it("★★ the THIRD failed try asks the merchant to pay by hand, once", async () => {
+    it("★★ the last attempt the backstop allows, failed at its first step, asks the merchant to pay by hand, once", async () => {
       openRenewal();
-      // Two tries before this run; after it, three. The announcement re-reads
-      // both the invoice and the count.
+      // Five attempts before this run, none of which sent a debit; after it,
+      // six, the backstop. The announcement re-reads both the invoice and
+      // the history.
       collector.automaticAttemptsOn
-        .mockResolvedValueOnce({ count: 2, lastAt: hoursAgo(25) })
-        .mockResolvedValue({ count: 3, lastAt: NOW });
+        .mockResolvedValueOnce({ count: 0, starts: 5, lastAt: hoursAgo(25) })
+        .mockResolvedValue({ count: 0, starts: 6, lastAt: NOW });
       collector.collectInvoice.mockResolvedValue({
         status: "failed",
-        attemptId: "att-3",
-        code: "declined",
+        attemptId: "att-6",
+        code: "gateway_rejected",
       });
       repo.getInvoice.mockResolvedValue({
         ...ISSUED,
@@ -866,26 +874,42 @@ describe("collectDueRenewals", () => {
           plan: "pro",
           amountPaise: 7_000_00,
           invoiceRef: "SM/2026-27/00004",
-          attempts: 3,
+          // What the email counts: every attempt that was not withdrawn.
+          attempts: 6,
           dueAt: new Date("2026-09-03T00:00:00.000Z"),
         }),
       );
     });
 
-    it("a first or second failed try says nothing: there is another try to come", async () => {
+    it("★★ an attempt that failed before its debit is NOT one of the three tries: nothing is said and another follows (PR #303 review)", async () => {
       openRenewal();
+      // The third attempt on this invoice, and the first two never sent a
+      // debit either. The old rule called this the last try.
       collector.automaticAttemptsOn.mockResolvedValue({
-        count: 1,
+        count: 0,
+        starts: 2,
         lastAt: hoursAgo(30),
       });
       collector.collectInvoice.mockResolvedValue({
         status: "failed",
-        attemptId: "att-2",
-        code: "declined",
+        attemptId: "att-3",
+        code: "gateway_rejected",
       });
       await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
       expect(repo.getInvoice).not.toHaveBeenCalled();
       expect(dunning.notifyAutopayStopped).not.toHaveBeenCalled();
+    });
+
+    it("★★ three debits SENT is the end: no fourth attempt starts", async () => {
+      openRenewal();
+      collector.automaticAttemptsOn.mockResolvedValue({
+        count: 3,
+        starts: 3,
+        lastAt: hoursAgo(30),
+      });
+      await collectDueRenewals({ now: NOW, charge, priceFor });
+      expect(collector.collectInvoice).not.toHaveBeenCalled();
     });
 
     it("an invoice that cannot be collected automatically is not counted against the rule", async () => {
@@ -1023,6 +1047,7 @@ describe("collectDueRenewals", () => {
       });
       collector.automaticAttemptsOn.mockResolvedValue({
         count: 0,
+        starts: 0,
         lastAt: null,
       });
       seedWith(LIVE_MANDATE);
@@ -1061,6 +1086,7 @@ describe("collectDueRenewals", () => {
         });
         collector.automaticAttemptsOn.mockResolvedValue({
           count: 1,
+          starts: 1,
           lastAt: hoursAgo(40),
         });
         repo.getInvoice.mockResolvedValue({
@@ -1123,6 +1149,7 @@ describe("collectDueRenewals", () => {
         issuedAndOwed();
         collector.automaticAttemptsOn.mockResolvedValue({
           count: 1,
+          starts: 1,
           lastAt: hoursAgo(2),
         });
         seedWith(LIVE_MANDATE);

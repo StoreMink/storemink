@@ -402,7 +402,7 @@ this code at all.
 All four belong to customer `cust_U2tCpF6i2o1LPF`; pass the token and order to
 `scripts/autopay-test-debit.mjs` as in the command above.
 
-### 22 Nov 2026: twenty-five scenarios, hour by hour, on dummy subscriptions
+### 22 Nov 2026: twenty-six scenarios, hour by hour, on dummy subscriptions
 
 `lib/billing/renewal-scenarios.local.test.ts`, run with
 `npm run billing:scenarios:local` against local Postgres. ⚠ The suite is
@@ -449,8 +449,9 @@ deleted, so dummy invoices are never committed.
 | 23  | Three failed tries, then paid by hand in grace   | the plan is restored at once and the store never moves to Free                                                                                                  |
 | 24  | Paused mandate resumed before the next renewal   | this renewal paid by hand, the next one collected automatically again                                                                                           |
 | 25  | The billing job was down for three days          | it catches up: the debit lands after the cycle turned, no grace, one debit, the new cycle starts on its own day                                                 |
+| 26  | Three notices the bank never delivered           | no debit was sent, so the three tries are untouched: the fourth attempt is debited and paid, and no "autopay stopped" email goes (PR #303 review)               |
 
-Eighty-five checks, all passing. **Every scenario from 1 to 20 was also
+Eighty-seven checks, all passing (scenario 26 was added on 22 Nov 2026 after the PR #303 review, and fails when every automatic attempt is counted as a try again). **Every scenario from 1 to 20 was also
 checked the other way round**: the defect it exists to catch was put back, one
 at a time, and the suite run again. All 22 were caught by the scenario they
 belong to (and often by its neighbours):

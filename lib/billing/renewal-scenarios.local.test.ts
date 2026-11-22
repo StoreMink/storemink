@@ -1996,5 +1996,35 @@ describe.skipIf(!enabled)(
 
       invariants();
     });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // PR #303 review, 22 Nov 2026. Every automatic attempt used to count as
+    // one of the three tries, whatever became of it, so three attempts that
+    // ended before any debit was sent ended automatic collection: the
+    // merchant was told autopay had stopped, on a mandate nobody had tried.
+    describe("26. three notices the bank never delivered, then one that is", () => {
+      let s: DummyStore;
+      scenario("s26", async () => {
+        s = await addStore({ rail: "upi" });
+        sim.dropNotices = 3;
+      });
+
+      it("★★ no debit was sent, so the three tries are untouched: the fourth attempt is debited and paid, and nobody is told autopay stopped", async () => {
+        await runTo(new Date(CYCLE_END.getTime() + 60 * HOUR));
+        const all = await attempts(s);
+        expect(
+          all.filter((a) => a.failure_code === "notice_undelivered"),
+        ).toHaveLength(3);
+        // One debit ever, and it is the one that paid the invoice.
+        expect(debitsOf(s)).toHaveLength(1);
+        expect((await invoice(s))?.status).toBe("paid");
+        expect(await storePlan(s)).toBe("pro");
+        expect(
+          emails(s).filter((subject) => /^Action needed: pay /.test(subject)),
+        ).toEqual([]);
+      }, 600_000);
+
+      invariants();
+    });
   },
 );

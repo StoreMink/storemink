@@ -204,6 +204,14 @@ export type PendingOrderOutcome =
   | "waiting"
   /** The gateway could not be read, so nothing was decided. */
   | "unknown"
+  /**
+   * ★★ The gateway HOLDS THE MONEY and the order could not be marked paid
+   * (the write failed). Never the same as `unknown`: an order nobody could
+   * ask about may be cancelled after a week, and this one must never be,
+   * because the shopper has paid for it. Every caller leaves it alone; the
+   * next pass tries the write again.
+   */
+  | "captured_unrecorded"
   /** The gateway answered and refused the read with these credentials. */
   | "refused";
 
@@ -231,8 +239,8 @@ export async function settlePendingOrder(
   if (state.kind === "unknown") return state.refused ? "refused" : "unknown";
   if (state.kind === "captured") {
     try {
-      // ★ `strict`: a write that failed throws and is reported as `unknown`
-      // below, never as "someone else recorded it".
+      // ★ `strict`: a write that failed throws and is reported as
+      // `captured_unrecorded` below, never as "someone else recorded it".
       const outcome = await markOrderPaid(order.id, state.paymentId, {
         strict: true,
       });
@@ -240,8 +248,17 @@ export async function settlePendingOrder(
       // not to be expired.
       return outcome === "paid" ? "paid" : "waiting";
     } catch (err) {
-      logError("checkout.settle_pending_mark_paid", err, { orderId: order.id });
-      return "unknown";
+      // ★★ NOT `unknown` (PR #303 review, 22 Nov 2026). That is what "Razorpay
+      // could not be read" returns, and the hourly reaper cancels an order
+      // it has been unable to ask about for a week: a captured payment whose
+      // write kept failing was then cancelled, its stock and credit given
+      // back, with nobody asked to refund the shopper.
+      logError("checkout.captured_payment_unrecorded", err, {
+        orderId: order.id,
+        storeId: order.store_id,
+        paymentId: state.paymentId,
+      });
+      return "captured_unrecorded";
     }
   }
   if (
@@ -612,7 +629,13 @@ export async function settleShopperPendingOrders(
         expire: "after_grace",
         now,
       });
-      if (outcome === "paid" && !result.paid) result.paid = order;
+      // Captured at the gateway counts as paid here even when our write
+      // failed: the shopper must not be sent to pay for it again.
+      if (
+        (outcome === "paid" || outcome === "captured_unrecorded") &&
+        !result.paid
+      )
+        result.paid = order;
       // Newest first, so the first one still waiting is the newest.
       if (outcome === "waiting" && !result.waiting) result.waiting = order;
     }

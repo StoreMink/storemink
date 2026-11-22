@@ -42,6 +42,10 @@ vi.mock("@/lib/db/client", () => ({
   }),
 }));
 
+// The billing contact is the SAME resolver enrolment uses (PR #303 review).
+const contact = vi.hoisted(() => ({ resolveBillingEmail: vi.fn() }));
+vi.mock("@/lib/email/billing-emails", () => contact);
+
 import {
   NOTICE_PERIOD_MS,
   NOTICE_READY_MARGIN_MS,
@@ -71,6 +75,13 @@ beforeEach(() => {
   vi.mocked(getPlatformRazorpayCreds).mockReturnValue(CREDS as any);
   dbHolder.rows = [{ email: "owner@example.com", phone: "9311456722" }];
   dbHolder.throws = false;
+  contact.resolveBillingEmail.mockResolvedValue({
+    email: "owner@example.com",
+    phone: "9311456722",
+    storeName: "Aurora",
+    slug: "aurora",
+    storeStatus: "active",
+  });
 });
 
 describe("the release gate", () => {
@@ -479,20 +490,49 @@ describe("debit: the second step, sent once per attempt by its caller", () => {
   });
 
   it("★★ no billing contact is a rejection, not a guess: nothing is sent", async () => {
-    dbHolder.rows = [];
+    contact.resolveBillingEmail.mockResolvedValue(null);
     expect(await gateway.debit(INPUT)).toMatchObject({
       ok: false,
       outcome: "rejected",
     });
-    dbHolder.rows = [{ email: "owner@example.com", phone: null }];
+    contact.resolveBillingEmail.mockResolvedValue({
+      email: "owner@example.com",
+      phone: null,
+      storeName: "Aurora",
+      slug: "aurora",
+    });
     expect(await gateway.debit(INPUT)).toMatchObject({ outcome: "rejected" });
     expect(rzpChargeMandate).not.toHaveBeenCalled();
   });
 
   it("★ a contact lookup that THROWS does not become a debit either", async () => {
-    dbHolder.throws = true;
+    contact.resolveBillingEmail.mockRejectedValue(new Error("db down"));
     expect(await gateway.debit(INPUT)).toMatchObject({ outcome: "rejected" });
     expect(rzpChargeMandate).not.toHaveBeenCalled();
+  });
+
+  it("★★ the contact is the one ENROLMENT used: a store with no owner phone is debited on its invoice contact phone (PR #303 review)", async () => {
+    // The debit read `admins.phone` alone, which the signup wizard never
+    // wrote, while enrolment falls back to the store's validated invoice
+    // contact phone. Such a store could set autopay up and then had every
+    // renewal refused here. The shared resolver answers with the fallback.
+    contact.resolveBillingEmail.mockResolvedValue({
+      email: "owner@example.com",
+      phone: "9876543210",
+      storeName: "Aurora",
+      slug: "aurora",
+    });
+    expect(await gateway.debit(INPUT)).toMatchObject({ ok: true });
+    expect(contact.resolveBillingEmail).toHaveBeenCalledWith(INPUT.storeId);
+    expect(rzpChargeMandate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        email: "owner@example.com",
+        contact: "9876543210",
+      }),
+    );
+    // No second, narrower read of the admins table beside it.
+    expect(dbHolder.rows).toHaveLength(1);
   });
 
   it("refuses when platform credentials are absent", async () => {

@@ -25230,6 +25230,39 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       (captured, or failed after `FAIL_AFTER_HOURS`) before anything is
       collected again; test in `renewal-worker.test.ts`, mutation-checked. No
       merchant step changes, so no Help Centre update.
+    - **★★ PR #303 REVIEW FIXES (22 Nov 2026, sm-AnuragGoyal; seven items,
+      all in billing, checkout and credit packs).** (1) A captured payment
+      whose order could not be marked paid is `captured_unrecorded`
+      (`settlePendingOrder`, `lib/orders/pending-payments.ts`), its own
+      outcome: it used to be `unknown`, the value for "Razorpay could not be
+      read", and the hourly reaper cancels an order it has been unable to ask
+      about for a week, so a paid order was cancelled with its stock and
+      credit given back. The reaper never expires it and reports
+      `capturedUnrecorded`; the shopper guard counts it as paid; a gateway
+      change is blocked by it. (2) The three tries count sent debits (next
+      item). (3) The renewal debit's contact is `resolveBillingEmail`, the
+      resolver enrolment uses (`gateway.ts` `resolveBillingContact`): it read
+      `admins.phone` alone, which the signup wizard never wrote, so a store
+      could enrol and then had every debit refused. (4) `placeOrder` resumes
+      an earlier order for the SAME cart that is still inside its payment
+      window (`resumed: true`, with that order's own Razorpay order) instead
+      of placing a second one beside a pending UPI approval; online payments
+      only, and only while the store still takes them. (5) A captured payment
+      on a FAILED credit purchase is `captured_on_failed` and logged as an
+      error (`billing.credit_pack_captured_on_failed`), never "already". A
+      purchase is failed only when its order or draft invoice could not be
+      made, when the payment window is never opened; closing the window
+      leaves it pending. Nothing is granted, because a payment needs its tax
+      invoice. (6) A manual checkout whose order is for an amount the invoice
+      no longer owes is closed when the gateway says nobody paid it
+      (`retireStaleCheckout`, `manual-pay.ts`, by `orderIsUntouched`) and a
+      new one starts; it used to block Pay now both ways for 72 hours. (7)
+      The debit pass sends the "autopay is no longer active" email only when
+      its own `verifyMandate` call changed the mandate (`verdict.changed`).
+      Tests beside each module, and scenario 26 of the hour-by-hour suite
+      (three undelivered notices, then a debit that pays). No merchant step
+      changes, so no Help Centre update: "tries up to three times" still
+      holds.
     - **★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY
       HAND (owner decision, 21 Nov 2026).** A declined debit leaves the
       invoice `open`, and the hourly pass re-reads every subscription inside
@@ -25237,9 +25270,22 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       mandate on every run: about 140 debits from T-4d to the end of grace.
       The rule is pure: `autoCollectDecision` in `cycle.ts`
       (`AUTO_COLLECT_MAX_ATTEMPTS` 3, `AUTO_COLLECT_RETRY_HOURS` 24), fed by
-      `automaticAttemptsOn` in `collect.ts` (every `mode = 'automatic'`
-      attempt on the invoice counts, whatever became of it; a count that
-      cannot be read is "not this run", never "no tries yet"). `collectOne`
+      `automaticAttemptsOn` in `collect.ts` (a count that cannot be read is
+      "not this run", never "no tries yet"). ★★ A TRY IS A DEBIT THAT WAS
+      SENT (PR #303 review, 22 Nov 2026). Every automatic attempt on the
+      invoice used to count, whatever became of it, so attempts that never
+      asked the bank for money (a scheduled debit withdrawn by "Pay now
+      instead", a start that timed out, a notice that never arrived) used the
+      three tries up: the merchant was told autopay had stopped, and grace
+      ran, on a mandate nobody had tried. `automaticAttemptsOn` now returns
+      `count` (the TRIES: `debit_sent_at` or a payment id is set) and
+      `starts` (every attempt except one cancelled before its debit); the
+      rule stops at three tries, or at the backstop
+      `AUTO_COLLECT_MAX_STARTS` (6 starts, so an invoice whose attempts keep
+      ending before their debit does not start one a day until grace ends).
+      `autoCollectExhausted` is the one test both the next try and
+      `announceAutopayStopped` use; the 24 hours still run from the newest
+      attempt of any kind; the email counts starts. `collectOne`
       asks it only when the debit would really be sent (`route.auto`):
       `wait` is `pending`, `exhausted` is `manual`, and the invoice stays
       open on Plans & Billing for the cycle turn to open grace on.
@@ -25444,7 +25490,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       ★ THE WHOLE RENEWAL RUNS HOUR BY HOUR IN A LOCAL TEST
       (`lib/billing/renewal-scenarios.local.test.ts`, run with
       `npm run billing:scenarios:local`; opt-in, so plain `vitest` reports it
-      as skipped): twenty-five scenarios on dummy stores whose subscriptions
+      as skipped): twenty-six scenarios on dummy stores whose subscriptions
       began months ago, from a Free store subscribing to a downgrade, the hourly job's passes run once per
       simulated hour against local Postgres, with only Razorpay's HTTP API
       simulated (holding the rules seen in test mode, and failing the run on

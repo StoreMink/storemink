@@ -547,13 +547,115 @@ describe("★★ Continue payment: an unfinished checkout is reopened on its own
     expect(orderState.orderIsUntouched).not.toHaveBeenCalled();
   });
 
-  it("★ an order made for another amount is never reopened at this one", async () => {
-    seedOpenCheckout({ ...OPEN, amountPaise: 4_000_00 });
-    expect(await startInvoicePayment(args)).toEqual({
-      ok: false,
-      error: PAYMENT_IN_PROGRESS_MESSAGE,
+  // ★★ PR #303 review, 22 Nov 2026. The amount due changed since the checkout
+  // was opened. It used to be refused and left in flight, where the
+  // one-in-flight index blocked a fresh payment too, for up to 72 hours.
+  describe("★★ the amount due changed since the checkout was opened", () => {
+    const STALE = { ...OPEN, amountPaise: 4_000_00 };
+
+    /** The invoice reads `processing` on the first read (the stale attempt
+     * holds it) and `open` once that attempt has been closed. */
+    function seedStale() {
+      seedOpenCheckout(STALE);
+      invStore.getInvoice
+        .mockResolvedValueOnce(openInvoice({ status: "processing" }))
+        .mockResolvedValue(openInvoice({ status: "open" }));
+      collect.settleAttempt.mockImplementation(
+        async (_id: string, state: string) => state,
+      );
+    }
+
+    it("the old order is never reopened at the new amount", async () => {
+      seedStale();
+      const res = await startInvoicePayment(args);
+      expect(res).toMatchObject({ ok: true });
+      if (res.ok) expect(res.data.providerOrderId).not.toBe("order_open");
     });
-    expect(rzp.rzpFetchOrder).not.toHaveBeenCalled();
+
+    it("★★ when nobody paid the old order it is closed, and a new one is started for what is due now", async () => {
+      seedStale();
+      const res = await startInvoicePayment(args);
+      // The gateway was asked about the OLD order first.
+      expect(rzp.rzpFetchOrder).toHaveBeenCalledWith(
+        expect.anything(),
+        "order_open",
+      );
+      expect(orderState.orderIsUntouched).toHaveBeenCalledTimes(1);
+      // The stale attempt is closed by the state machine's own write ...
+      expect(collect.settleAttempt).toHaveBeenCalledWith(
+        "att-open",
+        "cancelled",
+        expect.objectContaining({ failureCode: "amount_changed" }),
+      );
+      // ... and only then is a new attempt opened, for today's amount.
+      expect(collect.beginAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({ amountPaise: 5_000_00, mode: "manual" }),
+      );
+      expect(rzp.rzpCreateOrder).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ amountPaise: 5_000_00 }),
+      );
+      expect(res).toEqual({
+        ok: true,
+        data: {
+          invoiceId: INVOICE,
+          providerOrderId: "order_1",
+          keyId: "rzp_1",
+          amountPaise: 5_000_00,
+          invoiceRef: "SM/2026-27/00002",
+        },
+      });
+    });
+
+    it("★★ money on the old order: nothing is closed and no second payment starts", async () => {
+      seedStale();
+      rzp.rzpFetchOrder.mockResolvedValue({
+        ok: true,
+        data: { id: "order_open", status: "attempted", amount_paid: 4_000_00 },
+      });
+      expect(await startInvoicePayment(args)).toEqual({
+        ok: false,
+        error: ALREADY_CAPTURED_INVOICE_MESSAGE,
+      });
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
+
+    it("★★ a payment still waiting for approval on the old order: left alone", async () => {
+      seedStale();
+      orderState.orderIsUntouched.mockResolvedValue(false);
+      expect(await startInvoicePayment(args)).toEqual({
+        ok: false,
+        error: PAYMENT_IN_PROGRESS_MESSAGE,
+      });
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
+
+    it("★★ an old order that could not be read refuses: 'could not check' is not 'nobody paid'", async () => {
+      seedStale();
+      rzp.rzpFetchOrder.mockResolvedValue({
+        ok: false,
+        outcome: "unknown",
+        error: "timeout",
+      });
+      const res = await startInvoicePayment(args);
+      expect(res.ok).toBe(false);
+      expect(orderState.orderIsUntouched).not.toHaveBeenCalled();
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
+
+    it("★ an attempt that moved while it was being closed is not replaced", async () => {
+      seedStale();
+      // The guarded write moved nothing: a payment landed meanwhile.
+      collect.settleAttempt.mockResolvedValue("captured");
+      expect(await startInvoicePayment(args)).toEqual({
+        ok: false,
+        error: PAYMENT_IN_PROGRESS_MESSAGE,
+      });
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
   });
 
   it("★ a checkout that could not be looked up refuses", async () => {

@@ -842,6 +842,13 @@ export default function CheckoutPage() {
     }
 
     if (result.payment) {
+      // No new order: the server found this cart's earlier order still
+      // inside its payment window and reopened that one.
+      if (result.resumed) {
+        toast.info(
+          `Continuing your payment for order ${result.orderRef}. No new order was placed.`,
+        );
+      }
       await startOnlinePayment({
         orderId: result.orderId,
         orderRef: result.orderRef,

@@ -721,21 +721,31 @@ export async function withdrawUnsentDebits(input: {
 }
 
 /**
- * How many automatic debits this invoice has had, and when the newest was
- * opened: the two facts `autoCollectDecision` (cycle.ts) needs.
+ * An invoice's automatic attempts, as `autoCollectDecision` (cycle.ts) reads
+ * them: `count`, the TRIES (a debit was sent, or a payment exists); `starts`,
+ * every attempt not withdrawn before its debit; and when the newest attempt
+ * of any kind was opened.
  *
- * Every automatic attempt counts, whatever became of it. ★ NULL WHEN THE READ
- * FAILED, never zero: "we could not count" must not read as "never tried", or
- * a database hiccup is one more debit.
+ * ★★ WITHDRAWN IS NOT TRIED (PR #303 review, 22 Nov 2026). An attempt
+ * cancelled before its debit was sent (the plan was cancelled, or the
+ * merchant chose "Pay now instead") never asked anyone for money and counts
+ * for nothing. One that ended before its debit for another reason (the
+ * gateway refused the order, the notice never arrived, the start timed out)
+ * is a start, not a try. Counting them all as tries used the three tries up
+ * without a single debit.
+ *
+ * ★ NULL WHEN THE READ FAILED, never zero: "we could not count" must not read
+ * as "never tried", or a database hiccup is one more debit.
  */
 export async function automaticAttemptsOn(
   invoiceId: string,
-): Promise<{ count: number; lastAt: Date | null } | null> {
+): Promise<{ count: number; starts: number; lastAt: Date | null } | null> {
   try {
     return await withService(async (db) => {
       const [row] = await db
         .select({
-          count: sql<number>`count(*)::int`,
+          count: sql<number>`count(*) filter (where ${billingPaymentAttempts.debitSentAt} is not null or ${billingPaymentAttempts.providerPaymentId} is not null)::int`,
+          starts: sql<number>`count(*) filter (where not (${billingPaymentAttempts.state} = 'cancelled' and ${billingPaymentAttempts.debitSentAt} is null and ${billingPaymentAttempts.providerPaymentId} is null))::int`,
           lastAt: sql<string | null>`max(${billingPaymentAttempts.createdAt})`,
         })
         .from(billingPaymentAttempts)
@@ -748,6 +758,7 @@ export async function automaticAttemptsOn(
       const lastAt = row?.lastAt ? new Date(row.lastAt) : null;
       return {
         count: Number(row?.count ?? 0),
+        starts: Number(row?.starts ?? 0),
         lastAt: lastAt && Number.isFinite(lastAt.getTime()) ? lastAt : null,
       };
     });

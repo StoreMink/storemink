@@ -392,7 +392,7 @@ export async function startInvoicePayment(input: {
         error: "We couldn't check this invoice just now. Please try again.",
       };
     }
-    if (open) {
+    if (open && open.amountPaise === amountDue) {
       return resumeCheckout(creds, {
         storeId: input.storeId,
         invoiceId: invoice.id,
@@ -400,6 +400,22 @@ export async function startInvoicePayment(input: {
         amountDue,
         open,
       });
+    }
+    // ★★ THE AMOUNT DUE CHANGED SINCE THAT CHECKOUT WAS OPENED (PR #303
+    // review, 22 Nov 2026). Its order is for the old amount, so it is never
+    // reopened. It used to be refused and left in flight, where the
+    // one-in-flight index then blocked a fresh payment too, until
+    // reconciliation gave the old attempt up 72 hours later: the merchant
+    // could not pay their invoice either way. When the gateway says nobody
+    // paid the old order, it is closed here and a new one starts below.
+    if (open) {
+      const retired = await retireStaleCheckout(creds, {
+        storeId: input.storeId,
+        invoiceId: invoice.id,
+        open,
+        now,
+      });
+      if (!retired.ok) return retired;
     }
 
     // Nothing to reopen. The invoice is payable only if it is `open` now
@@ -543,7 +559,8 @@ async function resumeCheckout(
     open: OpenCheckout;
   },
 ): Promise<PayResult<PaymentStart>> {
-  // An order made for another amount is never reopened at this one.
+  // An order made for another amount is never reopened at this one (the
+  // caller retires it instead: `retireStaleCheckout`).
   if (input.open.amountPaise !== input.amountDue) {
     return { ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE };
   }
@@ -579,6 +596,56 @@ async function resumeCheckout(
       invoiceRef: input.invoiceRef,
     },
   };
+}
+
+/**
+ * Close an unfinished checkout whose order is for an amount the invoice no
+ * longer owes, so a new one can be started.
+ *
+ * ★ ONLY WHEN THE GATEWAY SAYS NOBODY PAID IT, by the same rule enrolment
+ * uses (`orderIsUntouched`): an order nobody opened, or one whose every
+ * payment failed. Money on it, a payment still waiting for approval, or a
+ * read that failed all refuse, and the attempt is left exactly as it was.
+ * The close itself is the state machine's own guarded write: an attempt that
+ * moved meanwhile is not closed.
+ */
+async function retireStaleCheckout(
+  creds: NonNullable<ReturnType<typeof getPlatformRazorpayCreds>>,
+  input: { storeId: string; invoiceId: string; open: OpenCheckout; now: Date },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const order = await rzpFetchOrder(creds, input.open.providerOrderId);
+  if (!order.ok) {
+    return {
+      ok: false,
+      error:
+        "We couldn't check this invoice's payments just now. Please try again.",
+    };
+  }
+  if (order.data.status === "paid" || (order.data.amount_paid ?? 0) > 0) {
+    logWarn("billing.manual_pay_stale_checkout_paid", {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+      attemptId: input.open.attemptId,
+    });
+    return { ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE };
+  }
+  if (!(await orderIsUntouched(creds, order))) {
+    return { ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE };
+  }
+  const settled = await settleAttempt(input.open.attemptId, "cancelled", {
+    failureCode: "amount_changed",
+    failureReason: "the amount due changed before this checkout was paid",
+    now: input.now,
+  });
+  if (settled !== "cancelled") {
+    return { ok: false, error: PAYMENT_IN_PROGRESS_MESSAGE };
+  }
+  logInfo("billing.manual_pay_stale_checkout_retired", {
+    storeId: input.storeId,
+    invoiceId: input.invoiceId,
+    attemptId: input.open.attemptId,
+  });
+  return { ok: true };
 }
 
 export interface PaymentConfirmed {

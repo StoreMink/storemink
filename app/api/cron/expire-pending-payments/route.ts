@@ -148,6 +148,8 @@ async function handle(request: Request) {
 
   let paid = 0;
   let expired = 0;
+  // Captured at the gateway, not yet marked paid here: reported, never expired.
+  let unrecorded = 0;
 
   for (const order of pending) {
     // 1. Razorpay is the source of truth: never cancel a paid order.
@@ -178,6 +180,18 @@ async function handle(request: Request) {
         if (outcome === "paid" || outcome === "expired") continue;
         // The claim lost to a payment recorded a moment ago: nothing to do.
         if (outcome === "waiting") continue;
+        // ★★ RAZORPAY HOLDS THE MONEY AND THE ORDER COULD NOT BE MARKED PAID.
+        // Never cancelled, however old it gets: the week's grace below is
+        // for an order nobody could ask about, and this one was answered
+        // (PR #303 review). The next run tries the write again; the error is
+        // logged on every run until it lands, for a person to follow up.
+        if (outcome === "captured_unrecorded") {
+          unrecorded++;
+          console.error(
+            `expire-pending-payments (captured payment could not be recorded, order ${order.id}): left pending, never expired`,
+          );
+          continue;
+        }
         // ★★ RAZORPAY COULD NOT BE ASKED ABOUT THIS ORDER (unreachable, or
         // these keys were refused: revoked, or another account's). Skip it
         // rather than risk cancelling a captured payment, but not for ever:
@@ -218,6 +232,7 @@ async function handle(request: Request) {
     ok: true,
     paid: paid + confirmed.paid,
     expired,
+    ...(unrecorded ? { capturedUnrecorded: unrecorded } : {}),
     ...(await standingSweeps()),
   });
 }
