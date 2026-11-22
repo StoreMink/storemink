@@ -36,6 +36,12 @@ vi.mock("@/lib/orders/cancel", () => ({
 vi.mock("@/lib/offers/cart", () => ({
   releaseOrderOfferUses: vi.fn(async () => []),
 }));
+vi.mock("@/lib/payments/razorpay", () => ({
+  rzpFetchOrder: vi.fn(),
+}));
+vi.mock("@/lib/billing/order-state", () => ({
+  orderIsUntouched: vi.fn(),
+}));
 
 import {
   CONFIRM_AFTER_MINUTES,
@@ -43,14 +49,20 @@ import {
   confirmYoungPendingOrders,
   expectedGatewayPaise,
   expireUnpaidOrder,
+  minutesUntilLapse,
   orderAgeMinutes,
   orderHoldsCart,
   refusedReadReason,
+  retireWaitingOrder,
   settleBeforeGatewayChange,
   settlePendingOrder,
   settleShopperPendingOrders,
+  waitingOrderChanges,
   type PendingOnlineOrder,
 } from "./pending-payments";
+import { rzpFetchOrder } from "@/lib/payments/razorpay";
+import { orderIsUntouched } from "@/lib/billing/order-state";
+import { logError } from "@/lib/observability/logger";
 import { recordEvent } from "@/lib/notifications/record";
 import { lookupStoreGateway } from "@/lib/payments/provider";
 import { settleOrderPayment } from "@/lib/payments/capture";
@@ -485,6 +497,139 @@ describe("orderHoldsCart: is this order the cart on screen?", () => {
       selectByTable: { order_items: [new Error("db down")] },
     });
     expect(await orderHoldsCart("o1", [line(P1, 2)])).toBe(false);
+  });
+});
+
+describe("waitingOrderChanges: is the waiting order what the shopper wants now?", () => {
+  const ADDRESS = {
+    firstName: "Asha",
+    lastName: "Rao",
+    addressLine1: "12 MG Road",
+    city: "Bengaluru",
+    postalCode: "560001",
+    phone: "+919876543210",
+  };
+  const stored = (over: Record<string, unknown> = {}) => ({
+    shippingAddress: { ...ADDRESS },
+    billingAddress: null,
+    notes: null,
+    appliedCouponCode: null,
+    pickupLocationId: null,
+    shippingOption: { id: "flat:standard", amount: 60 },
+    shipping: "60.00",
+    ...over,
+  });
+  const wanted = (over: Record<string, unknown> = {}) => ({
+    shippingAddress: { ...ADDRESS },
+    billingAddress: null,
+    notes: null,
+    couponCode: null,
+    pickupLocationId: null,
+    shippingRateId: "flat:standard",
+    shippingAmount: 60,
+    ...over,
+  });
+
+  it("the same choices: nothing differs", async () => {
+    db({ rows: [[stored()]] });
+    expect(await waitingOrderChanges("o1", wanted())).toEqual([]);
+  });
+
+  it("★★ a changed address or a switch to collection is reported", async () => {
+    db({ rows: [[stored()]] });
+    expect(
+      await waitingOrderChanges(
+        "o1",
+        wanted({ shippingAddress: { ...ADDRESS, addressLine1: "21 MG Road" } }),
+      ),
+    ).toEqual(["address"]);
+    db({ rows: [[stored()]] });
+    expect(
+      await waitingOrderChanges(
+        "o1",
+        wanted({
+          pickupLocationId: "loc-1",
+          shippingRateId: null,
+          shippingAmount: null,
+        }),
+      ),
+    ).toEqual(["fulfilment"]);
+  });
+
+  it("★★ NULL, never 'the same', when the order is missing or the read fails", async () => {
+    db({ rows: [[]] });
+    expect(await waitingOrderChanges("o1", wanted())).toBeNull();
+    dbHolder.current = makeDbMock({
+      selectByTable: { orders: [new Error("db down")] },
+    });
+    expect(await waitingOrderChanges("o1", wanted())).toBeNull();
+    expect(vi.mocked(logError).mock.calls[0][0]).toBe(
+      "checkout.waiting_order_details",
+    );
+  });
+});
+
+describe("retireWaitingOrder: cancel the old order only when nobody is paying it", () => {
+  const GATEWAY_ORDER = { id: "order_1", status: "created" };
+
+  it("★★ an order the gateway says is untouched is cancelled, and gives back what it held", async () => {
+    vi.mocked(rzpFetchOrder).mockResolvedValue(GATEWAY_ORDER as any);
+    vi.mocked(orderIsUntouched).mockResolvedValue(true);
+    expect(await retireWaitingOrder(order(), CREDS)).toBe("retired");
+    expect(vi.mocked(rzpFetchOrder)).toHaveBeenCalledWith(CREDS, "order_1");
+    expect(vi.mocked(orderIsUntouched)).toHaveBeenCalledWith(
+      CREDS,
+      GATEWAY_ORDER,
+    );
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      paymentStatus: "failed",
+    });
+    expect(releaseCancelledOrder).toHaveBeenCalledTimes(1);
+    expect(releaseOrderOfferUses).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ a payment waiting for approval, or money on it, leaves the order exactly as it was", async () => {
+    vi.mocked(rzpFetchOrder).mockResolvedValue({
+      id: "order_1",
+      status: "attempted",
+    } as any);
+    vi.mocked(orderIsUntouched).mockResolvedValue(false);
+    expect(await retireWaitingOrder(order(), CREDS)).toBe("in_flight");
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+  });
+
+  it("★★ FAILS CLOSED: an unreadable gateway, or an order with no gateway order, cancels nothing", async () => {
+    vi.mocked(rzpFetchOrder).mockRejectedValue(new Error("timeout"));
+    expect(await retireWaitingOrder(order(), CREDS)).toBe("in_flight");
+    vi.mocked(rzpFetchOrder).mockResolvedValue(GATEWAY_ORDER as any);
+    vi.mocked(orderIsUntouched).mockRejectedValue(new Error("timeout"));
+    expect(await retireWaitingOrder(order(), CREDS)).toBe("in_flight");
+    vi.mocked(rzpFetchOrder).mockClear();
+    expect(
+      await retireWaitingOrder(order({ razorpay_order_id: null }), CREDS),
+    ).toBe("in_flight");
+    expect(rzpFetchOrder).not.toHaveBeenCalled();
+    expect(dbHolder.current.calls.update).toHaveLength(0);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+  });
+
+  it("★ a payment recorded in the same instant wins the claim", async () => {
+    vi.mocked(rzpFetchOrder).mockResolvedValue(GATEWAY_ORDER as any);
+    vi.mocked(orderIsUntouched).mockResolvedValue(true);
+    db({ claimed: [] });
+    expect(await retireWaitingOrder(order(), CREDS)).toBe("in_flight");
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe("minutesUntilLapse", () => {
+  it("counts down the payment window, rounds up, and never says under a minute", () => {
+    const at = (m: number) => ({ created_at: minutesAgo(m) });
+    expect(minutesUntilLapse(at(10), NOW)).toBe(PAYMENT_GRACE_MINUTES - 10);
+    expect(minutesUntilLapse(at(10.5), NOW)).toBe(PAYMENT_GRACE_MINUTES - 10);
+    expect(minutesUntilLapse(at(PAYMENT_GRACE_MINUTES - 0.2), NOW)).toBe(1);
+    expect(minutesUntilLapse(at(PAYMENT_GRACE_MINUTES + 30), NOW)).toBe(1);
   });
 });
 

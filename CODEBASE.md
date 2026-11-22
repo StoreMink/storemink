@@ -25165,8 +25165,9 @@ way — an entry there is a deliberate act, not a way to silence the guard.
          confirmation and empties the cart, a paid one for a changed cart is
          announced and the cart kept (`orderHoldsCart`: exact lines and
          quantities, free gift lines ignored), and one still waiting for this
-         cart restores "Retry Payment" for the SAME Razorpay order, which a
-         reload used to lose; (b) `placeOrder` makes the same check before any
+         cart is announced with a "Continue that payment" action on the SAME
+         Razorpay order (an offer since 22 Nov, never the page's own retry:
+         see the follow-up review below); (b) `placeOrder` makes the same check before any
          read or reservation and refuses with `paidOrder` instead of placing
          a second order (a failed check never blocks a sale; with nothing
          waiting no gateway is read); (c) `/api/cron/confirm-payments`
@@ -25243,11 +25244,10 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       item). (3) The renewal debit's contact is `resolveBillingEmail`, the
       resolver enrolment uses (`gateway.ts` `resolveBillingContact`): it read
       `admins.phone` alone, which the signup wizard never wrote, so a store
-      could enrol and then had every debit refused. (4) `placeOrder` resumes
-      an earlier order for the SAME cart that is still inside its payment
-      window (`resumed: true`, with that order's own Razorpay order) instead
-      of placing a second one beside a pending UPI approval; online payments
-      only, and only while the store still takes them. (5) A captured payment
+      could enrol and then had every debit refused. (4) `placeOrder` never
+      places a second order beside an earlier one for the SAME cart that may
+      still be paid (a pending UPI approval): it resumes that order, replaces
+      it, or refuses (the follow-up review, next item). (5) A captured payment
       on a FAILED credit purchase is `captured_on_failed` and logged as an
       error (`billing.credit_pack_captured_on_failed`), never "already". A
       purchase is failed only when its order or draft invoice could not be
@@ -25263,6 +25263,62 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       (three undelivered notices, then a debit that pays). No merchant step
       changes, so no Help Centre update: "tries up to three times" still
       holds.
+    - **★★ A WAITING ORDER IS RESUMED ONLY WHEN IT IS THE ORDER BEING ASKED
+      FOR (PR #303 follow-up review, 22 Nov 2026).** Item 4's first fix
+      resumed whenever the products and quantities matched, so a shopper who
+      came back to correct their address, or to switch to collection, was
+      handed the old order to pay: the old total, the parcel to the old
+      address. `placeOrder` now decides between three cases, before anything
+      is priced, reserved or written, for an earlier order of this shopper's
+      that holds the same cart and is still inside its payment window.
+      (1) THE SAME ORDER (paying online, the store still takes online
+      payments, and nothing the shopper chose differs): resumed on its own
+      Razorpay order (`resumed: true`). One Razorpay order takes one payment,
+      so reopening it cannot charge twice. (2) SOMETHING CHANGED, or another
+      way to pay was chosen, AND NOBODY IS PAYING THE OLD ORDER: the old
+      order is cancelled with everything it held given back, and the new
+      order is placed as asked. (3) SOMETHING CHANGED AND A PAYMENT MAY STILL
+      LAND ON THE OLD ORDER: no second order. The result is an `error` with
+      `unfinished` (`orderId`, `orderRef`, `minutesLeft`, and `payment` while
+      the store takes online payments): "A payment for this cart is still
+      being processed on order X. If you approved it, that order will be
+      confirmed shortly. To order with your changes instead, try again in
+      about N minutes." This covers cash on delivery too (it used to place a
+      second order beside the pending approval).
+      `lib/orders/checkout-details.ts` (pure, no imports) is the comparison:
+      `checkoutChanges(order, wanted)` returns what differs out of address,
+      phone, billing address, notes, coupon, delivery or collection, the
+      shop, the delivery option and its price. ★ CHOICES, NEVER A RECOMPUTED
+      TOTAL: the waiting order already holds the shopper's store credit, its
+      coupon use and its stock, so pricing the cart again differs for
+      reasons that are not the shopper's doing. ★ It fails toward "changed":
+      anything missing or unreadable on either side is a difference, and a
+      delivery with no option stated by the page is one too. In
+      `lib/orders/pending-payments.ts`: `waitingOrderChanges(orderId, wanted)`
+      reads the order's own columns (null when it cannot, which the caller
+      treats as changed); `retireWaitingOrder(order, creds)` asks Razorpay
+      about the gateway order and cancels through `expireUnpaidOrder` only
+      when `orderIsUntouched` says so (never opened, or every payment failed;
+      the rule Plans & Billing uses for its own checkouts), answering
+      `in_flight` for money on it, an approval still pending, a failed read,
+      or a payment that won the claim in the same instant;
+      `minutesUntilLapse` is the time left in the window.
+      `shippingAddressOf`, `orderNotesOf` and `billingAddressOf`
+      (checkout-actions) build those values once, for the order row and for
+      the comparison, so both sides are trimmed and capped alike.
+      ★ THE PAGE NEVER REOPENS AN OLD ORDER BY ITSELF. Its "Retry Payment"
+      state is matched on `orderKey` (the cart plus fulfilment, shop,
+      delivery option, address, billing address and note), so once any of
+      them changes Place order goes to the server. What the check on page
+      load finds, and what case 3 returns, is shown as a toast with a
+      "Continue that payment" action: an explicit choice to pay that order
+      as it was placed. A payment that still arrives on a cancelled order is
+      refunded by the late-payment sweep, as for any order that lapsed.
+      Tests: `lib/orders/checkout-details.test.ts`,
+      `lib/orders/pending-payments.test.ts`, `checkout-actions.test.ts`
+      (seven mutants, all caught). ⚠ The checkout page has no test file and
+      was not run in a browser. No Help Centre update: "no second order is
+      started" still holds, and no merchant step changes.
     - **★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY
       HAND (owner decision, 21 Nov 2026).** A declined debit leaves the
       invoice `open`, and the hourly pass re-reads every subscription inside

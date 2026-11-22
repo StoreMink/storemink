@@ -102,8 +102,11 @@ import type { OrderPlacedEvent } from "@/lib/orders/mark-paid";
 import {
   expectedGatewayPaise,
   listShopperPendingOrders,
+  minutesUntilLapse,
   orderHoldsCart,
+  retireWaitingOrder,
   settleShopperPendingOrders,
+  waitingOrderChanges,
   type PendingOnlineOrder,
 } from "@/lib/orders/pending-payments";
 import { formatIndianMobile, textablePhone } from "@/lib/phone";
@@ -231,6 +234,20 @@ export type CheckoutResult =
        * the page can show its confirmation and empty the cart.
        */
       paidOrder?: { orderId: string; orderRef: string; sameCart: boolean };
+      /**
+       * Set when the order was NOT placed because an earlier order for this
+       * same cart may still be paid (an approval is pending, or it could not
+       * be checked), and what the shopper is asking for now differs from it.
+       * `payment`, when present, reopens that earlier order exactly as it
+       * was placed; the page offers it as a choice, never by itself.
+       */
+      unfinished?: {
+        orderId: string;
+        orderRef: string;
+        /** Minutes until that order's payment window closes. */
+        minutesLeft: number;
+        payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
+      };
     };
 
 // Normalize a coupon code the same way coupon-actions does (stored uppercased,
@@ -808,6 +825,59 @@ export interface PickupOptions {
 }
 
 /**
+ * The delivery address as an order stores it: trimmed, length-capped, the
+ * phone formatted. ★ One function for the order row and for the resume
+ * check, so "is this the same address?" compares like with like.
+ */
+function shippingAddressOf(form: CheckoutFormData, deliveryPhone: string) {
+  return {
+    firstName: cleanField(form.firstName),
+    lastName: cleanField(form.lastName),
+    addressLine1: cleanField(form.addressLine1),
+    addressLine2: cleanField(form.addressLine2),
+    city: cleanField(form.city),
+    state: cleanField(form.state),
+    postalCode: cleanField(form.postalCode),
+    country: cleanField(form.country),
+    email: cleanField(form.email),
+    phone: deliveryPhone,
+  };
+}
+
+/** The order note as stored, or null. */
+function orderNotesOf(form: CheckoutFormData): string | null {
+  return cleanField(form.notes, MAX_NOTES_LEN) || null;
+}
+
+/**
+ * A separate billing address as an order stores it, or null for "same as
+ * delivery". Optional, and trimmed and capped exactly like the delivery one:
+ * it prints on the invoice, so it is merchant-visible text from an untrusted
+ * source.
+ */
+function billingAddressOf(
+  billingInput: BillingAddressInput | null | undefined,
+): Record<string, string> | null {
+  if (!billingInput || typeof billingInput !== "object") return null;
+  const b = (v: unknown, max = 120) =>
+    typeof v === "string" ? v.trim().slice(0, max) : "";
+  const line1 = b(billingInput.addressLine1);
+  const city = b(billingInput.city, 60);
+  if (!line1 || !city) return null;
+  return {
+    firstName: b(billingInput.firstName, 60),
+    lastName: b(billingInput.lastName, 60),
+    addressLine1: line1,
+    addressLine2: b(billingInput.addressLine2),
+    city,
+    state: b(billingInput.state, 60),
+    postalCode: b(billingInput.postalCode, 20),
+    country: b(billingInput.country, 60) || "India",
+    phone: b(billingInput.phone, 20),
+  };
+}
+
+/**
  * Shops this cart could be collected from.
  *
  * Takes the cart so it can say which shops actually have the goods — offering
@@ -1051,36 +1121,81 @@ export async function placeOrder(
       paidOrder: earlier.paid,
     };
   }
-  // ★★ AND ONE STILL WAITING, FOR THIS SAME CART, IS RESUMED, NEVER
-  // DUPLICATED (PR #303 review, 22 Nov 2026). The check above stops a second
-  // order only once the first is PAID. A shopper whose UPI approval was still
-  // pending could come back, press Place order again, and get a second order
-  // with a second Razorpay order; when both approvals completed they had
-  // paid twice for one cart. The page already reopens the same order when it
-  // knows about it ("Retry Payment"), but only from its own memory or its
-  // check on load, and the server is what must hold the rule. One Razorpay
-  // order takes one payment, so reopening it cannot charge twice.
-  // Online payments only, and only while the store still takes them: a
-  // shopper who now chooses another way to pay gets a new order as before,
-  // and the abandoned one lapses at the end of its payment window.
-  if (
-    paymentMethod === "razorpay" &&
-    earlier.waiting?.sameCart &&
-    earlier.waiting.enabled &&
-    earlier.waiting.order.razorpay_order_id
-  ) {
-    const waiting = earlier.waiting.order;
-    return {
-      success: true,
-      orderId: waiting.id,
-      orderRef: waiting.order_ref ?? "",
-      resumed: true,
-      payment: {
-        rzpOrderId: waiting.razorpay_order_id!,
-        keyId: earlier.waiting.keyId,
-        amountPaise: expectedGatewayPaise(waiting),
-      },
-    };
+  // ★★ AND ONE STILL WAITING, FOR THIS SAME CART, IS NEVER PAID FOR BESIDE
+  // A SECOND ORDER (PR #303 review, 22 Nov 2026). The check above stops a
+  // second order only once the first is PAID. A shopper whose UPI approval
+  // was still pending could come back, press Place order again, and get a
+  // second order with a second Razorpay order; when both approvals completed
+  // they had paid twice for one cart. Three cases, decided here before
+  // anything is priced, reserved or written:
+  //
+  //   1. THE SAME ORDER: paying online, and every choice on the form is what
+  //      the waiting order was placed with (`waitingOrderChanges`: address,
+  //      phone, billing address, notes, coupon, delivery or collection, the
+  //      shop, the delivery option and its price). It is RESUMED on its own
+  //      Razorpay order. One Razorpay order takes one payment, so reopening
+  //      it cannot charge twice.
+  //   2. SOMETHING CHANGED (or another way to pay was chosen), and the
+  //      gateway says nobody is paying the old order: the old order is
+  //      cancelled, everything it held is given back, and the new order is
+  //      placed below as asked (`retireWaitingOrder`).
+  //   3. SOMETHING CHANGED and a payment may still land on the old order:
+  //      no second order. The shopper is told, with the choice to continue
+  //      that payment as it was or to wait for it to lapse.
+  //
+  // ★ The first version resumed on the products alone (follow-up review):
+  //   a shopper who came back to correct their address, or to switch to
+  //   collection, was handed the old total and the old address to pay.
+  if (earlier.waiting?.sameCart) {
+    const waiting = earlier.waiting;
+    const order = waiting.order;
+    const resumable =
+      paymentMethod === "razorpay" &&
+      waiting.enabled &&
+      Boolean(order.razorpay_order_id);
+    const changes = resumable
+      ? await waitingOrderChanges(order.id, {
+          shippingAddress: shippingAddressOf(form, deliveryPhone),
+          billingAddress: billingAddressOf(billingInput),
+          notes: orderNotesOf(form),
+          couponCode: couponCode ? normalizeCode(couponCode) : null,
+          pickupLocationId: pickupLocationId || null,
+          shippingRateId: selectedShippingRateId || null,
+          shippingAmount:
+            typeof selectedShippingRateAmount === "number"
+              ? selectedShippingRateAmount
+              : null,
+        })
+      : null;
+    const payment = order.razorpay_order_id
+      ? {
+          rzpOrderId: order.razorpay_order_id,
+          keyId: waiting.keyId,
+          amountPaise: expectedGatewayPaise(order),
+        }
+      : null;
+    if (resumable && payment && changes && changes.length === 0) {
+      return {
+        success: true,
+        orderId: order.id,
+        orderRef: order.order_ref ?? "",
+        resumed: true,
+        payment,
+      };
+    }
+    const retired = await retireWaitingOrder(order, waiting.creds);
+    if (retired !== "retired") {
+      const minutesLeft = minutesUntilLapse(order);
+      return {
+        error: `A payment for this cart is still being processed on order ${order.order_ref ?? ""}. If you approved it, that order will be confirmed shortly. To order with your changes instead, try again in about ${minutesLeft} ${minutesLeft === 1 ? "minute" : "minutes"}.`,
+        unfinished: {
+          orderId: order.id,
+          orderRef: order.order_ref ?? "",
+          minutesLeft,
+          ...(payment && waiting.enabled ? { payment } : {}),
+        },
+      };
+    }
   }
 
   // Orders/order_items are written with a service-role (RLS-bypassing) scope:
@@ -1585,19 +1700,8 @@ export async function placeOrder(
 
   // Store only trimmed, length-capped values (the fields render in the admin
   // dashboard; React escapes output, but we keep the stored data clean too).
-  const shippingAddress = {
-    firstName: cleanField(form.firstName),
-    lastName: cleanField(form.lastName),
-    addressLine1: cleanField(form.addressLine1),
-    addressLine2: cleanField(form.addressLine2),
-    city: cleanField(form.city),
-    state: cleanField(form.state),
-    postalCode: cleanField(form.postalCode),
-    country: cleanField(form.country),
-    email: cleanField(form.email),
-    phone: deliveryPhone,
-  };
-  const notes = cleanField(form.notes, MAX_NOTES_LEN) || null;
+  const shippingAddress = shippingAddressOf(form, deliveryPhone);
+  const notes = orderNotesOf(form);
 
   // The order id is generated up front so the order row and its stock-ledger
   // movements share it. What follows is a reserve → create → reserve → rollback
@@ -1915,26 +2019,7 @@ export async function placeOrder(
   // A separate billing address is optional and trimmed/capped exactly like the
   // shipping one — it prints on the invoice, so it is merchant-visible text
   // from an untrusted source.
-  let billingAddress: Record<string, string> | null = null;
-  if (billingInput && typeof billingInput === "object") {
-    const b = (v: unknown, max = 120) =>
-      typeof v === "string" ? v.trim().slice(0, max) : "";
-    const line1 = b(billingInput.addressLine1);
-    const city = b(billingInput.city, 60);
-    if (line1 && city) {
-      billingAddress = {
-        firstName: b(billingInput.firstName, 60),
-        lastName: b(billingInput.lastName, 60),
-        addressLine1: line1,
-        addressLine2: b(billingInput.addressLine2),
-        city,
-        state: b(billingInput.state, 60),
-        postalCode: b(billingInput.postalCode, 20),
-        country: b(billingInput.country, 60) || "India",
-        phone: b(billingInput.phone, 20),
-      };
-    }
-  }
+  const billingAddress = billingAddressOf(billingInput);
 
   // The code the customer shows at the counter (roadmap Step 3). Minted before
   // the insert so the confirmation email can carry it — a collection order that
@@ -2675,6 +2760,8 @@ async function settleEarlierPayment(
     sameCart: boolean;
     keyId: string;
     enabled: boolean;
+    /** The account that order was read on, for asking about it again. */
+    creds: { keyId: string; keySecret: string };
   } | null;
 }> {
   const nothing = { paid: null, waiting: null };
@@ -2719,6 +2806,7 @@ async function settleEarlierPayment(
           sameCart: await orderHoldsCart(settled.waiting.id, cart),
           keyId: gateway.creds.keyId,
           enabled: gateway.enabled,
+          creds: gateway.creds,
         },
       };
     }

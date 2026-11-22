@@ -36,7 +36,13 @@ import {
   lookupStoreGateway,
   type StoreGatewayLookup,
 } from "@/lib/payments/provider";
-import type { RazorpayCreds } from "@/lib/payments/razorpay";
+import { rzpFetchOrder, type RazorpayCreds } from "@/lib/payments/razorpay";
+import { orderIsUntouched } from "@/lib/billing/order-state";
+import {
+  checkoutChanges,
+  type CheckoutChange,
+  type WantedCheckout,
+} from "./checkout-details";
 
 /**
  * How long an online order waits for its payment before it is cancelled.
@@ -590,6 +596,85 @@ export async function orderHoldsCart(
     if (held.get(key) !== quantity) return false;
   }
   return true;
+}
+
+/**
+ * What differs between a waiting order and what the shopper is asking for
+ * now (`checkout-details.ts`): empty when it is the same order.
+ *
+ * ★ NULL WHEN THE ORDER COULD NOT BE READ. The caller treats that as
+ * "changed", never as "the same": an order is not resumed on a guess.
+ */
+export async function waitingOrderChanges(
+  orderId: string,
+  wanted: WantedCheckout,
+): Promise<CheckoutChange[] | null> {
+  try {
+    const [row] = await withService((db) =>
+      db
+        .select({
+          shippingAddress: orders.shippingAddress,
+          billingAddress: orders.billingAddress,
+          notes: orders.notes,
+          appliedCouponCode: orders.appliedCouponCode,
+          pickupLocationId: orders.pickupLocationId,
+          shippingOption: orders.shippingOption,
+          shipping: orders.shipping,
+        })
+        .from(orders)
+        .where(eq(orders.id, orderId))
+        .limit(1),
+    );
+    return row ? checkoutChanges(row, wanted) : null;
+  } catch (err) {
+    logError("checkout.waiting_order_details", err, { orderId });
+    return null;
+  }
+}
+
+/**
+ * Cancel a waiting order NOW, so the order the shopper has changed can take
+ * its place, but only when the gateway says nobody is paying it.
+ *
+ * ★★ WHY THIS EXISTS (PR #303 follow-up review, 22 Nov 2026). A shopper who
+ * comes back and changes their address, or switches to collection or to cash
+ * on delivery, must not be handed the old order to pay; and a new order must
+ * not be placed beside a payment that may still land, or they pay twice.
+ * The gateway decides which case this is, by the rule Plans & Billing uses
+ * for its own checkouts (`orderIsUntouched`): an order nobody opened, or one
+ * whose every payment failed, cannot take money any more and is cancelled
+ * here with everything it held given back. Money on it, a payment still
+ * waiting for approval, or a read that failed all leave it exactly as it was.
+ *
+ * ★ The cancel is `expireUnpaidOrder`'s own conditional claim (pending to
+ * failed), so a payment recorded in the same instant wins and this reports
+ * `in_flight`. A payment that still arrives on a cancelled order is refunded
+ * by the late-payment sweep, as for any order that lapsed.
+ */
+export async function retireWaitingOrder(
+  order: PendingOnlineOrder,
+  creds: RazorpayCreds,
+): Promise<"retired" | "in_flight"> {
+  if (!order.razorpay_order_id) return "in_flight";
+  try {
+    const gatewayOrder = await rzpFetchOrder(creds, order.razorpay_order_id);
+    if (!(await orderIsUntouched(creds, gatewayOrder))) return "in_flight";
+    return (await expireUnpaidOrder(order)) ? "retired" : "in_flight";
+  } catch (err) {
+    logError("checkout.retire_waiting_order", err, { orderId: order.id });
+    return "in_flight";
+  }
+}
+
+/** Minutes until a waiting order's payment window closes (never under 1). */
+export function minutesUntilLapse(
+  order: Pick<PendingOnlineOrder, "created_at">,
+  now: Date = new Date(),
+): number {
+  return Math.max(
+    1,
+    Math.ceil(PAYMENT_GRACE_MINUTES - orderAgeMinutes(order, now)),
+  );
 }
 
 export interface ShopperPendingResult {

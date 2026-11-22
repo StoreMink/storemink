@@ -177,6 +177,12 @@ vi.mock("@/lib/orders/pending-payments", () => ({
     waiting: null,
   })),
   orderHoldsCart: vi.fn(async () => false),
+  // What differs between a waiting order and the form (PR #303 follow-up
+  // review). ★ The default is "nothing differs", and a waiting order that is
+  // replaced is retired, so the tests below state the case they are about.
+  waitingOrderChanges: vi.fn(async () => []),
+  retireWaitingOrder: vi.fn(async () => "retired"),
+  minutesUntilLapse: vi.fn(() => 30),
   expectedGatewayPaise: (o: any) =>
     Math.round((Number(o.total ?? 0) - Number(o.store_credit_used ?? 0)) * 100),
 }));
@@ -231,7 +237,9 @@ import {
 import {
   listShopperPendingOrders,
   orderHoldsCart,
+  retireWaitingOrder,
   settleShopperPendingOrders,
+  waitingOrderChanges,
 } from "@/lib/orders/pending-payments";
 import { releaseOrderOfferUses } from "@/lib/offers/cart";
 import {
@@ -2614,6 +2622,8 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
       waiting: null,
     });
     vi.mocked(orderHoldsCart).mockResolvedValue(true);
+    vi.mocked(waitingOrderChanges).mockResolvedValue([]);
+    vi.mocked(retireWaitingOrder).mockResolvedValue("retired");
   });
 
   afterEach(() => {
@@ -2623,6 +2633,8 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
       waiting: null,
     });
     vi.mocked(orderHoldsCart).mockResolvedValue(false);
+    vi.mocked(waitingOrderChanges).mockResolvedValue([]);
+    vi.mocked(retireWaitingOrder).mockResolvedValue("retired");
   });
 
   describe("placeOrder", () => {
@@ -2695,6 +2707,146 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
       expect(dbHolder.current.calls.insert).toHaveLength(0);
       expect(dbHolder.current.calls.execute).toHaveLength(0);
       expect(rzpCreateOrder).not.toHaveBeenCalled();
+      // It was resumed because the form asks for what that order was placed
+      // with, stated the way an order stores it; and it was not cancelled.
+      expect(waitingOrderChanges).toHaveBeenCalledWith("order-old", {
+        shippingAddress: {
+          firstName: "Ada",
+          lastName: "Lovelace",
+          addressLine1: "1 Analytical Engine Rd",
+          addressLine2: "",
+          city: "London",
+          state: "England",
+          postalCode: "SW1",
+          country: "UK",
+          email: "ada@example.com",
+          phone: "+919876543210",
+        },
+        billingAddress: null,
+        notes: null,
+        couponCode: null,
+        pickupLocationId: null,
+        shippingRateId: null,
+        shippingAmount: null,
+      });
+      expect(retireWaitingOrder).not.toHaveBeenCalled();
+    });
+
+    // ★★ PR #303 follow-up review, 22 Nov 2026. The resume above matched on
+    // the products alone, so a shopper who came back to correct their
+    // address, or to switch to collection, paid the old order as it was.
+    it("★★ every choice on the form is compared: the coupon, a billing address, a note, the delivery option and its price", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      await placeOrder(
+        { ...validForm, notes: "  Leave at the gate  " },
+        [oneItem()],
+        " save10 ",
+        "razorpay",
+        null,
+        { addressLine1: " 4 Park Street ", city: "Kolkata" } as any,
+        "flat:express",
+        120,
+      );
+      expect(vi.mocked(waitingOrderChanges).mock.calls[0][1]).toMatchObject({
+        notes: "Leave at the gate",
+        couponCode: "SAVE10",
+        billingAddress: {
+          addressLine1: "4 Park Street",
+          city: "Kolkata",
+          country: "India",
+        },
+        pickupLocationId: null,
+        shippingRateId: "flat:express",
+        shippingAmount: 120,
+      });
+    });
+
+    it("★★ a CHANGED order whose old payment nobody is making: the old order is cancelled and the new one is placed as asked", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(waitingOrderChanges).mockResolvedValue(["address"]);
+      vi.mocked(getCreditBalance).mockResolvedValue(0);
+      vi.mocked(getLiveStoreGateway).mockResolvedValue({
+        keyId: "rzp_live_store",
+        keySecret: "s",
+      } as any);
+      vi.mocked(rzpCreateOrder).mockResolvedValue({
+        ok: true,
+        data: {
+          id: "rzp_order_new",
+          amount: 20000,
+          currency: "INR",
+          receipt: "ORD100110006",
+          status: "created",
+        },
+      } as any);
+      const res = await placeOrder(
+        { ...validForm, addressLine1: "2 Difference Engine Rd" },
+        [oneItem()],
+        null,
+        "razorpay",
+      );
+      expect(retireWaitingOrder).toHaveBeenCalledWith(WAITING_ORDER, {
+        keyId: "rzp_live_store",
+        keySecret: "s",
+      });
+      // A new order, with the corrected address, on its own Razorpay order.
+      expect(res).toMatchObject({
+        success: true,
+        payment: { rzpOrderId: "rzp_order_new" },
+      });
+      expect("resumed" in res && res.resumed).toBeFalsy();
+      expect(rzpCreateOrder).toHaveBeenCalledTimes(1);
+      const row = dbHolder.current.calls.values.find(
+        (v: any) => v?.shippingAddress,
+      );
+      expect(row.shippingAddress.addressLine1).toBe("2 Difference Engine Rd");
+    });
+
+    it("★★ a CHANGED order while a payment may still land on the old one: NO second order, and the shopper is told", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(waitingOrderChanges).mockResolvedValue(["fulfilment"]);
+      vi.mocked(retireWaitingOrder).mockResolvedValue("in_flight");
+      const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+      expect(res).toEqual({
+        error:
+          "A payment for this cart is still being processed on order ORD100110001. If you approved it, that order will be confirmed shortly. To order with your changes instead, try again in about 30 minutes.",
+        unfinished: {
+          orderId: "order-old",
+          orderRef: "ORD100110001",
+          minutesLeft: 30,
+          // The choice to continue that payment exactly as it was placed.
+          payment: {
+            rzpOrderId: "rzp_order_old",
+            keyId: "rzp_live_store",
+            amountPaise: 20000,
+          },
+        },
+      });
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+      expect(dbHolder.current.calls.execute).toHaveLength(0);
+      expect(rzpCreateOrder).not.toHaveBeenCalled();
+    });
+
+    it("★★ an order whose details could not be read is never resumed on a guess", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(waitingOrderChanges).mockResolvedValue(null);
+      vi.mocked(retireWaitingOrder).mockResolvedValue("in_flight");
+      const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
+      expect("resumed" in res && res.resumed).toBeFalsy();
+      expect("unfinished" in res && res.unfinished?.orderId).toBe("order-old");
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
     });
 
     it("★ a waiting order for a DIFFERENT cart is not resumed: this is another purchase", async () => {
@@ -2706,6 +2858,9 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
       const res = await placeOrder(validForm, [oneItem()], null, "cod");
       expect("success" in res && res.success).toBe(true);
       expect("resumed" in res && res.resumed).toBeFalsy();
+      // Nor is it touched: it is a separate purchase with its own window.
+      expect(waitingOrderChanges).not.toHaveBeenCalled();
+      expect(retireWaitingOrder).not.toHaveBeenCalled();
     });
 
     it("★ a store that has paused online payments has nothing to resume on", async () => {
@@ -2719,17 +2874,61 @@ describe("★★ an earlier payment is confirmed, never paid for again", () => {
       } as any);
       const res = await placeOrder(validForm, [oneItem()], null, "razorpay");
       expect("resumed" in res && res.resumed).toBeFalsy();
+      expect(waitingOrderChanges).not.toHaveBeenCalled();
     });
 
-    it("a shopper who now chooses another way to pay gets a new order, as before", async () => {
+    it("★ and when a payment may still land there, the refusal offers no payment to reopen", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(getStoreGateway).mockResolvedValue({
+        creds: { keyId: "rzp_live_store", keySecret: "s" },
+        enabled: false,
+      } as any);
+      vi.mocked(retireWaitingOrder).mockResolvedValue("in_flight");
+      const res = await placeOrder(validForm, [oneItem()], null, "cod");
+      expect("unfinished" in res && res.unfinished).toEqual({
+        orderId: "order-old",
+        orderRef: "ORD100110001",
+        minutesLeft: 30,
+      });
+    });
+
+    it("★★ a shopper who now chooses another way to pay: the unpaid online order is cancelled first, then the new order is placed", async () => {
       vi.mocked(settleShopperPendingOrders).mockResolvedValue({
         paid: null,
         waiting: WAITING_ORDER,
       } as any);
       const res = await placeOrder(validForm, [oneItem()], null, "cod");
+      expect(retireWaitingOrder).toHaveBeenCalledWith(WAITING_ORDER, {
+        keyId: "rzp_live_store",
+        keySecret: "s",
+      });
+      // Another way to pay is a change in itself: nothing is compared.
+      expect(waitingOrderChanges).not.toHaveBeenCalled();
       expect("success" in res && res.success).toBe(true);
       expect("resumed" in res && res.resumed).toBeFalsy();
       expect(dbHolder.current.calls.insert.length).toBeGreaterThan(0);
+    });
+
+    it("★★ cash on delivery while the online payment may still land: NO second order beside it", async () => {
+      vi.mocked(settleShopperPendingOrders).mockResolvedValue({
+        paid: null,
+        waiting: WAITING_ORDER,
+      } as any);
+      vi.mocked(retireWaitingOrder).mockResolvedValue("in_flight");
+      const res = await placeOrder(validForm, [oneItem()], null, "cod");
+      expect("error" in res && res.error).toContain(
+        "A payment for this cart is still being processed on order ORD100110001",
+      );
+      expect("unfinished" in res && res.unfinished?.payment).toEqual({
+        rzpOrderId: "rzp_order_old",
+        keyId: "rzp_live_store",
+        amountPaise: 20000,
+      });
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+      expect(dbHolder.current.calls.execute).toHaveLength(0);
     });
 
     it("★ with nothing waiting, no gateway is read and Razorpay is never asked", async () => {
