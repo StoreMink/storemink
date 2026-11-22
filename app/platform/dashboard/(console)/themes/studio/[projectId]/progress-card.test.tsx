@@ -3,7 +3,6 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type {
   StudioStatusInput,
-  ThemeStudioBuildTimeRange,
   ThemeStudioProgress,
   ThemeStudioProgressStep,
 } from "@/lib/theme-studio/progress";
@@ -114,25 +113,13 @@ const building: StudioStatus = {
   primary: null,
   secondary: [{ kind: "stop", label: "Stop" }],
 };
-const range: ThemeStudioBuildTimeRange = {
-  fromMinutes: 35,
-  toMinutes: 75,
-  basedOn: 0,
-  source: "default",
-};
 
 afterEach(() => cleanup());
 
 describe("the progress card", () => {
   it("names each step with its time, never a step number", () => {
     const view = render(
-      <ProgressCard
-        progress={progress()}
-        status={building}
-        buildTime={range}
-        plan={null}
-        notifiesViewer
-      />,
+      <ProgressCard progress={progress()} status={building} plan={null} />,
     );
     const card = screen.getByRole("region", {
       name: "Theme Studio is building",
@@ -165,13 +152,7 @@ describe("the progress card", () => {
 
   it("shows a next try only on a step that waits for a set time", () => {
     render(
-      <ProgressCard
-        progress={progress()}
-        status={building}
-        buildTime={range}
-        plan={null}
-        notifiesViewer={false}
-      />,
+      <ProgressCard progress={progress()} status={building} plan={null} />,
     );
     const rows = screen.getAllByRole("listitem");
     // One sentence after another: the detail gets its full stop first.
@@ -196,9 +177,7 @@ describe("the progress card", () => {
           ],
         })}
         status={building}
-        buildTime={range}
         plan={null}
-        notifiesViewer={false}
       />,
     );
     expect(
@@ -207,36 +186,20 @@ describe("the progress card", () => {
     ).toBe("Waiting for the picture model. Next try at 10:31.");
   });
 
-  it("says how long a build usually takes, and who is told when it ends", () => {
+  it("shows no time estimate and no leave-this-page line while it builds", () => {
+    // Owner, 22 Nov 2026: the line "Usually 35 to 75 minutes. You can leave
+    // this page. We'll let you know when it's ready." was removed.
     const view = render(
-      <ProgressCard
-        progress={progress()}
-        status={building}
-        buildTime={range}
-        plan={null}
-        notifiesViewer
-      />,
+      <ProgressCard progress={progress()} status={building} plan={null} />,
     );
-    expect(
-      screen.getByText(
-        "Usually 35 to 75 minutes. You can leave this page. We'll let you know when it's ready.",
-      ),
-    ).toBeTruthy();
-    view.rerender(
-      <ProgressCard
-        progress={progress()}
-        status={building}
-        buildTime={range}
-        plan={null}
-        notifiesViewer={false}
-      />,
-    );
-    expect(
-      screen.getByText("Usually 35 to 75 minutes. You can leave this page."),
-    ).toBeTruthy();
+    const text = view.container.textContent ?? "";
+    expect(text).not.toMatch(/Usually|leave this page|let you know/);
+    expect(view.container.querySelector(".studio-progress-foot")).toBeNull();
+    // The steps are still there.
+    expect(text).toContain("Drawing pictures");
   });
 
-  it("names a re-check and gives its own time", () => {
+  it("names a re-check", () => {
     render(
       <ProgressCard
         progress={progress(
@@ -246,9 +209,7 @@ describe("the progress card", () => {
           },
         )}
         status={{ ...building, words: "Checking on today's StoreMink build" }}
-        buildTime={range}
         plan={null}
-        notifiesViewer={false}
       />,
     );
     expect(
@@ -256,20 +217,12 @@ describe("the progress card", () => {
         name: "Checking again on today's StoreMink build",
       }),
     ).toBeTruthy();
-    expect(
-      screen.getByText("About 3 to 5 minutes. You can leave this page."),
-    ).toBeTruthy();
+    expect(screen.queryByText(/About 3 to 5 minutes/)).toBeNull();
   });
 
   it("tells a screen reader the step working now in one short line", () => {
     render(
-      <ProgressCard
-        progress={progress()}
-        status={building}
-        buildTime={range}
-        plan={null}
-        notifiesViewer={false}
-      />,
+      <ProgressCard progress={progress()} status={building} plan={null} />,
     );
     expect(screen.getByRole("status").textContent).toBe(
       "Working on: Drawing pictures",
@@ -293,9 +246,7 @@ describe("the progress card", () => {
           primary: { kind: "publish", label: "Publish" },
           secondary: [],
         }}
-        buildTime={range}
         plan={null}
-        notifiesViewer
       />,
     );
     const details = view.container.querySelector("details.studio-progress");
@@ -321,9 +272,7 @@ describe("the progress card", () => {
           primary: null,
           secondary: [],
         }}
-        buildTime={range}
         plan={null}
-        notifiesViewer
       />,
     );
     expect(
@@ -334,9 +283,7 @@ describe("the progress card", () => {
       <ProgressCard
         progress={progress()}
         status={{ ...building, row: 6, words: "Stuck since 10:20" }}
-        buildTime={range}
         plan={null}
-        notifiesViewer
       />,
     );
     expect(
@@ -349,12 +296,10 @@ describe("the progress card", () => {
       <ProgressCard
         progress={progress({ steps: [] }, { working: null })}
         status={{ ...building, row: 19, words: "Not checked yet" }}
-        buildTime={range}
         plan={{
           assumptions: ["Ships across India", `Prices in 3${EN}5 tiers`],
           leftOut: ["A size quiz"],
         }}
-        notifiesViewer
       />,
     );
     expect(
@@ -371,9 +316,7 @@ describe("the progress card", () => {
       <ProgressCard
         progress={progress({ steps: [] }, { working: null })}
         status={{ ...building, row: 18, words: "Not started" }}
-        buildTime={range}
         plan={null}
-        notifiesViewer
       />,
     );
     expect(view.container.innerHTML).toBe("");
@@ -381,13 +324,7 @@ describe("the progress card", () => {
 
   it("keeps long dashes out of stored step words", () => {
     const view = render(
-      <ProgressCard
-        progress={progress()}
-        status={building}
-        buildTime={range}
-        plan={null}
-        notifiesViewer
-      />,
+      <ProgressCard progress={progress()} status={building} plan={null} />,
     );
     const text = view.container.textContent ?? "";
     expect(text.includes(EM) || text.includes(EN)).toBe(false);

@@ -55,6 +55,44 @@
   );
 }
 
+/* ★★ A FULL-WIDTH PHOTOGRAPH MEETS THE HEADER EXACTLY (owner, 22 Nov 2026).
+   The rule above floors the reserve at the page's section gap, which is
+   right for a hero drawn as a card (the space around it is its design) and
+   wrong for a photograph running edge to edge: with the bar now 68px tall,
+   a 72px gap on a wide screen, or a spacious theme's larger one, left a
+   strip of page colour between the header and the picture. A full-width
+   opening reserves the header's height and nothing more; under the market
+   bar, which reserves its own height on the root, it reserves nothing. */
+.storefront-root:not(.sm-header-market):not(.sm-header-transparent)
+  .home-sections:has(
+    > .home-section.is-fullbleed:first-child > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: var(--sm-header-h, 68px);
+}
+.storefront-root.sm-header-market
+  .home-sections:has(
+    > .home-section.is-fullbleed:first-child > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: 0;
+}
+
+/* ★★ AND THE PHOTOGRAPH ITSELF STARTS THERE (owner, 22 Nov 2026: "just
+   below the Roast and above the homepage carousel there is so much of gap").
+   The rule above puts the opening SECTION flush under the header, but a
+   section's own vertical padding (a theme's or a merchant's `padding_y`) then
+   pushed the photograph down inside it: the Roast theme's "sm" left 28px of
+   page colour under a 68px bar, which read as a header half as tall again.
+   A full-width photograph that opens the page has no padding above it, under
+   every header, whatever the section's padding setting says; its padding
+   below is kept. A contained hero (not full width) keeps its padding: there
+   the space around the card is the design. */
+.home-sections
+  > .home-section.is-fullbleed:first-child:has(
+    > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: 0;
+}
+
 /* The transparent header (theme layout.header = "transparent") floats over
    the opening photograph the way Shopify themes do, so a hero- or
    carousel-led page starts at the very top and its picture runs under the

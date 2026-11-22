@@ -14771,7 +14771,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the list's rows (the most recently changed first, at most 100) and every
     filter's count (over at most 1000 projects) in at most 4 statements,
     whatever the number of projects. `readThemeStudioBuildTimeRange` gives
-    "Usually N to M minutes" from the last 10 finished builds on a real
+    the New theme page's "Usually N to M minutes" from the last 10 finished builds on a real
     provider (the first build run to the first `auto_qa_passed`, rounded
     outward to 5 minutes), else 35 to 75 (the 4 Oct 2026 benchmark). Cost: a
     poll while building is 2 statements in one transaction plus the actor's
@@ -14828,8 +14828,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     **The theme page (TS-2B).** `[projectId]/page.tsx` gates first
     (`requireOperator`, then `getThemeStudioActor`; anyone else gets
     `SuperadminOnly` and nothing is read). It then reads
-    `readThemeStudioProgress` and `readThemeStudioBuildTimeRange` (one
-    `withService`, one after the other), then the project once through
+    `readThemeStudioProgress`, then the project once through
     `tab-reads.ts` `readStudioProject` (React `cache`, keyed by the id the
     progress read returns, so the open tab and the release controls share the
     one read of the whole project), reads the progress again when the project
@@ -14882,11 +14881,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     because the status is the current design's.
     `progress-card.tsx`, at the end of the chat: each step by name with its
     time, a repair round as its own row, "Next try at 10:31" only when a step
-    really waits for one, "Usually N to M minutes. You can leave this page."
-    (about 3 to 5 minutes for a re-check), "We'll let you know" only for the
-    operator who started the theme, and a Plan line (the current design's
-    assumptions and non-blocking gaps); it folds into "What Theme Studio did
-    last" once nothing works. `conversation.tsx`: Design N names, **Start
+    really waits for one, and a Plan line (the current design's assumptions
+    and non-blocking gaps); it folds into "What Theme Studio did last" once
+    nothing works. ★ No time estimate and no "You can leave this page. We'll
+    let you know when it's ready." under the steps (removed 22 Nov 2026,
+    owner); the New theme page still gives the estimate before a build is
+    started, and the phone bar keeps its own status sentence. `conversation.tsx`: Design N names, **Start
     building** (the saved brief, with the screenshots New theme uploaded),
     Send answer or Send message, **Screenshots** (upload, Earlier screenshots
     to attach again, Delete for an upload no message used), one idempotency
@@ -15936,6 +15936,19 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     guards: publish 1.0.0, a change, a failed change stays live, a second
     design, 1.1.0, the 1.0.0 row byte-identical, the same design refused.
     Operator-only: no Help Centre update.
+    ★ A REVIEW SCREENSHOT WAITS FOR ITS PHOTOGRAPHS (same day, found on the
+    first change to the live Roast theme). `capture-job.mjs`
+    `waitForPictures` runs in the page just before each design-review
+    screenshot: a picture with a source and a box that has not loaded is
+    waited for up to `PICTURE_WAIT_MS` (8 s); one that failed is asked for
+    once more, one still held back as lazy is started. The probe's own wait
+    is six seconds, and a picture still on its way after it was photographed
+    as an empty box: the reviewer saw "a blank, unrendered container", called
+    it a platform fault (`renderer_fix_required`) and failed a design whose
+    page rendered correctly a moment later. A picture that really is broken
+    still fails the probe's own `brokenImages`. Tests:
+    `capture-job.test.mjs` (the wait itself, and the order measure, wait,
+    screenshot).
     ★ THE OPENING SITS FLUSH UNDER THE HEADER (same day). `opening.ts`
     `enforceHomepageOpening(..., { flush })` sets the opening section's
     `style.padding_y` to `none` on v34 new themes: Roast's model wrote "sm",
@@ -17616,6 +17629,29 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Now 12px of padding (`.header`, and the same at 1024px and below, where
     it had grown to 20px 32px) around a 44px button
     (`delivery-location.module.css` `.trigger`), the touch-target floor.
+    ★★ AND A FULL-WIDTH OPENING PHOTOGRAPH MEETS IT EXACTLY (same day,
+    owner: "just below the Roast and above the homepage carousel there is so
+    much of gap"). Three things had left page colour between the bar and the
+    photograph, and each is now a storefront rule in `homepage.css`, for
+    every store and every theme release already installed:
+    (1) the opening section's own vertical padding (`padding_y`, a theme's or
+    a merchant's) pushed the photograph down inside it (Roast: 28px), so a
+    full-bleed first section that holds a hero or a slideshow has no padding
+    above it; (2) the page reserved `max(section gap, header)` above a
+    photograph-led opening, 72px on a wide screen under a 68px bar and more
+    on a spacious theme, so a full-bleed opening reserves the header's height
+    and nothing more (a hero drawn as a card keeps the gap, and the market
+    bar, which reserves on the root, gets none); (3) the height reserved
+    before the browser has measured the header (`--sm-header-h` in
+    `storefront-theme.css`) was still 80px, and 88px from 769 to 1024px,
+    after the bar became 68px: it is 68px at every width now, 69px for the
+    minimal header's desktop line, 108px stacked and 134px utility.
+    `scripts/storefront-header-layout-check.mjs` (2,496 cases: six widths,
+    eight headers, nine openings, before and after hydration, with and
+    without the announcement bar) now also measures where the photograph
+    starts inside its section, and ★ RUNS IN CI's renderer job: it was not
+    run there, 87 of its cases were failing after the bar was slimmed, and
+    nothing said so. `opening-clearance.test.ts` pins the rules' text.
     ★ Transitions are switched off while measuring
     (`data-header-measuring`). The search box animates its width and the
     header its padding, and a mid-animation reading once passed a fit that

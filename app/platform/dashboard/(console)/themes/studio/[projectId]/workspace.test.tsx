@@ -236,12 +236,6 @@ function props(
   return {
     project: base,
     initialProgress: progress(),
-    buildTime: {
-      fromMinutes: 35,
-      toMinutes: 75,
-      basedOn: 0,
-      source: "default",
-    },
     tab: "preview",
     explicitTab: false,
     versionId: "v2",

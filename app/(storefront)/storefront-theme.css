@@ -23,8 +23,13 @@
      below adds it and the measured height includes it. */
   --sm-announce-h: 0px;
   /* Safe clearance before hydration; useHeaderFit publishes the bar's actual
-     height after layout and on resize/font changes. */
-  --sm-header-h: calc(80px + var(--sm-announce-h));
+     height after layout and on resize/font changes. ★ 68px at every width
+     since 22 Nov 2026, the header's real height (12px of padding around
+     44px controls, Header.module.css). It was 80px here and 88px from 769
+     to 1024px, the old bar's heights: left behind when the bar was slimmed,
+     they reserved 12 to 20px too much until the browser had measured it, a
+     strip of page colour under the header on every page load. */
+  --sm-header-h: calc(68px + var(--sm-announce-h));
 
   /* Per-store theming: the brand's primary colour (injected as --brand-primary
      from the store's settings) drives the storefront accent / CTA / link
@@ -109,25 +114,23 @@
 .storefront-root.sm-announce {
   --sm-announce-h: 36px;
 }
-@media (max-width: 1024px) {
-  .storefront-root {
-    --sm-header-h: calc(88px + var(--sm-announce-h));
-  }
-}
-@media (max-width: 768px) {
-  .storefront-root {
-    --sm-header-h: calc(68px + var(--sm-announce-h));
-  }
-}
-/* The two-row headers (plan Phase 2d) are taller than the 80px fallback
+/* The two-row headers (plan Phase 2d) are taller than the 68px fallback
    above; useHeaderFit publishes the measured height once hydrated, this is
-   what leading content clears before then. Desktop only, where they apply. */
+   what leading content clears before then. Desktop only, where they apply.
+   Measured again on 22 Nov 2026, after the bar's padding went from 16px to
+   12px (they were 112px and 138px for 108.5px and 135px). A few px over
+   the measurement, as before: a row of text is a little taller in some
+   fonts, and too little would put the opening under the header. */
 @media (min-width: 1025px) {
+  /* The minimal header draws a 1px line under itself on desktop. */
+  .storefront-root.sm-header-minimal {
+    --sm-header-h: calc(69px + var(--sm-announce-h));
+  }
   .storefront-root.sm-header-stacked {
-    --sm-header-h: calc(112px + var(--sm-announce-h)); /* measured 108.5px */
+    --sm-header-h: calc(108px + var(--sm-announce-h)); /* measured 104.5px */
   }
   .storefront-root.sm-header-utility {
-    --sm-header-h: calc(138px + var(--sm-announce-h)); /* measured 135px */
+    --sm-header-h: calc(134px + var(--sm-announce-h)); /* measured 131px */
   }
 }
 

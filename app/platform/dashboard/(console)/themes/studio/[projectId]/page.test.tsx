@@ -52,12 +52,6 @@ vi.mock("@/lib/theme-studio/progress", () => ({
         : data.progress[0]
       : data.progress;
   }),
-  readThemeStudioBuildTimeRange: vi.fn(async () => ({
-    fromMinutes: 35,
-    toMinutes: 75,
-    basedOn: 0,
-    source: "default",
-  })),
 }));
 vi.mock("@/lib/db/client", () => ({
   withService: vi.fn(async (fn: (db: unknown) => unknown) => fn({})),
@@ -204,7 +198,6 @@ describe("the theme page's server part", () => {
     expect(page.props.explicitTab).toBe(false);
     expect(page.props.tabContent).toBeNull();
     expect(page.props.initialProgress).toEqual(progress());
-    expect(page.props.buildTime).toMatchObject({ fromMinutes: 35 });
     expect(page.props.testProvider).toBe(true);
     expect(page.props.draftLayout).toBeNull();
     // The viewer started the theme (emails compared without case).

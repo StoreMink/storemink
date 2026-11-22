@@ -42,10 +42,7 @@ import type {
   ThemeStudioVersionView,
 } from "@/lib/theme-studio/repository";
 import type { DistinctnessReport } from "@/lib/theme-studio/fingerprint";
-import type {
-  ThemeStudioBuildTimeRange,
-  ThemeStudioProgress,
-} from "@/lib/theme-studio/progress";
+import type { ThemeStudioProgress } from "@/lib/theme-studio/progress";
 import {
   Dialog,
   DialogContent,
@@ -1298,7 +1295,6 @@ export interface ProjectWorkspaceProps {
    * it, so the page refreshes once when the live row leaves it (or reaches a
    * release row) even at the same revision. */
   serverRow: number;
-  buildTime: ThemeStudioBuildTimeRange;
   /** The tab the server rendered (`?tab=`, default preview). */
   tab: StudioTabKey;
   /** The address named a tab: a phone then opens on it, not on the chat. */
@@ -1324,7 +1320,6 @@ export function ProjectWorkspace({
   project,
   initialProgress,
   serverRow,
-  buildTime,
   tab,
   explicitTab,
   versionId,
@@ -1915,13 +1910,11 @@ export function ProjectWorkspace({
             <ProgressCard
               progress={live.progress}
               status={status}
-              buildTime={buildTime}
               plan={
                 plan && (plan.assumptions.length || plan.leftOut.length)
                   ? plan
                   : null
               }
-              notifiesViewer={notifiesViewer}
             />
           }
         />
