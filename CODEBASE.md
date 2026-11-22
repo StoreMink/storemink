@@ -7700,6 +7700,17 @@ wholesip/
 │                              # storemink-theme-studio-capture-dev (deleting that job is
 │                              # step A6, with the owner's OK); dev still BUILDS the
 │                              # capture image, so a broken Dockerfile fails on dev first.
+│                              # ★★ theme-workers-deploy finds its own Python (23 Nov
+│                              # 2026). It called bare `python3`, and the production
+│                              # build of commit 604ed60 failed there ("python3: command
+│                              # not found": the Cloud SDK image's tag floats) AFTER the
+│                              # migrations and the web deploy, leaving the two worker
+│                              # services on the previous image. It now uses python3
+│                              # from PATH, else the Python gcloud itself runs on
+│                              # (`gcloud info`, basic.python_location). ⚠ A build that
+│                              # fails at this step has ALREADY deployed the website:
+│                              # run scripts/theme-studio-workers.py --deploy by hand
+│                              # to bring the workers level.
 │                              # The deploy step also sets THEME_STUDIO_BUILD_ID to the
 │                              # commit (COMMIT_SHA, plan P3); it is empty on a manual
 │                              # build, so the app falls back to K_REVISION. It passes
@@ -11804,6 +11815,10 @@ wholesip/
 │   │                          # pos-wording rule of help-content-lint.mjs (Help
 │   │                          # migrations after 0253) and help-content-audit.mjs,
 │   │                          # so the two guards cannot drift (§5 #22).
+│   ├── theme-release-copy.ts  # ★ `npm run theme-release:copy`: export a Theme Studio
+│   │                          # theme's releases from one database and import them into
+│   │                          # another (dry run by default; releases, demo store, then
+│   │                          # the catalogue). Rules: theme-release-copy-core.ts
 │   ├── build.mjs              # ★ `npm run build`: next build, run again (4 attempts,
 │   │                          # build cache cleared) only when a Google font failed it;
 │   │                          # the rule is build-font-retry.mjs (pure, tested). §2 Deploy
@@ -12858,7 +12873,36 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     bundled releases with `--commit`, and can explicitly select/restore a
     published pointer with `--activate id@version` (which refuses a package
     the readers would reject); it never advances an existing pointer during
-    routine import. Size is measured as `package_json::text` (`jsonbTextBytes`)
+    routine import. ★★ A THEME BUILT IN THEME STUDIO IS COPIED BETWEEN
+    ENVIRONMENTS BY `npm run theme-release:copy` (owner, 22 Nov 2026: "volt
+    and roast themes are on my local. push to production through CLI";
+    `scripts/theme-release-copy.ts`, rules in `theme-release-copy-core.ts`).
+    A generated theme exists only in the database it was built in, and the
+    import above handles bundled themes only, so a theme published on a
+    laptop could reach production only by being built there again. The
+    `export` mode reads the published `theme-studio` releases and the
+    catalogue pointer out of the database the shell points at. The `import`
+    mode is a DRY RUN by default: it validates every package with this
+    checkout's validator (the content digest must match), fetches every
+    picture it names (public addresses in the bucket every environment
+    reads), reads the target and prints the plan. With `--commit`,
+    `--confirm-database` naming the target and `--by` naming who, it writes
+    in Publish's own order, so exposure is last: the release rows oldest
+    first (`insertThemeReleaseWithDb`), the demo store (`upsertDemoStoreRow`
+    and `applyThemeDefinition` with reset), with `--root-domain` the demo's
+    four pages fetched, and only then the catalogue pointer with a
+    `theme_catalog_audit` row. It refuses a release that exists with
+    different content and a demo slug held by a real store, and never moves a
+    catalogue that already offers a newer version. `--visibility hidden`
+    copies without offering. ⚠ It copies the RELEASES, not the Theme Studio
+    project: in the target the theme has no project, so it cannot be changed
+    from that environment's Theme Studio (change it where the project lives
+    and copy the next release), and that console has no Stop offering button
+    for it (`theme-registry:import` with `--activate` and
+    `--visibility hidden` hides it). ⚠ The target must already run code that
+    understands the package, or it stores a release it then refuses to
+    render. Tests: `scripts/theme-release-copy-core.test.ts`.
+    Size is measured as `package_json::text` (`jsonbTextBytes`)
     and actor ids must be `platform_admins.id` uuids. Full contract and rollout record:
     `docs/mink-ai-theme-studio-phase1.md`. This is internal infrastructure, so
     there is no merchant-visible change and no Help Centre migration.
