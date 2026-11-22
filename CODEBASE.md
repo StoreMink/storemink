@@ -25835,9 +25835,24 @@ way — an entry there is a deliberate act, not a way to silence the guard.
          `billing.mandate_token_past_expiry`); a UPI token's `expired_at` is
          its real five-year expiry and still ends it.
 
-      ⚠ Still not run: the DEBIT itself, on any mandate, which Razorpay
-      allows only after the notice period (four notified test orders are
-      waiting; the first from 22 Nov 2026 20:35 UTC).
+      ★★ THE DEBIT ITSELF WAS TRIED ON 23 NOV 2026 AND REFUSED (UPI, test
+      mode; docs/autopay-verification.md, "23 Nov 2026: the first debit
+      after its notice period"). With the notice delivered, the 25 hours
+      passed, the mandate confirmed and `readNotice` ready, Razorpay
+      answered HTTP 400 "The requested URL was not found on the server"
+      (source `internal`), counted an attempt on the order and created no
+      payment: the answer the plain order got on 21 Nov. So the notification
+      is necessary and not shown to be sufficient; whether it is test mode,
+      the account or UPI only is Razorpay's to say. The debit pass records it
+      as a refused try (`gateway_rejected`), which is true and safe. Since
+      that night a refused debit is logged, where it left no line before:
+      `billing.debit_pass.refused` (a warning, every refusal, with the
+      gateway's words) and `billing.gateway.debit_unavailable` (an error, for
+      this answer only, `isDebitUnavailableAnswer` in
+      `lib/billing/gateway.ts`: it is about the gateway account, not one
+      merchant's mandate). `RECURRING_CHARGE_VERIFIED` is unchanged (owner's
+      decision). ⚠ The three card orders come due on 23 Nov between 11:28
+      and 13:05 IST. No merchant step changes, so no Help Centre update.
       ★ THE WHOLE RENEWAL RUNS HOUR BY HOUR IN A LOCAL TEST
       (`lib/billing/renewal-scenarios.local.test.ts`, run with
       `npm run billing:scenarios:local`; opt-in, so plain `vitest` reports it
