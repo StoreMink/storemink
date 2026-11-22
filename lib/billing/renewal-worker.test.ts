@@ -53,6 +53,13 @@ const collector = vi.hoisted(() => ({
   automaticAttemptsOn: vi.fn(),
 }));
 vi.mock("./collect", () => collector);
+// Whether an earlier debit of the invoice took the money after all
+// (earlier-debits.ts, proved in its own test). ★ "clear" unless a test says
+// otherwise, so every case here describes an invoice with nothing held.
+const earlierDebits = vi.hoisted(() => ({
+  earlierDebitsOf: vi.fn(async (): Promise<string> => "clear"),
+}));
+vi.mock("./earlier-debits", () => earlierDebits);
 
 // Telling the merchant is best-effort and proved by its own suite; here it is a
 // seam, so a test can assert WHO was told and WHEN without sending mail.
@@ -815,6 +822,50 @@ describe("collectDueRenewals", () => {
       });
       await collectDueRenewals({ now: NOW, charge, priceFor });
       expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+    });
+
+    // PR #303 review, 22 Nov 2026. Razorpay does not treat a failed payment
+    // as final: a debit reported failed can be authorised late by the bank
+    // and captured. Starting the next try then debited one renewal twice.
+    describe("★★ a retry first asks whether an earlier debit took the money after all", () => {
+      const retryDue = () => {
+        openRenewal();
+        collector.automaticAttemptsOn.mockResolvedValue({
+          count: 1,
+          starts: 1,
+          lastAt: hoursAgo(24),
+        });
+      };
+
+      it("asks about this invoice's earlier debits before the next try", async () => {
+        retryDue();
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(earlierDebits.earlierDebitsOf).toHaveBeenCalledWith({
+          invoiceId: "inv-1",
+          storeId: STORE,
+          source: "collect",
+          now: NOW,
+        });
+        expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      });
+
+      it.each(["paid", "unsettled", "unknown"])(
+        "★★ an earlier debit that is %s: NO new try this run",
+        async (state) => {
+          retryDue();
+          earlierDebits.earlierDebitsOf.mockResolvedValueOnce(state);
+          const s = await collectDueRenewals({ now: NOW, charge, priceFor });
+          expect(collector.collectInvoice).not.toHaveBeenCalled();
+          expect(s).toMatchObject({ pendingReconcile: 1, failed: 0 });
+        },
+      );
+
+      it("★ a FIRST try asks nothing: no debit was ever sent for this invoice", async () => {
+        openRenewal();
+        await collectDueRenewals({ now: NOW, charge, priceFor });
+        expect(earlierDebits.earlierDebitsOf).not.toHaveBeenCalled();
+        expect(collector.collectInvoice).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("★★ after three tries it never debits again: the invoice is the merchant's to pay", async () => {

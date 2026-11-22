@@ -25,7 +25,7 @@ import {
 import { withService, type Db } from "@/lib/db/client";
 import { isUniqueViolation } from "@/lib/db/errors";
 import { resolveRecreatedThemeId } from "./project-identity";
-import { publishedReleaseOf } from "./published-version";
+import { publishedReleaseOf, restingStatusSql } from "./published-version";
 import { isBundledThemeId } from "@/lib/themes";
 import type {
   ThemeCatalogSize,
@@ -1680,15 +1680,6 @@ async function lockRun(db: Db, projectId: string, runId: string) {
   return run;
 }
 
-/** The status a project returns to when its active run ends without a new
- * version: its last good version if it has one, otherwise `failed`. Both are
- * legal from `generating`. */
-function restingState(
-  currentVersionId: string | null,
-): ThemeStudioProjectState {
-  return currentVersionId ? "ready" : "failed";
-}
-
 export async function cancelThemeStudioRun(
   actor: ThemeStudioActor,
   input: { projectId: string; runId: string },
@@ -1736,7 +1727,14 @@ export async function cancelThemeStudioRun(
         .set({
           ...(revealed.length
             ? { status: "ready", currentVersionId: revealed[0].id }
-            : { status: restingState(project.currentVersionId) }),
+            : // ★★ PUBLISHED-AWARE, like the worker's and Stop's resting state
+              // (PR #303 review, 22 Nov 2026). A live theme whose change was
+              // still queued keeps its published design current, so
+              // cancelling returns it to `published`. It used to go to
+              // `ready`: the theme stopped showing as live, Publish refused
+              // the design as already published, and Make current on it
+              // answered "already current".
+              { status: restingStatusSql() }),
           revision: project.revision + 1,
         })
         .where(eq(themeStudioProjects.id, project.id));
@@ -2439,7 +2437,18 @@ export type ThemeStudioRestoreOutcome =
   | "checking"
   /** The design made current is one already published: the theme is live on
    * it again, and there is nothing to check or publish. */
-  | "live";
+  | "live"
+  /** The design made current was published as an EARLIER release, and new
+   * stores get another (the catalogue is not moved by Make current). Nothing
+   * to check or publish; a change sent now starts from this design. */
+  | "earlier_release";
+
+/** The releases a Make current outcome of `live` or `earlier_release` is
+ * about: the one this design was published as, and the one new stores get. */
+export interface ThemeStudioRestoreRelease {
+  version: string;
+  liveVersion: string | null;
+}
 
 /**
  * Make an earlier version current again. Nothing is copied or deleted:
@@ -2468,7 +2477,11 @@ export type ThemeStudioRestoreOutcome =
 export async function restoreThemeStudioVersion(
   actor: ThemeStudioActor,
   input: { projectId: string; versionId: string; expectedRevision: number },
-): Promise<{ changed: boolean; outcome: ThemeStudioRestoreOutcome }> {
+): Promise<{
+  changed: boolean;
+  outcome: ThemeStudioRestoreOutcome;
+  release?: ThemeStudioRestoreRelease;
+}> {
   if (!isUuid(input.projectId) || !isUuid(input.versionId)) {
     throw new ThemeStudioError("not_found", "That version no longer exists.");
   }
@@ -2529,12 +2542,26 @@ export async function restoreThemeStudioVersion(
         "That version has no theme to restore.",
       );
     }
+    // ★ Asked BEFORE the "already current" answer below (PR #303 review,
+    //   22 Nov 2026): a project can be `ready` on a design that IS published
+    //   (older code left it so after a queued change was cancelled), and
+    //   Make current on that design is how it comes back to `published`.
+    const releaseVersion = await publishedReleaseOf(db, project.id, version.id);
+    const sameVersion = version.id === project.currentVersionId;
     if (
-      version.id === project.currentVersionId &&
-      (project.status === "ready" ||
-        project.status === "candidate" ||
-        project.status === "published")
+      sameVersion &&
+      (project.status === "published" ||
+        (!releaseVersion &&
+          (project.status === "ready" || project.status === "candidate")))
     ) {
+      if (project.status === "published" && releaseVersion) {
+        const { outcome, ...release } = await restoreRelease(
+          db,
+          project.themeId,
+          releaseVersion,
+        );
+        return { changed: false, outcome, release };
+      }
       return {
         changed: false,
         outcome:
@@ -2546,16 +2573,38 @@ export async function restoreThemeStudioVersion(
       };
     }
     const revision = project.revision + 1;
-    // ★ The design being made current is one already published: the theme
-    //   is simply live on it again (0288). Nothing is checked or queued, and
+    // ★ The design being made current is one already published: the project
+    //   is `published` on it again (0288). Nothing is checked or queued, and
     //   Publish has nothing to do. The database allows this move only
     //   because that publication exists.
-    const releaseVersion = await publishedReleaseOf(db, project.id, version.id);
     if (releaseVersion) {
+      // ★★ FROM `published` ON ANOTHER DESIGN, THROUGH `ready` (PR #303
+      // review, 22 Nov 2026). The guard refuses published to published with
+      // a different version ("a theme studio published project cannot change
+      // its version"), so a theme with two releases could not make its
+      // earlier published design current: the one UPDATE below raised a
+      // database error. Leaving `published` with the new version and coming
+      // back to it are both moves the guard knows, in this one transaction.
+      if (project.status === "published" && !sameVersion) {
+        await db
+          .update(themeStudioProjects)
+          .set({ status: "ready", currentVersionId: version.id, revision })
+          .where(eq(themeStudioProjects.id, project.id));
+      }
       await db
         .update(themeStudioProjects)
         .set({ status: "published", currentVersionId: version.id, revision })
         .where(eq(themeStudioProjects.id, project.id));
+      // ★ THE CATALOGUE IS NOT MOVED. Which release new stores get changes
+      //   only by publishing, or by the catalogue's own action (the Log's
+      //   "Changed the release new stores get"): Make current is about what
+      //   the operator is working on. So the outcome says which of the two
+      //   this is, and the message names both releases when they differ.
+      const { outcome, ...release } = await restoreRelease(
+        db,
+        project.themeId,
+        releaseVersion,
+      );
       await recordEvent(db, {
         projectId: project.id,
         actor,
@@ -2564,11 +2613,12 @@ export async function restoreThemeStudioVersion(
           versionId: version.id,
           versionNumber: version.versionNumber,
           previousVersionId: project.currentVersionId,
-          outcome: "live",
+          outcome,
           releaseVersion,
+          liveReleaseVersion: release.liveVersion,
         },
       });
-      return { changed: true, outcome: "live" };
+      return { changed: true, outcome, release };
     }
     await db
       .update(themeStudioProjects)
@@ -2593,6 +2643,39 @@ export async function restoreThemeStudioVersion(
     });
     return { changed: true, outcome: checked.outcome };
   });
+}
+
+/**
+ * Whether a published design made current is the release new stores get
+ * (`live`) or an earlier one (`earlier_release`), read from the catalogue.
+ * A catalogue that names no release (or cannot be matched) reads as `live`:
+ * the design is a published one, and there is no other release to name.
+ */
+async function restoreRelease(
+  db: Db,
+  themeId: string,
+  releaseVersion: string,
+): Promise<
+  ThemeStudioRestoreRelease & { outcome: "live" | "earlier_release" }
+> {
+  const [row] = await db
+    .select({ version: themeReleases.version })
+    .from(themeCatalogEntries)
+    .innerJoin(
+      themeReleases,
+      eq(themeReleases.id, themeCatalogEntries.currentReleaseId),
+    )
+    .where(eq(themeCatalogEntries.themeId, themeId))
+    .limit(1);
+  const liveVersion = row?.version ?? null;
+  return {
+    version: releaseVersion,
+    liveVersion,
+    outcome:
+      liveVersion && liveVersion !== releaseVersion
+        ? "earlier_release"
+        : "live",
+  };
 }
 
 /** The automatic half of Make current: see `restoreThemeStudioVersion`. The

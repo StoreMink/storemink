@@ -1,6 +1,7 @@
 // `npm run build`: `next build`, run again when (and only when) it failed
-// because a Google font file could not be downloaded. The rule and the reason
-// are in scripts/build-font-retry.mjs.
+// because of a Google font, with the build cache cleared first so Google is
+// really asked again. The rule and the reason are in
+// scripts/build-font-retry.mjs.
 //
 // ★ THE HEAP LIMIT TRAVELS IN `NODE_OPTIONS`, as it did when this was a
 //   one-line script: Next type-checks by spawning `tsc` as a separate process
@@ -12,6 +13,7 @@
 //   this script's exit code.
 
 import { spawn } from "node:child_process";
+import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -77,6 +79,29 @@ function runBuild() {
 const sleep = (seconds) =>
   new Promise((resolve) => setTimeout(resolve, seconds * 1000));
 
+/**
+ * Remove what the failed build left in `.next`, so the next attempt asks
+ * Google for every stylesheet again instead of reading the same answer back
+ * from the bundler's cache (which is what made an unchanged retry fail in
+ * two seconds). `.next/dev` is the dev server's own and is left alone.
+ */
+async function clearBuildCache() {
+  const dir = path.join(projectRoot, ".next");
+  let entries = [];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return;
+  }
+  await Promise.all(
+    entries
+      .filter((entry) => entry !== "dev")
+      .map((entry) =>
+        rm(path.join(dir, entry), { recursive: true, force: true }),
+      ),
+  );
+}
+
 for (let attempt = 1; ; attempt += 1) {
   const result = await runBuild();
   if (result.code === 0) process.exit(0);
@@ -85,8 +110,10 @@ for (let attempt = 1; ; attempt += 1) {
     process.exit(result.code);
   }
   console.error(
-    `\nThe build could not download a Google font file (attempt ${attempt} of ${BUILD_ATTEMPTS}). ` +
-      `This is a network failure, not a fault in the code. Building again in ${wait} seconds.\n`,
+    `\nGoogle Fonts answered with font addresses this build cannot read (attempt ${attempt} of ${BUILD_ATTEMPTS}). ` +
+      `It does so about once in a hundred requests; it is not a fault in the code. ` +
+      `Clearing the build cache and building again in ${wait} seconds.\n`,
   );
+  await clearBuildCache();
   await sleep(wait);
 }

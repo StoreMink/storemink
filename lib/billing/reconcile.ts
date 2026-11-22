@@ -536,16 +536,22 @@ async function closeOrderlessAttempts(input: {
 }
 
 /**
- * Ask the gateway about MANUAL checkouts closed in the last
- * `FAIL_AFTER_HOURS`, and file any payment captured on one for a person.
+ * Ask the gateway about attempts closed in the last `FAIL_AFTER_HOURS` whose
+ * order could still be paid, and file any payment captured on one for a
+ * person.
  *
  * ★ WHY THESE. Closing an attempt does not close its Razorpay order. A manual
  * checkout is closed with its order still payable when the amount due changed
  * (Pay now), when the GST, plan or rail changed under an enrolment, or when
  * this pass gave up waiting, each on the gateway's word that nobody had paid
- * YET. The window left open in another tab can still pay it. An automatic
- * debit is not read: nothing but our own server call can pay a recurring
- * order, and a failed debit is final.
+ * YET. The window left open in another tab can still pay it.
+ * ★★ AND AN AUTOMATIC DEBIT THAT WAS SENT (PR #303 review, 22 Nov 2026). This
+ * said "a failed debit is final", which Razorpay does not promise: a payment
+ * marked failed can be authorised late by the bank and captured. The webhook
+ * files such a capture, but a missed webhook left it recorded nowhere,
+ * because this scan read manual checkouts only. An automatic attempt that
+ * ended BEFORE its debit is still not read: nothing but our own server call
+ * can pay a recurring order.
  *
  * ★ The same horizon the stale scan uses: 72 hours after an attempt is over,
  * a payment landing on it would be extraordinary. Bounded per pass, newest
@@ -572,6 +578,7 @@ async function findPaymentsOnClosedCheckouts(input: {
     amountPaise: number;
     state: string;
     failureCode: string | null;
+    mode: string;
   }[];
   try {
     rows = await withService((db) =>
@@ -584,12 +591,20 @@ async function findPaymentsOnClosedCheckouts(input: {
           amountPaise: billingPaymentAttempts.amountPaise,
           state: billingPaymentAttempts.state,
           failureCode: billingPaymentAttempts.failureCode,
+          mode: billingPaymentAttempts.mode,
         })
         .from(billingPaymentAttempts)
         .where(
           and(
             inArray(billingPaymentAttempts.state, CLOSED_WITHOUT_PAYMENT),
-            eq(billingPaymentAttempts.mode, "manual"),
+            // A manual checkout, or an automatic attempt whose DEBIT WAS SENT.
+            // One that ended before its debit cannot be paid: nothing but
+            // our own server call pays a recurring order.
+            or(
+              eq(billingPaymentAttempts.mode, "manual"),
+              isNotNull(billingPaymentAttempts.debitSentAt),
+              isNotNull(billingPaymentAttempts.providerPaymentId),
+            ),
             isNotNull(billingPaymentAttempts.providerOrderId),
             gt(billingPaymentAttempts.resolvedAt, closedAfter),
           ),
@@ -620,6 +635,7 @@ async function findPaymentsOnClosedCheckouts(input: {
         observedPaise: typeof paid.amount === "number" ? paid.amount : null,
         closedAs: row.state,
         closedCode: row.failureCode,
+        automatic: row.mode === "automatic",
         source: "reconcile",
         now: input.now,
       });

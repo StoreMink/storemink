@@ -56,6 +56,7 @@ import {
   type RecurringGateway,
 } from "./collect";
 import type { MandateStatus } from "./cycle";
+import { earlierDebitsOf } from "./earlier-debits";
 import { cycleRefusal } from "./manual-pay";
 import { verifyMandate } from "./mandate-check";
 import { advanceAfterPayment, announceAutopayStopped } from "./renewal-worker";
@@ -359,6 +360,47 @@ async function debitOne(
       now,
       { unsent: true },
     );
+  }
+
+  // ── 4b. Did an EARLIER debit of this invoice take the money after all? ────
+  // ★★ PR #303 review, 22 Nov 2026 (lib/billing/earlier-debits.ts). A debit
+  // Razorpay reported failed can be authorised late by the bank and captured.
+  // This try was started a day or more ago, so the answer the collect pass
+  // got then proves nothing now: asked again here, last, before the claim.
+  // Read only when an earlier debit was sent for this invoice, so a first
+  // try costs no call.
+  const earlier = await earlierDebitsOf({
+    invoiceId: row.invoiceId,
+    storeId: row.storeId,
+    exceptAttemptId: row.id,
+    source: "debit",
+    now,
+  });
+  if (earlier === "paid") {
+    // The money for this invoice is already held (and filed for a person).
+    return withdraw(
+      row,
+      "earlier_debit_paid",
+      "an earlier debit for this invoice was captured after it had been recorded as failed",
+      now,
+    );
+  }
+  if (earlier !== "clear") {
+    // Not settled yet, or the gateway would not say. Never a debit on a
+    // guess; and not for ever either, like every other wait in this pass.
+    return silentTooLong(row, now)
+      ? failTry(
+          row,
+          earlier === "unsettled"
+            ? "earlier_debit_unsettled"
+            : "gateway_unreachable",
+          earlier === "unsettled"
+            ? "an earlier debit for this invoice still has a payment that is neither failed nor captured"
+            : "the gateway would not say what became of an earlier debit for this invoice",
+          now,
+          { unsent: true },
+        )
+      : "waiting";
   }
 
   // ── 5. The claim, then the debit ─────────────────────────────────────────

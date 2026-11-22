@@ -539,6 +539,7 @@ describe("★★ declaring failure", () => {
       amountPaise: 500_000,
       state: "cancelled",
       failureCode: "amount_changed",
+      mode: "manual",
       ...over,
     });
     /** Select #1 the main scan, #2 the orderless scan, #3 closed checkouts. */
@@ -566,6 +567,7 @@ describe("★★ declaring failure", () => {
         observedPaise: 500_000,
         closedAs: "cancelled",
         closedCode: "amount_changed",
+        automatic: false,
         source: "reconcile",
         now: NOW,
       });
@@ -604,7 +606,35 @@ describe("★★ declaring failure", () => {
       expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
     });
 
-    it("★ asks only about MANUAL checkouts closed in the last 72 hours that hold an order", async () => {
+    // The next review, same day: "a failed debit is final" is not something
+    // Razorpay promises. A renewal debit reported failed can be authorised
+    // late by the bank and captured, and with a missed webhook nothing else
+    // read it.
+    it("★★ a renewal DEBIT recorded as failed and captured later is filed too, as an automatic one", async () => {
+      seedClosed([
+        closed({
+          id: "att-auto",
+          mode: "automatic",
+          state: "failed",
+          failureCode: "gateway_failed",
+        }),
+      ]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          attemptId: "att-auto",
+          automatic: true,
+          closedCode: "gateway_failed",
+          source: "reconcile",
+        }),
+      );
+      expect(res.paidAfterClose).toBe(1);
+    });
+
+    it("★ asks about closed attempts of the last 72 hours that hold an order: every MANUAL one, and an automatic one only when its debit was SENT", async () => {
       seedClosed([]);
       await reconcileStrandedAttempts({
         now: NOW,
@@ -614,6 +644,10 @@ describe("★★ declaring failure", () => {
       expect(where.sql).toContain('"state" in');
       expect(where.params).toEqual(
         expect.arrayContaining(["failed", "cancelled", "manual"]),
+      );
+      // An automatic attempt that ended before its debit cannot be paid.
+      expect(where.sql).toMatch(
+        /"mode" = \$\d+ or [^)]*"debit_sent_at" is not null or [^)]*"provider_payment_id" is not null/,
       );
       expect(where.sql).toContain('"provider_order_id" is not null');
       expect(where.sql).toContain('"resolved_at" >');

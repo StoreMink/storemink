@@ -85,6 +85,7 @@ import { restingStatusSql } from "./published-version";
 import {
   digestThemeStudioJson,
   restoreThemeStudioVersion,
+  cancelThemeStudioRun,
   reviseThemeStudioVersion,
 } from "./repository";
 import { themeStudioProjects } from "@/drizzle/schema";
@@ -1577,7 +1578,11 @@ describe.skipIf(!ENABLED)(
             versionId: s.versionId,
             expectedRevision: await ctx.revisionOf(s.projectId),
           }),
-        ).toEqual({ changed: true, outcome: "live" });
+        ).toEqual({
+          changed: true,
+          outcome: "live",
+          release: { version: "1.0.0", liveVersion: "1.0.0" },
+        });
         expect(await statusOf()).toEqual({
           status: "published",
           current_version_id: s.versionId,
@@ -1678,6 +1683,109 @@ describe.skipIf(!ENABLED)(
             [s.themeId],
           ),
         ).toEqual({ ...releaseOne, release_status: "published" });
+
+        // 6b. ★★ PR #303 review, 22 Nov 2026. With TWO releases, the earlier
+        //     published design is made current. One UPDATE (published to
+        //     published, another version) is refused by the guard and
+        //     surfaced as a database error; it now goes through `ready`.
+        //     The catalogue is not moved, and the answer says so.
+        expect(
+          await restoreThemeStudioVersion(ctx.actor, {
+            projectId: s.projectId,
+            versionId: s.versionId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          }),
+        ).toEqual({
+          changed: true,
+          outcome: "earlier_release",
+          release: { version: "1.0.0", liveVersion: "1.1.0" },
+        });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: s.versionId,
+        });
+        expect(await catalogAt()).toBe(releaseTwo.id);
+        // Asked again, it is still an earlier release, and nothing changes.
+        expect(
+          await restoreThemeStudioVersion(ctx.actor, {
+            projectId: s.projectId,
+            versionId: s.versionId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          }),
+        ).toEqual({
+          changed: false,
+          outcome: "earlier_release",
+          release: { version: "1.0.0", liveVersion: "1.1.0" },
+        });
+
+        // 6c. ★★ A change queued on the live theme is CANCELLED before it
+        //     starts: the theme is published again, on the design it kept.
+        //     It used to rest at `ready`, where Publish refused the design
+        //     as already published and Make current said "already current".
+        //     (Step 1's run was left queued by this test's hand-made
+        //     settles; cancelling it first leaves the theme published too.)
+        expect(
+          await cancelThemeStudioRun(ctx.actor, {
+            projectId: s.projectId,
+            runId: change.runId,
+          }),
+        ).toEqual({ status: "cancelled" });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: s.versionId,
+        });
+        const queued = await reviseThemeStudioVersion(ctx.actor, {
+          projectId: s.projectId,
+          versionId: s.versionId,
+          expectedRevision: await ctx.revisionOf(s.projectId),
+          expectedPackageDigest: s.packageDigest,
+          body: "Make the footer shorter.",
+          idempotencyKey: `change_live_${randomUUID()}`,
+        });
+        expect((await statusOf()).status).toBe("generating");
+        expect(
+          await cancelThemeStudioRun(ctx.actor, {
+            projectId: s.projectId,
+            runId: queued.runId,
+          }),
+        ).toEqual({ status: "cancelled" });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: s.versionId,
+        });
+
+        // 6d. A project left at `ready` on a published design (what older
+        //     code did after such a cancel) comes back by Make current.
+        await ctx.pg.query(
+          "UPDATE theme_studio_projects SET status='ready',revision=revision+1 WHERE id=$1",
+          [s.projectId],
+        );
+        expect(
+          await restoreThemeStudioVersion(ctx.actor, {
+            projectId: s.projectId,
+            versionId: s.versionId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          }),
+        ).toMatchObject({ changed: true, outcome: "earlier_release" });
+        expect((await statusOf()).status).toBe("published");
+
+        // 6e. And back to the design new stores get: live.
+        expect(
+          await restoreThemeStudioVersion(ctx.actor, {
+            projectId: s.projectId,
+            versionId: secondId,
+            expectedRevision: await ctx.revisionOf(s.projectId),
+          }),
+        ).toEqual({
+          changed: true,
+          outcome: "live",
+          release: { version: "1.1.0", liveVersion: "1.1.0" },
+        });
+        expect(await statusOf()).toEqual({
+          status: "published",
+          current_version_id: secondId,
+        });
+        expect(await catalogAt()).toBe(releaseTwo.id);
 
         // 7. One release per design: the same design is never stored twice.
         await ctx.pg.query(

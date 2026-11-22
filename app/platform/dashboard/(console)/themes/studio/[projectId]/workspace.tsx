@@ -39,6 +39,7 @@ import {
 import type {
   ThemeStudioProjectDetail,
   ThemeStudioRestoreOutcome,
+  ThemeStudioRestoreRelease,
   ThemeStudioVersionView,
 } from "@/lib/theme-studio/repository";
 import type { DistinctnessReport } from "@/lib/theme-studio/fingerprint";
@@ -118,10 +119,21 @@ export function restoredMessage(
   versionNumber: number,
   outcome: ThemeStudioRestoreOutcome | undefined,
   changed = true,
+  release?: ThemeStudioRestoreRelease,
 ): string {
   const design = designLabel(versionNumber);
-  if (!changed) return `${design} is already current.`;
+  // ★ An earlier published design is NOT what new stores get, and the words
+  //   never say it is: Make current does not move the catalogue.
+  const earlier =
+    outcome === "earlier_release" && release?.liveVersion
+      ? ` It was published as v${release.version}. New stores still get v${release.liveVersion}, and a change you send now starts from this design.`
+      : outcome === "earlier_release"
+        ? " It was published as an earlier version, and a change you send now starts from this design."
+        : "";
+  if (!changed) return `${design} is already current.${earlier}`;
   switch (outcome) {
+    case "earlier_release":
+      return `${design} is current.${earlier}`;
     case "ready_to_publish":
       return `${design} is current and Ready to publish.`;
     case "rechecking":
@@ -900,6 +912,7 @@ function MakeCurrentButton({
                 version.versionNumber,
                 result.outcome,
                 result.changed,
+                result.release,
               ),
             );
             onDone();

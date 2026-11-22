@@ -144,6 +144,7 @@ export async function applyBillingPaymentEvent(
           observedPaise: event.amountPaise,
           closedAs: attempt.state,
           closedCode: attempt.failureCode,
+          automatic: attempt.mode === "automatic",
           source: "webhook",
           now,
         });
@@ -181,6 +182,7 @@ export async function applyBillingPaymentEvent(
             observedPaise: event.amountPaise,
             closedAs: settled,
             closedCode: null,
+            automatic: attempt.mode === "automatic",
             source: "webhook",
             now,
           });

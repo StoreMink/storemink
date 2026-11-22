@@ -4,6 +4,9 @@ import { and, asc, eq } from "drizzle-orm";
 import { withAnon } from "@/lib/db/client";
 import { categories, productVariants, products } from "@/drizzle/schema";
 import { getCurrentStoreOrNull } from "@/lib/store/resolve";
+import { isStorefrontGated } from "@/lib/store/launch-state";
+import { storefrontAccess } from "@/lib/store/storefront-access";
+import { maskBlockedMedia } from "@/lib/moderation/blocked-objects";
 import { normalizeOptions, type ProductOption } from "@/lib/products/options";
 import { productGallery } from "@/lib/products/gallery";
 import { productExcerpt } from "@/lib/products/excerpt";
@@ -21,6 +24,18 @@ import { productExcerpt } from "@/lib/products/excerpt";
 // ★ Prices here only PREVIEW. The cart re-prices every line on the server at
 //   checkout (placeOrder), so a stale number costs a wrong label, never a
 //   wrong charge.
+// ★★ THE ANSWER IS MASKED (takedown; PR #303 review, 22 Nov 2026). A file
+//   StoreMink has blocked is hidden by the page swap, not by row security: a
+//   published product keeps its row while one of its photos is blocked. The
+//   answer carries the primary photo, the gallery, every variant's photos and
+//   the colour photos inside `options`, and it went out unmasked, so a
+//   blocked file's real address reached the shopper and was copied into the
+//   cart line. `maskBlockedMedia` runs after the database scope closes, as
+//   for every other storefront reader (lib/moderation/mask-coverage.test.ts
+//   lists this module).
+// ★ A store that has not opened answers nothing without its password, like
+//   /api/storefront/products: a product id must not read an unopened store's
+//   prices and stock.
 // ---------------------------------------------------------------------------
 
 export interface QuickAddVariant {
@@ -84,9 +99,15 @@ export async function getQuickViewProduct(
   if (typeof productId !== "string" || !UUID.test(productId)) return null;
   const store = await getCurrentStoreOrNull();
   if (!store) return null;
+  if (
+    isStorefrontGated(store) &&
+    (await storefrontAccess(store)) === "locked"
+  ) {
+    return null;
+  }
 
   try {
-    return await withAnon(async (db) => {
+    const product = await withAnon(async (db) => {
       const rows = await db
         .select({
           id: products.id,
@@ -145,6 +166,7 @@ export async function getQuickViewProduct(
         variants,
       };
     });
+    return product ? await maskBlockedMedia(product) : null;
   } catch (err) {
     console.error(
       "getQuickViewProduct:",

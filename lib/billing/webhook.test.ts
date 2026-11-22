@@ -152,6 +152,7 @@ describe("★★ a payment captured on an attempt that was already closed", () =
       observedPaise: 240_000,
       closedAs: "cancelled",
       closedCode: "amount_changed",
+      automatic: false,
       source: "webhook",
       now: NOW,
     });
@@ -177,6 +178,23 @@ describe("★★ a payment captured on an attempt that was already closed", () =
     expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith(
       expect.objectContaining({ closedAs: "cancelled", source: "webhook" }),
     );
+  });
+
+  // The next review, same day: Razorpay does not treat a failed payment as
+  // final. A renewal debit reported failed can be authorised late and
+  // captured; it is filed as what it is.
+  it("★★ a renewal debit recorded as failed and captured later is filed as an automatic one", async () => {
+    seed([attempt({ state: "failed", failureCode: "gateway_failed" })]);
+    expect(await captured()).toBe("closed_attempt");
+    expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        automatic: true,
+        closedAs: "failed",
+        closedCode: "gateway_failed",
+      }),
+    );
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
   });
 
   it("a FAILED payment on a closed attempt is nothing to record", async () => {

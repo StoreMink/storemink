@@ -37,6 +37,13 @@ vi.mock("./collect", async (original) => ({
 
 const mandates = vi.hoisted(() => ({ verifyMandate: vi.fn() }));
 vi.mock("./mandate-check", () => mandates);
+// Whether an earlier debit of the invoice took the money after all
+// (earlier-debits.ts, proved in its own test). ★ "clear" unless a test says
+// otherwise, so every case here describes an invoice with nothing held.
+const earlierDebits = vi.hoisted(() => ({
+  earlierDebitsOf: vi.fn(async (): Promise<string> => "clear"),
+}));
+vi.mock("./earlier-debits", () => earlierDebits);
 
 const worker = vi.hoisted(() => ({
   advanceAfterPayment: vi.fn<(...args: any[]) => Promise<boolean>>(
@@ -565,6 +572,81 @@ describe("★★ the notice period is read from the gateway, not assumed", () =>
 // A notified attempt keeps its invoice `processing`, and no grace opens on an
 // invoice with a payment in flight. So waiting on a silent gateway must end,
 // or the store keeps its plan for nothing.
+// PR #303 review, 22 Nov 2026. A debit Razorpay reported failed can be
+// authorised late by the bank and captured. This try was started a day or
+// more ago, so the earlier debits are asked about again, last, before the
+// claim.
+describe("★★ an earlier debit of the same invoice is asked about before this one is sent", () => {
+  const hoursPastDue = (h: number) =>
+    new Date(Date.parse(DUE_AT) + h * 3_600_000);
+
+  it("asks about the invoice's other debits, never this attempt's own", async () => {
+    seed([dueRow()]);
+    const gateway = gatewayOk();
+    await sendDueDebits({ gateway, now: NOW });
+    expect(earlierDebits.earlierDebitsOf).toHaveBeenCalledWith({
+      invoiceId: "inv-1",
+      storeId: STORE,
+      exceptAttemptId: "att-1",
+      source: "debit",
+      now: NOW,
+    });
+    expect(gateway.debit).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ an earlier debit was CAPTURED after all: this try is withdrawn, and no debit is sent", async () => {
+    seed([dueRow()]);
+    earlierDebits.earlierDebitsOf.mockResolvedValueOnce("paid");
+    const gateway = gatewayOk();
+    const s = await sendDueDebits({ gateway, now: NOW });
+    expect(gateway.debit).not.toHaveBeenCalled();
+    expect(collector.settleAttempt).toHaveBeenCalledWith(
+      "att-1",
+      "cancelled",
+      expect.objectContaining({
+        failureCode: "earlier_debit_paid",
+        onlyIfUnsent: true,
+      }),
+    );
+    expect(s).toMatchObject({ cancelled: 1, sent: 0 });
+  });
+
+  it.each(["unsettled", "unknown"])(
+    "★★ an earlier debit that is %s: nothing is sent or written, and it is asked again next run",
+    async (state) => {
+      seed([dueRow()]);
+      earlierDebits.earlierDebitsOf.mockResolvedValueOnce(state);
+      const gateway = gatewayOk();
+      const s = await sendDueDebits({ gateway, now: NOW });
+      expect(gateway.debit).not.toHaveBeenCalled();
+      expect(collector.settleAttempt).not.toHaveBeenCalled();
+      expect(s).toMatchObject({ waiting: 1, sent: 0 });
+    },
+  );
+
+  it(`★ still not settled ${GATEWAY_SILENCE_DEADLINE_HOURS}h past the debit time: the try ends with no debit`, async () => {
+    seed([dueRow()]);
+    earlierDebits.earlierDebitsOf.mockResolvedValueOnce("unsettled");
+    const gateway = gatewayOk();
+    const at = hoursPastDue(GATEWAY_SILENCE_DEADLINE_HOURS);
+    const s = await sendDueDebits({ gateway, now: at });
+    expect(gateway.debit).not.toHaveBeenCalled();
+    expect(collector.settleAttempt.mock.calls[0][2]).toMatchObject({
+      failureCode: "earlier_debit_unsettled",
+      onlyIfUnsent: true,
+    });
+    expect(s.failed).toBe(1);
+  });
+
+  it("★ it is the LAST check before the claim: mandate and notice are read first", async () => {
+    seed([dueRow()]);
+    const gateway = gatewayOk();
+    gateway.readNotice.mockResolvedValue({ state: "unknown" });
+    await sendDueDebits({ gateway, now: NOW });
+    expect(earlierDebits.earlierDebitsOf).not.toHaveBeenCalled();
+  });
+});
+
 describe("★★ a gateway that stays silent does not hold the invoice for ever", () => {
   const hoursPastDue = (h: number) =>
     new Date(Date.parse(DUE_AT) + h * 3_600_000);

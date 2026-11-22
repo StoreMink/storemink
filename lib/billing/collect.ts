@@ -1249,6 +1249,12 @@ export const CLOSED_CHECKOUT_PAID_KEY_PREFIX = "closed_checkout_paid:";
  * read only attempts still in flight and the refund pass only captured ones.
  * The money was taken and the merchant was asked to pay again.
  *
+ * ★ AN AUTOMATIC DEBIT TOO (the next review, same day). Razorpay does not
+ * treat a failed payment as final: a renewal debit reported failed can be
+ * authorised late by the bank and captured. It is filed here the same way
+ * (`automatic`), and lib/billing/earlier-debits.ts keeps any further debit
+ * from being taken for that invoice.
+ *
  * It is NOT applied and NOT refunded here. Whether it settles the invoice
  * (still open, same amount) or goes back (paid twice, or another amount) is a
  * person's decision, with the invoice in front of them.
@@ -1271,8 +1277,13 @@ export async function fileClosedAttemptPayment(input: {
   /** The state and reason the attempt was closed with. */
   closedAs: string;
   closedCode: string | null;
+  /**
+   * True for an automatic renewal debit recorded as failed and captured
+   * later (a bank that authorised late), for the item's own words.
+   */
+  automatic?: boolean;
   /** Which path found it. */
-  source: "webhook" | "confirm" | "reconcile";
+  source: "webhook" | "confirm" | "reconcile" | "collect" | "debit" | "manual";
   now: Date;
 }): Promise<boolean> {
   const repairKey = `${CLOSED_CHECKOUT_PAID_KEY_PREFIX}${input.providerPaymentId}`;
@@ -1309,7 +1320,10 @@ export async function fileClosedAttemptPayment(input: {
           observedPaise: input.observedPaise ?? null,
           detail: {
             repair_key: repairKey,
-            note: `A payment was captured on a checkout that had already been closed (${input.closedCode ?? input.closedAs}). It is not recorded on the invoice.`,
+            note: input.automatic
+              ? `A renewal debit that had been recorded as failed was captured later (${input.closedCode ?? input.closedAs}). It is not recorded on the invoice, and no further debit is taken for this invoice while this is open.`
+              : `A payment was captured on a checkout that had already been closed (${input.closedCode ?? input.closedAs}). It is not recorded on the invoice.`,
+            ...(input.automatic ? { automatic: true } : {}),
             closedAs: input.closedAs,
             closedCode: input.closedCode,
             source: input.source,

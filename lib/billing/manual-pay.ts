@@ -52,6 +52,7 @@ import {
   settleAttempt,
   withdrawUnsentDebits,
 } from "./collect";
+import { earlierDebitsOf } from "./earlier-debits";
 import type { PayableInvoice } from "./invoice-types";
 import { orderIsUntouched } from "./order-state";
 import {
@@ -256,6 +257,33 @@ export async function startInvoicePayment(input: {
       invoiceStatus: invoice.status,
     });
     return { ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE };
+  }
+
+  // ★★ NOR ONE WHOSE EARLIER AUTOMATIC DEBIT TOOK THE MONEY AFTER ALL (PR
+  // #303 review, 22 Nov 2026; lib/billing/earlier-debits.ts). A renewal debit
+  // Razorpay reported failed can be authorised late by the bank and
+  // captured. That payment sits on a closed attempt, so the check above does
+  // not see it, and the invoice still reads open: paying it by hand would be
+  // a second payment for one renewal. Read only when a debit was sent for
+  // this invoice before, so an ordinary Pay now costs no extra call.
+  const earlier = await earlierDebitsOf({
+    invoiceId: invoice.id,
+    storeId: input.storeId,
+    source: "manual",
+    now,
+  });
+  if (earlier === "paid") {
+    return { ok: false, error: ALREADY_CAPTURED_INVOICE_MESSAGE };
+  }
+  if (earlier === "unsettled") {
+    return { ok: false, error: PAYMENT_BEING_CONFIRMED_MESSAGE };
+  }
+  if (earlier === "unknown") {
+    return {
+      ok: false,
+      error:
+        "We couldn't check this invoice's payments just now. Please try again.",
+    };
   }
 
   // ★★ A `processing` INVOICE IS NOT ALWAYS A PAYMENT THAT IS MOVING

@@ -478,6 +478,38 @@ describe("a payment made on a closed checkout", () => {
     expect(screen.queryByText("State conflict")).toBeNull();
   });
 
+  // The next review, same day: a renewal debit Razorpay reported failed can
+  // be authorised late by the bank and captured. It is not a checkout.
+  it("★★ a renewal DEBIT captured late is named as that, and says no further debit is taken meanwhile", () => {
+    render(
+      <ReconciliationQueue
+        items={[
+          closedCheckoutItem({
+            detail: {
+              repair_key: "closed_checkout_paid:pay_777",
+              note: "A renewal debit that had been recorded as failed was captured later (gateway_failed). It is not recorded on the invoice, and no further debit is taken for this invoice while this is open.",
+              automatic: true,
+              closedAs: "failed",
+              closedCode: "gateway_failed",
+              source: "debit",
+            },
+          }),
+        ]}
+        status="open"
+        canManage
+      />,
+    );
+    expect(
+      screen.getByText("A renewal debit recorded as failed was captured later"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/takes no further debit or payment for that invoice/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Payment made on a checkout that had been closed"),
+    ).toBeNull();
+  });
+
   it("★ opens the store, and offers no StoreMink refund tool: the payment is on no captured attempt", () => {
     render(
       <ReconciliationQueue

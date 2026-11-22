@@ -156,6 +156,28 @@ export const REPAIR_COPY: Record<RepairKind, { title: string; hint: string }> =
     },
   };
 
+/**
+ * A `closed_checkout_paid` item about an AUTOMATIC renewal debit
+ * (`detail.automatic`): one recorded as failed that the bank authorised late.
+ * It is no checkout, and what the operator must know is different: no
+ * further debit is taken for that invoice while the item is open.
+ */
+export const LATE_DEBIT_COPY = {
+  title: "A renewal debit recorded as failed was captured later",
+  hint: "The payment is not recorded on the invoice, and StoreMink takes no further debit or payment for that invoice while this is open. Settle the invoice with this payment, or refund it in the Razorpay dashboard, then close this with what you did.",
+} as const;
+
+/** The title and hint an item shows: its kind's, or the late debit's. */
+function repairCopy(
+  item: ReconciliationItem,
+  kind: RepairKind,
+): { title: string; hint: string } {
+  return kind === "closed_checkout_paid" &&
+    asRecord(item.detail).automatic === true
+    ? LATE_DEBIT_COPY
+    : REPAIR_COPY[kind];
+}
+
 /** A `captured_draft` item whose store was deleted (deleteStore's repair). */
 export const CAPTURED_DRAFT_STORE_DELETED =
   "The store has been deleted, so what it paid for can't be applied. Refund the payment, then close this with what you did.";
@@ -280,7 +302,7 @@ export function ReconciliationQueue({
                   <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
                   <span className="text-sm font-semibold text-[#111827]">
                     {kind
-                      ? REPAIR_COPY[kind].title
+                      ? repairCopy(item, kind).title
                       : (KIND_LABEL[item.kind] ?? item.kind)}
                   </span>
                   {/* ★ A null store is legitimate and is itself the problem: an
@@ -453,7 +475,9 @@ function RepairDetail({
   const deleted = kind === "captured_draft" && storeDeleted(item);
   return (
     <div className="mt-1 space-y-1 text-sm text-[var(--dash-text-2)]">
-      <p>{deleted ? CAPTURED_DRAFT_STORE_DELETED : REPAIR_COPY[kind].hint}</p>
+      <p>
+        {deleted ? CAPTURED_DRAFT_STORE_DELETED : repairCopy(item, kind).hint}
+      </p>
       {purchase ? (
         <p className="text-[var(--dash-text)]">
           What was bought: {PURCHASE_LABEL[purchase] ?? purchase}

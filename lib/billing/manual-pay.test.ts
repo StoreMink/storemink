@@ -61,6 +61,13 @@ const collect = vi.hoisted(() => ({
   withdrawUnsentDebits: vi.fn(async (): Promise<number | null> => 0),
 }));
 vi.mock("./collect", () => collect);
+// Whether an earlier debit of the invoice took the money after all
+// (earlier-debits.ts, proved in its own test). ★ "clear" unless a test says
+// otherwise, so every case here describes an invoice with nothing held.
+const earlierDebits = vi.hoisted(() => ({
+  earlierDebitsOf: vi.fn(async (): Promise<string> => "clear"),
+}));
+vi.mock("./earlier-debits", () => earlierDebits);
 
 // The one rule for "nobody has paid this order" (./order-state), proved by
 // enrolment's suite; here a test says what the gateway's record shows.
@@ -180,6 +187,49 @@ describe("startInvoicePayment", () => {
     expect(collect.recordGatewayOrder).toHaveBeenCalledWith(
       expect.objectContaining({ providerOrderId: "order_1" }),
     );
+  });
+
+  // PR #303 review, 22 Nov 2026. A renewal debit Razorpay reported failed
+  // can be authorised late by the bank and captured. The invoice still reads
+  // open, so paying it by hand would be a second payment for one renewal.
+  describe("★★ an earlier automatic debit that took the money after all", () => {
+    it("asks about this invoice's earlier debits before it opens a payment", async () => {
+      await startInvoicePayment(args);
+      expect(earlierDebits.earlierDebitsOf).toHaveBeenCalledWith({
+        invoiceId: INVOICE,
+        storeId: STORE,
+        source: "manual",
+        now: NOW,
+      });
+    });
+
+    it("captured: no second payment, and the merchant is told theirs went through", async () => {
+      earlierDebits.earlierDebitsOf.mockResolvedValueOnce("paid");
+      const res = await startInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: ALREADY_CAPTURED_INVOICE_MESSAGE,
+      });
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+      expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    });
+
+    it("not settled yet: no second payment while it is being confirmed", async () => {
+      earlierDebits.earlierDebitsOf.mockResolvedValueOnce("unsettled");
+      const res = await startInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: PAYMENT_BEING_CONFIRMED_MESSAGE,
+      });
+      expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
+    });
+
+    it("could not be read: refused, never taken as nothing paid", async () => {
+      earlierDebits.earlierDebitsOf.mockResolvedValueOnce("unknown");
+      const res = await startInvoicePayment(args);
+      expect(res.ok).toBe(false);
+      expect(collect.beginAttempt).not.toHaveBeenCalled();
+    });
   });
 
   it("★★ refuses an invoice belonging to ANOTHER store", async () => {

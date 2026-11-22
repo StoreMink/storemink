@@ -1403,6 +1403,28 @@ describe("words", () => {
     expect(restoredMessage(1, "live")).toBe(
       "Design 1 is current. It is the published design, so the theme is live on it.",
     );
+    // ★ An EARLIER published design made current (PR #303 review): the
+    //   words never say it is what new stores get, because Make current does
+    //   not move the catalogue.
+    expect(
+      restoredMessage(3, "earlier_release", true, {
+        version: "1.0.0",
+        liveVersion: "1.1.0",
+      }),
+    ).toBe(
+      "Design 3 is current. It was published as v1.0.0. New stores still get v1.1.0, and a change you send now starts from this design.",
+    );
+    expect(
+      restoredMessage(3, "earlier_release", false, {
+        version: "1.0.0",
+        liveVersion: "1.1.0",
+      }),
+    ).toBe(
+      "Design 3 is already current. It was published as v1.0.0. New stores still get v1.1.0, and a change you send now starts from this design.",
+    );
+    expect(restoredMessage(3, "earlier_release")).toBe(
+      "Design 3 is current. It was published as an earlier version, and a change you send now starts from this design.",
+    );
     expect(restoredMessage(4, "ready", false)).toBe(
       "Design 4 is already current.",
     );

@@ -69,6 +69,7 @@ import {
   type CollectResult,
   type RecurringGateway,
 } from "./collect";
+import { earlierDebitsOf } from "./earlier-debits";
 import {
   isVerifiable,
   loadMandateRecord,
@@ -627,6 +628,24 @@ async function collectOne(
     if (decision === "exhausted") return "manual";
     if (decision === "wait") return "pending";
     startsBefore = history.starts;
+
+    // ★★ A RETRY FIRST ASKS WHETHER AN EARLIER DEBIT TOOK THE MONEY AFTER ALL
+    // (PR #303 review, 22 Nov 2026; lib/billing/earlier-debits.ts). A debit
+    // Razorpay reported failed can be authorised late by the bank and
+    // captured; starting another try then debits the same renewal twice.
+    // Asked only when a debit was sent before (`history.count`), so a first
+    // try costs no gateway call. Anything but a clear "nothing was paid"
+    // leaves the invoice alone this run: a captured one is filed for a
+    // person, an unsettled or unreadable one is asked again next hour.
+    if (history.count > 0) {
+      const earlier = await earlierDebitsOf({
+        invoiceId: invoice.id,
+        storeId: row.storeId,
+        source: "collect",
+        now,
+      });
+      if (earlier !== "clear") return "pending";
+    }
 
     // ★★ A RETRY ASKS THE GATEWAY ABOUT THE MANDATE AGAIN. The check above
     // ran when the invoice was issued, days ago for a second or third try,

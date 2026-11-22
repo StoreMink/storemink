@@ -14,6 +14,22 @@ vi.mock("@/lib/store/resolve", () => ({
   getCurrentStoreOrNull: () => getCurrentStoreOrNull(),
 }));
 
+// The page swap (takedown): by default it changes nothing, as with no blocked
+// file. Its own behaviour is proved in lib/moderation.
+const maskBlockedMedia = vi.fn(async (value: any) => value);
+vi.mock("@/lib/moderation/blocked-objects", () => ({
+  maskBlockedMedia: (value: any) => maskBlockedMedia(value),
+}));
+// A store that has not opened yet, and whether this visitor holds its password.
+const isStorefrontGated = vi.fn(() => false);
+const storefrontAccess = vi.fn(async () => "locked");
+vi.mock("@/lib/store/launch-state", () => ({
+  isStorefrontGated: () => isStorefrontGated(),
+}));
+vi.mock("@/lib/store/storefront-access", () => ({
+  storefrontAccess: () => storefrontAccess(),
+}));
+
 import { getQuickAddProduct, getQuickViewProduct } from "./quick-add-actions";
 
 const ID = "11111111-1111-4111-8111-111111111111";
@@ -104,6 +120,9 @@ describe("getQuickViewProduct", () => {
     holder.fail = false;
     getCurrentStoreOrNull.mockResolvedValue({ id: "store-1" });
     holder.db = makeDbMock({ selectQueue: [[row], []] }).db;
+    maskBlockedMedia.mockReset();
+    maskBlockedMedia.mockImplementation(async (value: any) => value);
+    isStorefrontGated.mockReturnValue(false);
   });
 
   it("refuses a malformed id and a host that is not a store", async () => {
@@ -111,6 +130,86 @@ describe("getQuickViewProduct", () => {
     expect(getCurrentStoreOrNull).not.toHaveBeenCalled();
     getCurrentStoreOrNull.mockResolvedValue(null);
     expect(await getQuickViewProduct(ID)).toBeNull();
+  });
+
+  // PR #303 review, 22 Nov 2026. RLS hides a blocked PRODUCT; a blocked FILE
+  // of a published product is hidden only by the page swap, and this reader
+  // skipped it: the blocked photo's real address reached the shopper and was
+  // copied into the cart line.
+  describe("★★ a photo StoreMink has blocked", () => {
+    const PLACEHOLDER = "/blocked-placeholder.svg";
+    const swap = (value: any): any =>
+      typeof value === "string"
+        ? value === "/jug-side.webp" || value === "/blue.webp"
+          ? PLACEHOLDER
+          : value
+        : Array.isArray(value)
+          ? value.map(swap)
+          : value && typeof value === "object"
+            ? Object.fromEntries(
+                Object.entries(value).map(([k, v]) => [k, swap(v)]),
+              )
+            : value;
+
+    beforeEach(() => {
+      maskBlockedMedia.mockImplementation(async (value: any) => swap(value));
+      holder.db = makeDbMock({
+        selectQueue: [
+          [
+            {
+              ...row,
+              options: [
+                {
+                  name: "Colour",
+                  values: ["Blue"],
+                  images: { Blue: ["/blue.webp"] },
+                },
+              ],
+            },
+          ],
+          [
+            {
+              id: "v1",
+              name: "Blue",
+              images: ["/jug-side.webp"],
+              option_values: ["Blue"],
+            },
+          ],
+        ],
+      }).db;
+    });
+
+    it("never reaches the shopper: the gallery and the variant's photos carry the placeholder", async () => {
+      const product = await getQuickViewProduct(ID);
+      expect(maskBlockedMedia).toHaveBeenCalledTimes(1);
+      expect(product?.gallery).toEqual(["/jug.webp", PLACEHOLDER]);
+      expect(product?.variants[0].images).toEqual([PLACEHOLDER]);
+      expect(JSON.stringify(product)).not.toContain("/jug-side.webp");
+      expect(JSON.stringify(product)).not.toContain("/blue.webp");
+    });
+
+    it("nor through the variant chooser, which takes the same answer", async () => {
+      const product = await getQuickAddProduct(ID);
+      expect(JSON.stringify(product)).not.toContain("/jug-side.webp");
+      expect(JSON.stringify(product)).not.toContain("/blue.webp");
+    });
+  });
+
+  describe("★ a store that has not opened", () => {
+    it("answers nothing without its password, and reads nothing", async () => {
+      isStorefrontGated.mockReturnValue(true);
+      storefrontAccess.mockResolvedValue("locked");
+      const select = vi.spyOn(holder.db, "select");
+      expect(await getQuickViewProduct(ID)).toBeNull();
+      expect(await getQuickAddProduct(ID)).toBeNull();
+      expect(select).not.toHaveBeenCalled();
+    });
+
+    it("answers the owner who holds the password", async () => {
+      isStorefrontGated.mockReturnValue(true);
+      storefrontAccess.mockResolvedValue("unlocked");
+      expect((await getQuickViewProduct(ID))?.name).toBe("Stoneware jug");
+    });
   });
 
   it("returns the photographs once each, primary first", async () => {

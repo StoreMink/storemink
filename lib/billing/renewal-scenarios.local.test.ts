@@ -2026,5 +2026,79 @@ describe.skipIf(!enabled)(
 
       invariants();
     });
+
+    // ─────────────────────────────────────────────────────────────────────
+    // PR #303 review, 22 Nov 2026. Razorpay does not treat a failed payment
+    // as final: the bank can authorise it late, and with automatic capture
+    // it is then captured. The second try used to debit the renewal again.
+    describe("27. a debit the bank reported failed, then captured late: the second try never debits", () => {
+      let s: DummyStore;
+      scenario("s27", async () => {
+        s = await addStore({ rail: "card" });
+        sim.plans.set(s.tokenId, ["failed_later", "success"]);
+      });
+
+      it("the first debit fails and a second try is started with its own notice", async () => {
+        await runTo(at(40 * HOUR));
+        const list = await attempts(s);
+        expect(list[0].state).toBe("failed");
+        expect(list[1]).toMatchObject({
+          state: "processing",
+          debit_sent_at: null,
+        });
+        expect(debitsOf(s)).toHaveLength(1);
+      });
+
+      it("★★ the bank then captures the first debit after all: the second try is withdrawn, ONE debit in all, and a person is told", async () => {
+        const [first] = await attempts(s);
+        const late = sim.orders.get(first.provider_order_id)!.payments[0];
+        expect(late.status).toBe("failed");
+        late.status = "captured";
+
+        await runTo(at(90 * HOUR));
+        expect(debitsOf(s)).toHaveLength(1);
+        const list = await attempts(s);
+        expect(list[0].state).toBe("failed");
+        expect(list[1]).toMatchObject({
+          state: "cancelled",
+          failure_code: "earlier_debit_paid",
+          debit_sent_at: null,
+        });
+        const filed = await rows(
+          `select kind, status, provider_payment_id, detail->>'repair_key' as repair_key,
+                  (detail->>'automatic')::boolean as automatic
+             from public.billing_reconciliation_items where store_id = $1`,
+          [s.storeId],
+        );
+        expect(filed).toEqual([
+          {
+            kind: "state_conflict",
+            status: "open",
+            provider_payment_id: late.id,
+            repair_key: `closed_checkout_paid:${late.id}`,
+            automatic: true,
+          },
+        ]);
+        // Not applied by itself: whether it settles the invoice is a
+        // person's decision, with the invoice in front of them.
+        expect((await invoice(s))?.status).toBe("open");
+      });
+
+      it("★★ and no later run debits it either, through the cycle turn and beyond", async () => {
+        await runTo(new Date(CYCLE_END.getTime() + 48 * HOUR));
+        expect(debitsOf(s)).toHaveLength(1);
+        expect(
+          (await attempts(s)).filter((a) => a.debit_sent_at !== null),
+        ).toHaveLength(1);
+        expect(
+          await rows(
+            "select 1 from public.billing_reconciliation_items where store_id = $1",
+            [s.storeId],
+          ),
+        ).toHaveLength(1);
+      }, 600_000);
+
+      invariants();
+    });
   },
 );
