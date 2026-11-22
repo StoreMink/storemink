@@ -69,7 +69,7 @@ import {
   type CollectResult,
   type RecurringGateway,
 } from "./collect";
-import { earlierDebitsOf } from "./earlier-debits";
+import { earlierDebitsOf, renewalPaymentHeld } from "./earlier-debits";
 import {
   isVerifiable,
   loadMandateRecord,
@@ -1531,6 +1531,11 @@ export async function advanceAfterPayment(
 
 export interface DowngradeSummary {
   downgraded: number;
+  /**
+   * Stores whose grace ran out but whose renewal StoreMink is holding the
+   * money for (a payment filed for a person): left as they are this run.
+   */
+  heldForPayment: number;
   shiftsClosed: number;
   /** Cancelling subscriptions whose grace ran out: ended as `cancelled` by
    *  `endSubscription`, never downgraded for non-payment. */
@@ -1579,6 +1584,7 @@ export async function downgradeExpired(
   const limit = input.limit ?? RENEWAL_BATCH;
   const summary: DowngradeSummary = {
     downgraded: 0,
+    heldForPayment: 0,
     shiftsClosed: 0,
     ended: 0,
     advancedAfterGrace: 0,
@@ -1674,6 +1680,24 @@ export async function downgradeExpired(
       } catch (err) {
         logError("billing.renewal.end_cancelled", err, { storeId });
         summary.errors += 1;
+      }
+      continue;
+    }
+
+    // ★★ NOT A STORE WHOSE PAYMENT FOR THIS RENEWAL STOREMINK IS HOLDING (PR
+    // #303 fifth review, 22 Nov 2026; `renewalPaymentHeld`). A debit recorded
+    // as failed and captured later is filed for a person and every further
+    // debit is held, so the invoice stays open through no fault of the
+    // merchant's. Taking the plan away then would downgrade someone who has
+    // paid. Left exactly as it is, every run, until a person resolves the
+    // item; a read that failed is not a reason to downgrade either.
+    const held = await renewalPaymentHeld(storeId, currentCycleSeq);
+    if (held !== false) {
+      if (held === null) {
+        summary.errors += 1;
+      } else {
+        summary.heldForPayment += 1;
+        logWarn("billing.downgrade_held_for_payment", { storeId });
       }
       continue;
     }

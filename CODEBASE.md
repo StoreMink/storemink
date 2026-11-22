@@ -11533,7 +11533,7 @@ wholesip/
 │   │                          # (send-emails)"; the message alerts match by PREFIX
 │   │                          # (=~"^..."), because production logError appends the
 │   │                          # stack; the owner adds the mobile and SMS channels to 25
-│   │                          # to 27 by hand (P4). 28 policies in all;
+│   │                          # to 27 by hand (P4). 29 policies in all;
 │   │                          # scripts/prod-monitoring.test.ts reads the dry run and
 │   │                          # pins them. `python3 -I
 │   │                          # scripts/prod-monitoring.py` is a dry run that prints every
@@ -25355,13 +25355,30 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       also reads an automatic attempt whose debit was sent (never one that
       ended before its debit: nothing but our own call pays a recurring
       order). The operator queue names such an item "A renewal debit recorded
-      as failed was captured later" (`LATE_DEBIT_COPY`). ⚠ The payment is
-      still not applied or refunded automatically, and while its item is open
-      the invoice stays unpaid with no further debit, so the plan follows its
-      ordinary grace clock: someone has to act on the queue. Tests:
+      as failed was captured later" (`LATE_DEBIT_COPY`). ★★ AND THE STORE IS NOT DOWNGRADED MEANWHILE (fifth review, same
+      day). The invoice stays open while the item waits for a person, and
+      grace used to run out on it: a merchant who had paid dropped to Free
+      with their payment in the queue. `downgradeExpired` now asks
+      `renewalPaymentHeld(storeId, currentCycleSeq)` (earlier-debits.ts)
+      before its claim and leaves the store as it is (`heldForPayment` in the
+      summary, `billing.downgrade_held_for_payment` in the log) while the
+      invoice of the cycle being entered is `open` and an unresolved
+      (`open` or `manual_review`) `closed_checkout_paid` item holds a payment
+      for EXACTLY what it owes (the gateway's amount, else the closed
+      attempt's; against the total less applied credits). A read that fails
+      holds too. A payment of another amount holds nothing, a cancelled plan
+      still ends on its day, and a person closing the item without settling
+      the invoice lets the next run downgrade. An alert is defined for the
+      filing line (`docs/monitoring.md` 29; the owner applies it). ⚠ The
+      payment is still not applied or refunded automatically, and the
+      merchant still sees an unpaid renewal and is asked to pay until a
+      person settles it (applying it automatically would need the payment
+      on a second attempt, which the unique index on payment ids forbids). Tests:
       `earlier-debits.test.ts`, the worker, debit pass, Pay now, webhook and
       reconcile tests, and scenario 27 of the hour-by-hour suite (one debit
-      in all; it fails with two when the check always says clear).
+      in all, and no downgrade when grace ends; it fails with two debits when
+      the check always says clear, and with a downgrade when the hold is
+      removed).
     - **★★ PR #303 FULL RE-REVIEW (22 Nov 2026, sm-AnuragGoyal; four
       payments that could be taken and recorded nowhere).**
       (1) A PAYMENT ON A CLOSED CHECKOUT IS NEVER DROPPED. Closing an attempt
@@ -29914,8 +29931,10 @@ see `docs/mink-sarvam-realtime-audit-2026-10-27.md` for existing latency evidenc
   still a draft", `docs/monitoring.md` 23 and 24, applied by the owner after
   the GST release, and the four takedown alerts, `docs/monitoring.md` 25 to 28,
   watching the every-minute takedown follow-ups and the `send-emails`
-  schedule, applied by the owner after the takedown release: 28 policies
-  defined), three uptime checks (storemink.com, a merchant store and its
+  schedule, applied by the owner after the takedown release, and one
+  payments alert, `docs/monitoring.md` 29, for a merchant's payment held on
+  a closed attempt, applied by the owner after the payments release: 29
+  policies defined), three uptime checks (storemink.com, a merchant store and its
   dashboard login, every 60 s from USA, Europe and Asia Pacific), the
   log-based counter `mink_chat_run_failures` (and, defined for the takedown
   release, `moderation_followups_ran`) and one email channel ("StoreMink

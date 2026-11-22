@@ -58,6 +58,9 @@ vi.mock("./collect", () => collector);
 // otherwise, so every case here describes an invoice with nothing held.
 const earlierDebits = vi.hoisted(() => ({
   earlierDebitsOf: vi.fn(async (): Promise<string> => "clear"),
+  // Whether StoreMink already holds the money for the store's unpaid renewal
+  // (a payment filed for a person). ★ "no" unless a test says otherwise.
+  renewalPaymentHeld: vi.fn(async (): Promise<boolean | null> => false),
 }));
 vi.mock("./earlier-debits", () => earlierDebits);
 
@@ -1930,6 +1933,66 @@ describe("downgradeExpired", () => {
     expect(set.closedByName).toBe("System");
   });
 
+  // PR #303 fifth review, 22 Nov 2026. A renewal debit recorded as failed
+  // and captured later is filed for a person and every further debit is
+  // held, so the invoice stays open. Grace then ran out and the store was
+  // downgraded while StoreMink held its payment for that very invoice.
+  describe("★★ a store whose payment for this renewal StoreMink is holding", () => {
+    it("is NOT downgraded: the claim is never asked, the plan and the till are untouched", async () => {
+      seed([[{ storeId: STORE, plan: "pro", currentCycleSeq: 4 }]]);
+      const execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+      dbHolder.current.db.execute = execute;
+      earlierDebits.renewalPaymentHeld.mockResolvedValueOnce(true);
+
+      const s = await downgradeExpired({ now: NOW });
+      expect(earlierDebits.renewalPaymentHeld).toHaveBeenCalledWith(STORE, 4);
+      expect(s).toMatchObject({
+        downgraded: 0,
+        heldForPayment: 1,
+        shiftsClosed: 0,
+        errors: 0,
+      });
+      expect(execute).not.toHaveBeenCalled();
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+    });
+
+    it("★★ a check that could not be read is not a reason to take a plan away: left this run, counted as an error", async () => {
+      seed([[{ storeId: STORE, plan: "pro", currentCycleSeq: 4 }]]);
+      const execute = vi.fn(async () => ({ rows: [{ ok: true }] }));
+      dbHolder.current.db.execute = execute;
+      earlierDebits.renewalPaymentHeld.mockResolvedValueOnce(null);
+
+      const s = await downgradeExpired({ now: NOW });
+      expect(s).toMatchObject({ downgraded: 0, heldForPayment: 0, errors: 1 });
+      expect(execute).not.toHaveBeenCalled();
+    });
+
+    it("nothing held: downgraded as for any unpaid renewal", async () => {
+      seed([[{ storeId: STORE, plan: "pro", currentCycleSeq: 4 }]]);
+      dbHolder.current.db.execute = vi.fn(async () => ({
+        rows: [{ ok: true }],
+      }));
+      const s = await downgradeExpired({ now: NOW });
+      expect(s).toMatchObject({ downgraded: 1, heldForPayment: 0 });
+    });
+
+    it("★ a plan the merchant CANCELLED still ends on its day: the question is not asked", async () => {
+      seed([
+        [
+          {
+            storeId: STORE,
+            plan: "pro",
+            cancelAtPeriodEnd: true,
+            currentCycleSeq: 4,
+          },
+        ],
+      ]);
+      dbHolder.current.db.execute = vi.fn(async () => ({ rows: [] }));
+      await downgradeExpired({ now: NOW });
+      expect(earlierDebits.renewalPaymentHeld).not.toHaveBeenCalled();
+    });
+  });
+
   it("★★ takes the plan off the STORE — the claim alone moves only the bill", async () => {
     // It used to be plan_expires_at that removed the plan, from payers and
     // non-payers alike. Paid plans carry no expiry now, so this is the
@@ -2124,6 +2187,7 @@ describe("downgradeExpired", () => {
 
         expect(s).toEqual({
           downgraded: 0,
+          heldForPayment: 0,
           shiftsClosed: 0,
           ended: 1,
           advancedAfterGrace: 0,

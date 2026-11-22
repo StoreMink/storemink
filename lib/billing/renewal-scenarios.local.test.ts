@@ -453,6 +453,7 @@ vi.mock("@/lib/payments/razorpay", async (importOriginal) => {
   };
 });
 
+import { renewalPaymentHeld } from "./earlier-debits";
 import {
   cancelAtPeriodEnd,
   getSubscriptionView,
@@ -2096,6 +2097,67 @@ describe.skipIf(!enabled)(
             [s.storeId],
           ),
         ).toHaveLength(1);
+      }, 600_000);
+
+      // The fifth review, same day: grace then ran out and the store was
+      // downgraded while its payment for that invoice sat in the queue.
+      it("★★ grace runs out and the store is NOT downgraded: StoreMink is holding its payment for that invoice", async () => {
+        await runTo(new Date(CYCLE_END.getTime() + 96 * HOUR));
+        const sub = await subscription(s);
+        expect(Number(sub?.grace_ends)).toBeLessThan(cursor.getTime());
+        expect(sub?.state).not.toBe("downgraded");
+        expect(await storePlan(s)).toBe("pro");
+        expect((await invoice(s))?.status).toBe("open");
+        expect(debitsOf(s)).toHaveLength(1);
+      }, 600_000);
+
+      it("★ only a payment for EXACTLY what the invoice owes holds the plan, and only for the cycle being entered", async () => {
+        const sub = await subscription(s);
+        const cycle = Number(sub?.cycle);
+        expect(await renewalPaymentHeld(s.storeId, cycle)).toBe(true);
+        // Another cycle's invoice is not this payment's.
+        expect(await renewalPaymentHeld(s.storeId, cycle + 1)).toBe(false);
+        // A payment of another amount, larger or smaller, does not settle
+        // the invoice.
+        for (const change of ["+ 100", "- 100"]) {
+          await client.query("SAVEPOINT other_amount");
+          await client.query(
+            `update public.billing_reconciliation_items set observed_paise = observed_paise ${change} where store_id = $1`,
+            [s.storeId],
+          );
+          expect(await renewalPaymentHeld(s.storeId, cycle)).toBe(false);
+          await client.query("ROLLBACK TO SAVEPOINT other_amount");
+        }
+        // With no amount from the gateway, the closed attempt's own stands.
+        await client.query("SAVEPOINT no_amount");
+        await client.query(
+          "update public.billing_reconciliation_items set observed_paise = null where store_id = $1",
+          [s.storeId],
+        );
+        expect(await renewalPaymentHeld(s.storeId, cycle)).toBe(true);
+        await client.query("ROLLBACK TO SAVEPOINT no_amount");
+        // An item set aside for a person to chase is still unresolved.
+        await client.query("SAVEPOINT chased");
+        await client.query(
+          "update public.billing_reconciliation_items set status = 'manual_review' where store_id = $1",
+          [s.storeId],
+        );
+        expect(await renewalPaymentHeld(s.storeId, cycle)).toBe(true);
+        await client.query("ROLLBACK TO SAVEPOINT chased");
+      });
+
+      it("★ once a person closes the item without settling the invoice, the next run downgrades as for any unpaid renewal", async () => {
+        await client.query(
+          `update public.billing_reconciliation_items
+              set status = 'resolved', resolved_at = $2, resolved_by = 'test',
+                  resolution_note = 'refunded in the Razorpay dashboard'
+            where store_id = $1`,
+          [s.storeId, cursor.toISOString()],
+        );
+        await runTo(new Date(cursor.getTime() + 2 * HOUR));
+        expect((await subscription(s))?.state).toBe("downgraded");
+        expect(await storePlan(s)).toBe("free");
+        expect(debitsOf(s)).toHaveLength(1);
       }, 600_000);
 
       invariants();

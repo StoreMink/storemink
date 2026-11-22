@@ -105,6 +105,7 @@ const EMPTY_EVAL = {
 };
 const EMPTY_DOWN = {
   downgraded: 0,
+  heldForPayment: 0,
   shiftsClosed: 0,
   ended: 0,
   advancedAfterGrace: 0,

@@ -39,7 +39,7 @@ import "server-only";
  *   `unsettled`: neither is "nothing was paid", and the caller does not debit.
  */
 
-import { and, desc, eq, inArray, isNotNull, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { billingPaymentAttempts } from "@/drizzle/schema";
 import { logError, logWarn } from "@/lib/observability/logger";
@@ -48,7 +48,10 @@ import {
   capturedPayment,
   rzpFetchOrderPayments,
 } from "@/lib/payments/razorpay";
-import { fileClosedAttemptPayment } from "./collect";
+import {
+  CLOSED_CHECKOUT_PAID_KEY_PREFIX,
+  fileClosedAttemptPayment,
+} from "./collect";
 
 export type EarlierDebits =
   /** No earlier debit was sent, or every payment on each reads failed. */
@@ -183,4 +186,67 @@ export async function earlierDebitsOf(
     });
   }
   return worst;
+}
+
+/**
+ * Is this store's unpaid renewal one StoreMink is already HOLDING the money
+ * for? True when the invoice of the cycle the store is entering is still
+ * open and a payment for exactly what it owes sits, unresolved, in the
+ * reconciliation queue as captured on a closed attempt.
+ *
+ * ★★ WHY (PR #303 fifth review, 22 Nov 2026). A renewal debit recorded as
+ * failed and captured later is filed for a person, and every further debit
+ * and Pay now is held (above). But the invoice stayed open, grace ran out
+ * after 48 hours, and the store was downgraded to Free, its POS and paid
+ * features gone, while its payment for that very invoice sat in the queue:
+ * for example over a weekend nobody worked it. `downgradeExpired` asks this
+ * first and leaves such a store exactly as it is.
+ *
+ * ★ EXACT AMOUNT ONLY. A payment for another amount (the amount due changed
+ *   after its checkout was opened) does not settle the invoice, so it holds
+ *   nothing: the item is still for a person, and grace runs as it would.
+ *   The payment's amount is the gateway's own when it was read
+ *   (`observed_paise`), else the closed attempt's, which is what its order
+ *   was created for.
+ * ★ ONLY WHILE THE ITEM IS UNRESOLVED (`open` or `manual_review`). A person
+ *   who closes it has decided: they settled the invoice (it is paid, and the
+ *   cycle advances) or refunded the payment (it is unpaid, and the next run
+ *   downgrades as for any unpaid renewal).
+ * ★ NULL WHEN IT COULD NOT BE READ, which the caller treats as "do not
+ *   downgrade this run": taking a plan away is not done on a failed read.
+ */
+export async function renewalPaymentHeld(
+  storeId: string,
+  currentCycleSeq: number,
+): Promise<boolean | null> {
+  try {
+    return await withService(async (db) => {
+      const result = await db.execute(sql`
+        select 1
+          from public.billing_invoices i
+          join public.billing_reconciliation_items r on r.invoice_id = i.id
+         where i.store_id = ${storeId}::uuid
+           and i.kind = 'subscription'
+           and i.cycle_seq = ${currentCycleSeq + 1}
+           and i.status = 'open'
+           and r.status in ('open', 'manual_review')
+           and r.detail ->> 'repair_key' like ${`${CLOSED_CHECKOUT_PAID_KEY_PREFIX}%`}
+           and coalesce(r.observed_paise, r.expected_paise) = greatest(
+                 0,
+                 i.total_paise - least(
+                   i.total_paise,
+                   abs(coalesce((
+                     select sum(c.delta_paise)
+                       from public.billing_credits c
+                      where c.invoice_id = i.id and c.kind = 'applied'
+                   ), 0))
+                 )
+               )
+         limit 1`);
+      return result.rows.length > 0;
+    });
+  } catch (err) {
+    logError("billing.renewal_payment_held.read", err, { storeId });
+    return null;
+  }
 }

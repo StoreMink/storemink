@@ -21,10 +21,11 @@ vi.mock("@/lib/payments/provider", () => ({
 }));
 const collect = vi.hoisted(() => ({
   fileClosedAttemptPayment: vi.fn(async () => true),
+  CLOSED_CHECKOUT_PAID_KEY_PREFIX: "closed_checkout_paid:",
 }));
 vi.mock("./collect", () => collect);
 
-import { earlierDebitsOf } from "./earlier-debits";
+import { earlierDebitsOf, renewalPaymentHeld } from "./earlier-debits";
 
 const NOW = new Date("2026-11-22T12:00:00.000Z");
 const CREDS = { keyId: "rzp_1", keySecret: "s" };
@@ -176,5 +177,49 @@ describe("earlierDebitsOf", () => {
       /"debit_sent_at" is not null or [^)]*"provider_payment_id" is not null/,
     );
     expect(where.sql).toContain('"id" <>');
+  });
+});
+
+// PR #303 fifth review, 22 Nov 2026: the store whose late-captured payment
+// waits for a person must not be downgraded meanwhile. The statement itself
+// runs on the real schema in scenario 27 of the hour-by-hour suite.
+describe("renewalPaymentHeld", () => {
+  const withRows = (rows: unknown[] | Error) => {
+    const execute = vi.fn(async () => {
+      if (rows instanceof Error) throw rows;
+      return { rows };
+    });
+    dbHolder.current = { db: { execute } };
+    return execute;
+  };
+
+  it("true when the query finds the unresolved payment, false when it finds none", async () => {
+    withRows([{ "?column?": 1 }]);
+    expect(await renewalPaymentHeld("store-1", 4)).toBe(true);
+    withRows([]);
+    expect(await renewalPaymentHeld("store-1", 4)).toBe(false);
+  });
+
+  it("★★ NULL when it could not be read, never 'nothing held'", async () => {
+    withRows(new Error("db down"));
+    expect(await renewalPaymentHeld("store-1", 4)).toBeNull();
+  });
+
+  it("★ asks about the invoice of the cycle being ENTERED, still open, an unresolved closed-attempt payment, for exactly what the invoice owes", async () => {
+    const execute = withRows([]);
+    await renewalPaymentHeld("store-1", 4);
+    const q = new PgDialect().sqlToQuery((execute.mock.calls as any)[0][0]);
+    const text = q.sql.replace(/\s+/g, " ");
+    expect(q.params).toEqual(
+      expect.arrayContaining(["store-1", 5, "closed_checkout_paid:%"]),
+    );
+    expect(text).toContain("i.kind = 'subscription'");
+    expect(text).toContain("i.status = 'open'");
+    expect(text).toContain("r.status in ('open', 'manual_review')");
+    expect(text).toContain("r.detail ->> 'repair_key' like");
+    // The payment's own amount when the gateway gave it, else the closed
+    // attempt's; against the invoice total less the credits applied to it.
+    expect(text).toContain("coalesce(r.observed_paise, r.expected_paise) =");
+    expect(text).toContain("c.kind = 'applied'");
   });
 });
