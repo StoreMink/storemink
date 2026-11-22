@@ -193,13 +193,81 @@
   border-radius: 0;
 }
 .home-section.home-pad-sm {
-  padding-block: clamp(16px, 2.5vw, 28px);
+  --home-pad: clamp(16px, 2.5vw, 28px);
+  padding-block: var(--home-pad);
 }
 .home-section.home-pad-md {
-  padding-block: clamp(32px, 5vw, 56px);
+  --home-pad: clamp(32px, 5vw, 56px);
+  padding-block: var(--home-pad);
 }
 .home-section.home-pad-lg {
-  padding-block: clamp(56px, 8vw, 96px);
+  --home-pad: clamp(56px, 8vw, 96px);
+  padding-block: var(--home-pad);
+}
+/* ★★ A SECTION'S OWN PADDING AND THE GAP BETWEEN SECTIONS DO NOT ADD UP
+   (owner, 22 Nov 2026: "there is so much of space above Flagship Lineup",
+   then the same above a pale band). `.home-sections` already puts the page's
+   section gap between every two sections. A section with vertical padding
+   then added that on BOTH sides on top of it: two "large" sections on a
+   desktop stood 96 + 72 + 96 = 264px apart, a third of a screen of bare
+   page, and a theme that gave most of its sections padding (the "Volt"
+   theme did) read as full of holes. Two rules, both by a negative margin:
+
+   1. A PLAIN section (no scheme band, no background, not a full-width
+      photograph): its padding is more of the same page colour as the gap,
+      so the two overlap. Each side gives back the smaller of its padding
+      and the gap. Two large sections are then 120px apart, a large beside
+      a medium 96px, two medium the plain 72px gap; never less than the gap.
+   2. A BLOCK that paints itself edge to edge (a scheme band, a merchant's
+      background, a full-width hero, slideshow or banner) keeps ALL of its
+      padding, which is the room inside its colour. It gives back half the
+      gap on each side instead: two blocks touch, the way coloured bands
+      and a ticker under a hero are meant to, and a block sits half a gap
+      (plus whatever padding its neighbour has left) from plain content,
+      never against it.
+
+   ★ Never above the first section (the header's reserve) nor below the last
+     (the footer). A later section is painted over an earlier one's padding
+     where the two overlap, and padding is all that ever overlaps. */
+.home-sections
+  > .home-section[class*="home-pad-"]:not(
+    :is(
+      .sm-scheme,
+      [style*="background"],
+      .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+    )
+  ):not(:first-child) {
+  margin-top: calc(
+    -1 * min(var(--home-pad), var(--sm-section-gap, clamp(40px, 6vw, 72px)))
+  );
+}
+.home-sections
+  > .home-section[class*="home-pad-"]:not(
+    :is(
+      .sm-scheme,
+      [style*="background"],
+      .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+    )
+  ):not(:last-child) {
+  margin-bottom: calc(
+    -1 * min(var(--home-pad), var(--sm-section-gap, clamp(40px, 6vw, 72px)))
+  );
+}
+.home-sections
+  > .home-section:is(
+    .sm-scheme,
+    [style*="background"],
+    .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+  ):not(:first-child) {
+  margin-top: calc(-0.5 * var(--sm-section-gap, clamp(40px, 6vw, 72px)));
+}
+.home-sections
+  > .home-section:is(
+    .sm-scheme,
+    [style*="background"],
+    .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+  ):not(:last-child) {
+  margin-bottom: calc(-0.5 * var(--sm-section-gap, clamp(40px, 6vw, 72px)));
 }
 
 /* ---- Colour schemes (SectionShell `sm-scheme sm-scheme-<id>`) ----

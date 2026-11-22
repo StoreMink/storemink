@@ -58,6 +58,12 @@ export const MIN_WAKE_MS = 60_000;
 /** Kept back from the budget for the job's own shutdown. */
 const SHUTDOWN_MARGIN_MS = 10_000;
 
+/** The most one review screenshot may weigh: the web app refuses more
+ * (lib/theme-studio/capture.ts MAX_QA_SCREENSHOT_BYTES). */
+export const MAX_QA_SCREENSHOT_BYTES = 512 * 1024;
+/** The JPEG qualities a review screenshot is tried at, best first. */
+export const QA_SCREENSHOT_QUALITIES = [55, 40, 28, 18];
+
 /** How long a review screenshot waits for the page's photographs. */
 export const PICTURE_WAIT_MS = 8_000;
 
@@ -336,12 +342,21 @@ export async function takeQaScreenshots(
               .catch(() => {});
             // Capture the measured layout unchanged. CSS zoom reflows the page
             // and made vision review a different composition from the probe.
-            const bytes = await page.screenshot({
-              type: "jpeg",
-              quality: 55,
-              fullPage: true,
-            });
-            if (bytes.byteLength > 512 * 1024) {
+            // ★ A long page full of photographs can pass the limit at the
+            //   first quality (the "Volt" theme's home page did, once every
+            //   photograph was waited for). The reviewer judges layout and
+            //   composition, which a lower JPEG quality still shows, so the
+            //   page is photographed again, smaller, before giving up.
+            let bytes = null;
+            for (const quality of QA_SCREENSHOT_QUALITIES) {
+              bytes = await page.screenshot({
+                type: "jpeg",
+                quality,
+                fullPage: true,
+              });
+              if (bytes.byteLength <= MAX_QA_SCREENSHOT_BYTES) break;
+            }
+            if (bytes.byteLength > MAX_QA_SCREENSHOT_BYTES) {
               throw new CaptureError("qa_screenshot_too_large");
             }
             screenshots.push({

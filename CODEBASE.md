@@ -15948,7 +15948,13 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     page rendered correctly a moment later. A picture that really is broken
     still fails the probe's own `brokenImages`. Tests:
     `capture-job.test.mjs` (the wait itself, and the order measure, wait,
-    screenshot).
+    screenshot). ★ AND ONE OVER THE SIZE LIMIT IS TAKEN AGAIN, SMALLER: a
+    full-page screenshot over `MAX_QA_SCREENSHOT_BYTES` (512 KiB, the web
+    app's own limit) is retaken at JPEG quality 40, 28, then 18
+    (`QA_SCREENSHOT_QUALITIES`) before the capture fails
+    `qa_screenshot_too_large`. The second live theme's long, photograph-heavy
+    home page passed the limit at quality 55 once every photograph was
+    waited for, and its final check stopped a finished theme.
     ★ A PHONE PHOTOGRAPH IS NOT "UNUSED", AND A 2K PICTURE IS NOT "TOO
     NARROW" (same day). The picture check (`acceptance-gates.ts`,
     `assets.integrity`) listed a theme's pictures by following only the key
@@ -15982,6 +15988,30 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     be the panel's colour (14 cases; all fail without the rule). ⚠ Any other
     component that paints its own panel under a themed text hook needs the
     same; the newsletter is the only one today.
+    ★★ A SECTION'S OWN PADDING AND THE GAP BETWEEN SECTIONS DO NOT ADD UP
+    (same day, owner on the Volt preview: "there is so much of space above
+    Flagship Lineup"; storefront CSS, so every store). `.home-sections`
+    already puts the page's section gap between every two sections, and a
+    section's `padding_y` then added itself on both sides on top: two "lg"
+    sections on a desktop stood 96 + 72 + 96 = 264px apart. Measured on Volt:
+    224 to 264px of bare page between most sections. For a section with no
+    colour of its own (no scheme band, no `background`) the padding now
+    overlaps the gap: each side gives back the smaller of its padding
+    (`--home-pad`, set by the `home-pad-*` class) and the gap, through a
+    negative margin. Two large sections are 120px apart, a large beside a
+    medium 96px, two medium the plain 72px gap; never less than the gap. A
+    BLOCK that paints itself edge to edge (a scheme band, a merchant's
+    background, a full-width hero, slideshow or banner) keeps all of its
+    padding, the room inside its colour, and gives back HALF the gap on each
+    side instead: two blocks touch (bands, a ticker under a hero), and a
+    block sits half a gap, plus whatever padding its neighbour has left,
+    from plain content. On Volt a pale band after a plain section went from
+    224 to 264px of apparent space to 132 to 156px. The first section's top
+    and the last one's bottom are untouched.
+    `theme-studio-renderer-check.mjs` lays ten sections out at five widths
+    and measures every distance (fails without the rule: "two large sections
+    are 264px apart"). ⚠ A merchant who set large padding on plain sections
+    to space a page out gets less space than before.
     ★ THE OPENING SITS FLUSH UNDER THE HEADER (same day). `opening.ts`
     `enforceHomepageOpening(..., { flush })` sets the opening section's
     `style.padding_y` to `none` on v34 new themes: Roast's model wrote "sm",

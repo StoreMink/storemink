@@ -593,6 +593,124 @@ try {
           });
       }
     }
+    // A section's own padding and the page's section gap do not add up
+    // (22 Nov 2026, owner: "there is so much of space above Flagship
+    // Lineup"). Two large plain sections stood 96 + 72 + 96 = 264px apart
+    // on a desktop. For a section with no colour of its own the padding and
+    // the gap overlap; a band keeps all of its padding inside its colour and
+    // gives back half the gap on each side, so two bands touch.
+    {
+      const block = (id) =>
+        `<div data-block="${id}" style="height:120px;background:#ddd"></div>`;
+      const plain = (id, pad) =>
+        `<section class="home-section${pad ? ` home-pad-${pad}` : ""}">${block(id)}</section>`;
+      await page.setContent(
+        documentHtml(
+          [
+            plain("first", "lg"),
+            plain("a", "lg"),
+            plain("b", "lg"),
+            plain("c", "md"),
+            plain("d", "md"),
+            plain("e", ""),
+            `<section class="home-section home-pad-lg sm-scheme sm-scheme-soft">${block("band")}</section>`,
+            `<section class="home-section home-pad-lg sm-scheme sm-scheme-inverse">${block("band2")}</section>`,
+            plain("f", "lg"),
+            `<section class="home-section home-pad-lg" style="background:#123456">${block("painted")}</section>`,
+            plain("last", "lg"),
+          ].join(""),
+        ),
+      );
+      const m = await page.evaluate(() => {
+        const box = (id) =>
+          document
+            .querySelector(`[data-block="${id}"]`)
+            .getBoundingClientRect();
+        const section = (id) =>
+          document
+            .querySelector(`[data-block="${id}"]`)
+            .closest(".home-section")
+            .getBoundingClientRect();
+        const between = (a, b) => Math.round(box(b).top - box(a).bottom);
+        const wrap = document.querySelector(".home-sections");
+        const px = (value) => {
+          const probe = document.createElement("div");
+          probe.style.height = value;
+          wrap.appendChild(probe);
+          const h = probe.getBoundingClientRect().height;
+          probe.remove();
+          return h;
+        };
+        return {
+          gap: px("clamp(40px, 6vw, 72px)"),
+          lg: px("clamp(56px, 8vw, 96px)"),
+          md: px("clamp(32px, 5vw, 56px)"),
+          lgLg: between("a", "b"),
+          lgMd: between("b", "c"),
+          mdMd: between("c", "d"),
+          mdNone: between("d", "e"),
+          // Inside a band, and inside a painted section: all of the padding.
+          bandInset: Math.round(box("band").top - section("band").top),
+          paintedInset: Math.round(box("painted").top - section("painted").top),
+          // A band never slides under a neighbour's content.
+          bandClear:
+            section("band").top >= box("e").bottom - 0.5 &&
+            section("band2").bottom <= box("f").top + 0.5,
+          // From plain content to a band's edge, and from a band's edge to
+          // plain content with large padding.
+          plainToBand: Math.round(section("band").top - box("e").bottom),
+          bandToLarge: Math.round(box("f").top - section("band2").bottom),
+          // Two bands, edge to edge.
+          bandToBand: Math.round(section("band2").top - section("band").bottom),
+          paintedClear:
+            section("painted").top >= box("f").bottom - 0.5 &&
+            section("painted").bottom <= box("last").top + 0.5,
+          // The first section's padding is its own (the header's reserve
+          // sits above it), and the last one's is the footer's.
+          firstInset: Math.round(box("first").top - section("first").top),
+          lastInset: Math.round(section("last").bottom - box("last").bottom),
+        };
+      });
+      const measured = await measureNative(page);
+      cases++;
+      const problems = [];
+      const near = (value, wanted) => Math.abs(value - wanted) <= 1.5;
+      const overlap = (a, b) =>
+        m.gap + a + b - Math.min(a, m.gap) - Math.min(b, m.gap);
+      if (measured.overflow) problems.push("overflow");
+      if (!near(m.lgLg, overlap(m.lg, m.lg)))
+        problems.push(`two large sections are ${m.lgLg}px apart`);
+      if (!near(m.lgMd, overlap(m.lg, m.md)))
+        problems.push(`a large and a medium section are ${m.lgMd}px apart`);
+      if (!near(m.mdMd, overlap(m.md, m.md)))
+        problems.push(`two medium sections are ${m.mdMd}px apart`);
+      if (!near(m.mdNone, overlap(m.md, 0)))
+        problems.push(`a medium and a plain section are ${m.mdNone}px apart`);
+      // Never the old sum, and never less than the page's gap.
+      for (const value of [m.lgLg, m.lgMd, m.mdMd, m.mdNone])
+        if (
+          value < m.gap - 1.5 ||
+          value > Math.max(m.gap, 2 * m.lg - m.gap) + 1.5
+        )
+          problems.push(`sections ${value}px apart (gap ${m.gap}px)`);
+      if (!near(m.bandInset, m.lg) || !near(m.paintedInset, m.lg))
+        problems.push("a band lost padding inside its colour");
+      if (!m.bandClear || !m.paintedClear)
+        problems.push("a band slid under a neighbour");
+      // A block gives back half the gap on each side: two blocks touch, and
+      // a block is half a gap (plus the neighbour's leftover padding) from
+      // plain content, never against it.
+      if (!near(m.bandToBand, 0))
+        problems.push(`two bands are ${m.bandToBand}px apart, not touching`);
+      if (!near(m.plainToBand, m.gap / 2))
+        problems.push(`a band starts ${m.plainToBand}px after plain content`);
+      if (!near(m.bandToLarge, m.gap / 2 + m.lg - Math.min(m.lg, m.gap)))
+        problems.push(`plain content starts ${m.bandToLarge}px after a band`);
+      if (!near(m.firstInset, m.lg) || !near(m.lastInset, m.lg))
+        problems.push("the first or last section lost its outer padding");
+      if (problems.length)
+        failures.push({ label: `${width}px section-spacing`, problems, ...m });
+    }
     // Photo tiles and testimonials (22 Nov 2026, owner's phone screenshots).
     // On a phone a photo tile's words sit UNDER its photo: two tiles across
     // 390px are about 170px wide, and a title with a sentence laid over the
