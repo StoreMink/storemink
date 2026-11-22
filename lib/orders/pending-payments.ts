@@ -642,14 +642,19 @@ export async function waitingOrderChanges(
  * not be placed beside a payment that may still land, or they pay twice.
  * The gateway decides which case this is, by the rule Plans & Billing uses
  * for its own checkouts (`orderIsUntouched`): an order nobody opened, or one
- * whose every payment failed, cannot take money any more and is cancelled
- * here with everything it held given back. Money on it, a payment still
- * waiting for approval, or a read that failed all leave it exactly as it was.
+ * whose every payment failed, has no payment under way and is cancelled here
+ * with everything it held given back. Money on it, a payment still waiting
+ * for approval, or a read that failed all leave it exactly as it was.
  *
  * ★ The cancel is `expireUnpaidOrder`'s own conditional claim (pending to
  * failed), so a payment recorded in the same instant wins and this reports
- * `in_flight`. A payment that still arrives on a cancelled order is refunded
- * by the late-payment sweep, as for any order that lapsed.
+ * `in_flight`.
+ * ⚠ "Nobody is paying it" is not "nobody can": the Razorpay order stays
+ * payable from a window left open. A payment that still arrives is RECORDED
+ * on the cancelled order (the webhook, the shopper's callback, or the hourly
+ * late-payment sweep), which then shows the money as owed back and tells the
+ * merchant. Nothing refunds it automatically: the merchant does, as for any
+ * order that lapsed before its payment landed.
  */
 export async function retireWaitingOrder(
   order: PendingOnlineOrder,

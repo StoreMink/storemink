@@ -6799,8 +6799,17 @@ with `for update skip locked`, so two tries never collect one job; a claim
 older than 4 minutes belongs to a dead process) and waits for that job. A
 delivered picture is never handed out again, so the same request later is a
 deliberate redraw. Collectable for 6 hours; rows of both tables are pruned
-after 14 days (`lib/retention/prune.ts`). Every write is best effort: a database that
-cannot be reached costs the saving, never the picture.
+after 14 days (`lib/retention/prune.ts`). Every write is best effort, with
+one exception: ★★ A SUBMIT THAT COULD NOT BE WRITTEN DOWN IS NOT SENT (PR #303
+re-review, 22 Nov 2026). `openSubmit` answering null (the database could not
+be reached) ends the draw as `unavailable` with `jobMayExist: false`: nothing
+drawn, nothing charged, the caller's ordinary retry. It used to be sent
+anyway, and its job was then in no record, so another instance's search for a
+lost job, for another store, could take it as its own. A store that keeps no
+record by design says so (`GenerationStore.unrecorded`, `noGenerationStore`:
+scripts and tests only). Every other failed write costs only the saving: an
+answered submit whose job could not be recorded keeps its `sending` row,
+which every other search counts as a rival.
 
 ★★ A SUBMIT WHOSE ANSWER WAS LOST IS FOUND BY WHEN ITS JOB WAS MADE (owner,
 22 Nov 2026: "check it and fix it"; `lib/images/elevenlabs-lost-jobs.ts`,
@@ -6837,11 +6846,19 @@ half a second of each other, so it is the creation time). So:
 the same seconds, as in a provider outage; more than 40 jobs since; an
 unreadable list) is still not collected, and a later try draws again. The
 cursor's shape is theirs and undocumented: every read of it is checked, and a
-cursor that does not parse makes the search `unsure`. ⚠ The record is one
-environment's: a job made in the same seconds by another environment on the
-same ElevenLabs workspace would pass, if our own submit made nothing; the
-shape check and the photo review stand behind that, and production should not
-share a workspace with a busy test environment. Tests:
+cursor that does not parse makes the search `unsure`.
+★★ THE SEARCH RUNS ONLY WHERE THE KEY IS NOT SHARED (PR #303 re-review,
+22 Nov 2026). The record is one environment's, and a job shows no prompt in
+the list or in its own read (checked on the live API), so a job made in the
+same seconds by another environment on the same key would pass every rule if
+our own submit made nothing, and a store would get a picture drawn from
+another's prompt and product photos. `elevenLabsKeyIsExclusive`
+(`provider-settings-store.ts`) reads `ELEVENLABS_KEY_EXCLUSIVE=true` (Cloud
+Build `_ELEVENLABS_KEY_EXCLUSIVE`, empty by default, on the workers'
+allowlist); without it `drawElevenLabsImage` never reads the list
+(`findLostJobs`), and a lost submit ends as it did before the search existed:
+`timeout`, a job may exist, and the next try draws again. ⚠ Until a trigger
+sets it, the search is off everywhere, local development included. Tests:
 `elevenlabs-lost-jobs.test.ts`, the "answer was lost" block of
 `elevenlabs-images.test.ts` (each rule mutation-checked), and the opt-in
 `elevenlabs-generations.local.test.ts` (`IMAGE_PROVIDER_LOCAL_TEST=1`, the
@@ -6888,7 +6905,16 @@ Deployment: `ELEVENLABS_API_KEY` is the `_ELEVENLABS_API_KEY` Cloud Build
 substitution (empty by default, like `_SARVAM_API_KEY`: a regular Cloud Run
 environment variable, readable by whoever can inspect a trigger or revision),
 and is on the Theme Studio workers' allowlist
-(`scripts/theme-studio-workers.py`). Tests: `lib/images/*.test.ts` (the draw
+(`scripts/theme-studio-workers.py`), as is `ELEVENLABS_KEY_EXCLUSIVE`
+(`_ELEVENLABS_KEY_EXCLUSIVE`, above; docs/gcp-ci-cd.md).
+★ A finished picture is fetched only from the provider's own storage
+(`isElevenLabsPictureHost`: `storage.googleapis.com` and `elevenlabs.io`,
+read from the live API on 22 Nov 2026), over https, never through a redirect,
+and its bytes are counted as they arrive and given up past 60 MB
+(`readCapped`): a chunked response declares no length, and used to be read
+whole before its size was looked at. ⚠ If the provider moves its pictures to
+another host, downloads fail as `unavailable` with a log line naming the
+host ("picture address on an unexpected host"); add the host there. Tests: `lib/images/*.test.ts` (the draw
 against a stand-in API: one submit per picture, no resend after an unknown
 answer, collection, the 429 retry, the wait ceiling, downloads, the enlarge;
 the job record; the settings read; the client), `photos.test.ts`,
@@ -25263,6 +25289,60 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       (three undelivered notices, then a debit that pays). No merchant step
       changes, so no Help Centre update: "tries up to three times" still
       holds.
+    - **★★ PR #303 FULL RE-REVIEW (22 Nov 2026, sm-AnuragGoyal; four
+      payments that could be taken and recorded nowhere).**
+      (1) A PAYMENT ON A CLOSED CHECKOUT IS NEVER DROPPED. Closing an attempt
+      does not close its Razorpay order: the order stays payable from a
+      Checkout window left open in another tab. Pay now closes a checkout
+      whose amount changed (`amount_changed`) and enrolment one whose GST,
+      plan or rail changed, each on the gateway's word that nobody had paid
+      YET; a payment made afterwards landed on a closed attempt, the state
+      machine rightly refused it, and nothing recorded it. Now
+      `fileClosedAttemptPayment` (`collect.ts`) files it for a person as a
+      `state_conflict` item with repair key `closed_checkout_paid:<payment>`
+      (once per payment in any status, by `billing_reconciliation_repair_once`;
+      never when a sibling attempt on the same order recorded that payment)
+      and logs `billing.payment_on_closed_attempt` as an error. Three paths
+      call it: the webhook (`applyBillingPaymentEvent` checks the attempt's
+      state FIRST, before its draft-invoice and amount exits, and answers
+      `closed_attempt`); the Pay now confirm (`confirmInvoicePayment` checks
+      a signature that fails for the newest order against the invoice's
+      closed attempts, `closedCheckoutSignedFor`, and answers
+      `PAID_ON_CLOSED_CHECKOUT_MESSAGE` where it used to say "We couldn't
+      verify that payment."); and the hourly reconcile
+      (`findPaymentsOnClosedCheckouts`: MANUAL attempts closed in the last 72
+      hours that hold an order, 100 a pass, `paidAfterClose` in the summary).
+      Nothing is applied or refunded automatically: the amount may not be the
+      one now due and the invoice may since have been paid. The operator
+      queue names it "Payment made on a checkout that had been closed" with
+      what to check and a link to the store; StoreMink's refund tools cannot
+      reach it (it is on no captured attempt), so the refund is made in the
+      Razorpay dashboard. ⚠ The enrolment, plan-change and location confirms
+      do not have the stale-tab message; the webhook and the hourly pass
+      cover their closed attempts.
+      (2) A BUSY ANSWER ON A READ IS NOT A REFUSAL. `failureOutcome`
+      (`lib/payments/razorpay.ts`) classes 408, 425 and 429 on a GET as
+      `unknown`; they were `rejected` like every 4xx, which callers read as
+      "these keys cannot read this order", so `settleBeforeGatewayChange`
+      skipped a paid order read in a busy minute, the store disconnected, and
+      the reaper later cancelled the order with its stock and credit given
+      back. On a write they stay `rejected` (turned away before anything was
+      created).
+      (3) AN ORDER ID LEAVES THE SERVER ONLY ONCE ITS ATTEMPT HOLDS IT.
+      `recordGatewayOrder` (`collect.ts`) is the one write the four checkout
+      starts use (Pay now, enrolment, plan change, extra locations): when the
+      attempt could not be moved to `processing` with its order, the start
+      answers "Couldn't start the payment", logs
+      `billing.checkout_order_unrecorded` and closes the attempt
+      (`order_unrecorded`) so the merchant can try again at once. The result
+      of that write used to be ignored and the order id returned anyway, so a
+      merchant could pay an order nothing knew about, and
+      `closeOrderlessAttempts` then closed the attempt as "never started".
+      (4) The image provider's unrecorded submits and shared keys: see
+      § ElevenLabs image provider.
+      Tests beside each module (16 mutants, all caught). No migration. No
+      Help Centre update: no merchant step changes (one new message in a rare
+      case).
     - **★★ A WAITING ORDER IS RESUMED ONLY WHEN IT IS THE ORDER BEING ASKED
       FOR (PR #303 follow-up review, 22 Nov 2026).** Item 4's first fix
       resumed whenever the products and quantities matched, so a shopper who
@@ -25312,8 +25392,11 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       them changes Place order goes to the server. What the check on page
       load finds, and what case 3 returns, is shown as a toast with a
       "Continue that payment" action: an explicit choice to pay that order
-      as it was placed. A payment that still arrives on a cancelled order is
-      refunded by the late-payment sweep, as for any order that lapsed.
+      as it was placed. A payment that still arrives on a cancelled order
+      (its Razorpay order stays payable from a window left open) is recorded
+      on it by the webhook, the shopper's callback or the hourly late-payment
+      sweep, which shows the money as owed back and tells the merchant;
+      nothing refunds it automatically, as for any order that lapsed.
       Tests: `lib/orders/checkout-details.test.ts`,
       `lib/orders/pending-payments.test.ts`, `checkout-actions.test.ts`
       (seven mutants, all caught). ⚠ The checkout page has no test file and
@@ -29913,7 +29996,10 @@ model refused`, logError); the fallback is final, so the worst case is about
   (`image_generation_settings`), which needs server-only
   **`ELEVENLABS_API_KEY`** (Cloud Build `_ELEVENLABS_API_KEY`, also on the
   Theme Studio workers' allowlist); chosen without the key, Google still
-  draws (§ ElevenLabs image provider).
+  draws (§ ElevenLabs image provider). **`ELEVENLABS_KEY_EXCLUSIVE`** (`true`
+  only where no other environment uses that key; Cloud Build
+  `_ELEVENLABS_KEY_EXCLUSIVE`, empty by default) allows the search for a lost
+  submit's job.
   Theme Studio reads **`THEME_STUDIO_PROVIDER`** (code default `fake`, the offline
   test provider; `vertex-gemini` sends new runs to the allowlisted models
   and must not be set until the dedicated worker job exists — §4

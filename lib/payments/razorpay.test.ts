@@ -24,6 +24,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  failureOutcome,
   rzpCreateOrder,
   rzpFetchOrderPayments,
   rzpFetchToken,
@@ -135,6 +136,52 @@ describe("★ a failure is classified, not just reported", () => {
       expect(res).toMatchObject({ ok: false, outcome: "unknown" });
     },
   );
+
+  // PR #303 re-review, 22 Nov 2026. A rejected READ is taken to mean "these
+  // keys cannot read this order" (revoked, or another account's), and a
+  // store may then disconnect its gateway with that order unchecked. A 429
+  // says none of that, so a paid order read in a busy minute was skipped and
+  // later cancelled.
+  it.each([408, 425, 429])(
+    "★★ %s on a READ is UNKNOWN: Razorpay was busy, the keys were not refused",
+    async (status) => {
+      respond({ ok: false, status, json: { error: { description: "slow" } } });
+      expect(await rzpFetchOrderPayments(CREDS, "order_1")).toMatchObject({
+        ok: false,
+        outcome: "unknown",
+      });
+    },
+  );
+
+  it.each([400, 401, 403, 404])(
+    "%s on a read is still a refusal of the keys or the order",
+    async (status) => {
+      respond({ ok: false, status, json: { error: { description: "no" } } });
+      expect(await rzpFetchOrderPayments(CREDS, "order_1")).toMatchObject({
+        ok: false,
+        outcome: "rejected",
+      });
+    },
+  );
+
+  it("★ a 429 on a WRITE stays a verdict: it was turned away before anything was created", async () => {
+    respond({
+      ok: false,
+      status: 429,
+      json: { error: { description: "slow" } },
+    });
+    const res = await rzpCreateOrder(CREDS, { amountPaise: 50000 });
+    expect(res).toMatchObject({ ok: false, outcome: "rejected" });
+  });
+
+  it("the rule itself, by status and method", () => {
+    expect(failureOutcome(429, undefined)).toBe("unknown");
+    expect(failureOutcome(429, "get")).toBe("unknown");
+    expect(failureOutcome(429, "POST")).toBe("rejected");
+    expect(failureOutcome(408, "PATCH")).toBe("rejected");
+    expect(failureOutcome(404, "GET")).toBe("rejected");
+    expect(failureOutcome(503, "POST")).toBe("unknown");
+  });
 
   it("★ a network throw is UNKNOWN — a timeout is a success we never read", async () => {
     respond({ reject: new Error("socket hang up") });

@@ -26,11 +26,16 @@ import "server-only";
  * ★ The cursor's shape is theirs and undocumented. Every read of it is
  *   checked (it must name the row it came with, and hold a time); a cursor
  *   that does not parse makes the search `unsure`, never a guess.
- * ⚠ The record is this environment's. A job made in the same seconds by
- *   ANOTHER environment using the same ElevenLabs workspace is not in it,
- *   and would pass rules 1 to 4 if our own submit made nothing. The caller's
- *   shape check and the photo review are what stand behind that; keep one
- *   workspace per environment where it matters.
+ * ★★ The record is this environment's. A job made in the same seconds by
+ *   ANOTHER environment using the same ElevenLabs key is not in it, and
+ *   would pass rules 1 to 4 if our own submit made nothing. A job shows no
+ *   prompt (list and single read alike, checked 22 Nov 2026), so nothing can
+ *   tell it apart. The search therefore runs ONLY where the environment has
+ *   declared its key is not shared (`ELEVENLABS_KEY_EXCLUSIVE=true`,
+ *   `elevenLabsKeyIsExclusive`); the draw never calls this otherwise.
+ * ★ Rule 2 holds because a submit that cannot be written down is not sent
+ *   (elevenlabs-images.ts): every job this environment makes is either held
+ *   in the record or covered by an open submit row, which is a rival.
  */
 
 import { logInfo, logWarn } from "@/lib/observability/logger";

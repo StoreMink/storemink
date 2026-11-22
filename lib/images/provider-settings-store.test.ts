@@ -21,6 +21,7 @@ vi.mock("@/lib/db/client", () => ({
 
 import {
   elevenLabsApiKey,
+  elevenLabsKeyIsExclusive,
   getImageGenerationSettings,
   resolveImageProvider,
 } from "./provider-settings-store";
@@ -64,6 +65,24 @@ describe("the key", () => {
     expect(elevenLabsApiKey({ ELEVENLABS_API_KEY: " sk_x " })).toBe("sk_x");
     expect(elevenLabsApiKey({ ELEVENLABS_API_KEY: "  " })).toBeNull();
     expect(elevenLabsApiKey({})).toBeNull();
+  });
+});
+
+describe("whether the key is this environment's alone", () => {
+  it("★★ is false unless ELEVENLABS_KEY_EXCLUSIVE says true: the safe side is the default", () => {
+    expect(elevenLabsKeyIsExclusive({})).toBe(false);
+    expect(elevenLabsKeyIsExclusive({ ELEVENLABS_KEY_EXCLUSIVE: "" })).toBe(
+      false,
+    );
+    expect(elevenLabsKeyIsExclusive({ ELEVENLABS_KEY_EXCLUSIVE: "1" })).toBe(
+      false,
+    );
+    expect(
+      elevenLabsKeyIsExclusive({ ELEVENLABS_KEY_EXCLUSIVE: "false" }),
+    ).toBe(false);
+    expect(
+      elevenLabsKeyIsExclusive({ ELEVENLABS_KEY_EXCLUSIVE: " True " }),
+    ).toBe(true);
   });
 });
 

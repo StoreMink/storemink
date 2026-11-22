@@ -54,6 +54,8 @@ vi.mock("./invoice-store", () => store);
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // The new order is recorded on its attempt unless a test says it was not.
+  recordGatewayOrder: vi.fn(),
   // RC-F1b: no earlier captured purchase unless a test says so.
   capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
   fileRecoveredPurchase: vi.fn(async () => true),
@@ -179,6 +181,7 @@ beforeEach(() => {
     idempotencyKey: "key-1",
   });
   collect.settleAttempt.mockResolvedValue("captured");
+  collect.recordGatewayOrder.mockResolvedValue(true);
 });
 
 const base = {
@@ -252,6 +255,26 @@ describe("startPlanChange — dearer applies NOW", () => {
     expect(res.data.payment).toBeUndefined();
     expect(rzp.rzpCreateOrder).not.toHaveBeenCalled();
     expect(dbHolder.current.calls.set[0].plan).toBe("pro");
+  });
+
+  // PR #303 re-review, 22 Nov 2026. The write that records the new order on
+  // its attempt can fail (a pool wait running out). The order id used to be
+  // returned anyway, so the merchant could pay an order nothing knew about.
+  it("★★ an order the attempt could not record is NEVER handed to the browser", async () => {
+    collect.recordGatewayOrder.mockResolvedValue(false);
+    seed([[subRow()], []]);
+    const res = await startPlanChange({
+      ...base,
+      targetPlan: "pro",
+      targetPeriod: "monthly",
+    });
+    expect(res).toEqual({
+      ok: false,
+      error: "Couldn't start the payment. Try again.",
+    });
+    expect(collect.recordGatewayOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ providerOrderId: "order_1" }),
+    );
   });
 
   it("★ an UNKNOWN order outcome leaves the attempt in flight", async () => {

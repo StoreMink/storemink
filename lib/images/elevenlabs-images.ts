@@ -41,6 +41,7 @@ import {
   type LostSubmit,
 } from "./elevenlabs-generations";
 import { findLostJob } from "./elevenlabs-lost-jobs";
+import { elevenLabsKeyIsExclusive } from "./provider-settings-store";
 import type {
   ElevenLabsImageQuality,
   ElevenLabsImageResolution,
@@ -155,6 +156,12 @@ export interface ElevenLabsDeps {
   now?: () => number;
   random?: () => number;
   store?: GenerationStore;
+  /**
+   * Whether a submit whose answer was lost may be looked for in the
+   * provider's job list and its job taken. Defaults to this environment's
+   * own declaration that its key is not shared (`elevenLabsKeyIsExclusive`).
+   */
+  findLostJobs?: boolean;
   /** The width and height of a picture (a found job's shape is checked). */
   sizeOf?: (
     bytes: Uint8Array,
@@ -374,23 +381,88 @@ function sniff(
   return null;
 }
 
+/**
+ * Where a finished picture may be fetched from: the provider's own storage
+ * (Google Cloud Storage, read on 22 Nov 2026) and its own domain. The address
+ * arrives in the provider's answer, so it is checked like any address this
+ * server did not choose: a secure URL on a host on this list, never followed
+ * through a redirect.
+ */
+export function isElevenLabsPictureHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "storage.googleapis.com" ||
+    host.endsWith(".storage.googleapis.com") ||
+    host === "elevenlabs.io" ||
+    host.endsWith(".elevenlabs.io")
+  );
+}
+
+/**
+ * A response's bytes, read piece by piece and given up the moment they pass
+ * `max`. ★ `Content-Length` alone is not a limit: a chunked response declares
+ * none, and reading it whole first means holding however much was sent before
+ * the size is ever looked at (PR #303 re-review, 22 Nov 2026).
+ */
+async function readCapped(
+  response: Response,
+  max: number,
+): Promise<Uint8Array | null> {
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    // No stream to read (a test double): the whole body, then the check.
+    const whole = new Uint8Array(await response.arrayBuffer());
+    return whole.length > max ? null : whole;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.length;
+  }
+  return bytes;
+}
+
 async function download(
   url: string,
   signal: AbortSignal,
   fetchFn: typeof fetch,
 ): Promise<Uint8Array | null> {
   try {
-    // Only ever a secure address, and never a file of unbounded size.
-    if (new URL(url).protocol !== "https:") return null;
+    // Only ever a secure address on the provider's own hosts, and never a
+    // file of unbounded size.
+    const target = new URL(url);
+    if (target.protocol !== "https:") return null;
+    if (!isElevenLabsPictureHost(target.hostname)) {
+      logWarn("images.elevenlabs: picture address on an unexpected host", {
+        host: target.hostname,
+      });
+      return null;
+    }
     const response = await fetchFn(url, {
       signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
       cache: "no-store",
+      // A redirect would leave the checked host.
+      redirect: "error",
     });
     if (!response.ok) return null;
     const declared = Number(response.headers.get("content-length") ?? 0);
     if (declared > ELEVENLABS_MAX_PICTURE_BYTES) return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (bytes.length > ELEVENLABS_MAX_PICTURE_BYTES) return null;
+    const bytes = await readCapped(response, ELEVENLABS_MAX_PICTURE_BYTES);
+    if (!bytes) return null;
     return sniff(bytes) ? bytes : null;
   } catch {
     return null;
@@ -476,6 +548,11 @@ export async function drawElevenLabsImage(
   const sleep = options.sleep ?? defaultSleep;
   const random = options.random ?? Math.random;
   const store = options.store ?? postgresGenerationStore;
+  // ★★ ONLY WHERE THE KEY IS NOT SHARED (PR #303 re-review, 22 Nov 2026). A
+  // job found in the list is taken as ours because OUR record does not hold
+  // it; a job made by another environment on the same key is not in our
+  // record either, and shows no prompt to tell it apart.
+  const findLostJobs = options.findLostJobs ?? elevenLabsKeyIsExclusive();
   const finish =
     options.finish === undefined ? finishElevenLabsPicture : options.finish;
   const deps = { apiKey: options.apiKey, fetch: options.fetch ?? fetch };
@@ -511,6 +588,7 @@ export async function drawElevenLabsImage(
   const recover = async (
     lost: LostSubmit,
   ): Promise<{ id: string | null; finding: "found" | "none" | "unsure" }> => {
+    if (!findLostJobs) return { id: null, finding: "unsure" };
     const search = await findLostJob(lost, signal, {
       ...deps,
       apiBase: ELEVENLABS_API_BASE,
@@ -594,6 +672,21 @@ export async function drawElevenLabsImage(
           digest,
           new Date(sentAt),
         );
+        // ★★ A SUBMIT THAT COULD NOT BE WRITTEN DOWN IS NOT SENT (PR #303
+        // re-review, 22 Nov 2026). The search for a lost job trusts that
+        // every submit of this environment is in the record: a job made
+        // while a submit row is open counts as a rival, and one whose answer
+        // came back is recorded as held. A submit sent with no row (the
+        // database could not be reached) made a job that was in neither, and
+        // another instance's search, for another store, took it as its own:
+        // that store got a picture drawn from this prompt and these product
+        // photos. Nothing was sent, so nothing was drawn or charged.
+        if (!submitId && !store.unrecorded) {
+          logWarn("images.elevenlabs: submit not sent, no record of it", {
+            scope: input.scope,
+          });
+          return end({ kind: "error", code: "unavailable" }, false);
+        }
         submits += 1;
         answer = await submit(input, signal, deps);
         if (answer.kind !== "rate_limited") break;
@@ -640,7 +733,7 @@ export async function drawElevenLabsImage(
         //    other. A caller that has stopped is not kept waiting; the next
         //    try for this picture looks (1b).
         let foundId: string | null = null;
-        if (submitId && !signal.aborted) {
+        if (submitId && findLostJobs && !signal.aborted) {
           const lost = { id: submitId, sentAt, lostAt };
           for (let look = 0; look < ELEVENLABS_LOST_LOOKS; look += 1) {
             await sleep(ELEVENLABS_LOST_LOOK_WAIT_MS, signal);

@@ -78,6 +78,38 @@ export type RzpResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; outcome: "rejected" | "unknown" };
 
+/** Statuses that say "ask again later", never anything about the request. */
+const TEMPORARY_STATUSES: ReadonlySet<number> = new Set([408, 425, 429]);
+
+/**
+ * Whether a failed response is a verdict (`rejected`) or tells us nothing
+ * (`unknown`).
+ *
+ * A 5xx means their side broke partway; a write may still have landed. A 4xx
+ * is a decision, with one exception:
+ *
+ * ★★ A "TOO MANY REQUESTS" (429) OR A TIMEOUT STATUS (408, 425) ON A READ IS
+ * NOT A REFUSAL (PR #303 re-review, 22 Nov 2026). Callers read a rejected
+ * READ as "these keys cannot read this object": the key was revoked, or the
+ * order belongs to another Razorpay account. `settleBeforeGatewayChange`
+ * skips such an order and lets the store disconnect, and the reaper waits a
+ * week and then cancels it. A 429 says none of that, only that Razorpay was
+ * busy, and a paid order read during a busy minute was skipped, the
+ * connection removed, and the order cancelled with its stock and credit given
+ * back. So on a read these are `unknown`: nothing was learned, ask again.
+ * ★ On a WRITE they stay `rejected`, which is true there: Razorpay turned the
+ * request away before doing anything, so no order or refund was created.
+ */
+export function failureOutcome(
+  status: number,
+  method: string | undefined,
+): "rejected" | "unknown" {
+  if (status >= 500) return "unknown";
+  const isRead = !method || method.toUpperCase() === "GET";
+  if (isRead && TEMPORARY_STATUSES.has(status)) return "unknown";
+  return "rejected";
+}
+
 async function rzpFetch<T>(
   creds: RazorpayCreds,
   path: string,
@@ -107,9 +139,7 @@ async function rzpFetch<T>(
       return {
         ok: false,
         error: description,
-        // A 5xx means their side broke partway; the write may still have
-        // landed. Only a 4xx is a decision.
-        outcome: res.status >= 500 ? "unknown" : "rejected",
+        outcome: failureOutcome(res.status, init?.method),
       };
     }
     return { ok: true, data: (await res.json()) as T };

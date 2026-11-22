@@ -40,6 +40,8 @@ import {
   finishElevenLabsPicture,
   hasShape,
   type ElevenLabsDrawInput,
+  ELEVENLABS_MAX_PICTURE_BYTES,
+  isElevenLabsPictureHost,
 } from "./elevenlabs-images";
 import {
   SUBMIT_CLOCK_SLACK_MS,
@@ -305,11 +307,11 @@ function api() {
       return json(200, {
         id,
         status: "completed",
-        content_url: `https://files.test/${id}?n=${state.reads.length}`,
+        content_url: `https://storage.googleapis.com/xi-backend/${id}?n=${state.reads.length}`,
         content_mime_type: "image/png",
       });
     }
-    if (href.startsWith("https://files.test/")) {
+    if (href.startsWith("https://storage.googleapis.com/xi-backend/")) {
       state.downloads.push(href);
       if ((state.downloadPlan.shift() ?? "ok") === "fail") {
         return new Response("gone", { status: 403 });
@@ -348,6 +350,9 @@ function deps(
     finish: null,
     // A found job's picture has the shape that was asked for (4:5).
     sizeOf: async () => ({ width: 832, height: 1040 }),
+    // This environment's key is not shared, so a lost job may be looked for
+    // (the default is OFF; its own tests are below).
+    findLostJobs: true,
     ...over,
   };
   // The provider stamps a job with the same clock the draw reads.
@@ -749,7 +754,7 @@ describe("★★ a job that was paid for is collected, never drawn twice", () =>
       return new Response(
         JSON.stringify(
           body.content_url
-            ? { ...body, content_url: "http://files.test/x.png" }
+            ? { ...body, content_url: "http://storage.googleapis.com/x.png" }
             : body,
         ),
         { status: response.status },
@@ -761,6 +766,82 @@ describe("★★ a job that was paid for is collected, never drawn twice", () =>
     });
     expect(out).toMatchObject({ kind: "error", jobMayExist: true });
     expect(a.state.downloads).toEqual([]);
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  // PR #303 re-review, 22 Nov 2026 (smaller notes).
+  it("★ nor from a host that is not the provider's own storage", async () => {
+    const a = api();
+    const { store } = memoryStore();
+    const elsewhere = vi.fn(async (url: any, init: any = {}) => {
+      const response = await a.fetchFn(url, init);
+      if (!String(url).includes("/v1/flows/image/")) return response;
+      const body = await response.json();
+      return new Response(
+        JSON.stringify(
+          body.content_url
+            ? { ...body, content_url: "https://internal.example/x.png" }
+            : body,
+        ),
+        { status: response.status },
+      );
+    });
+    const out = await drawElevenLabsImage(input(), live(), {
+      ...deps(a, store),
+      fetch: elsewhere as any,
+    });
+    expect(out).toMatchObject({ kind: "error", jobMayExist: true });
+    expect(
+      elsewhere.mock.calls.some(([url]) =>
+        String(url).startsWith("https://internal.example/"),
+      ),
+    ).toBe(false);
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("the hosts a picture may come from", () => {
+    expect(isElevenLabsPictureHost("storage.googleapis.com")).toBe(true);
+    expect(isElevenLabsPictureHost("xi-backend.storage.googleapis.com")).toBe(
+      true,
+    );
+    expect(isElevenLabsPictureHost("cdn.ElevenLabs.io")).toBe(true);
+    expect(isElevenLabsPictureHost("storage.googleapis.com.evil.test")).toBe(
+      false,
+    );
+    expect(isElevenLabsPictureHost("evilelevenlabs.io")).toBe(false);
+    expect(isElevenLabsPictureHost("169.254.169.254")).toBe(false);
+  });
+
+  it("★★ a picture is given up the moment it passes the size limit, even with no declared length", async () => {
+    // A chunked response declares no Content-Length; reading it whole before
+    // looking at its size held however much was sent.
+    const a = api();
+    const { store } = memoryStore();
+    let pulled = 0;
+    const chunk = new Uint8Array(8 * 1024 * 1024);
+    const endless = vi.fn(async (url: any, init: any = {}) => {
+      if (!String(url).startsWith("https://storage.googleapis.com/")) {
+        return a.fetchFn(url, init);
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulled += 1;
+            controller.enqueue(chunk);
+          },
+        }),
+        { status: 200 },
+      );
+    });
+    const out = await drawElevenLabsImage(input(), live(), {
+      ...deps(a, store),
+      fetch: endless as any,
+    });
+    expect(out).toMatchObject({ kind: "error", jobMayExist: true });
+    // Stopped a little past the limit, never read to the end (there is none).
+    expect(pulled * chunk.length).toBeLessThan(
+      ELEVENLABS_MAX_PICTURE_BYTES * 4,
+    );
     expect(a.state.posts).toHaveLength(1);
   });
 
@@ -785,6 +866,101 @@ describe("★★ a job that was paid for is collected, never drawn twice", () =>
     const broken: GenerationStore = noGenerationStore;
     const out = await drawElevenLabsImage(input(), live(), deps(a, broken));
     expect(out.kind).toBe("ok");
+  });
+});
+
+// PR #303 re-review, 22 Nov 2026. The search for a lost job takes a job as
+// ours because OUR record does not hold it. Two ways that was false.
+describe("★★ a job is never taken on a record that is not the whole truth", () => {
+  it("★★ a submit that could NOT be written down is not sent: nothing drawn, nothing charged", async () => {
+    // The database could not be reached. Sent anyway, its job would be in no
+    // record, and another store's search would take it as its own.
+    const a = api();
+    const { store, rows, submits } = memoryStore();
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, { ...store, openSubmit: async () => null }),
+    );
+    expect(out).toMatchObject({
+      kind: "error",
+      code: "unavailable",
+      jobMayExist: false,
+      submits: 0,
+    });
+    expect(a.state.posts).toHaveLength(0);
+    expect(rows).toEqual([]);
+    expect(submits).toEqual([]);
+  });
+
+  it("a store that keeps no record BY DESIGN still draws", async () => {
+    const a = api();
+    const out = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, noGenerationStore),
+    );
+    expect(out.kind).toBe("ok");
+    expect(a.state.posts).toHaveLength(1);
+  });
+
+  it("★★ where the key may be SHARED the list is never read and no job is taken: a lost submit ends as it did before the search existed", async () => {
+    // A job made in the same seconds by another environment on the same key
+    // is not in this record either, and shows no prompt to tell it apart.
+    const a = api();
+    const { store, rows, submits } = memoryStore();
+    const c = clock();
+    const shared = { now: c.now, sleep: c.sleep, findLostJobs: false };
+    a.state.submitPlan = ["lost"];
+    const first = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(first).toMatchObject({
+      kind: "error",
+      code: "timeout",
+      jobMayExist: true,
+      recovered: false,
+    });
+    expect(a.state.lists).toBe(0);
+    expect(rows).toEqual([]);
+    expect(submits[0].state).toBe("lost");
+
+    // The next try does not look either: it draws a new picture.
+    const second = await drawElevenLabsImage(
+      input(),
+      live(),
+      deps(a, store, shared),
+    );
+    expect(second).toMatchObject({
+      kind: "ok",
+      adopted: false,
+      recovered: false,
+      submits: 1,
+    });
+    expect(a.state.lists).toBe(0);
+    // The unanswered submit is left as it is, never closed on a guess.
+    expect(submits[0].state).toBe("lost");
+  });
+
+  it("★ the search is OFF unless this environment says its key is not shared", async () => {
+    const run = async () => {
+      const a = api();
+      const { store } = memoryStore();
+      a.state.submitPlan = ["lost"];
+      await drawElevenLabsImage(
+        input(),
+        live(),
+        deps(a, store, { findLostJobs: undefined }),
+      );
+      return a.state.lists;
+    };
+    vi.stubEnv("ELEVENLABS_KEY_EXCLUSIVE", "");
+    expect(await run()).toBe(0);
+    vi.stubEnv("ELEVENLABS_KEY_EXCLUSIVE", "true");
+    expect(await run()).toBeGreaterThan(0);
+    vi.unstubAllEnvs();
   });
 });
 

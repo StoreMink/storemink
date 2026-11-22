@@ -129,9 +129,10 @@ import {
   capturedAttemptForInvoice,
   capturedDraftPurchases,
   fileRecoveredPurchase,
+  type PurchaseCompletion,
+  recordGatewayOrder,
   settleAttempt,
   verifyRecoveredCapture,
-  type PurchaseCompletion,
 } from "./collect";
 import { orderIsUntouched } from "./order-state";
 import { notifyPlanActivated } from "./receipts";
@@ -795,10 +796,22 @@ export async function startEnrolment(input: {
     };
   }
 
-  await settleAttempt(attempt.attemptId, "processing", {
+  // ★ The order id leaves the server only once the attempt holds it
+  // (`recordGatewayOrder`): an order the attempt does not know about must
+  // never be payable.
+  const recorded = await recordGatewayOrder({
+    attemptId: attempt.attemptId,
     providerOrderId: order.data.id,
+    invoiceId: invoice.id,
+    storeId: input.storeId,
     now,
   });
+  if (!recorded) {
+    return {
+      ok: false,
+      error: "Couldn't start the payment. Please try again.",
+    };
+  }
 
   return {
     ok: true,

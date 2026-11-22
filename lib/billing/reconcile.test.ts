@@ -51,6 +51,8 @@ const collect = vi.hoisted(() => ({
   // RC-F1b: no captured draft purchase to finish unless a test says so.
   capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
   fileRecoveredPurchase: vi.fn(async () => true),
+  // A payment on a closed checkout is filed for a person (PR #303 re-review).
+  fileClosedAttemptPayment: vi.fn(async (): Promise<boolean> => true),
   readAddonOrderTarget: vi.fn(async (): Promise<unknown> => null),
 }));
 vi.mock("./collect", () => collect);
@@ -373,9 +375,9 @@ describe("★★ finding money", () => {
         fetchOrderPayments: gateway([CAPTURED]) as any,
       });
       expect(worker.advanceAfterPayment).toHaveBeenCalledWith(STORE, NOW);
-      // The scan, and the scan for attempts with no gateway order. Never the
-      // invoice.
-      expect(dbHolder.current.db.select).toHaveBeenCalledTimes(2);
+      // The scan, the scan for attempts with no gateway order, and the scan
+      // for checkouts closed while still payable. Never the invoice.
+      expect(dbHolder.current.db.select).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -521,6 +523,113 @@ describe("★★ declaring failure", () => {
         fetchOrderPayments: gateway([FAILED_PAYMENT]) as any,
       });
       expect(worker.announceAutopayStopped).not.toHaveBeenCalled();
+    });
+  });
+
+  // PR #303 re-review, 22 Nov 2026. Closing an attempt does not close its
+  // Razorpay order: a Checkout window left open in another tab can still pay
+  // it. The pass read only attempts still in flight, so such a payment was
+  // recorded nowhere unless its webhook arrived.
+  describe("★★ a payment made on a checkout that had already been closed", () => {
+    const closed = (over: Record<string, unknown> = {}) => ({
+      id: "att-old",
+      storeId: STORE,
+      invoiceId: "inv-1",
+      providerOrderId: "order_old",
+      amountPaise: 500_000,
+      state: "cancelled",
+      failureCode: "amount_changed",
+      ...over,
+    });
+    /** Select #1 the main scan, #2 the orderless scan, #3 closed checkouts. */
+    const seedClosed = (rows: any[] | Error) =>
+      (dbHolder.current = makeDbMock({ selectQueue: [[], [], rows] }));
+
+    it("is filed for a person, with what was paid and why the checkout was closed", async () => {
+      seedClosed([closed()]);
+      const fetchOrderPayments = gateway([CAPTURED]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: fetchOrderPayments as any,
+      });
+      expect(fetchOrderPayments).toHaveBeenCalledWith(
+        expect.anything(),
+        "order_old",
+      );
+      expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith({
+        storeId: STORE,
+        invoiceId: "inv-1",
+        attemptId: "att-old",
+        providerPaymentId: "pay_1",
+        providerOrderId: "order_old",
+        expectedPaise: 500_000,
+        observedPaise: 500_000,
+        closedAs: "cancelled",
+        closedCode: "amount_changed",
+        source: "reconcile",
+        now: NOW,
+      });
+      expect(res.paidAfterClose).toBe(1);
+      // ★ Never applied here: the closed attempt is not settled, and no plan
+      // is moved. Whether it settles the invoice or goes back is a person's.
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+    });
+
+    it("★ one already filed (even resolved) is not counted again", async () => {
+      collect.fileClosedAttemptPayment.mockResolvedValueOnce(false);
+      seedClosed([closed()]);
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([CAPTURED]) as any,
+      });
+      expect(res.paidAfterClose).toBe(0);
+    });
+
+    it("no payment on the order, or a gateway that cannot be read, files nothing", async () => {
+      seedClosed([closed()]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      seedClosed([closed()]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: vi.fn(async () => ({
+          ok: false as const,
+          error: "timeout",
+          outcome: "unknown" as const,
+        })) as any,
+      });
+      expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
+    });
+
+    it("★ asks only about MANUAL checkouts closed in the last 72 hours that hold an order", async () => {
+      seedClosed([]);
+      await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      const where = new PgDialect().sqlToQuery(dbHolder.current.calls.where[2]);
+      expect(where.sql).toContain('"state" in');
+      expect(where.params).toEqual(
+        expect.arrayContaining(["failed", "cancelled", "manual"]),
+      );
+      expect(where.sql).toContain('"provider_order_id" is not null');
+      expect(where.sql).toContain('"resolved_at" >');
+      expect(where.params).toContain(
+        new Date(NOW.getTime() - FAIL_AFTER_HOURS * 3_600_000).toISOString(),
+      );
+    });
+
+    it("a failed scan is one error and stops nothing else", async () => {
+      seedClosed(new Error("db down"));
+      const res = await reconcileStrandedAttempts({
+        now: NOW,
+        fetchOrderPayments: gateway([]) as any,
+      });
+      expect(res.errors).toBe(1);
+      expect(collect.capturedDraftPurchases).toHaveBeenCalled();
     });
   });
 

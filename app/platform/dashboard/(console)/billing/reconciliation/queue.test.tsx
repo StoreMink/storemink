@@ -435,6 +435,70 @@ function purchaseItem(
   });
 }
 
+// PR #303 re-review, 22 Nov 2026: a payment captured on a checkout that had
+// already been closed (its Razorpay order stays payable from an open tab).
+describe("a payment made on a closed checkout", () => {
+  const closedCheckoutItem = (over: Partial<ReconciliationItem> = {}) =>
+    item({
+      kind: "state_conflict",
+      invoiceId: "inv-8",
+      attemptId: "att-old",
+      providerPaymentId: "pay_777",
+      expectedPaise: 240_000,
+      observedPaise: null,
+      detail: {
+        repair_key: "closed_checkout_paid:pay_777",
+        note: "A payment was captured on a checkout that had already been closed (amount_changed). It is not recorded on the invoice.",
+        closedAs: "cancelled",
+        closedCode: "amount_changed",
+        source: "webhook",
+      },
+      ...over,
+    });
+
+  it("★★ is named for what it is, says what to check, and shows the note", () => {
+    render(
+      <ReconciliationQueue
+        items={[closedCheckoutItem()]}
+        status="open"
+        canManage
+      />,
+    );
+    expect(
+      screen.getByText("Payment made on a checkout that had been closed"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/refund the payment in the Razorpay dashboard/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "A payment was captured on a checkout that had already been closed (amount_changed). It is not recorded on the invoice.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("State conflict")).toBeNull();
+  });
+
+  it("★ opens the store, and offers no StoreMink refund tool: the payment is on no captured attempt", () => {
+    render(
+      <ReconciliationQueue
+        items={[closedCheckoutItem()]}
+        status="open"
+        canManage
+      />,
+    );
+    expect(
+      screen.getByRole("link", { name: "Open the store" }).getAttribute("href"),
+    ).toBe("/dashboard/stores/store-1");
+    expect(screen.queryByRole("button", { name: "Issue a refund" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Issue a refund" })).toBeNull();
+    expect(
+      screen.queryByRole("button", {
+        name: "Record a refund made outside StoreMink",
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("the closed-tab purchase items (RC-F1b, RC-F1c)", () => {
   it("★★ names a purchase that was not applied, says what was bought and shows the note", () => {
     render(

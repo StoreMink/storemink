@@ -102,9 +102,16 @@ function itemNote(item: ReconciliationItem): string | null {
 // as `kept_draft:<invoice>`. Its note names both rates and the payment; a
 // person decides whether a difference goes back, through Issue a refund with a
 // reason they pick, and the store's page is a link away.
+//
+// ★ A payment captured on a checkout that had already been closed (its order
+// stays payable from a tab left open) is filed as
+// `closed_checkout_paid:<payment>` by the webhook, the Pay now confirm and
+// the hourly check. It is on no captured attempt, so the refund tools here
+// cannot reach it: the item says what to check and links to the store.
 // ---------------------------------------------------------------------------
 
 export type RepairKind =
+  | "closed_checkout_paid"
   | "paid_unreached"
   | "kept_before_refunds"
   | "refund_refused"
@@ -115,6 +122,10 @@ export type RepairKind =
 
 export const REPAIR_COPY: Record<RepairKind, { title: string; hint: string }> =
   {
+    closed_checkout_paid: {
+      title: "Payment made on a checkout that had been closed",
+      hint: "The payment is not recorded on the invoice. If the invoice has since been paid another way, or this amount is not what it owes, refund the payment in the Razorpay dashboard. Otherwise settle the invoice with the merchant. Then close this with what you did.",
+    },
     paid_unreached: {
       title: "Renewal paid for a cycle the plan did not reach",
       hint: "Issue a refund (reason: Plan ended before this cycle), then close this with what you did.",
@@ -158,6 +169,7 @@ export const PURCHASE_LABEL: Record<string, string> = {
 };
 
 const REPAIR_KINDS: readonly RepairKind[] = [
+  "closed_checkout_paid",
   "paid_unreached",
   "kept_before_refunds",
   "refund_refused",
@@ -429,7 +441,11 @@ function RepairDetail({
   // if the pass ever writes something else. A kept draft's note is the point:
   // it names the GST the invoice was issued with and the GST in force.
   const rawNote =
-    boughtSomething(kind) || kind === "kept_draft" ? itemNote(item) : null;
+    boughtSomething(kind) ||
+    kind === "kept_draft" ||
+    kind === "closed_checkout_paid"
+      ? itemNote(item)
+      : null;
   const note =
     kind === "captured_draft" && rawNote === CAPTURED_DRAFT_REPAIR.detail
       ? null
@@ -489,6 +505,22 @@ function RepairOpeners({
     return (
       <KeptDraftOpeners item={item} canManage={canManage} onOpen={onOpen} />
     );
+  }
+  // ★ A payment on a closed checkout (PR #303 re-review) is recorded on no
+  // captured attempt, so StoreMink's refund tools cannot reach it: the hint
+  // sends the operator to the Razorpay dashboard, and the store's page is
+  // where the invoice is.
+  if (kind === "closed_checkout_paid") {
+    return item.storeId ? (
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Link
+          href={`/dashboard/stores/${item.storeId}`}
+          className="dash-btn dash-btn-ghost dash-btn-sm pointer-coarse:min-h-11"
+        >
+          Open the store
+        </Link>
+      </div>
+    ) : null;
   }
   if (isPurchaseKind(kind)) {
     return (

@@ -58,6 +58,28 @@ export function elevenLabsApiKey(
 }
 
 /**
+ * Whether this environment has declared that its ElevenLabs key is used by
+ * NO other environment (`ELEVENLABS_KEY_EXCLUSIVE=true`).
+ *
+ * ★★ WHY IT IS ASKED (PR #303 re-review, 22 Nov 2026). When a submit's answer
+ * is lost, its job is looked for in the provider's job list, and a job made
+ * in those seconds that this environment's record does not hold is taken as
+ * that submit's (elevenlabs-lost-jobs.ts). The record is this environment's
+ * alone, and a job shows no prompt, so a job made in the same seconds by
+ * ANOTHER environment on the same key (a laptop, staging) would be taken too:
+ * one store's page would get a picture drawn from another's prompt and
+ * product photos. Nothing in the provider's API can tell the two apart, so
+ * the search runs only where an operator has said the key is not shared.
+ * ★ Off by default, which is the safe side: a lost submit then behaves as it
+ * did before the search existed (the picture may be paid for twice).
+ */
+export function elevenLabsKeyIsExclusive(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return env.ELEVENLABS_KEY_EXCLUSIVE?.trim().toLowerCase() === "true";
+}
+
+/**
  * The provider that will really draw: ElevenLabs only when the operator chose
  * it AND this environment holds its key. ★ A missing key falls back to
  * Google and says so in the log; it never fails a merchant's redesign.

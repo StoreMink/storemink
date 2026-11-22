@@ -46,7 +46,9 @@ import {
 import {
   beginAttempt,
   capturedAttemptForInvoice,
+  fileClosedAttemptPayment,
   hasUnknownAttempt,
+  recordGatewayOrder,
   settleAttempt,
   withdrawUnsentDebits,
 } from "./collect";
@@ -99,6 +101,14 @@ export const CLOSED_INVOICE_MESSAGE =
 /** A payment that settled after the plan ended and its invoice closed. */
 export const CLOSED_ON_ARRIVAL_MESSAGE =
   "Your plan ended before this payment arrived, so we're refunding it to the account you paid from, usually within 5 working days.";
+
+/**
+ * A payment made on a checkout that had already been closed (the amount due
+ * changed, and a newer checkout replaced it). It is not applied; a person
+ * settles it.
+ */
+export const PAID_ON_CLOSED_CHECKOUT_MESSAGE =
+  "This payment was made on an earlier checkout that was replaced when the amount due changed, so it has not been applied to this invoice. Our team has been told and will refund it. To settle the invoice, pay the amount now due. Questions: support@storemink.com.";
 
 /**
  * Refused: a payment for this invoice is already captured (RC-F1b). Never a
@@ -465,10 +475,22 @@ export async function startInvoicePayment(input: {
     };
   }
 
-  await settleAttempt(attempt.attemptId, "processing", {
+  // ★ The order id leaves the server only once the attempt holds it
+  // (`recordGatewayOrder`): an order the attempt does not know about must
+  // never be payable.
+  const recorded = await recordGatewayOrder({
+    attemptId: attempt.attemptId,
     providerOrderId: order.data.id,
+    invoiceId: invoice.id,
+    storeId: input.storeId,
     now,
   });
+  if (!recorded) {
+    return {
+      ok: false,
+      error: "Couldn't start the payment. Please try again.",
+    };
+  }
 
   return {
     ok: true,
@@ -608,6 +630,13 @@ async function resumeCheckout(
  * read that failed all refuse, and the attempt is left exactly as it was.
  * The close itself is the state machine's own guarded write: an attempt that
  * moved meanwhile is not closed.
+ *
+ * ⚠ "Nobody paid it" is not "nobody can" (PR #303 re-review, 22 Nov 2026):
+ * the closed order stays payable at Razorpay, and its Checkout window may
+ * still be open in another tab. A payment made there afterwards is never
+ * dropped: the webhook, that tab's own confirm and the hourly reconcile each
+ * file it for a person (`fileClosedAttemptPayment`, collect.ts), and the
+ * merchant is told it was not applied.
  */
 async function retireStaleCheckout(
   creds: NonNullable<ReturnType<typeof getPlatformRazorpayCreds>>,
@@ -703,18 +732,48 @@ export async function confirmInvoicePayment(input: {
     return { ok: false, error: "Couldn't confirm that payment." };
   }
 
-  if (!attempt?.providerOrderId) {
-    return { ok: false, error: "No payment to confirm." };
-  }
-
-  if (
-    !verifyCheckoutSignature(
+  // ★★ THE PAYMENT MAY BELONG TO AN EARLIER, CLOSED CHECKOUT OF THIS INVOICE
+  // (PR #303 re-review, 22 Nov 2026). Pay now closes a checkout whose amount
+  // changed and starts another, but the first tab may still be open and its
+  // Razorpay order is still payable. That tab's payment arrives here signed
+  // for the OLD order, so it fails the check against the newest attempt, and
+  // "We couldn't verify that payment." sent the merchant to pay again with
+  // their money already taken. The signature is checked against the invoice's
+  // closed attempts too: one it verifies for is that payment, proved by the
+  // same HMAC. It is filed for a person and never applied here (the amount is
+  // not the one now due, and the invoice may since have been paid).
+  const signedForLatest =
+    !!attempt?.providerOrderId &&
+    verifyCheckoutSignature(
       creds.keySecret,
       attempt.providerOrderId,
       input.providerPaymentId,
       input.signature,
-    )
-  ) {
+    );
+  if (!signedForLatest) {
+    const closed = await closedCheckoutSignedFor(creds.keySecret, input);
+    if (closed) {
+      await fileClosedAttemptPayment({
+        storeId: input.storeId,
+        invoiceId: input.invoiceId,
+        attemptId: closed.id,
+        providerPaymentId: input.providerPaymentId,
+        providerOrderId: closed.providerOrderId,
+        expectedPaise: closed.amountPaise,
+        closedAs: closed.state,
+        closedCode: closed.failureCode,
+        source: "confirm",
+        now,
+      });
+      return { ok: false, error: PAID_ON_CLOSED_CHECKOUT_MESSAGE };
+    }
+  }
+
+  if (!attempt?.providerOrderId) {
+    return { ok: false, error: "No payment to confirm." };
+  }
+
+  if (!signedForLatest) {
     logWarn("billing.manual_bad_signature", {
       storeId: input.storeId,
       invoiceId: input.invoiceId,
@@ -771,6 +830,74 @@ export async function confirmInvoicePayment(input: {
   const planRestored = await advanceAfterPayment(input.storeId, now);
 
   return { ok: true, data: { invoiceId: input.invoiceId, planRestored } };
+}
+
+/** How many of an invoice's closed checkouts a confirm is checked against. */
+const CLOSED_CHECKOUTS_CHECKED = 10;
+
+/**
+ * The CLOSED attempt of this store's invoice whose order this payment is
+ * signed for, if any. Null when there is none, and when the read fails: the
+ * caller then answers as it always did, and the webhook and the hourly pass
+ * still find the payment.
+ */
+async function closedCheckoutSignedFor(
+  keySecret: string,
+  input: {
+    storeId: string;
+    invoiceId: string;
+    providerPaymentId: string;
+    signature: string;
+  },
+): Promise<{
+  id: string;
+  providerOrderId: string;
+  amountPaise: number;
+  state: string;
+  failureCode: string | null;
+} | null> {
+  try {
+    const rows = await withService((db) =>
+      db
+        .select({
+          id: billingPaymentAttempts.id,
+          providerOrderId: billingPaymentAttempts.providerOrderId,
+          amountPaise: billingPaymentAttempts.amountPaise,
+          state: billingPaymentAttempts.state,
+          failureCode: billingPaymentAttempts.failureCode,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(billingPaymentAttempts.invoiceId, input.invoiceId),
+            eq(billingPaymentAttempts.storeId, input.storeId),
+            inArray(billingPaymentAttempts.state, ["failed", "cancelled"]),
+            isNotNull(billingPaymentAttempts.providerOrderId),
+          ),
+        )
+        .orderBy(desc(billingPaymentAttempts.createdAt))
+        .limit(CLOSED_CHECKOUTS_CHECKED),
+    );
+    for (const row of rows) {
+      if (
+        row.providerOrderId &&
+        verifyCheckoutSignature(
+          keySecret,
+          row.providerOrderId,
+          input.providerPaymentId,
+          input.signature,
+        )
+      ) {
+        return { ...row, providerOrderId: row.providerOrderId };
+      }
+    }
+    return null;
+  } catch (err) {
+    logError("billing.manual_confirm_closed_checkouts", err, {
+      invoiceId: input.invoiceId,
+    });
+    return null;
+  }
 }
 
 /**

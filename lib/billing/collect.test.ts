@@ -53,9 +53,11 @@ import {
   capturedAttemptForInvoice,
   capturedDraftPurchases,
   collectInvoice,
+  fileClosedAttemptPayment,
   fileRecoveredPurchase,
   mapGatewayStatus,
   readAddonOrderTarget,
+  recordGatewayOrder,
   settleAttempt,
   verifyRecoveredCapture,
   withdrawUnsentDebits,
@@ -371,6 +373,61 @@ describe("settleAttempt", () => {
   it("returns null for an unknown attempt", async () => {
     seed({ selects: [[]] });
     expect(await settleAttempt(ATTEMPT, "captured")).toBeNull();
+  });
+});
+
+// PR #303 re-review, 22 Nov 2026. The four checkout starts returned the new
+// order id to the browser whether or not the attempt had recorded it.
+describe("★★ recordGatewayOrder: an order is handed out only once its attempt holds it", () => {
+  const input = {
+    attemptId: ATTEMPT,
+    providerOrderId: "order_1",
+    invoiceId: INVOICE,
+    storeId: STORE,
+    now: NOW_1,
+  };
+
+  it("records the order and moves the attempt to processing", async () => {
+    seed({
+      selects: [
+        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
+        [{ state: "processing" }],
+      ],
+      returning: [{ state: "processing" }],
+    });
+    expect(await recordGatewayOrder(input)).toBe(true);
+    expect(dbHolder.current.calls.set[0]).toMatchObject({
+      state: "processing",
+      providerOrderId: "order_1",
+    });
+    expect(logError).not.toHaveBeenCalled();
+  });
+
+  it("★★ a write that fails answers FALSE, says so loudly, and tries to close the attempt", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [new Error("pool wait ran out"), new Error("still down")],
+    });
+    expect(await recordGatewayOrder(input)).toBe(false);
+    const events = vi.mocked(logError).mock.calls.map((c) => c[0]);
+    expect(events).toContain("billing.checkout_order_unrecorded");
+  });
+
+  it("★ a claim another writer won is not a recorded order either, and the attempt is closed", async () => {
+    dbHolder.current = makeDbMock({
+      selectQueue: [
+        // The record: read as `created`, but the claim matched no row.
+        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
+        // The close that follows.
+        [{ id: ATTEMPT, state: "created", invoiceId: INVOICE }],
+        [{ state: "failed" }],
+      ],
+      returningQueue: [[], [{ state: "failed" }], []],
+    });
+    expect(await recordGatewayOrder(input)).toBe(false);
+    expect(dbHolder.current.calls.set[1]).toMatchObject({
+      state: "failed",
+      failureCode: "order_unrecorded",
+    });
   });
 });
 
@@ -1195,6 +1252,70 @@ describe("★★ recovered purchases (RC-F1b)", () => {
         outcome: "unknown",
       });
       expect(await readAddonOrderTarget(CREDS, "order_1")).toBeNull();
+    });
+  });
+
+  // PR #303 re-review, 22 Nov 2026.
+  describe("★★ fileClosedAttemptPayment: a payment on a closed checkout is never dropped", () => {
+    const input = {
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-old",
+      providerPaymentId: "pay_9",
+      providerOrderId: "order_old",
+      expectedPaise: 400_000,
+      observedPaise: 400_000,
+      closedAs: "cancelled",
+      closedCode: "amount_changed",
+      source: "webhook" as const,
+      now: new Date("2026-11-22T00:00:00.000Z"),
+    };
+
+    it("files ONE open item per payment, keyed by the payment, and logs an error", async () => {
+      seed({ selects: [[]], returning: [{ id: "item-1" }] });
+      expect(await fileClosedAttemptPayment(input)).toBe(true);
+      expect(dbHolder.current.calls.values[0]).toMatchObject({
+        storeId: STORE,
+        kind: "state_conflict",
+        status: "open",
+        invoiceId: "inv-1",
+        attemptId: "att-old",
+        providerPaymentId: "pay_9",
+        providerOrderId: "order_old",
+        expectedPaise: 400_000,
+        observedPaise: 400_000,
+        detail: {
+          repair_key: "closed_checkout_paid:pay_9",
+          closedAs: "cancelled",
+          closedCode: "amount_changed",
+          source: "webhook",
+        },
+      });
+      expect(dbHolder.current.calls.onConflict).toHaveLength(1);
+      expect(vi.mocked(logError).mock.calls[0][0]).toBe(
+        "billing.payment_on_closed_attempt",
+      );
+    });
+
+    it("★ one filed before (in any status) is not filed or announced again", async () => {
+      seed({ selects: [[]], returning: [] });
+      expect(await fileClosedAttemptPayment(input)).toBe(false);
+      expect(logError).not.toHaveBeenCalled();
+    });
+
+    it("★★ a payment a SIBLING attempt recorded on the same order is not a lost payment", async () => {
+      seed({ selects: [[{ id: "att-new" }]], returning: [{ id: "item-1" }] });
+      expect(await fileClosedAttemptPayment(input)).toBe(false);
+      expect(dbHolder.current.calls.insert).toHaveLength(0);
+    });
+
+    it("a deleted store's is marked so, and a failed write answers false", async () => {
+      seed({ selects: [[]], returning: [{ id: "item-1" }] });
+      await fileClosedAttemptPayment({ ...input, storeId: null });
+      expect(dbHolder.current.calls.values[0].detail.storeDeleted).toBe(true);
+
+      dbHolder.current = makeDbMock({ selectQueue: [new Error("db down")] });
+      expect(await fileClosedAttemptPayment(input)).toBe(false);
     });
   });
 

@@ -33,6 +33,7 @@ import {
   count,
   desc,
   eq,
+  gt,
   inArray,
   isNotNull,
   isNull,
@@ -58,6 +59,7 @@ import {
 import type { ReconciliationItem } from "./invoice-types";
 import {
   capturedDraftPurchases,
+  fileClosedAttemptPayment,
   fileRecoveredPurchase,
   readAddonOrderTarget,
   settleAttempt,
@@ -116,8 +118,14 @@ export const AUTO_NO_PAYMENT_FAIL_AFTER_HOURS = 6;
 /** States that are not over, and so can still be resolved. */
 const IN_FLIGHT = ["created", "processing", "authorized", "unknown"];
 
+/** States that are over with no money recorded. */
+const CLOSED_WITHOUT_PAYMENT = ["failed", "cancelled"];
+
 /** Stranded attempts with no gateway order that one pass will close. */
 const ORDERLESS_BATCH = 100;
+
+/** Closed checkouts whose orders one pass asks the gateway about. */
+const CLOSED_CHECKOUT_BATCH = 100;
 
 export interface ReconcileSummary {
   considered: number;
@@ -134,6 +142,11 @@ export interface ReconcileSummary {
   stillUnknown: number;
   /** Flagged for a human. */
   flagged: number;
+  /**
+   * Payments found on checkouts that had already been closed (their orders
+   * stay payable from an open tab), filed for a person this pass.
+   */
+  paidAfterClose: number;
   /**
    * Purchases whose payment was captured while the invoice was still a draft
    * (the merchant closed the tab before the confirm), finished this pass:
@@ -171,6 +184,7 @@ export async function reconcileStrandedAttempts(
     orderless: 0,
     stillUnknown: 0,
     flagged: 0,
+    paidAfterClose: 0,
     completed: 0,
     errors: 0,
   };
@@ -420,6 +434,12 @@ export async function reconcileStrandedAttempts(
   // such an attempt: after the stale window it is simply over.
   await closeOrderlessAttempts({ staleBefore, now, summary });
 
+  // ★★ THEN THE CHECKOUTS THAT WERE CLOSED WHILE THEIR ORDER COULD STILL BE
+  // PAID (PR #303 re-review, 22 Nov 2026). The scan above reads only attempts
+  // still in flight, so a payment made on a closed checkout from a tab left
+  // open was seen by nothing unless its webhook arrived.
+  await findPaymentsOnClosedCheckouts({ creds, fetchPayments, now, summary });
+
   // ★★ THEN FINISH WHAT WAS PAID BUT NEVER CONFIRMED (RC-F1b). A capture found
   // above (or on an earlier pass) for an enrolment, a plan change or a
   // location purchase lands on a DRAFT invoice, because only the browser's
@@ -510,6 +530,104 @@ async function closeOrderlessAttempts(input: {
       }
     } catch (err) {
       logError("billing.reconcile.orderless_one", err, { attemptId: row.id });
+      input.summary.errors += 1;
+    }
+  }
+}
+
+/**
+ * Ask the gateway about MANUAL checkouts closed in the last
+ * `FAIL_AFTER_HOURS`, and file any payment captured on one for a person.
+ *
+ * ★ WHY THESE. Closing an attempt does not close its Razorpay order. A manual
+ * checkout is closed with its order still payable when the amount due changed
+ * (Pay now), when the GST, plan or rail changed under an enrolment, or when
+ * this pass gave up waiting, each on the gateway's word that nobody had paid
+ * YET. The window left open in another tab can still pay it. An automatic
+ * debit is not read: nothing but our own server call can pay a recurring
+ * order, and a failed debit is final.
+ *
+ * ★ The same horizon the stale scan uses: 72 hours after an attempt is over,
+ * a payment landing on it would be extraordinary. Bounded per pass, newest
+ * first; a read that fails is simply asked again next hour.
+ *
+ * ★ Filed once per payment in any status (`fileClosedAttemptPayment`), so an
+ * item a person has resolved is not filed again by the next pass. Nothing is
+ * applied or refunded here.
+ */
+async function findPaymentsOnClosedCheckouts(input: {
+  creds: NonNullable<ReturnType<typeof getPlatformRazorpayCreds>>;
+  fetchPayments: typeof rzpFetchOrderPayments;
+  now: Date;
+  summary: ReconcileSummary;
+}): Promise<void> {
+  const closedAfter = new Date(
+    input.now.getTime() - FAIL_AFTER_HOURS * 3_600_000,
+  ).toISOString();
+  let rows: {
+    id: string;
+    storeId: string | null;
+    invoiceId: string;
+    providerOrderId: string | null;
+    amountPaise: number;
+    state: string;
+    failureCode: string | null;
+  }[];
+  try {
+    rows = await withService((db) =>
+      db
+        .select({
+          id: billingPaymentAttempts.id,
+          storeId: billingPaymentAttempts.storeId,
+          invoiceId: billingPaymentAttempts.invoiceId,
+          providerOrderId: billingPaymentAttempts.providerOrderId,
+          amountPaise: billingPaymentAttempts.amountPaise,
+          state: billingPaymentAttempts.state,
+          failureCode: billingPaymentAttempts.failureCode,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            inArray(billingPaymentAttempts.state, CLOSED_WITHOUT_PAYMENT),
+            eq(billingPaymentAttempts.mode, "manual"),
+            isNotNull(billingPaymentAttempts.providerOrderId),
+            gt(billingPaymentAttempts.resolvedAt, closedAfter),
+          ),
+        )
+        .orderBy(desc(billingPaymentAttempts.resolvedAt))
+        .limit(CLOSED_CHECKOUT_BATCH),
+    );
+  } catch (err) {
+    logError("billing.reconcile.closed_checkout_scan", err);
+    input.summary.errors += 1;
+    return;
+  }
+
+  for (const row of rows) {
+    try {
+      const res = await input.fetchPayments(input.creds, row.providerOrderId!);
+      // Unreachable, or refused: not a verdict. Asked again next pass.
+      if (!res.ok) continue;
+      const paid = capturedPayment(res.data);
+      if (!paid) continue;
+      const filed = await fileClosedAttemptPayment({
+        storeId: row.storeId,
+        invoiceId: row.invoiceId,
+        attemptId: row.id,
+        providerPaymentId: paid.id,
+        providerOrderId: row.providerOrderId,
+        expectedPaise: row.amountPaise,
+        observedPaise: typeof paid.amount === "number" ? paid.amount : null,
+        closedAs: row.state,
+        closedCode: row.failureCode,
+        source: "reconcile",
+        now: input.now,
+      });
+      if (filed) input.summary.paidAfterClose += 1;
+    } catch (err) {
+      logError("billing.reconcile.closed_checkout_one", err, {
+        attemptId: row.id,
+      });
       input.summary.errors += 1;
     }
   }

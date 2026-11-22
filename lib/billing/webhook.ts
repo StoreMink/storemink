@@ -29,6 +29,9 @@ import "server-only";
  *   • An amount or currency that differs from the attempt's. Reconcile
  *     records that payment and files it for a person; nothing is decided here.
  *
+ * And one thing it never leaves alone: a payment captured on an attempt that
+ * was already closed is filed for a person (`closed_attempt`).
+ *
  * Never throws. Anything it does not act on is settled by reconcile.
  */
 
@@ -36,7 +39,8 @@ import { desc, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { billingInvoices, billingPaymentAttempts } from "@/drizzle/schema";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
-import { settleAttempt } from "./collect";
+import { fileClosedAttemptPayment, settleAttempt } from "./collect";
+import { isClosedWithoutPayment, type PaymentState } from "./payment-state";
 import { advanceAfterPayment, announceAutopayStopped } from "./renewal-worker";
 
 export type BillingWebhookOutcome =
@@ -50,6 +54,8 @@ export type BillingWebhookOutcome =
   | "mismatch"
   /** Nothing to change (a replay, or a failed try in a manual checkout). */
   | "ignored"
+  /** Captured on an attempt already closed: filed for a person, not applied. */
+  | "closed_attempt"
   /** It could not be read or written; reconcile settles it. */
   | "error";
 
@@ -78,6 +84,8 @@ export async function applyBillingPaymentEvent(
         invoiceId: string;
         mode: string;
         amountPaise: number;
+        state: string;
+        failureCode: string | null;
         invoiceFinalizedAt: string | null;
       }
     | undefined;
@@ -90,6 +98,8 @@ export async function applyBillingPaymentEvent(
           invoiceId: billingPaymentAttempts.invoiceId,
           mode: billingPaymentAttempts.mode,
           amountPaise: billingPaymentAttempts.amountPaise,
+          state: billingPaymentAttempts.state,
+          failureCode: billingPaymentAttempts.failureCode,
           invoiceFinalizedAt: billingInvoices.finalizedAt,
         })
         .from(billingPaymentAttempts)
@@ -115,6 +125,30 @@ export async function applyBillingPaymentEvent(
 
   try {
     if (event.result === "captured") {
+      // ★★ A CAPTURE ON A CLOSED ATTEMPT IS NEVER DROPPED (PR #303 re-review,
+      // 22 Nov 2026). Closing an attempt does not close its Razorpay order: a
+      // Checkout window left open in another tab can still pay it. The state
+      // machine will not reopen a closed attempt, so this used to end as
+      // "ignored" with the money recorded nowhere. Checked FIRST, before the
+      // amount and draft-invoice exits below, which would also leave it
+      // unrecorded (a draft's closed attempt is never the one its checkout
+      // confirms). Filed for a person; nothing is applied or refunded here.
+      if (isClosedWithoutPayment(attempt.state as PaymentState)) {
+        await fileClosedAttemptPayment({
+          storeId: attempt.storeId,
+          invoiceId: attempt.invoiceId,
+          attemptId: attempt.id,
+          providerPaymentId: event.providerPaymentId,
+          providerOrderId: event.providerOrderId,
+          expectedPaise: attempt.amountPaise,
+          observedPaise: event.amountPaise,
+          closedAs: attempt.state,
+          closedCode: attempt.failureCode,
+          source: "webhook",
+          now,
+        });
+        return "closed_attempt";
+      }
       if (
         (typeof event.amountPaise === "number" &&
           event.amountPaise !== attempt.amountPaise) ||
@@ -134,7 +168,26 @@ export async function applyBillingPaymentEvent(
         providerPaymentId: event.providerPaymentId,
         now,
       });
-      if (settled !== "captured") return "ignored";
+      if (settled !== "captured") {
+        // It was closed between the read above and this settle.
+        if (settled && isClosedWithoutPayment(settled)) {
+          await fileClosedAttemptPayment({
+            storeId: attempt.storeId,
+            invoiceId: attempt.invoiceId,
+            attemptId: attempt.id,
+            providerPaymentId: event.providerPaymentId,
+            providerOrderId: event.providerOrderId,
+            expectedPaise: attempt.amountPaise,
+            observedPaise: event.amountPaise,
+            closedAs: settled,
+            closedCode: null,
+            source: "webhook",
+            now,
+          });
+          return "closed_attempt";
+        }
+        return "ignored";
+      }
       logInfo("billing.webhook.captured", {
         attemptId: attempt.id,
         storeId: attempt.storeId,

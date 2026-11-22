@@ -17,7 +17,10 @@ vi.mock("@/lib/observability/logger", () => ({
   logInfo: vi.fn(),
   logWarn: vi.fn(),
 }));
-const collect = vi.hoisted(() => ({ settleAttempt: vi.fn() }));
+const collect = vi.hoisted(() => ({
+  settleAttempt: vi.fn(),
+  fileClosedAttemptPayment: vi.fn(async () => true),
+}));
 vi.mock("./collect", () => collect);
 const worker = vi.hoisted(() => ({
   advanceAfterPayment: vi.fn(),
@@ -37,6 +40,8 @@ function attempt(over: Record<string, unknown> = {}) {
     invoiceId: "inv-1",
     mode: "automatic",
     amountPaise: 240_000,
+    state: "processing",
+    failureCode: null,
     invoiceFinalizedAt: "2026-11-17T00:00:00.000Z",
     ...over,
   };
@@ -121,6 +126,70 @@ describe("a captured payment", () => {
     seed([attempt({ storeId: null })]);
     expect(await captured()).toBe("settled");
     expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+  });
+});
+
+// PR #303 re-review, 22 Nov 2026. Pay now cancels a checkout whose amount
+// changed, but its Razorpay order stays payable from a tab left open. The
+// capture used to end here as "ignored", recorded nowhere.
+describe("★★ a payment captured on an attempt that was already closed", () => {
+  it("is filed for a person and never settled", async () => {
+    seed([
+      attempt({
+        mode: "manual",
+        state: "cancelled",
+        failureCode: "amount_changed",
+      }),
+    ]);
+    expect(await captured()).toBe("closed_attempt");
+    expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith({
+      storeId: STORE,
+      invoiceId: "inv-1",
+      attemptId: "att-1",
+      providerPaymentId: "pay_1",
+      providerOrderId: "order_1",
+      expectedPaise: 240_000,
+      observedPaise: 240_000,
+      closedAs: "cancelled",
+      closedCode: "amount_changed",
+      source: "webhook",
+      now: NOW,
+    });
+    expect(collect.settleAttempt).not.toHaveBeenCalled();
+    expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+  });
+
+  it("★ is filed BEFORE the draft-invoice and amount exits, which would leave it unrecorded", async () => {
+    seed([
+      attempt({
+        state: "failed",
+        failureCode: "tax_changed",
+        invoiceFinalizedAt: null,
+      }),
+    ]);
+    expect(await captured({ amountPaise: 999 })).toBe("closed_attempt");
+    expect(collect.fileClosedAttemptPayment).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ one closed between the read and the settle is filed too", async () => {
+    collect.settleAttempt.mockResolvedValue("cancelled");
+    expect(await captured()).toBe("closed_attempt");
+    expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ closedAs: "cancelled", source: "webhook" }),
+    );
+  });
+
+  it("a FAILED payment on a closed attempt is nothing to record", async () => {
+    seed([attempt({ mode: "manual", state: "cancelled" })]);
+    expect(await failed()).toBe("ignored");
+    expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
+  });
+
+  it("a replay of a recorded capture is still just a replay", async () => {
+    seed([attempt({ state: "captured" })]);
+    collect.settleAttempt.mockResolvedValue("captured");
+    await captured();
+    expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
   });
 });
 

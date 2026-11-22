@@ -29,8 +29,12 @@ import "server-only";
  *    finds the one job made inside that window that this record does not
  *    hold and that no other unanswered submit could have made.
  * ★ Rows are pruned after 14 days (lib/retention/prune.ts).
- * ★ Every write here is best effort. A database that cannot be reached costs
- *   the saving, never the picture: the draw goes on without the record.
+ * ★ Every write here is best effort, with ONE exception the draw enforces:
+ *   a submit that could not be written down (`openSubmit` answered null) is
+ *   not sent (PR #303 re-review, 22 Nov 2026). Every other failed write costs
+ *   only the saving: a job that was recorded as sent but whose answer could
+ *   not be recorded keeps its `sending` row, which every other search counts
+ *   as a rival, so nobody else takes its job.
  */
 
 import { and, eq, inArray, sql } from "drizzle-orm";
@@ -65,6 +69,14 @@ export interface LostSubmit {
 }
 
 export interface GenerationStore {
+  /**
+   * True ONLY for a store that keeps no record by design (a caller with no
+   * database). A recording store that cannot write a submit down answers
+   * null from `openSubmit`, and that submit is then NOT sent
+   * (elevenlabs-images.ts): an unrecorded job is one another try's search
+   * could take as its own.
+   */
+  readonly unrecorded?: true;
   /** The id of a submitted, uncollected job for this picture, now claimed. */
   claimUndelivered(
     scope: string,
@@ -72,8 +84,8 @@ export interface GenerationStore {
     now: Date,
   ): Promise<string | null>;
   /**
-   * Written before a submit leaves. Null when the record is unavailable: the
-   * submit still goes, it just cannot be looked for if its answer is lost.
+   * Written before a submit leaves. Null when the record is unavailable, and
+   * the submit is then not sent (unless the store is `unrecorded` by design).
    */
   openSubmit(scope: string, digest: string, now: Date): Promise<string | null>;
   /** The submit was answered with a job: record the job and close the submit,
@@ -441,8 +453,13 @@ export const postgresGenerationStore: GenerationStore = {
   },
 };
 
-/** A store that remembers nothing: for a caller with no database. */
+/**
+ * A store that remembers nothing: for a caller with no database (a script, a
+ * test). ⚠ Its jobs are in no record, so never use it in an environment whose
+ * key another environment's lost-job search can see.
+ */
 export const noGenerationStore: GenerationStore = {
+  unrecorded: true,
   claimUndelivered: async () => null,
   openSubmit: async () => null,
   recordSubmitted: async () => {},

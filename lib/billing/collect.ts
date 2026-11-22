@@ -409,6 +409,62 @@ export async function settleAttempt(
 }
 
 /**
+ * Record a newly created gateway order on its attempt, and say whether the
+ * attempt now holds it. The caller hands the order id to the browser ONLY on
+ * true.
+ *
+ * ★★ WHY THE ANSWER MATTERS (PR #303 re-review, 22 Nov 2026). `settleAttempt`
+ * swallows its errors and returns null, and the four checkout starts
+ * (Pay now, enrolment, a plan change, extra locations) ignored that and
+ * returned the order id anyway. After one failed write (a pool wait running
+ * out) the merchant could pay an order the attempt knew nothing about: the
+ * confirm answered "No payment to confirm.", the webhook found no attempt for
+ * the order, and fifteen minutes later reconciliation closed the attempt as
+ * "never started at the gateway", freeing the invoice to be paid again. The
+ * money was taken and recorded nowhere.
+ *
+ * So: an order that could not be recorded is never handed out. Nobody can pay
+ * an order id that never left the server, which is what makes
+ * `closeOrderlessAttempts` (reconcile.ts) safe.
+ *
+ * ★ On a failure the attempt is closed here, best effort, so the merchant can
+ * start again at once instead of meeting "a payment is already in progress"
+ * until the hourly pass. If that write fails too, the pass closes it. Closing
+ * is safe even when the first write did land and only its answer was lost:
+ * the order id is not handed out either way.
+ */
+export async function recordGatewayOrder(input: {
+  attemptId: string;
+  providerOrderId: string;
+  invoiceId: string;
+  storeId: string;
+  now: Date;
+}): Promise<boolean> {
+  const recorded = await settleAttempt(input.attemptId, "processing", {
+    providerOrderId: input.providerOrderId,
+    now: input.now,
+  });
+  if (recorded === "processing") return true;
+  logError(
+    "billing.checkout_order_unrecorded",
+    new Error("the gateway order could not be recorded on its attempt"),
+    {
+      storeId: input.storeId,
+      invoiceId: input.invoiceId,
+      attemptId: input.attemptId,
+      settled: recorded,
+    },
+  );
+  await settleAttempt(input.attemptId, "failed", {
+    failureCode: "order_unrecorded",
+    failureReason:
+      "the gateway order could not be recorded, so it was not used",
+    now: input.now,
+  });
+  return false;
+}
+
+/**
  * The invoice statuses a capture can land on when a plan was closed under it:
  * an issued invoice in one of these is money the refund pass returns.
  */
@@ -1168,6 +1224,125 @@ export async function fileRecoveredPurchase(input: {
     logError("billing.recovery.file", err, {
       attemptId: input.attemptId,
       repairKey: input.repairKey,
+    });
+    return false;
+  }
+}
+
+/** The repair key of a payment found on a closed attempt (one per payment). */
+export const CLOSED_CHECKOUT_PAID_KEY_PREFIX = "closed_checkout_paid:";
+
+/**
+ * File a payment that was captured on an attempt already CLOSED (failed or
+ * cancelled) for a person, once.
+ *
+ * ★★ WHY (PR #303 re-review, 22 Nov 2026). Closing an attempt does not close
+ * its Razorpay order: the order stays payable, and its Checkout window may
+ * still be open in another tab. Pay now closes a checkout whose amount
+ * changed (`amount_changed`), and enrolment closes one whose GST, plan or rail
+ * changed, each on the gateway's word that nobody had paid YET. A payment
+ * made afterwards lands on a closed attempt, and the state machine rightly
+ * refuses to reopen it (a closed attempt is over; the invoice may since have
+ * been paid another way, or be for a different amount). Before this nothing
+ * recorded that payment: the webhook answered "ignored", the stale tab's
+ * confirm failed its signature check against the newer order, reconciliation
+ * read only attempts still in flight and the refund pass only captured ones.
+ * The money was taken and the merchant was asked to pay again.
+ *
+ * It is NOT applied and NOT refunded here. Whether it settles the invoice
+ * (still open, same amount) or goes back (paid twice, or another amount) is a
+ * person's decision, with the invoice in front of them.
+ *
+ * ★ ONCE PER PAYMENT, IN ANY STATUS: the repair key carries the payment id,
+ * and `billing_reconciliation_repair_once` is unique over repair keys whatever
+ * the item's status, so the hourly pass re-finding a payment an operator has
+ * already resolved files nothing. Returns whether THIS call filed it.
+ */
+export async function fileClosedAttemptPayment(input: {
+  storeId: string | null;
+  invoiceId: string;
+  attemptId: string;
+  providerPaymentId: string;
+  providerOrderId: string | null;
+  /** What the closed attempt was for. */
+  expectedPaise: number | null;
+  /** What the payment was for, when the gateway said. */
+  observedPaise?: number | null;
+  /** The state and reason the attempt was closed with. */
+  closedAs: string;
+  closedCode: string | null;
+  /** Which path found it. */
+  source: "webhook" | "confirm" | "reconcile";
+  now: Date;
+}): Promise<boolean> {
+  const repairKey = `${CLOSED_CHECKOUT_PAID_KEY_PREFIX}${input.providerPaymentId}`;
+  try {
+    const rows = await withService(async (db) => {
+      // ★ Not when the payment IS recorded, on another attempt. Attempts can
+      // share one gateway order (a checkout reopened on its own order), so a
+      // closed attempt's order may hold a payment a sibling attempt captured.
+      const [recorded] = await db
+        .select({ id: billingPaymentAttempts.id })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            eq(
+              billingPaymentAttempts.providerPaymentId,
+              input.providerPaymentId,
+            ),
+            inArray(billingPaymentAttempts.state, ["captured", "refunded"]),
+          ),
+        )
+        .limit(1);
+      if (recorded) return [];
+      return db
+        .insert(billingReconciliationItems)
+        .values({
+          storeId: input.storeId,
+          kind: "state_conflict",
+          status: "open",
+          invoiceId: input.invoiceId,
+          attemptId: input.attemptId,
+          providerPaymentId: input.providerPaymentId,
+          providerOrderId: input.providerOrderId,
+          expectedPaise: input.expectedPaise,
+          observedPaise: input.observedPaise ?? null,
+          detail: {
+            repair_key: repairKey,
+            note: `A payment was captured on a checkout that had already been closed (${input.closedCode ?? input.closedAs}). It is not recorded on the invoice.`,
+            closedAs: input.closedAs,
+            closedCode: input.closedCode,
+            source: input.source,
+            ...(input.storeId ? {} : { storeDeleted: true }),
+          },
+          createdAt: input.now.toISOString(),
+          updatedAt: input.now.toISOString(),
+        })
+        .onConflictDoNothing()
+        .returning({ id: billingReconciliationItems.id });
+    });
+    const filed = rows.length > 0;
+    if (filed) {
+      // An ERROR, not a warning: money StoreMink holds and has not recorded.
+      logError(
+        "billing.payment_on_closed_attempt",
+        new Error("a payment was captured on a closed payment attempt"),
+        {
+          storeId: input.storeId,
+          invoiceId: input.invoiceId,
+          attemptId: input.attemptId,
+          providerPaymentId: input.providerPaymentId,
+          closedAs: input.closedAs,
+          closedCode: input.closedCode,
+          source: input.source,
+        },
+      );
+    }
+    return filed;
+  } catch (err) {
+    logError("billing.payment_on_closed_attempt_file", err, {
+      attemptId: input.attemptId,
+      providerPaymentId: input.providerPaymentId,
     });
     return false;
   }

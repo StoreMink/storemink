@@ -49,6 +49,10 @@ vi.mock("./invoice-store", () => invStore);
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // The new order is recorded on its attempt unless a test says it was not.
+  recordGatewayOrder: vi.fn(),
+  // A payment on a closed checkout is filed for a person (PR #303 re-review).
+  fileClosedAttemptPayment: vi.fn(async (): Promise<boolean> => true),
   // RC-F1b: no captured attempt on the invoice unless a test says so.
   capturedAttemptForInvoice: vi.fn(async (): Promise<unknown> => null),
   // No earlier payment waiting on its result unless a test says so.
@@ -71,6 +75,7 @@ vi.mock("./renewal-worker", () => worker);
 import {
   ALREADY_CAPTURED_INVOICE_MESSAGE,
   PAYMENT_BEING_CONFIRMED_MESSAGE,
+  PAID_ON_CLOSED_CHECKOUT_MESSAGE,
   PAYMENT_IN_PROGRESS_MESSAGE,
   CANCELLING_INVOICE_MESSAGE,
   CLOSED_INVOICE_MESSAGE,
@@ -144,6 +149,7 @@ beforeEach(() => {
     idempotencyKey: "key-1",
   });
   collect.settleAttempt.mockResolvedValue("captured");
+  collect.recordGatewayOrder.mockResolvedValue(true);
   worker.advanceAfterPayment.mockResolvedValue(true);
 });
 
@@ -159,6 +165,21 @@ describe("startInvoicePayment", () => {
       amountPaise: 5_000_00,
       invoiceRef: "SM/2026-27/00002",
     });
+  });
+
+  // PR #303 re-review, 22 Nov 2026. The write that records the new order on
+  // its attempt can fail (a pool wait running out). The order id used to be
+  // returned anyway, so the merchant could pay an order nothing knew about.
+  it("★★ an order the attempt could not record is NEVER handed to the browser", async () => {
+    collect.recordGatewayOrder.mockResolvedValue(false);
+    const res = await startInvoicePayment(args);
+    expect(res).toEqual({
+      ok: false,
+      error: "Couldn't start the payment. Please try again.",
+    });
+    expect(collect.recordGatewayOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ providerOrderId: "order_1" }),
+    );
   });
 
   it("★★ refuses an invoice belonging to ANOTHER store", async () => {
@@ -1002,6 +1023,127 @@ describe("confirmInvoicePayment", () => {
     expect(res.ok).toBe(false);
     expect(collect.settleAttempt).not.toHaveBeenCalled();
     expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+  });
+
+  // PR #303 re-review, 22 Nov 2026. Pay now closed checkout O1 because the
+  // amount due changed and opened O2, but the first tab was still open and
+  // O1 is still payable at Razorpay. That tab's payment is signed for O1.
+  describe("★★ a payment signed for an earlier, CLOSED checkout of this invoice", () => {
+    const CLOSED = {
+      id: "att-old",
+      providerOrderId: "order_old",
+      amountPaise: 4_000_00,
+      state: "cancelled",
+      failureCode: "amount_changed",
+    };
+    /** Signed for `order_old` only. */
+    const signedForOld = () =>
+      rzp.verifyCheckoutSignature.mockImplementation(
+        (_secret: string, orderId: string) => orderId === "order_old",
+      );
+
+    it("is filed for a person, never applied, and the merchant is told the truth", async () => {
+      signedForOld();
+      seed([
+        [
+          {
+            id: "att-new",
+            providerOrderId: "order_new",
+            amountPaise: 5_000_00,
+          },
+        ],
+        [CLOSED],
+      ]);
+      const res = await confirmInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: PAID_ON_CLOSED_CHECKOUT_MESSAGE,
+      });
+      expect(collect.fileClosedAttemptPayment).toHaveBeenCalledWith({
+        storeId: STORE,
+        invoiceId: INVOICE,
+        attemptId: "att-old",
+        providerPaymentId: "pay_1",
+        providerOrderId: "order_old",
+        expectedPaise: 4_000_00,
+        closedAs: "cancelled",
+        closedCode: "amount_changed",
+        source: "confirm",
+        now: NOW,
+      });
+      // The invoice is not marked paid by a payment for another amount.
+      expect(collect.settleAttempt).not.toHaveBeenCalled();
+      expect(worker.advanceAfterPayment).not.toHaveBeenCalled();
+    });
+
+    it("★ looks only at THIS store's closed attempts of THIS invoice that hold an order", async () => {
+      signedForOld();
+      seed([
+        [
+          {
+            id: "att-new",
+            providerOrderId: "order_new",
+            amountPaise: 5_000_00,
+          },
+        ],
+        [CLOSED],
+      ]);
+      await confirmInvoicePayment(args);
+      const where = new PgDialect().sqlToQuery(dbHolder.current.calls.where[1]);
+      expect(where.params).toEqual(
+        expect.arrayContaining([INVOICE, STORE, "failed", "cancelled"]),
+      );
+      expect(where.sql).toContain('"provider_order_id" is not null');
+    });
+
+    it("★★ a signature that matches NO order of this invoice is still refused, and nothing is filed", async () => {
+      rzp.verifyCheckoutSignature.mockReturnValue(false);
+      seed([
+        [
+          {
+            id: "att-new",
+            providerOrderId: "order_new",
+            amountPaise: 5_000_00,
+          },
+        ],
+        [CLOSED],
+      ]);
+      const res = await confirmInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: "We couldn't verify that payment.",
+      });
+      expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
+    });
+
+    it("a payment signed for the CURRENT checkout never looks at the closed ones", async () => {
+      seedAttempt();
+      await confirmInvoicePayment(args);
+      expect(dbHolder.current.db.select).toHaveBeenCalledTimes(1);
+      expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
+    });
+
+    it("the closed checkouts cannot be read: answered as before, nothing filed", async () => {
+      signedForOld();
+      dbHolder.current = makeDbMock({
+        selectQueue: [
+          [
+            {
+              id: "att-new",
+              providerOrderId: "order_new",
+              amountPaise: 5_000_00,
+            },
+          ],
+          new Error("db down"),
+        ],
+      });
+      const res = await confirmInvoicePayment(args);
+      expect(res).toEqual({
+        ok: false,
+        error: "We couldn't verify that payment.",
+      });
+      expect(collect.fileClosedAttemptPayment).not.toHaveBeenCalled();
+    });
   });
 
   it("refuses a gateway record that contradicts the signed callback", async () => {
