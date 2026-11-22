@@ -5,7 +5,15 @@
 // arguments, and the steps run with PATH limited to /usr/bin and /bin.
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -201,6 +209,65 @@ describe("cloudbuild.yaml, Theme Studio", () => {
         false,
       );
     }
+  });
+
+  // The production build of 23 Nov 2026 failed at this step with "python3:
+  // command not found", after the web deploy: the Cloud SDK image's tag
+  // floats, and it no longer had a python3 on PATH.
+  describe("★★ the worker deploy finds a Python whatever the Cloud SDK image has on PATH", () => {
+    /** Run the real step with only its own bin folder on PATH and a gcloud
+     *  that names `sdk-python` as the Python it runs on. Returns what ran. */
+    function deployWorkers(withPython3OnPath: boolean): string {
+      const workspace = mkdtempSync(path.join(tmpdir(), "cloudbuild-step-"));
+      workspaces.push(workspace);
+      const binDir = path.join(workspace, "bin");
+      mkdirSync(binDir);
+      const record = path.join(workspace, "ran");
+      const fake = (name: string) => {
+        const file = path.join(workspace, name);
+        writeFileSync(
+          file,
+          ["#!/bin/sh", `echo "${name} $*" >> "${record}"`, ""].join("\n"),
+        );
+        chmodSync(file, 0o755);
+        return file;
+      };
+      const sdkPython = fake("sdk-python");
+      if (withPython3OnPath) {
+        symlinkSync(fake("path-python"), path.join(binDir, "python3"));
+      }
+      const script = substitute(
+        stepScript("theme-workers-deploy"),
+        values({ _SERVICE: "storemink-web-prod" }),
+      )
+        .replaceAll("/workspace", workspace)
+        .replace(/\bgcloud\b/g, "fake_gcloud");
+      const gcloud = `fake_gcloud() { if [ "$1" = info ]; then echo "${sdkPython}"; fi; }`;
+      execFileSync("/bin/bash", ["-c", `${gcloud}\n${script}`], {
+        cwd: ROOT,
+        env: { NODE_ENV: "test", PATH: binDir },
+        encoding: "utf8",
+      });
+      return readFileSync(record, "utf8").trim();
+    }
+
+    it("no python3 on PATH: it uses the Python gcloud itself runs on", () => {
+      expect(deployWorkers(false)).toMatch(
+        /^sdk-python scripts\/theme-studio-workers\.py --deploy --web=storemink-web-prod --project=\S+ --region=\S+$/,
+      );
+    });
+
+    it("a python3 on PATH is still the one used", () => {
+      expect(deployWorkers(true)).toMatch(
+        /^path-python scripts\/theme-studio-workers\.py --deploy /,
+      );
+    });
+
+    it("the step never calls a bare python3 again", () => {
+      const script = stepScript("theme-workers-deploy");
+      expect(script).not.toMatch(/^\s*python3 /m);
+      expect(script).toContain("basic.python_location");
+    });
   });
 
   it("★ updates no capture job outside production (P4: nothing Theme Studio runs on dev)", () => {

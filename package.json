@@ -50,6 +50,7 @@
     "theme-studio:exemplars": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-exemplar-check.ts",
     "theme-studio:stylesheets": "tsx --tsconfig tsconfig.scripts.json scripts/theme-studio-stylesheet-check.ts",
     "theme-registry:import": "tsx --tsconfig tsconfig.scripts.json scripts/theme-registry-import.ts",
+    "theme-release:copy": "tsx --tsconfig tsconfig.scripts.json scripts/theme-release-copy.ts",
     "auth:sync-hosts": "tsx --tsconfig tsconfig.scripts.json scripts/sync-auth-hosts.ts",
     "themes:remove-samples": "tsx --tsconfig tsconfig.scripts.json scripts/remove-theme-samples.ts",
     "db:lint": "node scripts/migration-lint.mjs",

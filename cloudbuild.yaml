@@ -423,7 +423,24 @@ steps:
         if [ -f /workspace/superseded ]; then exit 0; fi
         case "${_SERVICE}" in
           storemink-web-prod)
-            python3 scripts/theme-studio-workers.py --deploy \
+            # ★★ THE CLOUD SDK IMAGE MAY HAVE NO `python3` ON PATH. This step
+            # used bare `python3`, and the production build of 23 Nov 2026
+            # (commit 604ed60) failed here with "python3: command not found"
+            # AFTER the migrations and the web deploy had succeeded: the
+            # website went live on the new code and the two worker services
+            # were left on the previous image. The image tag floats, and its
+            # 31 Oct build still had one. gcloud runs on a Python the image
+            # always ships, so that one is used when PATH has none. The
+            # script needs only the standard library.
+            PY="$(command -v python3 || true)"
+            if [ -z "$${PY}" ]; then
+              PY="$(gcloud info --format='value(basic.python_location)')"
+            fi
+            if [ -z "$${PY}" ] || [ ! -x "$${PY}" ]; then
+              echo "No Python found to deploy the Theme Studio workers with." >&2
+              exit 1
+            fi
+            "$${PY}" scripts/theme-studio-workers.py --deploy \
               --web="${_SERVICE}" --project="${_GCP_PROJECT_ID}" --region="${_RUN_REGION}"
             ;;
           *) echo "No Theme Studio workers for ${_SERVICE}: they run in production only." ;;
