@@ -8578,8 +8578,9 @@ wholesip/
 │   │                          # from any Help page), search-box, category-icon (§21)
 │   ├── themes/                # ★ Public metadata-driven theme catalog served at
 │   │                          # themes.storemink.com; own canonical/OG/CSS, industry
-│   │                          # filters, truthful demo/release/plan state, and a
-│   │                          # newest-first one-row carousel at every viewport
+│   │                          # filters, truthful demo/plan state, and a plain
+│   │                          # newest-first grid of pictures and names (no theme
+│   │                          # description on a card; owner, 23 Nov 2026)
 │   │
 │   ├── actions/               # ★ ALL SERVER ACTIONS ("use server") — one file per domain:
 │   │   │                      # product/category/coupon/coupon-email/blog/blog-social/
@@ -12807,18 +12808,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     by `proxy.ts` to `app/themes/`, never resolved as merchant tenancy. The
     server-rendered catalog receives only client-safe `ThemeMeta` from the
     runtime registry (with bundled `THEME_META` as fallback), so its
-    industry filters, plan badges, release labels, preview image, demo health,
-    and signup CTA share the exact source used by onboarding. The hero and
-    closing galleries receive a small serializable projection of every
-    selectable manifest entry and rotate automatically in the narrow
-    `theme-showcases.tsx` client boundary; manual controls pause rotation, and
-    reduced-motion visitors keep a stable composition. Publishing another
-    selectable theme therefore updates both galleries without page-specific
-    image wiring. The catalog cards are newest-first by `release.releasedAt` and
-    stay in one horizontally scrollable, snap-aligned row at desktop, tablet and
-    mobile widths; `theme-catalog-carousel.tsx` adds one-card previous/next
-    controls (wrapping at the ends) while leaving touch and trackpad scrolling
-    native. The catalog has its own
+    industry filters, plan labels, preview image, demo health and signup CTA
+    share the exact source used by onboarding.
+    ★ A PLAIN GRID, NOT A SHOWCASE (owner, 23 Nov 2026: "no need of theme
+    descriptions to show on the page. the overall vibe should be a bit like
+    shopify's themes page"). The page is one server component with no client
+    code: a SHORT sans headline band with one sentence and one button (the
+    first row of themes is on a laptop's first screen with no scrolling,
+    owner the same day: everything above the pictures comes to about 400px
+    at 1440px wide, and `themes.css` says to re-check a 760px-tall screen
+    before making it taller); then every
+    selectable theme at once, newest first by `release.releasedAt`, in a grid
+    (three across, two from 1024px down, one from 680px down; a `ul` named
+    "Theme collection"); then three plain points and one closing call to
+    action. A card is the theme's 4:3 preview picture shown whole, its name,
+    the plans it is on ("All plans", "Basic and Pro", "Pro only") and what it
+    suits in the filter's own words, with two text links: "View live store"
+    and "Start with (name)". ★ A card carries no description, no feature
+    list, no number and no badge, and `page.test.tsx` fails if a description
+    or a list comes back. The picture opens the live demo store when the demo
+    is healthy (a "Live preview" cue on hover); the text link under the name
+    says the same, so touch and keyboard lose nothing. The catalogue heading
+    names the chosen category ("Food & Beverages themes") beside a count
+    ("6 themes"), with nothing else above the pills. On a phone the category pills are one row that scrolls
+    sideways. White ground and Inter throughout; the announcement bar, the
+    header and the footer are as before. Removed with this:
+    `theme-showcases.tsx` (the rotating hero stage and closing art),
+    `theme-catalog-carousel.tsx` (the one-row rail and its previous/next
+    buttons), the serif display type, the release-status and plan badges over
+    the picture, and the dark "standard" band. `ThemeMeta.description` and
+    `catalog.features` stay in the data: the dashboard's theme picker and
+    Theme Studio still read them. Checked in Chrome at 1440px and at phone
+    width (one column, no sideways page scroll). No merchant step changes, so
+    no Help Centre update. The catalog has its own
     canonical/OG metadata (`public/themes/catalog-og.png`), robots host, and
     one-entry sitemap; the platform nav/footer links to it. Blocked or unhealthy
     demos render an honest unavailable state rather than a broken live link.
