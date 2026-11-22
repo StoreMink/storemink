@@ -1674,6 +1674,11 @@
     transform: translateX(-50%);
   }
 }
+/* ★ Motion off: the band stands still and shows each message ONCE, centred.
+   A sequence holds the messages several times over to fill the loop; those
+   copies (.is-repeat) used to wrap into a block eight rows tall, on a
+   shopper's screen and in every Theme Studio catalogue picture, which is
+   taken with motion off (23 Nov 2026; ticker-section.tsx). */
 @media (prefers-reduced-motion: reduce) {
   .home-ticker-track {
     animation: none;
@@ -1681,14 +1686,21 @@
   }
   .home-ticker-seq {
     flex-wrap: wrap;
+    justify-content: center;
     width: 100%;
     gap: 12px;
   }
-  .home-ticker-seq[aria-hidden="true"] {
+  .home-ticker-seq[aria-hidden="true"],
+  .home-ticker-item.is-repeat {
     display: none;
   }
   .home-ticker-item {
     white-space: normal;
+    text-align: center;
+  }
+  /* The mark sits BETWEEN messages; nothing follows the last one now. */
+  .home-ticker-item.is-last::after {
+    display: none;
   }
 }
 
@@ -2861,7 +2873,8 @@ a.home-gallery-card:hover .home-gallery-image {
 
 /* ---- Image marquee (image-marquee-section.tsx; logo strip "scroll") ----
    The ticker's track, with pictures: two sequences, -50% translate, pause
-   on hover, static and wrapped under reduced motion. */
+   on hover; with motion off, still, wrapped and each picture ONCE (the
+   copies that fill the loop, .is-repeat, are dropped: 23 Nov 2026). */
 .home-marquee {
   overflow: hidden;
   padding: 6px 0;
@@ -2924,7 +2937,8 @@ a.home-gallery-card:hover .home-gallery-image {
     flex-wrap: wrap;
     justify-content: center;
   }
-  .home-marquee-track .home-marquee-seq[aria-hidden] {
+  .home-marquee-track .home-marquee-seq[aria-hidden],
+  .home-marquee-item.is-repeat {
     display: none;
   }
   .home-marquee-seq {

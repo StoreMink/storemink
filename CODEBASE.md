@@ -12346,7 +12346,23 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     merchant copy, theme and alignment controls),
     `usp_bar` (fixed icon catalog `USP_ICONS` + label strip), `ticker`
     (scrolling marquee — `messages[]` + speed + text theme; CSS-animated
-    `ticker-section.tsx`, pauses on hover, static under reduced-motion),
+    `ticker-section.tsx`, pauses on hover, static under reduced-motion;
+    ★ with motion off each message shows ONCE, centred on one row, since
+    23 Nov 2026: a sequence holds the messages several times over to fill the
+    loop, and the still, wrapped band used to show every copy, so three
+    messages were a block of twelve, eight rows tall, for a shopper with
+    "Reduce motion" on AND in every Theme Studio catalogue picture, which the
+    capture job takes with motion off (the owner found it on Aurelle's card).
+    The copies carry `is-repeat` and `aria-hidden` (screen readers used to
+    read each message once per copy) and `homepage.css` drops them in its
+    reduced-motion block; `image_marquee` has the same fix, its copies also
+    out of the tab order. ⚠ A picture already captured keeps the old block:
+    a published theme's pictures are retaken only when a change to it is
+    published as its next release. Tests: `ticker-section.test.tsx` (markup
+    and the stylesheet's reduced-motion rules), `phase2c-sections.test.tsx`;
+    checked in Chrome on the Vitrine demo with motion off (three messages,
+    one row, 44px) and on (24 items, moving). No merchant step changes, so
+    no Help Centre update),
     `faq_accordion`
     (expandable Q/A with optional category-filter pills; plain-text answers),
     `accordion` (collapsible content: typed rows of copy, or copy with a
