@@ -11910,7 +11910,19 @@ wholesip/
 │   │                          # `postgres` user (invisible to a non-root lsof, so
 │   │                          # the port looks free). Sets LC_ALL, without which
 │   │                          # the postmaster dies "became multithreaded during
-│   │                          # startup". start/stop/status/psql.
+│   │                          # startup". start/stop/status/psql. ★ Windows
+│   │                          # (Git Bash): the EDB portable binaries in
+│   │                          # ~/pgsql, cluster ~/pgsql-data, and `init` makes it
+│   │                          # (superuser postgres, trust, 127.0.0.1:5544, ICU
+│   │                          # en-US; Windows only, refused elsewhere).
+│   │                          # npm must use Git Bash as its script-shell there.
+│   │                          # Setup: docs/local-dev-performance.md "on Windows".
+│   ├── db-local-env.sh        # sourced by db-local-ctl.sh and db-local-sync.sh:
+│   │                          # port 5544, the binaries/data/log paths per platform
+│   │                          # (PG_HOME/PG_DATA/PG_LOG override, Windows-style paths
+│   │                          # converted with cygpath) and the local superuser
+│   │                          # (PGUSER=postgres on Windows). One copy, so the two
+│   │                          # scripts cannot talk to different binaries or users.
 │   ├── billing-verify.sql     # ★ §34 adversarial check of the APPLIED billing schema
 │   │                          # (26 checks; moved from the pre-ledger SQL folder).
 │   │                          # Mutations run in a plpgsql SUBTRANSACTION that is
@@ -11932,6 +11944,18 @@ wholesip/
 │                              # applied by hand and survives only in git history.
 │                              # Refuses on expired
 │                              # ADC, a dead proxy, or pg_dump older than the server.
+│                              # Before dropping anything it checks every staging
+│                              # extension is installable here (pgvector on Windows
+│                              # is built by hand). Before the restore it copies
+│                              # staging's roles, LOGIN/BYPASSRLS and the memberships
+│                              # between them (revoking any staging lacks), and
+│                              # creates `postgres` when missing (a Homebrew cluster
+│                              # has only the macOS user). Any restore error other
+│                              # than Cloud SQL's own roles stops the run before
+│                              # .env.local. Runs on Windows too (decodes the secret
+│                              # with node, no python). The root .gitattributes is
+│                              # `* text=auto eol=lf`: a CRLF checkout breaks the
+│                              # migration checksums, bash and Prettier's check.
 │   └── help-content-migrations.test.mjs # static contract for the 0019–0024 public Help
 │                              # baseline: exact file/order/article counts, unique slugs,
 │                              # complete metadata/substantial bodies, valid internal links,
@@ -29847,7 +29871,8 @@ npm run dev -- --no-fs-cache  # force it OFF (DEV_FS_CACHE=0); default is OFF on
 npm run dev:all     # ↑ dev + the Cloud SQL Auth Proxy together (concurrently) — one command
 npm run dev:all:lean # ↑ force the 2 GB heap + proxy (normally identical on this 8 GB Mac)
 npm run dev:all:full # ↑ uncapped dev + proxy
-npm run db:local:start  # ★ start the LOCAL dev Postgres (Homebrew @17, port 5544)
+npm run db:local:init   # Windows only, once: create the cluster in ~/pgsql-data
+npm run db:local:start  # ★ start the LOCAL dev Postgres (Homebrew @17 or Windows ~/pgsql, port 5544)
 npm run db:local:status # cluster state + storemink_local table count
 npm run db:local:sync   # rebuild storemink_local from staging (add -- --schema-only to skip data)
 npm run db:local:psql   # psql into storemink_local
