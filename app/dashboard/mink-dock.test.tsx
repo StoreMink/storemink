@@ -20,7 +20,8 @@ vi.mock("./chat-context", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./chat-context")>();
   return {
     ...actual,
-    // Null: the real hook outside a provider (the platform console).
+    // Null: the real hook outside a provider. The platform console never mounts
+    // the bar (the top bar gates it on useHasChat); this is the second line.
     useMinkDock: () => chat.value ?? actual.useMinkDock(),
   };
 });
@@ -98,7 +99,7 @@ describe("MinkDock", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders nothing outside a chat provider (the platform console)", () => {
+  it("renders nothing outside a chat provider (a second line of defence; the console never mounts it)", () => {
     chat.value = null;
     const { container } = render(<MinkDock />);
     expect(container).toBeEmptyDOMElement();

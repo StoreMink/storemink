@@ -141,7 +141,14 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > bar (its first) and the panel's empty-state chips (up to four) both use. On
 > touch screens (`pointer: coarse`) a tap opens the panel straight away
 > (`openChat({ focusComposer: false })`, so the keyboard does not rise). It
-> renders only when Mink is enabled and the chat is closed. Closing the chat
+> renders only when Mink is enabled and the chat is closed. ★ The platform
+> console renders the same top bar with no ChatProvider (Mink AI works on one
+> store's data), so there the face and its bar are not shown at all
+> (`useHasChat()` in `chat-context.tsx`, 2026-11-21); before, the face was a
+> button that did nothing. A store whose Mink AI is switched off still has a
+> provider and keeps the face (`chat-context.test.tsx` pins both cases on the
+> real hook). "My Store" is likewise shown only when a `storeName` is passed,
+> since on the console "/" is the marketing site. Closing the chat
 > from its Close button returns focus to the control that opened it
 > (`app/dashboard/mink-opener.ts`: recorded at the click or at an open from
 > the address, used while it is still on the page, and forgotten whenever the

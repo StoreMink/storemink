@@ -5,6 +5,7 @@ import { StrictMode, useEffect } from "react";
 import {
   ChatProvider,
   useChat,
+  useHasChat,
   useMinkDock,
   useMinkVoice,
   type MinkVoiceComposer,
@@ -828,6 +829,26 @@ describe("★★ Stop asks the server, through the provider (25 Oct 2026)", () =
     await expect(
       value.loadConversation("chat", { revealMessageId: "message" }),
     ).resolves.toBeUndefined();
+  });
+
+  // The top bar shows its Mink AI button only where this is true, so the real
+  // hook is pinned here: no provider (the platform console) is false, and a
+  // store whose Mink AI is switched off (a provider, enabled false) is true.
+  it("useHasChat is false outside a provider and true under one, even with Mink AI off", () => {
+    const seen: boolean[] = [];
+    function HasChat() {
+      seen.push(useHasChat());
+      return null;
+    }
+    render(<HasChat />);
+    expect(seen.at(-1)).toBe(false);
+    cleanup();
+    render(
+      <ChatProvider minkEnabled={false}>
+        <HasChat />
+      </ChatProvider>,
+    );
+    expect(seen.at(-1)).toBe(true);
   });
 
   it("outside a provider there is nothing to stop: Stop answers finished and is never refused", async () => {
