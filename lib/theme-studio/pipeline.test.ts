@@ -1996,7 +1996,7 @@ describe("the Stage B request a run sends, against the golden pins", () => {
     if (revised.kind !== "version")
       throw new Error(`expected a version: ${JSON.stringify(revised)}`);
     expect(revised.change?.scope).toBe("revise");
-    return { revised, stageB: seen.find((r) => r.stage === "draft")! };
+    return { revised, stageB: seen.find((r) => r.stage === "draft")!, seen };
   }
 
   /** A schema-1 base's change sends the plain system prompt, which reads no
@@ -2085,6 +2085,33 @@ describe("the Stage B request a run sends, against the golden pins", () => {
     expect(propertiesOf(older.stageB)).not.toHaveProperty("stylesheetJson");
     expect(older.stageB.system).not.toContain("stylesheetJson");
     expect(older.result.package.definition.preset.stylesheet).toBeUndefined();
+  });
+
+  it("★ under v35 a new theme, a change and the change scope are told which headers show the menu; v34 is not", async () => {
+    // Owner, 23 Nov 2026: Muse's "add navigation" left the menu hidden.
+    const { HEADER_MENU_PROMPT } = await import("./prompts");
+    const { CHANGE_SCOPE_PROMPT_MARKER } = await import("./change-scope");
+    const built = await build("theme-studio-v35");
+    expect(built.stageB.system.endsWith(HEADER_MENU_PROMPT)).toBe(true);
+    const { stageB, seen } = await change("theme-studio-v35", built.result);
+    expect(stageB.system.endsWith(HEADER_MENU_PROMPT)).toBe(true);
+    const scope = seen.find((r) =>
+      r.system.startsWith(CHANGE_SCOPE_PROMPT_MARKER),
+    );
+    expect(scope?.system.endsWith(HEADER_MENU_PROMPT)).toBe(true);
+    // Everything before it is v34's request, byte for byte.
+    expect(sha(HEADER_MENU_PROMPT)).toBe(GOLDEN.prompts["headerMenu@v35"]);
+
+    const older = await build("theme-studio-v34");
+    expect(older.stageB.system).not.toContain("Header menu on a computer");
+    const { stageB: olderChange, seen: olderSeen } = await change(
+      "theme-studio-v34",
+      older.result,
+    );
+    expect(olderChange.system).not.toContain("Header menu on a computer");
+    expect(
+      olderSeen.some((r) => r.system.includes("Header menu on a computer")),
+    ).toBe(false);
   });
 
   it("★★ under v34 a new theme with no reference is given layout commitments, sent back once if it leaves them, and still completes", async () => {

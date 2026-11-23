@@ -6688,6 +6688,33 @@ address. A static route would hide a page a merchant already built there, and
 reserving the names would change `RESERVED_PAGE_SLUGS`, which every Theme
 Studio prompt since v19 prints (pinned byte for byte). ⚠ A store with its own
 page at `/wishlist` has no built-in saved-items page.
+★ BOTH PAGES SIT INSIDE THE SHOP PAGE'S GUTTERS (23 Nov 2026, owner's
+screenshot of Muse): they reuse the shop listing's classes, and skipped its
+`.shop-panel > .shop-panel-body` wrapper, which carries the side gutters, so
+their heading and text ran to the screen's left edge. Pinned in
+`wishlist.test.tsx` and `built-in.test.tsx`.
+★★ EVERY STOREFRONT PAGE STARTS BELOW THE HEADER'S MEASURED HEIGHT (same
+day). The same screenshot showed the Saved items heading under the menu: the
+shop listing reserved a fixed 80/88px, and the other pages 92 to 140px, all
+tuned for the 68px bar, while a stacked header is 108px, a utility header
+134px and the announcement bar adds 36px. Every page-top rule (shop listing,
+`.shop-main`, product page, cart, checkout, profile, orders, enquiries,
+notifications, account sidebar, blog hero and article, write-a-blog) is now
+`calc(var(--sm-header-h, 68px) + N)`, where N is its old number less 68, so
+a plain header with no bar keeps exactly the spacing it had and a taller one
+pushes the page down by what it adds. `--sm-header-h` is the server's
+default per header (`storefront-theme.css`) until `use-header-fit.ts`
+publishes the measured height. The market header's page overrides are more
+specific and unchanged (that header reserves itself on the root).
+`app/(storefront)/page-top-clearance.test.ts` pins each page's rule and
+fails on any storefront stylesheet that reserves a fixed 80px or more at a
+page top (two inner blog sections are named exceptions; mutation-checked).
+Checked offline in Chrome with the real stylesheets: the Saved items page
+under the classic, stacked, utility and centred headers, with and without
+the bar, at 390, 1024 and 1440px. Before: all 24 cases had the heading
+under the header or at the screen's edge (stacked with the bar at 1440px:
+47px under it). After: all 24 have it 44px below the header, inside the
+gutters. No Help Centre change: no merchant step changes.
 Tests: `lib/storefront/device-lists.test.ts`, `store-locations.test.ts`,
 `app/api/storefront/products/route.test.ts`, `components/wishlist.test.tsx`
 (heart, saved page, recently viewed), `[pageSlug]/built-in.test.tsx`, the
@@ -8578,8 +8605,9 @@ wholesip/
 │   │                          # from any Help page), search-box, category-icon (§21)
 │   ├── themes/                # ★ Public metadata-driven theme catalog served at
 │   │                          # themes.storemink.com; own canonical/OG/CSS, industry
-│   │                          # filters, truthful demo/release/plan state, and a
-│   │                          # newest-first one-row carousel at every viewport
+│   │                          # filters, truthful demo/plan state, and a plain
+│   │                          # newest-first grid of pictures and names (no theme
+│   │                          # description on a card; owner, 23 Nov 2026)
 │   │
 │   ├── actions/               # ★ ALL SERVER ACTIONS ("use server") — one file per domain:
 │   │   │                      # product/category/coupon/coupon-email/blog/blog-social/
@@ -10439,6 +10467,18 @@ wholesip/
 │   │                          # its direction allows and the catalogue uses
 │   │                          # least (header, card, product page, footer, page
 │   │                          # width, grid, hover); DIRECTION_SIGNATURES
+│   ├── theme-studio/follow-up-guard.ts # v35, pure: an automatic fix keeps the
+│   │                          # operator's latest request (the settings it
+│   │                          # moved may not be set back); worker.ts
+│   │                          # loadFollowUp finds that change
+│   ├── theme-studio/menu-fit.ts # v35, pure: a centred theme's menu planned to
+│   │                          # fit beside the logo (room prompt, links kept
+│   │                          # that fit, a change sent back once)
+│   ├── themes/text-width.ts   # pure: a text's px width in a catalogue font,
+│   │                          # from font-widths.json (Chrome-measured by
+│   │                          # scripts/theme-font-widths.mjs)
+│   ├── storefront/header-menu-room.ts # pure: the room the centred header
+│   │                          # leaves its menu (Header.module.css, pinned)
 │   ├── theme-studio/publish-distinctness.ts # server-only: the public catalogue's
 │   │                          # fingerprints, for Publish's lookalike refusal
 │   │                          # (fingerprint.ts publicationSimilarityBlocker)
@@ -11346,7 +11386,11 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0289 (0288 = a published Theme
+│                              # Next free: 0290 (0289 = deleting a Theme
+│                              # Studio theme stores use keeps the releases
+│                              # they pinned, and the install guard refuses
+│                              # a deleted id even with releases left, no
+│                              # Help; 0288 = a published Theme
 │                              # Studio theme can be changed: the project
 │                              # guard's new moves and one published
 │                              # publication per design, no Help; 0287 =
@@ -11692,6 +11736,9 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
+│   ├── theme-font-widths.mjs  # Writes lib/themes/font-widths.json: every catalogue
+│   │                          # font's character widths at weights 300 to 900, measured
+│   │                          # in local Chrome from .next/static/media; no network.
 │   ├── theme-studio-local.mjs # ★ `npm run theme-studio:local`: Theme Studio's
 │   │                          # schedulers for localhost. With a real provider a
 │   │                          # theme is moved along by a scheduler calling the
@@ -12369,7 +12416,23 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     merchant copy, theme and alignment controls),
     `usp_bar` (fixed icon catalog `USP_ICONS` + label strip), `ticker`
     (scrolling marquee — `messages[]` + speed + text theme; CSS-animated
-    `ticker-section.tsx`, pauses on hover, static under reduced-motion),
+    `ticker-section.tsx`, pauses on hover, static under reduced-motion;
+    ★ with motion off each message shows ONCE, centred on one row, since
+    23 Nov 2026: a sequence holds the messages several times over to fill the
+    loop, and the still, wrapped band used to show every copy, so three
+    messages were a block of twelve, eight rows tall, for a shopper with
+    "Reduce motion" on AND in every Theme Studio catalogue picture, which the
+    capture job takes with motion off (the owner found it on Aurelle's card).
+    The copies carry `is-repeat` and `aria-hidden` (screen readers used to
+    read each message once per copy) and `homepage.css` drops them in its
+    reduced-motion block; `image_marquee` has the same fix, its copies also
+    out of the tab order. ⚠ A picture already captured keeps the old block:
+    a published theme's pictures are retaken only when a change to it is
+    published as its next release. Tests: `ticker-section.test.tsx` (markup
+    and the stylesheet's reduced-motion rules), `phase2c-sections.test.tsx`;
+    checked in Chrome on the Vitrine demo with motion off (three messages,
+    one row, 44px) and on (24 items, moving). No merchant step changes, so
+    no Help Centre update),
     `faq_accordion`
     (expandable Q/A with optional category-filter pills; plain-text answers),
     `accordion` (collapsible content: typed rows of copy, or copy with a
@@ -12831,18 +12894,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     by `proxy.ts` to `app/themes/`, never resolved as merchant tenancy. The
     server-rendered catalog receives only client-safe `ThemeMeta` from the
     runtime registry (with bundled `THEME_META` as fallback), so its
-    industry filters, plan badges, release labels, preview image, demo health,
-    and signup CTA share the exact source used by onboarding. The hero and
-    closing galleries receive a small serializable projection of every
-    selectable manifest entry and rotate automatically in the narrow
-    `theme-showcases.tsx` client boundary; manual controls pause rotation, and
-    reduced-motion visitors keep a stable composition. Publishing another
-    selectable theme therefore updates both galleries without page-specific
-    image wiring. The catalog cards are newest-first by `release.releasedAt` and
-    stay in one horizontally scrollable, snap-aligned row at desktop, tablet and
-    mobile widths; `theme-catalog-carousel.tsx` adds one-card previous/next
-    controls (wrapping at the ends) while leaving touch and trackpad scrolling
-    native. The catalog has its own
+    industry filters, plan labels, preview image, demo health and signup CTA
+    share the exact source used by onboarding.
+    ★ A PLAIN GRID, NOT A SHOWCASE (owner, 23 Nov 2026: "no need of theme
+    descriptions to show on the page. the overall vibe should be a bit like
+    shopify's themes page"). The page is one server component with no client
+    code: a SHORT sans headline band with one sentence and one button (the
+    first row of themes is on a laptop's first screen with no scrolling,
+    owner the same day: everything above the pictures comes to about 400px
+    at 1440px wide, and `themes.css` says to re-check a 760px-tall screen
+    before making it taller); then every
+    selectable theme at once, newest first by `release.releasedAt`, in a grid
+    (three across, two from 1024px down, one from 680px down; a `ul` named
+    "Theme collection"); then three plain points and one closing call to
+    action. A card is the theme's 4:3 preview picture shown whole, its name,
+    the plans it is on ("All plans", "Basic and Pro", "Pro only") and what it
+    suits in the filter's own words, with two text links: "View live store"
+    and "Start with (name)". ★ A card carries no description, no feature
+    list, no number and no badge, and `page.test.tsx` fails if a description
+    or a list comes back. The picture opens the live demo store when the demo
+    is healthy (a "Live preview" cue on hover); the text link under the name
+    says the same, so touch and keyboard lose nothing. The catalogue heading
+    names the chosen category ("Food & Beverages themes") beside a count
+    ("6 themes"), with nothing else above the pills. On a phone the category pills are one row that scrolls
+    sideways. White ground and Inter throughout; the announcement bar, the
+    header and the footer are as before. Removed with this:
+    `theme-showcases.tsx` (the rotating hero stage and closing art),
+    `theme-catalog-carousel.tsx` (the one-row rail and its previous/next
+    buttons), the serif display type, the release-status and plan badges over
+    the picture, and the dark "standard" band. `ThemeMeta.description` and
+    `catalog.features` stay in the data: the dashboard's theme picker and
+    Theme Studio still read them. Checked in Chrome at 1440px and at phone
+    width (one column, no sideways page scroll). No merchant step changes, so
+    no Help Centre update. The catalog has its own
     canonical/OG metadata (`public/themes/catalog-og.png`), robots host, and
     one-entry sitemap; the platform nav/footer links to it. Blocked or unhealthy
     demos render an honest unavailable state rather than a broken live link.
@@ -12916,8 +13000,8 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     and `applyThemeDefinition` with reset), with `--root-domain` the demo's
     four pages fetched, and only then the catalogue pointer with a
     `theme_catalog_audit` row. It refuses a release that exists with
-    different content and a demo slug held by a real store, and never moves a
-    catalogue that already offers a newer version. `--visibility hidden`
+    different content, a demo slug held by a real store and (since 23 Nov 2026) a theme id the target's Theme Studio deleted for good, and never
+    moves a catalogue that already offers a newer version. `--visibility hidden`
     copies without offering. ⚠ It copies the RELEASES, not the Theme Studio
     project: in the target the theme has no project, so it cannot be changed
     from that environment's Theme Studio (change it where the project lives
@@ -12979,9 +13063,42 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     session-gated `deleteThemeStudioProjectAction` call migration
     `20261005_0161_theme_permanent_deletion`'s bounded service function. It
     locks the project and store installations, rejects stale revisions, active
-    generation/capture/QA/acceptance/publication, shared release projects and
-    installed merchant themes, then removes project history, private reference
-    bytes, preview/demo stores and its release/catalog records atomically.
+    generation/capture/QA/acceptance/publication and shared release projects,
+    then removes project history, private reference bytes, preview/demo stores
+    and its catalog records atomically.
+    ★★ A THEME STORES USE CAN BE DELETED, AND THEY KEEP IT (owner, 23 Nov 2026:
+    "store which uses this theme should remain as it is"; migration
+    `20261123_0289_theme_delete_keeps_store_releases`). Until then the
+    function refused while any merchant store used the theme ("Switch its
+    theme before permanently deleting it"), and a store cannot switch themes,
+    so an installed theme could never be deleted. Every store pins the release
+    it installed (`settings.theme.presetId` + `presetVersion`, written by
+    `lib/themes/apply.ts` and `switch.ts`) and renders it by id and version
+    straight from `theme_releases` (`resolveInstalledThemeDefinition`), never
+    through the catalogue, so the deletion now keeps each release a remaining
+    store is pinned to and deletes the theme's other releases (all of them when
+    no store uses it). It never writes to a store that keeps the theme. It
+    still refuses, deleting nothing, when a store uses the theme WITHOUT a
+    pinned release (only a legacy `template`, or no major.minor.patch
+    `presetVersion`): that store renders the catalogue's current release,
+    which the deletion removes; no store installed through StoreMink's install
+    paths is in that state. The answer gains `storesKept`; the action returns
+    it and the toast says "Theme deleted. The store using it keeps it as it
+    is." (or "The N stores using it keep it as it is."). The dialog says the
+    theme leaves the library so no new store can choose it, and that stores
+    already using it keep it exactly as it is, pictures included. The
+    merchant's Storefront page (`app/dashboard/storefront/page.tsx`
+    `keptCard`) shows such a theme's own name and picture from the kept
+    release, with "Your store uses a theme that is no longer in the library.
+    It keeps working." and no preview (its demo store is gone); it reads the
+    release only when the library no longer has the theme, and a failed read
+    falls back to the theme's id as before. ★ The install guard
+    (`theme_studio_deleted_install_guard`) now refuses a new store, or a store
+    moving, onto any id in the deletion receipt, even while releases remain
+    (0161 refused only once none remained); a store already on the theme is
+    untouched. `npm run theme-release:copy` refuses a theme id the target
+    deleted for good (`TargetTheme.deleted`), since the guard would refuse
+    its demo store after its releases were stored.
     Internal Studio FKs are immediate by default and deferred during removal
     to handle the run/version history cycles. Ordinary immutable history guards
     remain enforced; only the function owner's exact transaction scope permits
@@ -12999,8 +13116,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     images remain available because merchant content may reuse them independently
     of its installed theme. The confirmation dialog lives in
     `themes/studio/[projectId]/delete-theme-button.tsx`; rollback-only local
-    PostgreSQL tests cover role boundaries, FKs and refusals. Operator-only:
-    no merchant-visible change, no Help Centre update.
+    PostgreSQL tests cover role boundaries, FKs and refusals
+    (`THEME_STUDIO_DELETE_DB_TEST=1`; since 0289 also the kept release, the
+    unpinned refusal and the refused new installs, mutation-checked against
+    0161's functions). Operator-only: the merchant's step does not change, no
+    Help Centre update.
 
     **Mink AI Theme Studio Phase 3 (2026-09-23; Gemini generation
     pipeline, NOT yet run against a live model):** `pipeline.ts` runs Stage A
@@ -16199,7 +16319,119 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `commitments.test.ts`, `design-directions.test.ts`, the v34 cases of
     `pipeline.test.ts`, `publication.test.ts` and the opt-in
     `publication-postgres.test.ts`; `stage-b-request.golden.json` holds v34's
-    pins and every v19 to v33 pin is unchanged. The Website Builder's brand
+    pins and every v19 to v33 pin is unchanged.
+    **Prompt v35 (23 Nov 2026, owner: "ai theme builder should be capable of
+    understanding the follow ups the operator gives").** Muse's operator
+    asked "there is no navigation or shop button in the navbar. add that",
+    and the new design still showed no menu. Three changes, the prompt
+    ones behind `theme-studio-v35` (`followUpRepair`, `headerMenu`):
+    (a) `HEADER_MENU_PROMPT` (`prompts.ts`), appended LAST to Stage B's
+    system prompt and to the change scope's, says which
+    `design.layout.header` values show the menu on a computer (hamburger
+    never; centered and stacked always, a long menu on its own row; the
+    others only while it fits) and that a request for navigation or a Shop
+    link means a header that shows it; showing an existing menu is a
+    settings edit. Every v35 pin but `headerMenu@v35` equals v34's.
+    (b) ★★ AN AUTOMATIC FIX NEVER UNDOES THE OPERATOR'S REQUEST
+    (`follow-up-guard.ts`). A fix round's message is the review's findings
+    only (`visual-qa.ts`, `contextMessageIds: [message.id]`), so a round
+    could set back the very setting the operator's change made.
+    `loadFollowUp` (`worker.ts`) walks back from the version being fixed
+    through versions automatic runs made (at most 12) to the first one an
+    operator's `revise` made, and `followUpOf` records the request (2,000
+    characters) and every scalar setting that change moved
+    (`repairTargets` paths) with its earlier value; null for a chain from a
+    first build or an operator's picture request. The repair is given
+    `operatorRequest` and `FOLLOW_UP_REPAIR_RULE`; an edit that sets a moved
+    setting back to its earlier value is refused once with `undoneIssue`,
+    then dropped; a fix left with nothing else stops as
+    `repair_not_supported` ("Every automatic fix would undo the operator's
+    latest request."), which the operator clears with a change. Another
+    value for that setting, or any other setting, stays the fix's to
+    choose. Provenance `targeted-repair-v2` when a follow-up was carried.
+    (c) `browser.header_menu` (advisory, never blocks): the preview probe
+    reports the home page's menu (`headerMenu`: layout from the root's
+    `sm-header-*` class, top-level items of `[data-sm="header-menu"]`,
+    which `desktop-nav.tsx` now carries, and whether it is on screen), and
+    `headerMenuFindings` warns `menu_hidden` at laptop1024 and desktop1440
+    when a menu with links is not shown and the header is not hamburger
+    ("On a computer, the menu is hidden behind the menu button..."). In
+    `THEME_FIX_CHECKS` and the layout gates; older evidence has no value
+    and no finding. Tests: `follow-up-guard.test.ts` (mutation-checked),
+    `follow-up-postgres.test.ts` (opt-in, `THEME_STUDIO_RECOVERY_DB_TEST=1`,
+    mutation-checked), the v35 cases of `pipeline.test.ts` and
+    `prompt-features.test.ts`, `acceptance-gates.test.ts`,
+    `studio-acceptance-probe.test.tsx`; `stage-b-request.golden.json` holds
+    v35's pins. Operator-only: no Help Centre change.
+    (d) ★★ A CENTRED THEME'S MENU IS PLANNED TO FIT BESIDE THE LOGO (same
+    day, owner: "in the planning it should judge, if the logo is in the
+    center, how much space is to the left, and according to that design the
+    number of buttons, so that we do not have to go a line below"; prompt
+    feature `menuFit`). A model cannot count pixels, so StoreMink does the
+    arithmetic (`lib/theme-studio/menu-fit.ts`), measured where it is
+    tightest: 1025px, the narrowest screen with the centred layout, less a
+    15px scrollbar, with the logo at least 160px (a store's name is usually
+    longer than a theme's). PLAN: a new theme whose plan has the centred
+    header gets `menuRoomPrompt` appended last to Stage B's system prompt:
+    the room in px, how many characters of link text it holds in the
+    planned body font at 15px and in capitals at 14px/0.08em, and that
+    StoreMink keeps the pages that fit. BUILD: `fitHeaderMenuToRoom`, after
+    `assemblePackage`, keeps Shop (always) and, in page order, each derived
+    page link while the menu still fits, measured in the theme's own menu
+    type (`headerPartStyle`: the body font, 600, 15px, then the theme's
+    resting desktop `header.nav-link` rules, the variant's last: display
+    font, size, weight, capitals, letter-spacing); the rest leave the
+    header and stay in the footer, which lists every page. No model round.
+    CHANGE: `headerMenuFitIssues` sends a change whose centred menu no
+    longer fits back ONCE with the numbers and the ways out (shorter labels,
+    fewer header links, plainer type, or `"stacked"` when the operator asked
+    for that many); not when the base was already too wide and the change
+    left the menu as it was; what comes back is accepted. CHECK:
+    `browser.header_menu` also warns `menu_wraps` (advisory) when the probe's
+    `headerMenu.stacked` says a centred menu went to its own row at
+    laptop1024/desktop1440. Example (Muse-like: standard page width,
+    Bodoni Moda capitals at 0.12em): room 361px, seven links 801px, kept
+    Shop, New In, Collections; in plain Jost four are kept. The numbers:
+    `lib/themes/text-width.ts` + `font-widths.json` (every printable ASCII
+    advance of all 31 catalogue fonts at weights 300 to 900, measured in
+    Chrome by `scripts/theme-font-widths.mjs` from the served font files;
+    re-run it when a font is added, `text-width.test.ts` fails until then)
+    and `lib/storefront/header-menu-room.ts` (the centred grid's geometry;
+    `header-menu-room.test.ts` pins every number to `Header.module.css`).
+    Checked against Chrome laying out the real stylesheet with the real
+    fonts (16 menus, 1025 and 1440px, Jost and Bodoni capitals): menu
+    widths within 0.3%, room within 1px, every fits verdict the same; and
+    the table against Chrome's layout of 1,395 words in every font at five
+    weights (worst 2.9% wide, 0.7% narrow; it ignores kerning, so it errs
+    wide). ⚠ Only the centred header is planned; the others put the menu
+    after the logo with the row to share, or on its own row already. ⚠ A
+    font outside the catalogue is not measured, and the menu is left as it
+    is. Tests: `menu-fit.test.ts`, `menu-fit-pipeline.test.ts`,
+    `text-width.test.ts`, `header-menu-room.test.ts`, the `menu_wraps` cases
+    of `acceptance-gates.test.ts` and the probe test (each rule
+    mutation-checked). Golden pins unchanged (no golden fixture plans a
+    centred header). Operator-only: no Help Centre change.
+    **Prompt v36 (23 Nov 2026, owner: in Muse "the desktop view shows the
+    proper picture on the carousel but in phone view it compresses and the
+    image is not visible properly").** A slide with no phone photograph is
+    cropped around its centre below 768px (`hero-media.tsx`, or its focal
+    point), and Muse's wide slide has the model at the far right, so a phone
+    saw only the wall. `withPhoneOpening` (frame-shapes.ts) gave every
+    opening slide a portrait phone photograph only when a NEW theme was
+    built; a change that rewrote the slideshow, or a model that left
+    `mobile_image_url` out of its revised slides, left phones with the
+    centre crop. From v36 (`phoneOpeningChanges`) it runs on a change's
+    draft too: a slide whose phone photograph the change dropped gets the
+    same `<slot>-phone` slot back, so `carryOverSlotImages` keeps its picture
+    (pass 1, by slot id) and nothing is drawn; only a slide with a new
+    picture, or a base built before v34, gets a new portrait brief (one more
+    picture to draw per slide). No request text changes: every v36 golden
+    pin equals v35's. Test: `design-plan-pipeline.test.ts` ("from v36 a
+    change gives its opening slides phone photographs too", mutation-checked;
+    a v35 change is unchanged). ⚠ An existing theme gets them at its next
+    change under v36; until then its phones keep the centre crop. Operator
+    only: no Help Centre change.
+    The Website Builder's brand
     panel lists a styled theme's rules read-only under **Theme styles**
     (`ThemeDesignDefaults.styleRules`, `describeStyleRule`; at most 80; test
     `app/dashboard/builder/theme-styles.test.tsx`). ⚠ Not built: a merchant
@@ -17855,6 +18087,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     sliver without overlapping anything.
     ★ Every check starts from the full header, so a tablet rotated to
     landscape unfolds again.
+    ★★ THE CENTRED-LOGO HEADER STACKS ITS MENU, NEVER HIDES IT (owner, 23
+    Nov 2026, "menu on its own row", after Theme Studio's Muse showed no
+    menu on a 1440px screen: seven uppercase Didone links did not fit left
+    of the logo, so the fold put every link behind the hamburger and only
+    the server-rendered first paint showed them). A header whose CSS sets
+    `--sm-header-stack: 1` (`HEADER_STACK_PROPERTY`; only
+    `.sm-header-centered .header`, inside the 1025px desktop block) is
+    fitted with `STACK_CANDIDATES` instead of `COMPACT_CANDIDATES`: `stack`
+    moves the menu to a centred, wrapping row of its own under the logo
+    (`.header[data-header-compact~="stack"]`, the stacked header's rules),
+    so it never folds. ★ IT STACKS ONLY WHEN THE MENU IS WHAT DOES NOT FIT
+    (same day): the two side columns are equal and never take room from each
+    other, so the candidates fold the right-hand side first (`delivery`,
+    then `delivery search`) and only then try `stack`, `stack delivery`,
+    `stack delivery search`; tried in that order a crowded right side used
+    to put a menu that fitted onto a second row. `chooseCompaction` now takes
+    candidate step sets (`COMPACT_CANDIDATES` are the old prefixes, so every
+    other header folds exactly as before). Theme Studio plans a centred
+    theme's own menu to fit beside the logo (Prompt v35 (d) below), so the
+    second row is the fallback for a merchant's longer menu. The hook reads
+    the property on every fit (the media query changes with the width). Below
+    1025px the centred header is the ordinary row and folds as before; every
+    other header folds as before. Measured offline in Chrome with the real
+    stylesheets and the bundled fit rule (seven uppercase links): centred
+    at 1440, 1280 and 1100px is `stack` (menu shown under the logo, no
+    hamburger, bar 99px), at 1024px `nav`; classic at every width `nav`.
+    ⚠ A stacked bar is taller than the 68px the server reserves, so a store
+    whose menu stacks shifts its first section down once, when the hook
+    publishes the measured height after hydration. Tests:
+    `header-fit.test.ts` (order, never `nav`, the right side first, the CSS
+    pinned), `use-header-fit.test.tsx` (mutation-checked). No Help Centre
+    change: no merchant step changes, and no guide describes the centred
+    header.
     ★ THE BAR IS 68px TALL (22 Nov 2026, owner: "this bar is too big"). It
     was 80px: 16px of padding above and below a 48px "Deliver to" button.
     Now 12px of padding (`.header`, and the same at 1024px and below, where
@@ -25797,9 +26062,9 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       `lib/payments/razorpay.test.ts`, `open-invoices.test.tsx`,
       `manual-pay.test.ts`, `order-state.test.ts` and the email tests. Step 1 was run in Razorpay test mode through the real gateway
       functions on 21 Nov 2026 (mandate read, notified order, notice read).
-      ⚠ NOT YET PROVEN: that the debit succeeds once the notice period has
-      passed; two notified test orders may be debited from 23 Nov 2026 11:28
-      IST with `scripts/autopay-test-debit.mjs` (test keys only).
+      ⚠ NOT PROVEN, AND REFUSED WHEN TRIED: all four notified test orders
+      were debited on 23 Nov 2026 after their notice periods and every one
+      was refused (below); no renewal debit has ever been accepted.
       ★★ A MANDATE IS REGISTERED `as_presented` (22 Nov 2026, owner's
       request; `MANDATE_FREQUENCY` in `lib/billing/enrol.ts`). It was
       `monthly` or `yearly`, and a mandate with a calendar frequency allows
@@ -25837,9 +26102,27 @@ way — an entry there is a deliberate act, not a way to silence the guard.
          `billing.mandate_token_past_expiry`); a UPI token's `expired_at` is
          its real five-year expiry and still ends it.
 
-      ⚠ Still not run: the DEBIT itself, on any mandate, which Razorpay
-      allows only after the notice period (four notified test orders are
-      waiting; the first from 22 Nov 2026 20:35 UTC).
+      ★★ THE DEBIT ITSELF WAS TRIED FOUR TIMES ON 23 NOV 2026 AND REFUSED
+      EVERY TIME (test mode; docs/autopay-verification.md, "23 Nov 2026: all
+      four test debits refused"): UPI `as_presented` at 02:14 IST, card
+      `monthly` at 11:37 and 11:39, card `as_presented` at 13:30. With the
+      notice delivered, its period passed, the mandate confirmed and
+      `readNotice` ready, Razorpay answered HTTP 400 "The requested URL was
+      not found on the server" (source `internal`), counted an attempt on the
+      order and created no payment: the answer the plain order got on 21 Nov.
+      So the notification is necessary and not shown to be sufficient, and
+      the cause is not the rail or the frequency: test mode or the account's
+      setup, which only Razorpay can say. `mapGatewayStatus` has never met a
+      real debit's status, and `as_presented` on a second debit in a month is
+      untested (no first debit was accepted). The debit pass records it
+      as a refused try (`gateway_rejected`), which is true and safe. Since
+      that night a refused debit is logged, where it left no line before:
+      `billing.debit_pass.refused` (a warning, every refusal, with the
+      gateway's words) and `billing.gateway.debit_unavailable` (an error, for
+      this answer only, `isDebitUnavailableAnswer` in
+      `lib/billing/gateway.ts`: it is about the gateway account, not one
+      merchant's mandate). `RECURRING_CHARGE_VERIFIED` is unchanged (owner's
+      decision). No merchant step changes, so no Help Centre update.
       ★ THE WHOLE RENEWAL RUNS HOUR BY HOUR IN A LOCAL TEST
       (`lib/billing/renewal-scenarios.local.test.ts`, run with
       `npm run billing:scenarios:local`; opt-in, so plain `vitest` reports it

@@ -116,6 +116,12 @@ describe("the Our stores page", () => {
     expect(link.getAttribute("rel")).toBe("noopener noreferrer");
     expect(link.textContent).toContain("to Indiranagar shop");
     expect(getPublicShopLocations).toHaveBeenCalledWith("store-1");
+    // Inside the shop page's gutters (shop.css), never edge to edge.
+    expect(
+      screen
+        .getByRole("heading", { level: 1, name: "Our stores" })
+        .closest(".shop-listing .shop-panel > .shop-panel-body"),
+    ).not.toBeNull();
     expect(await generateMetadata(at("stores"))).toMatchObject({
       title: "Our stores",
       alternates: { canonical: "/stores" },

@@ -99,6 +99,9 @@ const MINOR_CODES: Partial<Record<GateId, readonly string[]>> = {
   // Speed is a warning. A gate made required by THEME_STUDIO_PERFORMANCE_
   // REQUIRED measures its findings as serious (acceptance-gates.ts).
   "browser.performance": ["lcp", "cls"],
+  // A menu behind the menu button on a computer: a theme may choose that.
+  // A centred menu on a second row still shows every link.
+  "browser.header_menu": ["menu_hidden", "menu_wraps"],
 };
 
 /** The axe rule for text contrast, and the name older evidence used. */

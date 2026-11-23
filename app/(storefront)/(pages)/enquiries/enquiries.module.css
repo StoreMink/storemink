@@ -1,6 +1,6 @@
 .container {
   min-height: 100vh;
-  padding: 140px 24px 80px;
+  padding: calc(var(--sm-header-h, 68px) + 72px) 24px 80px;
   background-color: var(--sm-cream);
   font-family: var(--font-outfit), sans-serif;
 }
@@ -494,7 +494,7 @@
 
 @media (max-width: 600px) {
   .container {
-    padding: 110px 16px 60px;
+    padding: calc(var(--sm-header-h, 68px) + 42px) 16px 60px;
   }
 
   .card {

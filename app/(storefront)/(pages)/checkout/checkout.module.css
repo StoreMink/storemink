@@ -4,7 +4,7 @@
 
 .page {
   min-height: 100vh;
-  padding: 120px 20px 72px;
+  padding: calc(var(--sm-header-h, 68px) + 52px) 20px 72px;
   background: var(--sm-cream);
   font-family: var(--font-outfit), sans-serif;
   color: var(--sm-ink);
@@ -757,7 +757,7 @@
   justify-content: center;
   gap: 16px;
   text-align: center;
-  padding: 120px 20px 40px;
+  padding: calc(var(--sm-header-h, 68px) + 52px) 20px 40px;
 }
 
 .centerTitle {
@@ -804,7 +804,7 @@
 
 @media (max-width: 560px) {
   .page {
-    padding: 96px 14px 56px;
+    padding: calc(var(--sm-header-h, 68px) + 28px) 14px 56px;
   }
 
   .title {

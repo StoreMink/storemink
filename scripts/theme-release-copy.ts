@@ -254,8 +254,13 @@ async function importThemes(path: string): Promise<number> {
     loadExactReleaseWithDb,
   } = await import("@/lib/themes/runtime-registry");
   const { withService } = await import("@/lib/db/client");
-  const { stores, themeCatalogAudit, themeCatalogEntries, themeReleases } =
-    await import("@/drizzle/schema");
+  const {
+    stores,
+    themeCatalogAudit,
+    themeCatalogEntries,
+    themeReleases,
+    themeStudioDeletionAudit,
+  } = await import("@/drizzle/schema");
   const { eq, inArray } = await import("drizzle-orm");
 
   // ── 1. Every package must be one THIS code accepts, unchanged. ───────────
@@ -335,6 +340,10 @@ async function importThemes(path: string): Promise<number> {
       .select({ slug: stores.slug, settings: stores.settings })
       .from(stores)
       .where(inArray(stores.slug, [...demoSlugs.values()]));
+    const deleted = await db
+      .select({ themeId: themeStudioDeletionAudit.themeId })
+      .from(themeStudioDeletionAudit)
+      .where(inArray(themeStudioDeletionAudit.themeId, themeIds));
     const state = new Map<string, TargetTheme>();
     for (const themeId of themeIds) {
       const mine = releases.filter((row) => row.themeId === themeId);
@@ -357,6 +366,7 @@ async function importThemes(path: string): Promise<number> {
                 true,
             }
           : null,
+        deleted: deleted.some((row) => row.themeId === themeId),
       });
     }
     return state;

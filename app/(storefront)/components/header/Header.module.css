@@ -1198,6 +1198,25 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     gap: 24px;
+    /* ★ This layout can put the menu on a row of its own (use-header-fit.ts
+       reads it): a menu too long for the left of the logo moves under it,
+       never behind the hamburger (owner, 23 Nov 2026). */
+    --sm-header-stack: 1;
+  }
+  /* "stack": the menu centred on a second row, as the stacked header draws
+     it, wrapping rather than ever folding. The logo and the controls keep
+     the first row. */
+  :global(.sm-header-centered) .header[data-header-compact~="stack"] {
+    grid-template-rows: auto auto;
+    row-gap: 12px;
+    padding-block: 14px 12px;
+  }
+  :global(.sm-header-centered) .header[data-header-compact~="stack"] .navLinks {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: stretch;
+    justify-content: center;
+    flex-wrap: wrap;
   }
   :global(.sm-header-centered) .headerLeft {
     display: contents;

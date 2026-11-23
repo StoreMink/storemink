@@ -61,6 +61,7 @@ import {
 } from "./image-models";
 import { describeSlots } from "./slot-images-core";
 import { MAX_AUTOMATIC_QA_REPAIRS } from "./automatic-qa-policy";
+import { followUpOf, type FollowUp } from "./follow-up-guard";
 import type { ThemeStudioImageClient } from "./image-provider";
 import { createVertexImageClient } from "./image-vertex";
 import { ELEVENLABS_IMAGE_MODEL } from "@/lib/images/elevenlabs-images";
@@ -550,7 +551,88 @@ type RunInput = {
   references: { bytes: Buffer; sha256: string; createdAt: string }[];
   versionNumber: number;
   revision: { baseIntent: ThemeIntent; basePackage: ThemePackageV2 } | null;
+  /** An automatic fix's operator change to keep (follow-up-guard.ts). */
+  followUp?: FollowUp | null;
 };
+
+/** How far back a fix round looks for the operator's change: the automatic
+ *  chain is a layout fix, a picture fill and up to MAX_AUTOMATIC_QA_REPAIRS
+ *  review fixes, so a dozen versions is more than any chain. */
+const FOLLOW_UP_HOPS = 12;
+
+/**
+ * The operator's change an automatic fix round must not undo: walk back from
+ * the version being fixed through versions automatic runs made, to the
+ * first one an operator's revision made, and compare it with that revision's
+ * base. Null for a chain that starts from a first build (nothing was asked
+ * yet), or from a picture run the operator asked for (no setting moved), and
+ * for anything unreadable: the fix then runs as it always did.
+ */
+export async function loadFollowUp(
+  db: Db,
+  projectId: string,
+  versionId: string,
+): Promise<FollowUp | null> {
+  let current = versionId;
+  for (let hop = 0; hop < FOLLOW_UP_HOPS; hop++) {
+    const [made] = await db
+      .select({
+        kind: themeStudioRuns.kind,
+        automatic: themeStudioRuns.automatic,
+        baseVersionId: themeStudioRuns.baseVersionId,
+        messageId: themeStudioRuns.messageId,
+      })
+      .from(themeStudioVersions)
+      .innerJoin(
+        themeStudioRuns,
+        eq(themeStudioRuns.id, themeStudioVersions.runId),
+      )
+      .where(
+        and(
+          eq(themeStudioVersions.id, current),
+          eq(themeStudioVersions.projectId, projectId),
+        ),
+      )
+      .limit(1);
+    if (!made || !made.baseVersionId) return null;
+    if (made.automatic) {
+      current = made.baseVersionId;
+      continue;
+    }
+    if (made.kind !== "revise") return null;
+    const packages = await db
+      .select({
+        id: themeStudioVersions.id,
+        packageJson: themeStudioVersions.packageJson,
+      })
+      .from(themeStudioVersions)
+      .where(
+        and(
+          eq(themeStudioVersions.projectId, projectId),
+          inArray(themeStudioVersions.id, [made.baseVersionId, current]),
+        ),
+      );
+    const [message] = await db
+      .select({ body: themeStudioMessages.body })
+      .from(themeStudioMessages)
+      .where(
+        and(
+          eq(themeStudioMessages.id, made.messageId),
+          eq(themeStudioMessages.projectId, projectId),
+        ),
+      )
+      .limit(1);
+    const base = validateThemePackageV2(
+      packages.find((p) => p.id === made.baseVersionId)?.packageJson,
+    );
+    const result = validateThemePackageV2(
+      packages.find((p) => p.id === current)?.packageJson,
+    );
+    if (!message || !base.ok || !result.ok) return null;
+    return followUpOf(message.body, base.value, result.value);
+  }
+  return null;
+}
 
 async function loadRunInput(
   run: ClaimedRun,
@@ -702,6 +784,15 @@ async function loadRunInput(
       ),
       versionNumber: (latest ?? 0) + 1,
       revision,
+      // ★ An automatic fix keeps the operator's latest request.
+      ...(run.kind === "revise" &&
+      run.automatic &&
+      run.baseVersionId &&
+      themePromptFeatures(run.promptVersion).followUpRepair
+        ? {
+            followUp: await loadFollowUp(db, run.projectId, run.baseVersionId),
+          }
+        : {}),
     };
   });
 }
@@ -1402,6 +1493,7 @@ async function execute(
           sha256: r.sha256,
         })),
         ...(input.revision ? { revision: input.revision } : {}),
+        ...(input.followUp ? { followUp: input.followUp } : {}),
         // Old queued runs must retain their original request sequence so paid
         // Stage A checkpoints remain replayable and included in their usage.
         automaticRepair:

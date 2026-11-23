@@ -21,6 +21,18 @@ import "server-only";
  *      "36 hours and 5 minutes" for a card, "a minimum of 24 hours" for UPI.
  *      Razorpay does not retry a failed debit of a notified order.
  *
+ * ★★ THE DEBIT ITSELF HAS NOT BEEN SEEN TO SUCCEED (23 Nov 2026). The first
+ * notified order to come due (UPI, test mode, notice delivered, 25 hours
+ * passed, mandate confirmed, `readNotice` ready) was still answered HTTP 400
+ * "The requested URL was not found on the server" (source `internal`), twice.
+ * Razorpay counted an attempt on the order each time and created no payment.
+ * So the notification is NECESSARY (it changes the answers before the period
+ * ends) and is not shown to be SUFFICIENT. Whether that is the test account,
+ * test mode or something Razorpay must switch on is theirs to say
+ * (docs/autopay-verification.md). The debit pass records it as a refused try,
+ * which is true and safe, and `debit` below logs it as an error, because the
+ * answer is about the gateway account and not about one merchant's mandate.
+ *
  * and, before either, `checkMandate`: "Only tokens in the confirmed state can
  * be used to execute subsequent payments."
  *
@@ -32,7 +44,7 @@ import "server-only";
  */
 
 import { resolveBillingEmail } from "@/lib/email/billing-emails";
-import { logWarn } from "@/lib/observability/logger";
+import { logError, logWarn } from "@/lib/observability/logger";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
 import {
   rzpChargeMandate,
@@ -329,7 +341,22 @@ async function debit(input: {
     description: input.description,
     notes: { idempotency_key: input.idempotencyKey },
   });
-  if (!paid.ok) return paid;
+  if (!paid.ok) {
+    if (paid.outcome === "rejected" && isDebitUnavailableAnswer(paid.error)) {
+      // ★ Not this merchant's mandate, bank or balance: the gateway would not
+      // run the debit at all, and it will answer every store the same. An
+      // error, so an operator hears of it from the first one (23 Nov 2026).
+      logError(
+        "billing.gateway.debit_unavailable",
+        new Error(paid.error.slice(0, 200)),
+        {
+          storeId: input.storeId,
+          providerOrderId: input.providerOrderId,
+        },
+      );
+    }
+    return paid;
+  }
 
   const paymentId = paid.data.razorpay_payment_id;
   if (!paymentId) {
@@ -350,6 +377,20 @@ async function debit(input: {
       status: paid.data.status ?? "created",
     },
   };
+}
+
+/**
+ * Is this refusal Razorpay's "I will not run a debit for this account", not a
+ * verdict on one mandate?
+ *
+ * Seen on 21 Nov 2026 (an order with no notification) and again on 23 Nov on
+ * a notified order whose period had passed: HTTP 400 `BAD_REQUEST_ERROR`,
+ * "The requested URL was not found on the server.". A bank's or a mandate's
+ * refusal names its reason (insufficient funds, mandate paused); this one
+ * names none.
+ */
+export function isDebitUnavailableAnswer(error: string): boolean {
+  return /requested URL was not found/i.test(error);
 }
 
 // ★ Exported so it can be tested directly. `getRecurringGateway` is the only

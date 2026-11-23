@@ -55,41 +55,46 @@ export async function builtInPage(
         alternates: { canonical: "/stores" },
       },
       element: (
+        // `shop-panel-body` carries the side gutters, as on the shop page.
         <div className="shop-listing sm-stores">
-          <section className="shop-hero">
-            <div className="shop-hero-row">
-              <h1 className="shop-title">Our stores</h1>
+          <div className="shop-panel">
+            <div className="shop-panel-body">
+              <section className="shop-hero">
+                <div className="shop-hero-row">
+                  <h1 className="shop-title">Our stores</h1>
+                </div>
+                <p className="shop-count">
+                  {shops.length === 1
+                    ? "Visit us at our shop."
+                    : `Visit us at any of our ${shops.length} shops.`}
+                </p>
+              </section>
+              <ul className="sm-stores-list">
+                {shops.map((shop) => (
+                  <li key={shop.id} className="sm-stores-card">
+                    <h2 className="sm-stores-name">{shop.name}</h2>
+                    <address className="sm-stores-address">
+                      {shop.address.map((line) => (
+                        <span key={line}>{line}</span>
+                      ))}
+                    </address>
+                    <a
+                      className="sm-stores-directions"
+                      href={shop.mapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Get directions
+                      <span className="sr-only">
+                        {" "}
+                        to {shop.name} (opens in a new tab)
+                      </span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </div>
-            <p className="shop-count">
-              {shops.length === 1
-                ? "Visit us at our shop."
-                : `Visit us at any of our ${shops.length} shops.`}
-            </p>
-          </section>
-          <ul className="sm-stores-list">
-            {shops.map((shop) => (
-              <li key={shop.id} className="sm-stores-card">
-                <h2 className="sm-stores-name">{shop.name}</h2>
-                <address className="sm-stores-address">
-                  {shop.address.map((line) => (
-                    <span key={line}>{line}</span>
-                  ))}
-                </address>
-                <a
-                  className="sm-stores-directions"
-                  href={shop.mapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Get directions
-                  <span className="sr-only">
-                    {" "}
-                    to {shop.name} (opens in a new tab)
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
+          </div>
         </div>
       ),
     };

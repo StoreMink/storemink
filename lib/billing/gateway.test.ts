@@ -12,7 +12,7 @@
 // rejection ends a try and an unknown must never be retried.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { logWarn } from "@/lib/observability/logger";
+import { logError, logWarn } from "@/lib/observability/logger";
 
 vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
@@ -53,6 +53,7 @@ import {
   RECURRING_CHARGE_VERIFIED,
   chargeUnavailableReason,
   getRecurringGateway,
+  isDebitUnavailableAnswer,
   razorpayRecurringGateway as gateway,
 } from "./gateway";
 import { getPlatformRazorpayCreds } from "@/lib/payments/provider";
@@ -487,6 +488,54 @@ describe("debit: the second step, sent once per attempt by its caller", () => {
       outcome: "unknown",
     } as any);
     expect(await gateway.debit(INPUT)).toMatchObject({ outcome: "unknown" });
+  });
+
+  // 23 Nov 2026, test mode: a notified UPI order, its period passed and its
+  // mandate confirmed, was answered exactly this, twice.
+  it("★★ 'URL not found' on a debit is the gateway's own refusal: passed through as rejected AND logged as an error", async () => {
+    const answer = "The requested URL was not found on the server.";
+    vi.mocked(logError).mockClear();
+    vi.mocked(rzpChargeMandate).mockResolvedValue({
+      ok: false,
+      error: answer,
+      outcome: "rejected",
+    } as any);
+    expect(await gateway.debit(INPUT)).toEqual({
+      ok: false,
+      error: answer,
+      outcome: "rejected",
+    });
+    expect(logError).toHaveBeenCalledTimes(1);
+    expect(logError).toHaveBeenCalledWith(
+      "billing.gateway.debit_unavailable",
+      expect.objectContaining({ message: answer }),
+      { storeId: "store-1", providerOrderId: "order_1" },
+    );
+  });
+
+  it("★ a bank's or a mandate's refusal is not that: no error is logged for it", async () => {
+    vi.mocked(logError).mockClear();
+    for (const error of [
+      "Insufficient balance",
+      "Amount exceeds maximum amount allowed",
+      "Debit can be attempted 36 hours after sending the pre-debit notification",
+    ]) {
+      vi.mocked(rzpChargeMandate).mockResolvedValue({
+        ok: false,
+        error,
+        outcome: "rejected",
+      } as any);
+      expect(await gateway.debit(INPUT)).toMatchObject({ outcome: "rejected" });
+      expect(isDebitUnavailableAnswer(error)).toBe(false);
+    }
+    // Nor for an answer that never came: that is an unknown, read later.
+    vi.mocked(rzpChargeMandate).mockResolvedValue({
+      ok: false,
+      error: "The requested URL was not found on the server.",
+      outcome: "unknown",
+    } as any);
+    await gateway.debit(INPUT);
+    expect(logError).not.toHaveBeenCalled();
   });
 
   it("★★ no billing contact is a rejection, not a guess: nothing is sent", async () => {

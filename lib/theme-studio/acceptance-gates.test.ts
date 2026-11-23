@@ -15,6 +15,7 @@ import {
   evaluatePackageGates,
   gate,
   gateBlocks,
+  headerMenuFindings,
   imageRuleCode,
   internalLinks,
   linkFindings,
@@ -499,6 +500,115 @@ function fullCoverage(surfaces: AcceptanceSurface[]): BrowserSample[] {
     ),
   );
 }
+
+describe("★ the header menu on a computer (owner, 23 Nov 2026)", () => {
+  // Muse's menu sat behind the menu button on a 1440px screen through two
+  // designs, and no check said so.
+  const hidden = { layout: "classic", links: 7, shown: false };
+
+  it("warns when a computer screen shows the menu button instead of the menu", () => {
+    const findings = headerMenuFindings([
+      sample({ headerMenu: hidden }),
+      sample({
+        viewport: "laptop1024",
+        width: 1024,
+        headerMenu: { ...hidden, links: 1 },
+      }),
+    ]);
+    expect(findings).toEqual([
+      {
+        code: "menu_hidden",
+        message:
+          "The header's 7 menu links are hidden behind the menu button on this screen: they do not fit beside the logo (classic header).",
+        where: "desktop1440 · home",
+      },
+      {
+        code: "menu_hidden",
+        message:
+          "The header's menu link is hidden behind the menu button on this screen: it does not fit beside the logo (classic header).",
+        where: "laptop1024 · home",
+      },
+    ]);
+  });
+
+  it("says nothing for a shown menu, a hamburger header, phones and tablets, an empty menu or older evidence", () => {
+    expect(
+      headerMenuFindings([
+        sample({ headerMenu: { ...hidden, shown: true } }),
+        sample({ headerMenu: { ...hidden, layout: "hamburger" } }),
+        sample({ headerMenu: { ...hidden, links: 0 } }),
+        sample({ viewport: "tablet768", width: 768, headerMenu: hidden }),
+        sample({ viewport: "phone390", width: 390, headerMenu: hidden }),
+        sample({ surface: "shop", path: "/shop", headerMenu: hidden }),
+        sample(),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("★ warns when a centred menu had to move to a row of its own under the logo", () => {
+    // Theme Studio plans a centred theme's menu to fit beside the logo
+    // (menu-fit.ts); a second row says the plan missed or a change grew it.
+    const wraps = { layout: "centered", links: 6, shown: true, stacked: true };
+    expect(headerMenuFindings([sample({ headerMenu: wraps })])).toEqual([
+      {
+        code: "menu_wraps",
+        message:
+          "The header's menu does not fit beside the centred logo on this screen, so it sits on a row of its own under it (6 links).",
+        where: "desktop1440 · home",
+      },
+    ]);
+    // One row, or evidence from before the probe reported it: nothing.
+    expect(
+      headerMenuFindings([
+        sample({ headerMenu: { ...wraps, stacked: false } }),
+        sample({ headerMenu: { layout: "centered", links: 6, shown: true } }),
+      ]),
+    ).toEqual([]);
+    const parsed = parseBrowserEvidence({
+      userAgent: "test",
+      samples: [sample({ headerMenu: wraps })],
+    });
+    expect(parsed.ok && parsed.value.samples[0].headerMenu).toEqual(wraps);
+    const gates = evaluateBrowserGates(
+      {
+        userAgent: "test",
+        samples: fullCoverage(["home"]).map((s) =>
+          s.viewport === "desktop1440" ? { ...s, headerMenu: wraps } : s,
+        ),
+      },
+      ["home"],
+    );
+    const menu = gates.find((g) => g.id === "browser.header_menu")!;
+    expect(menu.findings.map((f) => [f.code, f.severity])).toEqual([
+      ["menu_wraps", "minor"],
+    ]);
+    expect(gateBlocks(menu)).toBe(false);
+  });
+
+  it("is a warning that never stops a run, and the probe's value survives parsing", () => {
+    const samples = fullCoverage(["home"]).map((s) =>
+      s.viewport === "desktop1440" ? { ...s, headerMenu: hidden } : s,
+    );
+    const parsed = parseBrowserEvidence({ userAgent: "test", samples });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(
+      parsed.value.samples.find((s) => s.viewport === "desktop1440")
+        ?.headerMenu,
+    ).toEqual(hidden);
+    const gates = evaluateBrowserGates(parsed.value, ["home"]);
+    const menu = gates.find((g) => g.id === "browser.header_menu")!;
+    expect(menu).toMatchObject({ required: false, status: "advisory" });
+    expect(menu.findings.map((f) => f.severity)).toEqual(["minor"]);
+    expect(gateBlocks(menu)).toBe(false);
+    // A malformed value is "not measured", never a parse failure.
+    const odd = parseBrowserEvidence({
+      userAgent: "test",
+      samples: [sample({ headerMenu: { layout: 3 } as never })],
+    });
+    expect(odd.ok && odd.value.samples[0].headerMenu).toBeUndefined();
+  });
+});
 
 describe("browser evidence", () => {
   it("bounds diagnostic examples and preserves contrast details in repair findings", () => {

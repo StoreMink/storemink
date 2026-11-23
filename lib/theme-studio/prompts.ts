@@ -881,6 +881,21 @@ export function stageBUserText(
   ].join("\n");
 }
 
+/**
+ * v35+ (owner, 23 Nov 2026): which header layouts show the menu's links on a
+ * computer, so "add navigation to the navbar" is answered with a header that
+ * shows them. Muse's change added a link to a menu its header then hid, and
+ * the operator saw nothing change. Appended after the Stage B system prompt
+ * and the change scope's, so earlier requests keep their bytes. Matches
+ * Header.module.css: the hamburger header hides the menu at every width;
+ * centered and stacked put a long menu on a wrapping row under the logo
+ * (lib/storefront/header-fit.ts STACK_STEPS); the others fold it behind the
+ * menu button when it does not fit beside the logo.
+ */
+export const HEADER_MENU_PROMPT = `
+
+Header menu on a computer: design.layout.header decides whether a shopper on a computer sees the menu's links in the header. "hamburger" never shows them: every link is behind the menu button at every width. "centered" and "stacked" always show them, a long menu centred on a row of its own under the logo. "classic", "minimal", "transparent", "market" and "utility" show them beside the logo only while every link fits on that row; when they do not fit, the whole menu folds behind the menu button. So when the brief or the operator asks for navigation, a menu, menu links or a Shop link in the header, the links must show on a computer: do not use "hamburger", and with more than four links or long labels use "centered" or "stacked". Adding a link does not show it while the header hides the menu; showing a menu the theme already has is a change to design.layout.header.`;
+
 export function repairUserText(
   stage: "intent" | "draft",
   base: string,

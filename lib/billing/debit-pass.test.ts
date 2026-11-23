@@ -283,6 +283,13 @@ describe("★★ the debit: claimed once, then sent", () => {
       invoiceId: "inv-1",
       now: NOW,
     });
+    // ★ And it leaves a line: a refusal used to be recorded and never logged.
+    expect(logger.logWarn).toHaveBeenCalledWith("billing.debit_pass.refused", {
+      attemptId: "att-1",
+      storeId: STORE,
+      invoiceId: "inv-1",
+      reason: "Insufficient balance",
+    });
     expect(s).toMatchObject({ failed: 1, sent: 0 });
   });
 
