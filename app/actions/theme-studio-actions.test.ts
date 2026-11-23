@@ -9,7 +9,10 @@ import type { ThemeStudioProjectState } from "@/lib/theme-studio/contracts";
 // ---------------------------------------------------------------------------
 
 const repo = vi.hoisted(() => ({
-  deleteThemeStudioProject: vi.fn(async () => ({ themeId: "clay-co" })),
+  deleteThemeStudioProject: vi.fn(async () => ({
+    themeId: "clay-co",
+    storesKept: 2,
+  })),
   createThemeStudioProject: vi.fn(async () => ({ id: "p1" })),
   queueThemeStudioGeneration: vi.fn(async () => ({
     runId: "r1",
@@ -532,5 +535,6 @@ it("does not report a committed deletion as unchanged when cache invalidation fa
     expectedRevision: 0,
     confirmation: "clay-co",
   });
-  expect(result).toEqual({ ok: true });
+  // ★ And says how many stores keep the deleted theme.
+  expect(result).toEqual({ ok: true, storesKept: 2 });
 });

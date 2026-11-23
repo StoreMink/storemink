@@ -11,12 +11,17 @@ export interface DeleteThemeStudioProjectInput {
   confirmation: string;
 }
 
-/** The database checks usage and active work under locks and removes the
- * complete protected history atomically. Only a session-derived actor enters. */
+/** The database checks active work under locks and removes the complete
+ * protected history atomically. Only a session-derived actor enters.
+ *
+ * ★ A theme stores use is deleted too (owner, 23 Nov 2026), and each of those
+ *   stores keeps the release it pinned (migration 0289): `storesKept` says how
+ *   many. The database still refuses when a store uses the theme without a
+ *   pinned release, because deleting it would change that store. */
 export async function deleteThemeStudioProject(
   actor: ThemeStudioActor,
   input: DeleteThemeStudioProjectInput,
-): Promise<{ themeId: string }> {
+): Promise<{ themeId: string; storesKept: number }> {
   if (
     !isUuid(input.projectId) ||
     !Number.isSafeInteger(input.expectedRevision) ||
@@ -37,7 +42,7 @@ export async function deleteThemeStudioProject(
   `),
   );
   const removed = result.rows[0]?.result as
-    | { ok: boolean; error?: string; themeId?: string }
+    | { ok: boolean; error?: string; themeId?: string; storesKept?: unknown }
     | undefined;
   if (!removed?.ok || !removed.themeId) {
     throw new ThemeStudioError(
@@ -45,5 +50,12 @@ export async function deleteThemeStudioProject(
       removed?.error ?? "The theme could not be deleted.",
     );
   }
-  return { themeId: removed.themeId };
+  // The revision before 0289 answers without the count: no store kept it.
+  const storesKept =
+    typeof removed.storesKept === "number" &&
+    Number.isSafeInteger(removed.storesKept) &&
+    removed.storesKept > 0
+      ? removed.storesKept
+      : 0;
+  return { themeId: removed.themeId, storesKept };
 }

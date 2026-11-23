@@ -76,6 +76,8 @@ export interface ThemeStudioActionResult {
   ok: boolean;
   error?: string;
   id?: string;
+  /** Delete only: how many stores keep the deleted theme (their release). */
+  storesKept?: number;
 }
 
 const NOT_AUTHORIZED: ThemeStudioActionResult = {
@@ -293,8 +295,9 @@ export async function deleteThemeStudioProjectAction(
 ): Promise<ThemeStudioActionResult> {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
+  let storesKept: number;
   try {
-    await deleteThemeStudioProject(actor, input);
+    ({ storesKept } = await deleteThemeStudioProject(actor, input));
   } catch (error) {
     return failure(error, "delete theme");
   }
@@ -309,7 +312,7 @@ export async function deleteThemeStudioProjectAction(
   } catch (error) {
     logError("theme studio: deleted theme cache invalidation failed", error);
   }
-  return { ok: true };
+  return { ok: true, storesKept };
 }
 
 const MALFORMED: ThemeStudioActionResult = {

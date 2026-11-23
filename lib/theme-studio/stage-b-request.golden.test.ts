@@ -10,6 +10,7 @@ import {
 } from "./prompt-features";
 import {
   currentThemeForRevision,
+  HEADER_MENU_PROMPT,
   heroContrastPrompt,
   stageBInitialSystemPrompt,
   stageBSystemPrompt,
@@ -37,7 +38,8 @@ import {
 // prompt, revision context and revision user text those revisions send. The
 // v19 to v32 pins were recorded on 25 Oct 2026 from the code before v33 moved
 // the templates into a JSON string; v33's were recorded with that change, and
-// v34's (22 Nov 2026) with the theme stylesheet. It
+// v34's (22 Nov 2026) with the theme stylesheet, and v35's (23 Nov 2026)
+// with the header menu section. It
 // is rebuilt here exactly as it was recorded, with the flags the pipeline
 // passes for each revision (pipeline.test.ts proves it passes them).
 //
@@ -198,6 +200,9 @@ function rebuild(last: number) {
         ),
       );
     }
+    // v35+: which header layouts show the menu on a computer, appended last
+    // to Stage B's system prompt and to the change scope's (prompts.ts).
+    if (f.headerMenu) prompts[`headerMenu@v${v}`] = sha(HEADER_MENU_PROMPT);
   }
   return { schemas, prompts };
 }
@@ -234,10 +239,13 @@ describe(`Stage B requests of prompt revisions v19 to v${CURRENT}`, () => {
       Object.keys(rebuilt.prompts).sort(),
     );
     expect(Object.keys(GOLDEN.schemas)).toHaveLength(4 * (CURRENT - 18));
-    // Nine request texts for each revision, and from v34 the two stylesheet
-    // sections and the layout commitments as well.
+    // Nine request texts for each revision, from v34 the two stylesheet
+    // sections and the layout commitments as well, and from v35 the header
+    // menu section.
     expect(Object.keys(GOLDEN.prompts)).toHaveLength(
-      9 * (CURRENT - 18) + 3 * Math.max(0, CURRENT - 33),
+      9 * (CURRENT - 18) +
+        3 * Math.max(0, CURRENT - 33) +
+        Math.max(0, CURRENT - 34),
     );
   });
 

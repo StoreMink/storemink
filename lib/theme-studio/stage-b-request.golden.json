@@ -106,7 +106,11 @@
     "draft@v34": "7f289b294350e2217d199f965f517fc0a258b872c6d6f38c5867c6b33719e323",
     "initial@v34": "47880d04cf1572983818cfbeaefb52943a23eafb71844ca4bd2f780e67dcbe2b",
     "varietyDraft@v34": "f87cb2b2c8bc5df49f6149e71d16f84be292c7ee098ffeba610e93a8cd792397",
-    "varietyInitial@v34": "2bfb5673b3e503b188ac7cc1bd0b53aa0cee4245bbe4525b77dd3c9b2656d1d0"
+    "varietyInitial@v34": "2bfb5673b3e503b188ac7cc1bd0b53aa0cee4245bbe4525b77dd3c9b2656d1d0",
+    "draft@v35": "7f289b294350e2217d199f965f517fc0a258b872c6d6f38c5867c6b33719e323",
+    "initial@v35": "47880d04cf1572983818cfbeaefb52943a23eafb71844ca4bd2f780e67dcbe2b",
+    "varietyDraft@v35": "f87cb2b2c8bc5df49f6149e71d16f84be292c7ee098ffeba610e93a8cd792397",
+    "varietyInitial@v35": "2bfb5673b3e503b188ac7cc1bd0b53aa0cee4245bbe4525b77dd3c9b2656d1d0"
   },
   "prompts": {
     "stageB@v19": "56067b953e2bc37f64b0ca3147c9c949e783527ae0f47cffdf10dd3924085d34",
@@ -255,6 +259,19 @@
     "userTextRevise@v34": "e8c1d8a0e7a92555f73ec60b6b1484e7f4070bdba0f69ca72c9612b446334bd4",
     "stylesheetNew@v34": "6d082dcb735aacb23ce793e58947083da07841d369cb340cf21051600cf7dce6",
     "stylesheetRevise@v34": "2b0a3c78074f2527b0a2295987457f733b3034d12e4aba56058a31b44a9fd2b6",
-    "commitments@v34": "ea0ace8c076f968dea876b850ede281485da960e2f78fe0d283d7d0be01a5fc9"
+    "commitments@v34": "ea0ace8c076f968dea876b850ede281485da960e2f78fe0d283d7d0be01a5fc9",
+    "commitments@v35": "ea0ace8c076f968dea876b850ede281485da960e2f78fe0d283d7d0be01a5fc9",
+    "currentThemeBasket@v35": "80be9e6793162027a86006b3cb2125ec655fb7ab8ee06653f499547da02437fe",
+    "currentThemeExemplar@v35": "b044d72d3ac9f9fce168864b9550ac2aa86cbbec5b049addcd4be8ab1400f4d3",
+    "headerMenu@v35": "828c04d1d4993ef930fc049e5742ca286538fe831578d33d5958b224ccfffab1",
+    "heroContrast@v35": "8462978d25b3890e24f37fc859f69435a4020d6fd4ba795563dc200af3f3ed36",
+    "stageB@v35": "c62618286fffb3890c07d4083e0904760c5905717139e8665ea2d66624706e26",
+    "stageBInitial@v35": "f599be89bb175a3c9876a95ad0fa40da31bf529507df0256c338ad5e6aab47f1",
+    "stageBNative@v35": "c62618286fffb3890c07d4083e0904760c5905717139e8665ea2d66624706e26",
+    "stageBVarietyInitial@v35": "a20afb87870b52b5f6fdc9d7ab75d4731492cd3f880a7cedfd53be7cdcc5cd77",
+    "stageBVarietyRevise@v35": "7b226bb0c50e7815a478d379be43faecbcffd4176c7abdab8e4d2053a33afb11",
+    "stylesheetNew@v35": "6d082dcb735aacb23ce793e58947083da07841d369cb340cf21051600cf7dce6",
+    "stylesheetRevise@v35": "2b0a3c78074f2527b0a2295987457f733b3034d12e4aba56058a31b44a9fd2b6",
+    "userTextRevise@v35": "e8c1d8a0e7a92555f73ec60b6b1484e7f4070bdba0f69ca72c9612b446334bd4"
   }
 }
