@@ -21,7 +21,7 @@
   min-height: 100vh;
   background: var(--blog-bg);
   font-family: var(--font-outfit), sans-serif;
-  padding-top: 100px; /* Space for fixed header */
+  padding-top: calc(var(--sm-header-h, 68px) + 32px);
   color: var(--blog-dark);
 }
 

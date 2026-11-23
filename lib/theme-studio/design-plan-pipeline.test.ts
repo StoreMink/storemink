@@ -714,4 +714,61 @@ describe("★ every opening slide of a new theme has a phone photograph (v34)", 
     for (const slide of openingSlides(revised.package))
       expect(slide.mobile_image_url).toBeUndefined();
   });
+
+  it("★ from v36 a change gives its opening slides phone photographs too, reusing the slot a slide had", async () => {
+    // Owner, 23 Nov 2026: Muse's slideshow showed only the wall behind the
+    // model on a phone. The offline provider writes its slides with no phone
+    // photograph, as a model rewriting the slideshow in a change can.
+    type Built = Extract<Awaited<ReturnType<typeof run>>, { kind: "version" }>;
+    const change = (base: Built, promptVersion: string) =>
+      run(
+        scripted(0).client,
+        input({
+          promptVersion,
+          messages: [{ kind: "revision", body: "Make the footer simpler." }],
+          revision: { baseIntent: base.intent, basePackage: base.package },
+        }),
+      );
+    const first = await run(
+      scripted(0).client,
+      input({ promptVersion: "theme-studio-v36" }),
+    );
+    if (first.kind !== "version") throw new Error(JSON.stringify(first));
+    const before = openingSlides(first.package).map((s) => s.mobile_image_url);
+    expect(before.every(Boolean)).toBe(true);
+
+    // A base that had them: the same slots come back, so their pictures
+    // carry over (carryOverSlotImages keeps a picture by slot id).
+    const revised = await change(first, "theme-studio-v36");
+    if (revised.kind !== "version") throw new Error(JSON.stringify(revised));
+    expect(
+      openingSlides(revised.package).map((s) => s.mobile_image_url),
+    ).toEqual(before);
+    for (const slide of openingSlides(revised.package)) {
+      const id = slide.mobile_image_url!.replace("theme-asset://", "");
+      expect(
+        revised.intent.assetBriefs.find((b) => b.id === id)?.aspectRatio,
+      ).toBe("4:5");
+      expect(revised.package.assets.map((a) => a.id)).toContain(id);
+    }
+
+    // A base built before v34, with none: the change adds them.
+    const old = await run(
+      scripted(0).client,
+      input({ promptVersion: "theme-studio-v33" }),
+    );
+    if (old.kind !== "version") throw new Error(JSON.stringify(old));
+    const added = await change(old, "theme-studio-v36");
+    if (added.kind !== "version") throw new Error(JSON.stringify(added));
+    for (const slide of openingSlides(added.package)) {
+      const wide = slide.image_url.replace("theme-asset://", "");
+      expect(slide.mobile_image_url).toBe(`theme-asset://${wide}-phone`);
+    }
+
+    // A change queued under v35 is left exactly as it was.
+    const v35 = await change(first, "theme-studio-v35");
+    if (v35.kind !== "version") throw new Error(JSON.stringify(v35));
+    for (const slide of openingSlides(v35.package))
+      expect(slide.mobile_image_url).toBeUndefined();
+  });
 });

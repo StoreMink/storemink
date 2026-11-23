@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v35";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v36";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -100,5 +100,11 @@ export function themePromptFeatures(version: string) {
      * links that fit beside the logo, and a change that makes the menu too
      * wide is sent back once (menu-fit.ts). */
     menuFit: revision >= 35,
+    /** Owner, 23 Nov 2026 (Muse on a phone showed only the wall behind the
+     * model): a CHANGE also gives every opening slide a portrait phone
+     * photograph (frame-shapes.ts withPhoneOpening), as a new theme has
+     * since v34. A slide whose phone photograph the change dropped gets the
+     * same slot back, so its picture carries over. No request text changes. */
+    phoneOpeningChanges: revision >= 36,
   };
 }

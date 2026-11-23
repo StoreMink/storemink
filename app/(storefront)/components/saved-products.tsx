@@ -30,64 +30,70 @@ export function SavedProducts({
   );
   const products = useDeviceProducts(slugs);
 
+  // `shop-panel-body` carries the page's side gutters (shop.css), as on the
+  // shop page; without it the page ran to the screen's edges.
   return (
     <div className="shop-listing sm-saved">
-      <section className="shop-hero">
-        <div className="shop-hero-row">
-          <h1 className="shop-title">Saved items</h1>
-        </div>
-        <p className="shop-count">
-          Saved on this device. They stay here until you remove them or clear
-          this browser.
-        </p>
-      </section>
+      <div className="shop-panel">
+        <div className="shop-panel-body">
+          <section className="shop-hero">
+            <div className="shop-hero-row">
+              <h1 className="shop-title">Saved items</h1>
+            </div>
+            <p className="shop-count">
+              Saved on this device. They stay here until you remove them or
+              clear this browser.
+            </p>
+          </section>
 
-      {slugs.length === 0 ? (
-        <div className="shop-empty">
-          <h2>Nothing saved yet</h2>
-          <p>Tap the heart on a product to keep it here for later.</p>
-          <p>
-            <Link href="/shop" className="sm-btn-primary sm-saved-cta">
-              Browse the shop
-            </Link>
-          </p>
+          {slugs.length === 0 ? (
+            <div className="shop-empty">
+              <h2>Nothing saved yet</h2>
+              <p>Tap the heart on a product to keep it here for later.</p>
+              <p>
+                <Link href="/shop" className="sm-btn-primary sm-saved-cta">
+                  Browse the shop
+                </Link>
+              </p>
+            </div>
+          ) : products === null ? (
+            <p className="shop-count" role="status">
+              Loading your saved items
+            </p>
+          ) : products.length === 0 ? (
+            <div className="shop-empty">
+              <h2>These products are no longer available</h2>
+              <p>
+                <Link href="/shop" className="sm-btn-primary sm-saved-cta">
+                  Browse the shop
+                </Link>
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="shop-grid">
+                {products.map((product) => (
+                  <ShopCard
+                    key={product.id}
+                    product={product}
+                    headingLevel={2}
+                    storeLowStockThreshold={storeLowStockThreshold}
+                  />
+                ))}
+              </div>
+              <p className="sm-saved-clear">
+                <button
+                  type="button"
+                  className="sm-btn-secondary"
+                  onClick={() => clearDeviceList("wishlist")}
+                >
+                  Remove all
+                </button>
+              </p>
+            </>
+          )}
         </div>
-      ) : products === null ? (
-        <p className="shop-count" role="status">
-          Loading your saved items
-        </p>
-      ) : products.length === 0 ? (
-        <div className="shop-empty">
-          <h2>These products are no longer available</h2>
-          <p>
-            <Link href="/shop" className="sm-btn-primary sm-saved-cta">
-              Browse the shop
-            </Link>
-          </p>
-        </div>
-      ) : (
-        <>
-          <div className="shop-grid">
-            {products.map((product) => (
-              <ShopCard
-                key={product.id}
-                product={product}
-                headingLevel={2}
-                storeLowStockThreshold={storeLowStockThreshold}
-              />
-            ))}
-          </div>
-          <p className="sm-saved-clear">
-            <button
-              type="button"
-              className="sm-btn-secondary"
-              onClick={() => clearDeviceList("wishlist")}
-            >
-              Remove all
-            </button>
-          </p>
-        </>
-      )}
+      </div>
     </div>
   );
 }

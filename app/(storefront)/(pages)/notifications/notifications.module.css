@@ -2,7 +2,7 @@
    account area feels like one place, including the market-header offset rule. */
 .container {
   min-height: 100vh;
-  padding: 140px 24px 80px;
+  padding: calc(var(--sm-header-h, 68px) + 72px) 24px 80px;
   background-color: var(--sm-cream);
   font-family: var(--font-outfit), sans-serif;
 }
