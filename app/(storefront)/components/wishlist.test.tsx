@@ -150,6 +150,14 @@ describe("★★ the saved-items page", () => {
   it("says so when nothing is saved, and reads no cards", () => {
     render(<SavedProducts />);
     expect(screen.getByRole("heading", { name: "Saved items" })).toBeTruthy();
+    // Inside the shop page's gutters (shop.css): on Muse, 23 Nov 2026, the
+    // page ran to the screen's edges.
+    for (const text of ["Saved items", "Nothing saved yet"])
+      expect(
+        screen
+          .getByText(text)
+          .closest(".shop-listing .shop-panel > .shop-panel-body"),
+      ).not.toBeNull();
     expect(screen.getByText("Nothing saved yet")).toBeTruthy();
     expect(screen.getByText(/Saved on this device/)).toBeTruthy();
     expect(

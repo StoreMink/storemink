@@ -1187,7 +1187,16 @@ async function generate(
     // v34, a new theme: every opening slide gets a portrait photograph for
     // phones (frame-shapes.ts withPhoneOpening). Idempotent across repair
     // rounds: a brief it added once is found again.
-    if (planFeature) {
+    // v36: a change too (owner, 23 Nov 2026: Muse's slideshow showed only
+    // the wall on a phone after its changes). A slide whose phone
+    // photograph the change dropped gets the same slot back, so
+    // carryOverSlotImages keeps its picture; only a new slide is drawn.
+    if (
+      planFeature ||
+      (input.revision &&
+        explicitStyles &&
+        themePromptFeatures(input.promptVersion).phoneOpeningChanges)
+    ) {
       const phone = withPhoneOpening(
         tidied,
         intent,

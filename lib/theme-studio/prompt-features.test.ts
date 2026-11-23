@@ -31,6 +31,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     followUpRepair: false,
     headerMenu: false,
     menuFit: false,
+    phoneOpeningChanges: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -58,6 +59,7 @@ it("preserves old paid request shapes and carries capabilities into future promp
     followUpRepair: false,
     headerMenu: false,
     menuFit: false,
+    phoneOpeningChanges: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -85,8 +87,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     followUpRepair: true,
     headerMenu: true,
     menuFit: true,
+    phoneOpeningChanges: true,
   });
-  expect(themePromptFeatures("theme-studio-v35")).toEqual(
+  expect(themePromptFeatures("theme-studio-v36")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -184,10 +187,21 @@ it("adds the theme stylesheet only from v34, so v33 requests replay unchanged", 
 it("keeps follow-ups through automatic fixes and explains the header menu only from v35, so v34 requests replay unchanged", () => {
   // Owner, 23 Nov 2026: "ai theme builder should be capable of
   // understanding the follow ups the operator gives".
-  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v35");
   for (const feature of ["followUpRepair", "headerMenu", "menuFit"] as const) {
     expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(false);
     expect(themePromptFeatures("theme-studio-v35")[feature]).toBe(true);
   }
   expect(themePromptFeatures("theme-studio-v35").stylesheet).toBe(true);
+});
+
+it("gives a change's opening slides phone photographs only from v36, so v35 runs replay unchanged", () => {
+  // Owner, 23 Nov 2026: Muse's slideshow showed only the wall on a phone.
+  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v36");
+  expect(themePromptFeatures("theme-studio-v35").phoneOpeningChanges).toBe(
+    false,
+  );
+  expect(themePromptFeatures("theme-studio-v36").phoneOpeningChanges).toBe(
+    true,
+  );
+  expect(themePromptFeatures("theme-studio-v36").menuFit).toBe(true);
 });

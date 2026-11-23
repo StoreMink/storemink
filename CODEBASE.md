@@ -6688,6 +6688,33 @@ address. A static route would hide a page a merchant already built there, and
 reserving the names would change `RESERVED_PAGE_SLUGS`, which every Theme
 Studio prompt since v19 prints (pinned byte for byte). ⚠ A store with its own
 page at `/wishlist` has no built-in saved-items page.
+★ BOTH PAGES SIT INSIDE THE SHOP PAGE'S GUTTERS (23 Nov 2026, owner's
+screenshot of Muse): they reuse the shop listing's classes, and skipped its
+`.shop-panel > .shop-panel-body` wrapper, which carries the side gutters, so
+their heading and text ran to the screen's left edge. Pinned in
+`wishlist.test.tsx` and `built-in.test.tsx`.
+★★ EVERY STOREFRONT PAGE STARTS BELOW THE HEADER'S MEASURED HEIGHT (same
+day). The same screenshot showed the Saved items heading under the menu: the
+shop listing reserved a fixed 80/88px, and the other pages 92 to 140px, all
+tuned for the 68px bar, while a stacked header is 108px, a utility header
+134px and the announcement bar adds 36px. Every page-top rule (shop listing,
+`.shop-main`, product page, cart, checkout, profile, orders, enquiries,
+notifications, account sidebar, blog hero and article, write-a-blog) is now
+`calc(var(--sm-header-h, 68px) + N)`, where N is its old number less 68, so
+a plain header with no bar keeps exactly the spacing it had and a taller one
+pushes the page down by what it adds. `--sm-header-h` is the server's
+default per header (`storefront-theme.css`) until `use-header-fit.ts`
+publishes the measured height. The market header's page overrides are more
+specific and unchanged (that header reserves itself on the root).
+`app/(storefront)/page-top-clearance.test.ts` pins each page's rule and
+fails on any storefront stylesheet that reserves a fixed 80px or more at a
+page top (two inner blog sections are named exceptions; mutation-checked).
+Checked offline in Chrome with the real stylesheets: the Saved items page
+under the classic, stacked, utility and centred headers, with and without
+the bar, at 390, 1024 and 1440px. Before: all 24 cases had the heading
+under the header or at the screen's edge (stacked with the bar at 1440px:
+47px under it). After: all 24 have it 44px below the header, inside the
+gutters. No Help Centre change: no merchant step changes.
 Tests: `lib/storefront/device-lists.test.ts`, `store-locations.test.ts`,
 `app/api/storefront/products/route.test.ts`, `components/wishlist.test.tsx`
 (heart, saved page, recently viewed), `[pageSlug]/built-in.test.tsx`, the
@@ -16360,6 +16387,26 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     of `acceptance-gates.test.ts` and the probe test (each rule
     mutation-checked). Golden pins unchanged (no golden fixture plans a
     centred header). Operator-only: no Help Centre change.
+    **Prompt v36 (23 Nov 2026, owner: in Muse "the desktop view shows the
+    proper picture on the carousel but in phone view it compresses and the
+    image is not visible properly").** A slide with no phone photograph is
+    cropped around its centre below 768px (`hero-media.tsx`, or its focal
+    point), and Muse's wide slide has the model at the far right, so a phone
+    saw only the wall. `withPhoneOpening` (frame-shapes.ts) gave every
+    opening slide a portrait phone photograph only when a NEW theme was
+    built; a change that rewrote the slideshow, or a model that left
+    `mobile_image_url` out of its revised slides, left phones with the
+    centre crop. From v36 (`phoneOpeningChanges`) it runs on a change's
+    draft too: a slide whose phone photograph the change dropped gets the
+    same `<slot>-phone` slot back, so `carryOverSlotImages` keeps its picture
+    (pass 1, by slot id) and nothing is drawn; only a slide with a new
+    picture, or a base built before v34, gets a new portrait brief (one more
+    picture to draw per slide). No request text changes: every v36 golden
+    pin equals v35's. Test: `design-plan-pipeline.test.ts` ("from v36 a
+    change gives its opening slides phone photographs too", mutation-checked;
+    a v35 change is unchanged). ⚠ An existing theme gets them at its next
+    change under v36; until then its phones keep the centre crop. Operator
+    only: no Help Centre change.
     The Website Builder's brand
     panel lists a styled theme's rules read-only under **Theme styles**
     (`ThemeDesignDefaults.styleRules`, `describeStyleRule`; at most 80; test
@@ -25991,9 +26038,9 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       `lib/payments/razorpay.test.ts`, `open-invoices.test.tsx`,
       `manual-pay.test.ts`, `order-state.test.ts` and the email tests. Step 1 was run in Razorpay test mode through the real gateway
       functions on 21 Nov 2026 (mandate read, notified order, notice read).
-      ⚠ NOT YET PROVEN: that the debit succeeds once the notice period has
-      passed; two notified test orders may be debited from 23 Nov 2026 11:28
-      IST with `scripts/autopay-test-debit.mjs` (test keys only).
+      ⚠ NOT PROVEN, AND REFUSED WHEN TRIED: all four notified test orders
+      were debited on 23 Nov 2026 after their notice periods and every one
+      was refused (below); no renewal debit has ever been accepted.
       ★★ A MANDATE IS REGISTERED `as_presented` (22 Nov 2026, owner's
       request; `MANDATE_FREQUENCY` in `lib/billing/enrol.ts`). It was
       `monthly` or `yearly`, and a mandate with a calendar frequency allows
@@ -26031,15 +26078,19 @@ way — an entry there is a deliberate act, not a way to silence the guard.
          `billing.mandate_token_past_expiry`); a UPI token's `expired_at` is
          its real five-year expiry and still ends it.
 
-      ★★ THE DEBIT ITSELF WAS TRIED ON 23 NOV 2026 AND REFUSED (UPI, test
-      mode; docs/autopay-verification.md, "23 Nov 2026: the first debit
-      after its notice period"). With the notice delivered, the 25 hours
-      passed, the mandate confirmed and `readNotice` ready, Razorpay
-      answered HTTP 400 "The requested URL was not found on the server"
-      (source `internal`), counted an attempt on the order and created no
-      payment: the answer the plain order got on 21 Nov. So the notification
-      is necessary and not shown to be sufficient; whether it is test mode,
-      the account or UPI only is Razorpay's to say. The debit pass records it
+      ★★ THE DEBIT ITSELF WAS TRIED FOUR TIMES ON 23 NOV 2026 AND REFUSED
+      EVERY TIME (test mode; docs/autopay-verification.md, "23 Nov 2026: all
+      four test debits refused"): UPI `as_presented` at 02:14 IST, card
+      `monthly` at 11:37 and 11:39, card `as_presented` at 13:30. With the
+      notice delivered, its period passed, the mandate confirmed and
+      `readNotice` ready, Razorpay answered HTTP 400 "The requested URL was
+      not found on the server" (source `internal`), counted an attempt on the
+      order and created no payment: the answer the plain order got on 21 Nov.
+      So the notification is necessary and not shown to be sufficient, and
+      the cause is not the rail or the frequency: test mode or the account's
+      setup, which only Razorpay can say. `mapGatewayStatus` has never met a
+      real debit's status, and `as_presented` on a second debit in a month is
+      untested (no first debit was accepted). The debit pass records it
       as a refused try (`gateway_rejected`), which is true and safe. Since
       that night a refused debit is logged, where it left no line before:
       `billing.debit_pass.refused` (a warning, every refusal, with the
@@ -26047,8 +26098,7 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       this answer only, `isDebitUnavailableAnswer` in
       `lib/billing/gateway.ts`: it is about the gateway account, not one
       merchant's mandate). `RECURRING_CHARGE_VERIFIED` is unchanged (owner's
-      decision). ⚠ The three card orders come due on 23 Nov between 11:28
-      and 13:05 IST. No merchant step changes, so no Help Centre update.
+      decision). No merchant step changes, so no Help Centre update.
       ★ THE WHOLE RENEWAL RUNS HOUR BY HOUR IN A LOCAL TEST
       (`lib/billing/renewal-scenarios.local.test.ts`, run with
       `npm run billing:scenarios:local`; opt-in, so plain `vitest` reports it

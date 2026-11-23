@@ -38,8 +38,9 @@ import {
 // prompt, revision context and revision user text those revisions send. The
 // v19 to v32 pins were recorded on 25 Oct 2026 from the code before v33 moved
 // the templates into a JSON string; v33's were recorded with that change, and
-// v34's (22 Nov 2026) with the theme stylesheet, and v35's (23 Nov 2026)
-// with the header menu section. It
+// v34's (22 Nov 2026) with the theme stylesheet, v35's (23 Nov 2026) with
+// the header menu section, and v36's the same day, equal to v35's (v36
+// changes what a change does with its draft, not what it sends). It
 // is rebuilt here exactly as it was recorded, with the flags the pipeline
 // passes for each revision (pipeline.test.ts proves it passes them).
 //
