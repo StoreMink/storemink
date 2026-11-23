@@ -593,6 +593,229 @@ try {
           });
       }
     }
+    // A section's own padding and the page's section gap do not add up
+    // (22 Nov 2026, owner: "there is so much of space above Flagship
+    // Lineup"). Two large plain sections stood 96 + 72 + 96 = 264px apart
+    // on a desktop. For a section with no colour of its own the padding and
+    // the gap overlap; a band keeps all of its padding inside its colour and
+    // gives back half the gap on each side, so two bands touch.
+    {
+      const block = (id) =>
+        `<div data-block="${id}" style="height:120px;background:#ddd"></div>`;
+      const plain = (id, pad) =>
+        `<section class="home-section${pad ? ` home-pad-${pad}` : ""}">${block(id)}</section>`;
+      await page.setContent(
+        documentHtml(
+          [
+            plain("first", "lg"),
+            plain("a", "lg"),
+            plain("b", "lg"),
+            plain("c", "md"),
+            plain("d", "md"),
+            plain("e", ""),
+            `<section class="home-section home-pad-lg sm-scheme sm-scheme-soft">${block("band")}</section>`,
+            `<section class="home-section home-pad-lg sm-scheme sm-scheme-inverse">${block("band2")}</section>`,
+            plain("f", "lg"),
+            `<section class="home-section home-pad-lg" style="background:#123456">${block("painted")}</section>`,
+            plain("last", "lg"),
+          ].join(""),
+        ),
+      );
+      const m = await page.evaluate(() => {
+        const box = (id) =>
+          document
+            .querySelector(`[data-block="${id}"]`)
+            .getBoundingClientRect();
+        const section = (id) =>
+          document
+            .querySelector(`[data-block="${id}"]`)
+            .closest(".home-section")
+            .getBoundingClientRect();
+        const between = (a, b) => Math.round(box(b).top - box(a).bottom);
+        const wrap = document.querySelector(".home-sections");
+        const px = (value) => {
+          const probe = document.createElement("div");
+          probe.style.height = value;
+          wrap.appendChild(probe);
+          const h = probe.getBoundingClientRect().height;
+          probe.remove();
+          return h;
+        };
+        return {
+          gap: px("clamp(40px, 6vw, 72px)"),
+          lg: px("clamp(56px, 8vw, 96px)"),
+          md: px("clamp(32px, 5vw, 56px)"),
+          lgLg: between("a", "b"),
+          lgMd: between("b", "c"),
+          mdMd: between("c", "d"),
+          mdNone: between("d", "e"),
+          // Inside a band, and inside a painted section: all of the padding.
+          bandInset: Math.round(box("band").top - section("band").top),
+          paintedInset: Math.round(box("painted").top - section("painted").top),
+          // A band never slides under a neighbour's content.
+          bandClear:
+            section("band").top >= box("e").bottom - 0.5 &&
+            section("band2").bottom <= box("f").top + 0.5,
+          // From plain content to a band's edge, and from a band's edge to
+          // plain content with large padding.
+          plainToBand: Math.round(section("band").top - box("e").bottom),
+          bandToLarge: Math.round(box("f").top - section("band2").bottom),
+          // Two bands, edge to edge.
+          bandToBand: Math.round(section("band2").top - section("band").bottom),
+          paintedClear:
+            section("painted").top >= box("f").bottom - 0.5 &&
+            section("painted").bottom <= box("last").top + 0.5,
+          // The first section's padding is its own (the header's reserve
+          // sits above it), and the last one's is the footer's.
+          firstInset: Math.round(box("first").top - section("first").top),
+          lastInset: Math.round(section("last").bottom - box("last").bottom),
+        };
+      });
+      const measured = await measureNative(page);
+      cases++;
+      const problems = [];
+      const near = (value, wanted) => Math.abs(value - wanted) <= 1.5;
+      const overlap = (a, b) =>
+        m.gap + a + b - Math.min(a, m.gap) - Math.min(b, m.gap);
+      if (measured.overflow) problems.push("overflow");
+      if (!near(m.lgLg, overlap(m.lg, m.lg)))
+        problems.push(`two large sections are ${m.lgLg}px apart`);
+      if (!near(m.lgMd, overlap(m.lg, m.md)))
+        problems.push(`a large and a medium section are ${m.lgMd}px apart`);
+      if (!near(m.mdMd, overlap(m.md, m.md)))
+        problems.push(`two medium sections are ${m.mdMd}px apart`);
+      if (!near(m.mdNone, overlap(m.md, 0)))
+        problems.push(`a medium and a plain section are ${m.mdNone}px apart`);
+      // Never the old sum, and never less than the page's gap.
+      for (const value of [m.lgLg, m.lgMd, m.mdMd, m.mdNone])
+        if (
+          value < m.gap - 1.5 ||
+          value > Math.max(m.gap, 2 * m.lg - m.gap) + 1.5
+        )
+          problems.push(`sections ${value}px apart (gap ${m.gap}px)`);
+      if (!near(m.bandInset, m.lg) || !near(m.paintedInset, m.lg))
+        problems.push("a band lost padding inside its colour");
+      if (!m.bandClear || !m.paintedClear)
+        problems.push("a band slid under a neighbour");
+      // A block gives back half the gap on each side: two blocks touch, and
+      // a block is half a gap (plus the neighbour's leftover padding) from
+      // plain content, never against it.
+      if (!near(m.bandToBand, 0))
+        problems.push(`two bands are ${m.bandToBand}px apart, not touching`);
+      if (!near(m.plainToBand, m.gap / 2))
+        problems.push(`a band starts ${m.plainToBand}px after plain content`);
+      if (!near(m.bandToLarge, m.gap / 2 + m.lg - Math.min(m.lg, m.gap)))
+        problems.push(`plain content starts ${m.bandToLarge}px after a band`);
+      if (!near(m.firstInset, m.lg) || !near(m.lastInset, m.lg))
+        problems.push("the first or last section lost its outer padding");
+      if (problems.length)
+        failures.push({ label: `${width}px section-spacing`, problems, ...m });
+    }
+    // Photo tiles and testimonials (22 Nov 2026, owner's phone screenshots).
+    // On a phone a photo tile's words sit UNDER its photo: two tiles across
+    // 390px are about 170px wide, and a title with a sentence laid over the
+    // picture covered all of it. Above 560px the words stay on the photo.
+    // With an odd number of tiles the first takes the full width.
+    for (const [layout, count] of [
+      ["grid", 3],
+      ["grid", 4],
+      ["collage", 4],
+    ]) {
+      const label = `${width}px photo-tiles/${layout}/${count}`;
+      await page.setContent(
+        documentHtml(
+          `<section class="home-section"><div class="home-tile-grid cols-3 size-md layout-${layout}">${Array.from({ length: count }, (_, i) => `<a href="/shop" class="home-tile theme-light${layout === "collage" && i === 0 ? " span-2x1" : ""}"><img class="home-tile-img" alt="" src="${image(1600, 1200)}" style="position:absolute;height:100%;width:100%;left:0;top:0;right:0;bottom:0"><span class="home-tile-copy"><span class="home-tile-title">Up to 30% off brew bars</span><span class="home-tile-sub">${copy}</span></span></a>`).join("")}</div></section>`,
+        ),
+      );
+      const m = await page.evaluate(async () => {
+        await Promise.all(
+          [...document.images].map((i) => i.decode().catch(() => {})),
+        );
+        return [...document.querySelectorAll(".home-tile")].map((tile) => {
+          const box = tile.getBoundingClientRect();
+          const photo = tile
+            .querySelector(".home-tile-img")
+            .getBoundingClientRect();
+          const words = tile
+            .querySelector(".home-tile-copy")
+            .getBoundingClientRect();
+          return {
+            width: box.width,
+            photoHeight: photo.height,
+            photoWidth: photo.width,
+            // How much of the photo the words lie over, in px of height.
+            covered: Math.max(
+              0,
+              Math.min(photo.bottom, words.bottom) -
+                Math.max(photo.top, words.top),
+            ),
+            wordsInside: words.bottom <= box.bottom + 1,
+          };
+        });
+      });
+      const measured = await measureNative(page);
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("overflow");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (measured.crop.length) problems.push("a photo keeps under 35%");
+      if (m.some((tile) => tile.photoHeight < 80 || tile.photoWidth < 100))
+        problems.push("a photo is too small to see");
+      if (!m.every((tile) => tile.wordsInside))
+        problems.push("words run out of their tile");
+      if (width <= 560) {
+        if (m.some((tile) => tile.covered > 1))
+          problems.push("words lie over a photo on a phone");
+        if (layout === "grid" && count % 2 === 1 && m[0].width < width * 0.8)
+          problems.push("the odd first tile is not full width");
+      } else if (m.some((tile) => tile.covered < 20)) {
+        problems.push("words are not on the photo above 560px");
+      }
+      if (problems.length) failures.push({ label, problems, tiles: m });
+    }
+    // Testimonials are ONE row that scrolls sideways: never a second row,
+    // never a column down the phone, and the page itself never scrolls.
+    for (const [cols, count] of [
+      [3, 5],
+      [2, 5],
+      [3, 3],
+      [3, 1],
+    ]) {
+      const label = `${width}px testimonials-row/${cols}/${count}`;
+      await page.setContent(
+        documentHtml(
+          `<section class="home-section"><div class="home-testimonials layout-cards cols-${cols}" role="group" aria-label="Reviews" tabindex="0">${Array.from({ length: count }, () => `<blockquote class="home-testimonial"><p class="home-testimonial-quote">${copy}</p><footer class="home-testimonial-attribution"><cite>Aarav M.</cite><span>Verified customer</span></footer></blockquote>`).join("")}</div></section>`,
+        ),
+      );
+      const m = await page.evaluate(() => {
+        const row = document.querySelector(".home-testimonials");
+        const cards = [...row.children].map((c) => c.getBoundingClientRect());
+        const box = row.getBoundingClientRect();
+        return {
+          tops: [...new Set(cards.map((c) => Math.round(c.top)))].length,
+          cardWidth: cards[0].width,
+          rowWidth: box.width,
+          scrolls: row.scrollWidth > row.clientWidth + 10,
+          inView: cards.filter((c) => c.left < box.right - 1).length,
+        };
+      });
+      const measured = await measureNative(page);
+      cases++;
+      const problems = [];
+      if (measured.overflow) problems.push("the page scrolls sideways");
+      if (measured.clipped.length) problems.push("clipped text");
+      if (m.tops !== 1) problems.push(`${m.tops} rows of quotes`);
+      // As many across as the section's columns (two at 820px, one and the
+      // edge of the next at 560px), so the rest are reached by swiping.
+      const across = width <= 560 ? 1 : width <= 820 ? 2 : cols;
+      if (m.scrolls !== count > across)
+        problems.push(m.scrolls ? "scrolls with nothing hidden" : "no scroll");
+      if (m.cardWidth < Math.min(240, m.rowWidth - 2))
+        problems.push(`a quote is ${Math.round(m.cardWidth)}px wide`);
+      if (width <= 560 && count > 1 && m.inView < 2)
+        problems.push("the next quote does not peek in on a phone");
+      if (problems.length) failures.push({ label, problems, ...m });
+    }
     // Page templates (2026-10-09, plan Phase 2e). The product gallery's five
     // shapes: on desktop the thumbnail shapes show one photo with the
     // thumbnails under or beside it, stacked and grid show every photo, the
@@ -745,6 +968,46 @@ try {
         if (problems.length)
           failures.push({ label, problems, ...m, ...measured });
       }
+    }
+    // ★ ONE PHOTOGRAPH (22 Nov 2026). Every case above has three, and a
+    // product with one renders no thumbnails at all: under thumbs-left the
+    // lone photograph then fell into the 72px thumbnail column and a real
+    // theme's product page showed a postage stamp. So each shape is also
+    // laid out with a single photograph, which must fill the gallery.
+    for (const mode of [
+      "thumbs-bottom",
+      "thumbs-left",
+      "stacked",
+      "carousel",
+      "grid",
+    ]) {
+      const label = `${width}px pdp/${mode}/one photo`;
+      await page.setContent(
+        documentHtmlShop(
+          `<main class="shop-main pdp-page"><div class="pdp-grid">
+          <div class="pdp-gallery sm-gallery mode-${mode} is-single"><div class="sm-gallery-frame"><div class="sm-gallery-track"><button class="pdp-main-img sm-gallery-slide" data-active="true" aria-label="Zoom photo"><img class="pdp-main-img-el" alt="" src="${image(1280, 1600)}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain"></button></div></div></div>
+          <div class="pdp-info"><h1 class="pdp-name">${heading}</h1><div class="pdp-price"><span class="pdp-price-sell">₹1,800</span></div></div>
+          </div></main>`,
+          "",
+        ),
+      );
+      const one = await page.evaluate(() => {
+        const rect = (selector) =>
+          document.querySelector(selector).getBoundingClientRect();
+        return {
+          gallery: rect(".sm-gallery").width,
+          slide: rect(".sm-gallery-slide").width,
+          slideHeight: rect(".sm-gallery-slide").height,
+        };
+      });
+      cases += 1;
+      const problems = [];
+      if (one.slide < one.gallery - 2)
+        problems.push(
+          `the only photograph is ${Math.round(one.slide)}px wide in a ${Math.round(one.gallery)}px gallery`,
+        );
+      if (one.slideHeight < 120) problems.push("the only photograph is tiny");
+      if (problems.length) failures.push({ label, problems, ...one });
     }
     // The blog template (plan Phase 2e): the index as a grid, a list of rows
     // or a featured first post, and the article narrow, wide or with an aside

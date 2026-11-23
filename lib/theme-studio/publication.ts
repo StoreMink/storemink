@@ -41,6 +41,8 @@ import { queueThemeStudioRecheck } from "./capture";
 import { getThemeStudioConfig } from "./config";
 import { validateThemePackageV2, type ThemePackageV2 } from "./contracts";
 import { SEVERITY_RULES_VERSION } from "./finding-severity";
+import { publicationSimilarityBlocker } from "./fingerprint";
+import { publishedThemeFingerprints } from "./publish-distinctness";
 import {
   buildPublishedPackage,
   nextReleaseVersion,
@@ -294,16 +296,33 @@ async function beginAttempt(
     if (refused.length > 0) {
       throw new ThemeStudioError("illegal_state", refused[0]);
     }
+    // ★★ A theme too close to one already in the catalogue is refused
+    //   (fingerprint.ts): the catalogue's themes must not look the same.
+    //   Checked here, before anything is measured again or stored, and
+    //   shown on the theme's page before Publish is pressed.
+    const tooSimilar = publicationSimilarityBlocker(
+      parsed.value.definition,
+      await publishedThemeFingerprints(db, project.themeId),
+    );
+    if (tooSimilar) throw new ThemeStudioError("illegal_state", tooSimilar);
 
     const attempts = await db
       .select()
       .from(themeStudioPublications)
       .where(eq(themeStudioPublications.projectId, project.id))
       .orderBy(desc(themeStudioPublications.createdAt));
-    if (attempts.some((a) => a.status === "published")) {
+    // ★ ONE RELEASE PER DESIGN (0288). A published theme can be changed, and
+    //   publishing the changed design stores the theme's next release. A
+    //   design that is already a release is never stored a second time: the
+    //   database holds the same rule (theme_studio_publications_one_published
+    //   is per project AND version).
+    const already = attempts.find(
+      (a) => a.status === "published" && a.versionId === version.id,
+    );
+    if (already) {
       throw new ThemeStudioError(
         "illegal_state",
-        "This project is already published.",
+        `This design is already published as v${already.releaseVersion}. Change the theme first, then publish the new design.`,
       );
     }
     const active = attempts.find((a) => a.status === "publishing");
@@ -1059,6 +1078,19 @@ export async function getThemeStudioReleaseState(
             : {},
         )
       : null;
+    // The same similarity rule Publish holds (beginAttempt), shown before it
+    // is pressed. A published theme is not judged against the catalogue it
+    // is already part of.
+    const tooSimilar =
+      parsed?.ok && project.status !== "published"
+        ? publicationSimilarityBlocker(
+            parsed.value.definition,
+            await publishedThemeFingerprints(db, project.themeId),
+          )
+        : null;
+    const blocking = checked
+      ? [...checked.blocking, ...(tooSimilar ? [tooSimilar] : [])]
+      : null;
     const publicationRows = await db
       .select()
       .from(themeStudioPublications)
@@ -1109,11 +1141,11 @@ export async function getThemeStudioReleaseState(
         evidence !== null &&
         !evidence.ok &&
         getThemeStudioConfig().autoQaEnabled &&
-        (checked?.blocking.length ?? 1) === 0 &&
+        (blocking?.length ?? 1) === 0 &&
         !publishingNow,
       packageDigest: version?.packageDigest ?? null,
       versionNumber: version?.versionNumber ?? null,
-      blockers: checked?.blocking ?? [],
+      blockers: blocking ?? [],
       warnings: checked?.warnings ?? [],
       publications: publicationRows.map((row) => ({
         id: row.id,

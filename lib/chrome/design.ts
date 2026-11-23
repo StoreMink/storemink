@@ -18,6 +18,11 @@
 // ---------------------------------------------------------------------------
 
 import { defaultTemplates, type ThemeTemplates } from "@/lib/themes/templates";
+import {
+  describeStyleRule,
+  salvageStylesheet,
+  type ThemeStyleRule,
+} from "@/lib/themes/stylesheet";
 import type { ThemeDesign, ThemePalette } from "@/lib/themes/types";
 import {
   DESIGN_FONTS,
@@ -330,7 +335,14 @@ export interface ThemeDesignDefaults {
   /** The templates the theme renders (plan Phase 2e), so the builder can
    *  start a merchant override from them and show what "theme" means. */
   templates: ThemeTemplates;
+  /** The theme's own style rules in plain words (lib/themes/stylesheet.ts),
+   *  for the builder's read-only "Theme styles" list. Empty for a theme with
+   *  none. */
+  styleRules: string[];
 }
+
+/** The most style rules the builder lists. */
+export const THEME_STYLE_RULES_SHOWN = 80;
 
 /** Radii are authored as CSS lengths ("20px"); the panel edits numbers. */
 function pxNumber(value: unknown): number | undefined {
@@ -341,6 +353,7 @@ function pxNumber(value: unknown): number | undefined {
 export function themeDesignDefaults(
   theme: ThemeDesign | null,
   templates?: ThemeTemplates,
+  stylesheet?: readonly ThemeStyleRule[],
 ): ThemeDesignDefaults {
   const palette: Partial<Record<DesignPaletteToken, string>> = {};
   for (const token of DESIGN_PALETTE_TOKENS) {
@@ -360,5 +373,10 @@ export function themeDesignDefaults(
     },
     shape,
     templates: templates ?? defaultTemplates(theme?.layout),
+    // Read through the same salvage the storefront serves, so the list is
+    // what is really in force.
+    styleRules: salvageStylesheet(stylesheet ?? [])
+      .rules.slice(0, THEME_STYLE_RULES_SHOWN)
+      .map(describeStyleRule),
   };
 }

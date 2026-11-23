@@ -45,25 +45,53 @@ vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
 }));
 
-import { consumeAiQuota, currentPeriod, refundAiQuota } from "./quota";
+import {
+  consumeAiQuota,
+  currentPeriod,
+  getMinkCreditCycle,
+  minkCreditCycleAt,
+  refundAiQuota,
+} from "./quota";
 import { logError } from "@/lib/observability/logger";
 
 const enabled = process.env.AI_QUOTA_LOCAL_TEST === "1";
 
 const PLAN_STORE = crypto.randomUUID();
 const CREDIT_STORE = crypto.randomUUID();
+const PAID_STORE = crypto.randomUUID();
+
+const DAY = 24 * 60 * 60 * 1000;
+const NOW = new Date();
+const daysAgo = (days: number) => new Date(NOW.getTime() - days * DAY);
+/** ★ The dummy stores were created in PREVIOUS MONTHS, on a whole millisecond
+ *  so the window key the database's timestamp gives is the one computed here.
+ *  A store's included credits are counted in 30-day windows from its own date
+ *  (owner, 21 Nov 2026), never from the 1st of the month. */
+const PLAN_STORE_CREATED = daysAgo(75);
+const CREDIT_STORE_CREATED = daysAgo(40);
+const PAID_STORE_CREATED = daysAgo(100);
+/** The paid store's current plan cycle began 26 days ago. */
+const PAID_CYCLE_START = daysAgo(26);
+const periodOf = (createdAt: Date) =>
+  minkCreditCycleAt(new Date(), null, createdAt.toISOString()).period;
 
 describe.skipIf(!enabled)(
   "Generate with AI refunds on the local database",
   () => {
     let client: Client;
-    const period = currentPeriod();
+    /** The window each dummy store is in today, counted from its own date. */
+    const period = periodOf(PLAN_STORE_CREATED);
+    const creditPeriod = periodOf(CREDIT_STORE_CREATED);
+    const periods: Record<string, string> = {
+      [PLAN_STORE]: period,
+      [CREDIT_STORE]: creditPeriod,
+    };
 
     const used = async (store: string) =>
       (
         await client.query(
           "select used from public.ai_usage where store_id = $1 and period = $2",
-          [store, period],
+          [store, periods[store]],
         )
       ).rows[0]?.used as number | undefined;
     const balance = async (store: string) =>
@@ -94,19 +122,43 @@ describe.skipIf(!enabled)(
       service.client = client;
       service.db = drizzle(client, { schema: { ...schema, ...relations } });
 
-      for (const [id, slug] of [
-        [PLAN_STORE, `ai-refund-plan-${PLAN_STORE.slice(0, 8)}`],
-        [CREDIT_STORE, `ai-refund-credit-${CREDIT_STORE.slice(0, 8)}`],
-      ]) {
+      for (const [id, slug, createdAt] of [
+        [
+          PLAN_STORE,
+          `ai-refund-plan-${PLAN_STORE.slice(0, 8)}`,
+          PLAN_STORE_CREATED,
+        ],
+        [
+          CREDIT_STORE,
+          `ai-refund-credit-${CREDIT_STORE.slice(0, 8)}`,
+          CREDIT_STORE_CREATED,
+        ],
+        [
+          PAID_STORE,
+          `ai-window-paid-${PAID_STORE.slice(0, 8)}`,
+          PAID_STORE_CREATED,
+        ],
+      ] as const) {
         await client.query(
-          "insert into public.stores (id, name, slug, plan) values ($1, 'Refund probe', $2, 'basic')",
-          [id, slug],
+          "insert into public.stores (id, name, slug, plan, created_at) values ($1, 'Refund probe', $2, 'basic', $3)",
+          [id, slug, createdAt.toISOString()],
         );
       }
+      await client.query(
+        `insert into public.billing_subscriptions
+           (store_id, plan, period, state, current_cycle_seq,
+            current_period_start, current_period_end, plan_source)
+         values ($1, 'basic', 'monthly', 'active', 3, $2, $3, 'paid')`,
+        [
+          PAID_STORE,
+          PAID_CYCLE_START.toISOString(),
+          new Date(PAID_CYCLE_START.getTime() + 30 * DAY).toISOString(),
+        ],
+      );
       // The credit store has spent its allowance and holds one top-up credit.
       await client.query(
         "insert into public.ai_usage (store_id, period, used) values ($1, $2, 1000000)",
-        [CREDIT_STORE, period],
+        [CREDIT_STORE, creditPeriod],
       );
       await client.query(
         "insert into public.ai_credit_balances (store_id, balance) values ($1, 1)",
@@ -118,6 +170,64 @@ describe.skipIf(!enabled)(
       if (!client) return;
       await client.query("ROLLBACK");
       await client.end();
+    });
+
+    // The owner's rule, on stores that began in previous months.
+    describe("★★ included credits are counted from the store's own date, never the 1st of the month", () => {
+      it("a store with no paid plan, created 75 days ago, is 15 days into its THIRD 30-day window", async () => {
+        const cycle = await getMinkCreditCycle(PLAN_STORE, NOW);
+        const windowStart = new Date(PLAN_STORE_CREATED.getTime() + 60 * DAY);
+        expect(cycle.period).toBe(`cycle:${windowStart.toISOString()}`);
+        expect(cycle.resetsAt).toBe(
+          new Date(PLAN_STORE_CREATED.getTime() + 90 * DAY).toISOString(),
+        );
+        // Not the calendar month, and not a refresh on the 1st.
+        expect(cycle.period).not.toBe(currentPeriod(NOW));
+        expect(period).toBe(cycle.period);
+      });
+
+      it("a store on a paid plan counts from its current plan cycle, whenever the store was created", async () => {
+        const cycle = await getMinkCreditCycle(PAID_STORE, NOW);
+        expect(cycle.period).toBe(`cycle:${PAID_CYCLE_START.toISOString()}`);
+        expect(cycle.resetsAt).toBe(
+          new Date(PAID_CYCLE_START.getTime() + 30 * DAY).toISOString(),
+        );
+      });
+
+      it("the day a window ends, the next one begins, with its own key", async () => {
+        const boundary = new Date(PLAN_STORE_CREATED.getTime() + 90 * DAY);
+        const before = await getMinkCreditCycle(
+          PLAN_STORE,
+          new Date(boundary.getTime() - 1),
+        );
+        const after = await getMinkCreditCycle(PLAN_STORE, boundary);
+        expect(before.period).toBe(period);
+        expect(after.period).toBe(`cycle:${boundary.toISOString()}`);
+        expect(after.resetsAt).toBe(
+          new Date(boundary.getTime() + 30 * DAY).toISOString(),
+        );
+      });
+
+      it("★ what was used in an EARLIER window, or in the calendar month, does not count against this one", async () => {
+        const earlier = `cycle:${new Date(
+          PLAN_STORE_CREATED.getTime() + 30 * DAY,
+        ).toISOString()}`;
+        await client.query(
+          "insert into public.ai_usage (store_id, period, used) values ($1, $2, 1000000), ($1, $3, 1000000)",
+          [PLAN_STORE, earlier, currentPeriod(NOW)],
+        );
+        const quota = await consumeAiQuota(PLAN_STORE, {
+          actorId: "local-probe",
+        });
+        // Taken from this window's allowance, which is untouched.
+        expect(quota.taken).toMatchObject({ source: "plan", period });
+        expect(await refundAiQuota(PLAN_STORE, quota.taken)).toBe("refunded");
+        await client.query(
+          "delete from public.ai_quota_refunds where store_id = $1",
+          [PLAN_STORE],
+        );
+        expect(await used(PLAN_STORE)).toBe(0);
+      });
     });
 
     it("gives a plan unit back once, in the period it was taken", async () => {

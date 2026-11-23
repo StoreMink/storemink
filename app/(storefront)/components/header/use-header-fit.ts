@@ -3,6 +3,8 @@
 import { useLayoutEffect, type RefObject } from "react";
 import {
   chooseCompaction,
+  COMPACT_CANDIDATES,
+  STACK_CANDIDATES,
   type CompactStep,
   type FitBox,
 } from "@/lib/storefront/header-fit";
@@ -10,6 +12,12 @@ import {
 // Measures the live header and writes `data-header-compact` on it ("nav",
 // "nav delivery", "nav delivery search", or nothing). Header.module.css and
 // delivery-location.module.css fold those items into the drawer.
+// ★ A header whose CSS sets `--sm-header-stack: 1` (the centred-logo header
+//   on a desktop screen) never folds its menu: it folds the delivery control
+//   and the search box first, and only when the menu still does not fit
+//   beside the logo moves it to a row of its own ("stack", "stack delivery",
+//   "stack delivery search"; owner, 23 Nov 2026). Read on every fit, because
+//   the media query that sets it changes with the width.
 //
 // ★ The attribute is written straight to the DOM, not rendered: the answer
 //   depends on layout, which the server cannot know, and a React state round
@@ -21,6 +29,8 @@ import {
 //   phones. Leading content and opaque headers use it for vertical clearance.
 
 export const HEADER_COMPACT_ATTR = "data-header-compact";
+/** Set to 1 by a header layout that can put its menu on a row of its own. */
+export const HEADER_STACK_PROPERTY = "--sm-header-stack";
 const MEASURING_ATTR = "data-header-measuring";
 const PHONE_QUERY = "(max-width: 768px)";
 
@@ -113,7 +123,14 @@ export function useHeaderFit(
         return;
       }
       header.setAttribute(MEASURING_ATTR, "");
-      const steps = chooseCompaction(measure);
+      const canStack =
+        getComputedStyle(header)
+          .getPropertyValue(HEADER_STACK_PROPERTY)
+          .trim() === "1";
+      const steps = chooseCompaction(
+        measure,
+        canStack ? STACK_CANDIDATES : COMPACT_CANDIDATES,
+      );
       header.setAttribute(HEADER_COMPACT_ATTR, steps.join(" "));
       void header.offsetWidth; // settle before transitions return
       header.removeAttribute(MEASURING_ATTR);

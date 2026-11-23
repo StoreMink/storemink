@@ -44,10 +44,12 @@ import { useStudioIntent, useStudioPage } from "../studio-tabs";
 // that did not finish shows its last reasons beside Try again.
 // ★ THE LIVE PANEL shows whenever a published release exists: Open live
 // demo, Stop offering this theme (or Offer again), each behind a dialog
-// where it changes something; live themes can't be changed yet, so Start a
-// new theme from this brief. The release version picker and "Restore this
-// version" are not on screen (one release per theme today); the server's
-// Restore stays for live updates.
+// where it changes something, and Start a new theme from this brief.
+// ★ A LIVE THEME CAN BE CHANGED (migration 0288): the panel says how (send
+// a change in the chat, or change its pictures), and that publishing it
+// makes a new version while stores already using the theme keep theirs. The
+// release version picker and "Restore this version" are not on screen; the
+// server's Restore stays for going back to an earlier release.
 // ★ INTENTS: `do=publish` and `do=retry_publish` open the Publish dialog,
 // `do=offer_again` and `do=stop_offering` their dialogs, `do=open_live_demo`
 // moves focus to the demo link; none acts by itself.
@@ -102,6 +104,10 @@ export interface ReleasePublishFacts {
   lastReasons: readonly string[];
   /** The viewer started this theme, so its notice reaches them. */
   notifies: boolean;
+  /** The release new stores get today ("1.0.0"), when this theme already
+   * has one: publishing stores the next version in its place, and stores
+   * already using the theme keep theirs. Null for a first publish. */
+  replaces?: string | null;
 }
 
 /** What the server part read for a theme with a published release. */
@@ -152,7 +158,9 @@ export function publishDialogWords(
       ? `Try publishing ${design}${made} again?`
       : `Publish ${design}${made}?`,
     confirm: retry ? "Try again" : "Publish now",
-    lead: `It appears in ${PUBLISH_REACH}, with a live demo store. Stores that install it keep this exact version.`,
+    lead: facts.replaces
+      ? `It becomes this theme's new version in ${PUBLISH_REACH}, in place of v${facts.replaces}, and the live demo store shows it. Stores already using this theme keep the version they have.`
+      : `It appears in ${PUBLISH_REACH}, with a live demo store. Stores that install it keep this exact version.`,
   };
 }
 
@@ -385,8 +393,9 @@ export function ReleasePanel({
           {live.offered
             ? `Live${live.version ? `, v${live.version}` : ""}${live.since ? `, since ${live.since}` : ""}.`
             : "Not offered to new stores."}{" "}
-          Stores that installed it keep this exact version. Live themes
-          can&apos;t be changed yet.
+          To change it, describe the change in the chat or change its pictures.
+          Publishing the result makes a new version, and stores already using
+          this theme keep the version they have.
         </span>
         {kinds.has("start_new_from_brief") ? (
           // The live row's next step, drawn as a button (44 px on touch).

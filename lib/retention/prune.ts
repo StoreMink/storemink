@@ -38,8 +38,10 @@ import {
   billingWebhookEvents,
   dataJobIssues,
   dataJobs,
-  minkCsvFiles,
   emailLogs,
+  imageProviderGenerations,
+  imageProviderSubmits,
+  minkCsvFiles,
   notifications,
   posParkedSales,
   storefrontEvents,
@@ -254,6 +256,8 @@ function batchDeleter(
     | typeof activityEvents
     | typeof emailLogs
     | typeof dataJobs
+    | typeof imageProviderGenerations
+    | typeof imageProviderSubmits
     | typeof minkCsvFiles
     | typeof dataJobIssues
     | typeof billingWebhookEvents
@@ -630,6 +634,37 @@ export const RETENTION_POLICIES: RetentionPolicy[] = [
       "(about three minutes) and while the stage sweep looks at it (minutes); 30 " +
       "days keeps 'did this merchant stop it?' answerable for support.",
     deleteBatch: refineRequestBatchDeleter,
+  },
+  // ── Image jobs submitted to the async image provider ───────────────────
+  // ★ Platform-global (a scope string, no store), and nothing cascades into
+  // it or out of it, so its place in this list is free.
+  {
+    table: "image_provider_generations",
+    days: 14,
+    reason:
+      "One row per image job submitted to ElevenLabs, kept so a job that was " +
+      "paid for and never collected is collected by the next try, not drawn " +
+      "again. A job can only be collected within six hours of its submit, so " +
+      "14 days is history for support: which job drew which picture.",
+    deleteBatch: batchDeleter(
+      imageProviderGenerations,
+      imageProviderGenerations.id,
+      imageProviderGenerations.createdAt,
+    ),
+  },
+  {
+    table: "image_provider_submits",
+    days: 14,
+    reason:
+      "One row per submit to ElevenLabs that was never answered (an answered " +
+      "one deletes its own row), kept so the job it may have made can be " +
+      "found by its creation time and collected. A submit is looked for " +
+      "within six hours, so 14 days is history for support.",
+    deleteBatch: batchDeleter(
+      imageProviderSubmits,
+      imageProviderSubmits.id,
+      imageProviderSubmits.createdAt,
+    ),
   },
   // ── Help Centre answer ratings ─────────────────────────────────────────
   // ★ Platform-global (no store), nothing cascades into it or out of it, so

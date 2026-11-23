@@ -3,7 +3,10 @@ import { and, eq } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { orders } from "@/drizzle/schema";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
-import { loadPaymentWebhookSecret } from "@/lib/payments/store-webhook";
+import {
+  loadPaymentWebhookSecret,
+  markPaymentWebhookReceived,
+} from "@/lib/payments/store-webhook";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import { logError, logInfo, logWarn } from "@/lib/observability/logger";
 
@@ -82,6 +85,11 @@ export async function POST(
     return NextResponse.json({ error: "bad signature" }, { status: 401 });
   }
 
+  // ★ A verified delivery is the only proof that Razorpay really has this
+  // store's address and secret, so it is what the dashboard's "receiving
+  // events" line reads. Any event counts, including ones ignored below.
+  await markPaymentWebhookReceived(storeId);
+
   let event: WebhookBody;
   try {
     event = JSON.parse(raw) as WebhookBody;
@@ -135,7 +143,11 @@ export async function POST(
 
     // Idempotent by construction: the claim inside matches zero rows on a
     // replay, so nothing is announced twice.
-    await markOrderPaid(order.id, rzpPaymentId);
+    // ★ `strict`: a write that FAILED throws, so the catch below answers 503
+    // and Razorpay delivers again. It used to come back as "unchanged", which
+    // reads exactly like a replay, so a payment this route had failed to
+    // record was acknowledged and never sent again.
+    await markOrderPaid(order.id, rzpPaymentId, { strict: true });
     return NextResponse.json({ ok: true });
   } catch (err) {
     logError("store webhook: processing failed", err, { storeId, rzpOrderId });

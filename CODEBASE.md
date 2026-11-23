@@ -60,16 +60,16 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 
 ## 2. Tech stack
 
-| Layer     | Tech                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Framework | Next.js 16 (App Router; dev uses Webpack on ≤12 GB RAM, Turbopack above) — **breaking-changes version; read `node_modules/next/dist/docs/` before writing code** (see AGENTS.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| UI        | React 19, Tailwind CSS v4, shadcn/ui (`components/ui/`), Base UI, lucide-react, sonner (toasts), recharts (charts), TipTap (rich-text editor), CodeMirror 6 (`@uiw/react-codemirror` — website-builder code editor, lazy-loaded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Backend   | Cloud SQL for PostgreSQL via Drizzle (`lib/db/`, RLS through the `app.current_user_id` GUC), Identity Platform auth (`lib/auth/`), Cloud Storage media (`lib/storage/`), server actions in `app/actions/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Email     | Resend (`lib/email/`), authenticated `/api/cron/send-emails` queue heartbeat (Cloud Scheduler every minute after Phase 5E rollout)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| AI        | Gemini (`lib/ai/gemini.ts`: Generate with AI asks `gemini-3.5-flash-lite`, then `gemini-3.5-flash` once, 30 s per attempt; it is rate-limited per store and per admin before a credit is taken, long fields are cut, and a request that fails gives its Mink credit back through `refundAiQuota` (`lib/ai/credited-copy.ts`)); per-store brand voice (`lib/ai/brand-voice.ts` + `store_brand_profiles`) with plan-capped usage metering (`lib/ai/quota.ts`); task prompts in `brand/tasks/`. The dashboard Mink drawer has a default-on Vertex/Gemini 3.7 agent available to every store in `lib/mink/` + `app/api/mink/`: its marked runtime system prompt is `docs/mink-ai-system-prompt.md`, validated and rendered by `lib/mink/system-prompt.ts`; its storefront image-provider prompt is `docs/mink-ai-image-prompt.md`, validated and rendered by `lib/mink/image-prompt.ts`. Phase 2 streams permission/location-aware store, catalogue, sales, order, inventory and Help reads; vague multi-location catalogue-stock questions now produce permission-safe multiple-choice clarification instead of silently using a combined total, while explicit comparison returns shelf-level counts. Phase 3 adds private proposals. Phase 4A adds independently gated product description/SEO actions; 4B adds unpublished, untracked draft-product creation; 4C adds disabled/hidden coupon create/update; and 4D adds customer-group metadata create/update. Phase 5A adds an independently gated, human-approved adjustment for one exact tracked SKU at one exact active accessible location; Phase 5B adds a separate 5-credit, maximum-20-line bulk inventory proposal and atomic approval; Phase 5C adds a separate one-credit, one-order, one-forward-step online-delivery status proposal/approval for pending → processing → shipped → delivered; Phase 5D adds a separate immediate/scheduled publication approval for one exact saved blog proposal plus a bounded conflict-safe worker; Phase 5E adds independently gated coupon-email audience selection, exact non-PII preview, final confirmation and immediate/scheduled queueing; Phase 5F adds an independently gated 1–20 exact-SKU bulk price proposal, one-unit basket impact review and atomic conflict-safe execution. Phase 6A adds a durable leased workflow runtime and an idempotent, read-only weekly trading report with persisted steps/events, safe cancellation, token-free waiting and background completion notification. Phase 6B adds a bounded, read-only 7/30/90-day revenue-decline investigation across exact channels, locations and leading products; Phase 6C adds a private exact-SKU product-launch readiness package covering catalogue, media, SEO, valid pricing, scoped inventory and shipping without live changes; Phase 6D adds a bounded location-aware slow-inventory workflow and a private, margin-guarded promotion recommendation that cannot create or activate an offer; Phase 6E adds a bounded PII-minimized delayed-pickup review, staff-confirmed preparation-delay copy and duplicate-safe handoff to the existing one-time reminder sweep. Phase 7A adds permission-gated current-store Website Builder page/section/design readers and strict code validation; Phase 7B adds one immutable 5-credit exact-section proposal with an isolated desktop/mobile preview; Phase 7C adds a separate default-off, human-only five-minute exact-diff approval that transactionally saves only that reviewed replacement to the private Builder draft with idempotency, conflict checks and audit. Every live action uses exact short-lived human approval, tenant/permission/tool/version rechecks, idempotent transactional execution and append-only outcomes; Phase 4 supports checkpointed safe rollback, while inventory, order-status, blog-publication, campaign, price and Builder corrections use fresh/manual domain workflows. Gemini receives checkpoint/proposal tools but no live execute tool; its durable workflow tools queue deterministic internal read work only. Transfers, cancellation/refunds/payment/shipment changes, pickup/POS lifecycle mutations, model-side product/bulk publication (human-approved CSV imports use the ordinary importer), arbitrary customer contact/group membership, unbounded catalogue repricing and arbitrary repository coding remain unavailable; Phase 7D adds separately gated human publication checks, approval and exact rollback after a completed Phase 7C save. The complete Website Builder tools add exact navigation/header/footer, appearance, page lifecycle/SEO, section creation/removal and checked publication proposals; authenticated humans approve each change. Mink cannot access shell/repository or deploy. Operators control every gate and inspect redacted metrics at `/dashboard/mink`; the live harness is `npm run mink:eval`, and the phase-wise manual catalogue is `docs/mink-ai-test-prompts.md`. An explicit global disable or missing invite retains the canned coming-soon response. Architecture and phased rollout are tracked in `docs/mink-ai-dashboard-plan.md`. |
-| Testing   | Vitest + Testing Library + jsdom, coverage via v8 (`coverage/` is generated output — never edit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| Browsers  | **`browserslist` in package.json is the stated floor: Chrome/Edge 111, Firefox 128, Safari/iOS 16.4.** Not a preference — Tailwind v4 depends on `@property` and `color-mix()` and does not work below it, so this records a constraint a dependency already imposed rather than inventing one. Two authored CSS features sit BELOW that floor and so are always available: `:has()` (Chrome 105+/Safari 15.4+/Firefox 121+) and container queries (Chrome 105+/Safari 16+/Firefox 110+), both used by the dashboard table compaction, which is nonetheless wrapped in `@supports selector(:has(+ *)) and (container-type: inline-size)` so the dependency is stated where it is used and stays graceful if the floor is ever lowered. **⚠ There is NO cross-browser test infrastructure** — vitest runs in jsdom, which renders nothing. Chrome is the only browser this has been exercised in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Deploy    | **Google Cloud Run** via branch-specific Cloud Build triggers (`dev` → `storemink-web-dev`, `main` → `storemink-web-prod`; Dockerfile + `cloudbuild.yaml`). ⚠ The STAGING DEPLOYMENT was removed 2026-09-08 — no `staging` branch, no `storemink-web` service, no `staging.storemink.com`; **dev is the only pre-production environment**. The `storemink_staging` DATABASE remains and is dev's, so `db:migrate:staging` and `db:drift:staging` still target a live database despite the name. The Cloud Build deploy owns the complete runtime environment; Mink's model and limit settings are declared as substitutions. The global runtime defaults enabled, and the operator's per-store Mink AI switch is the fail-closed merchant boundary. ⚠ `_MINK_BETA_REQUIRE_INVITE` is RETIRED but still declared (empty) and read by a shim at the top of `build-push`: this file sets no `substitution_option: ALLOW_LOOSE`, so a trigger that still supplies the key would fail every build against a template that no longer mentions it — i.e. production would stop deploying until somebody remembered a manual step. The shim keeps the merge safe and warns in the build log; delete it and the default once all three triggers have had `--remove-substitutions` applied (**docs/gcp-ci-cd.md**). ★ MEMORY IS NOT A SUBSTITUTION: `storemink-web-prod` has run with 2 GiB (still 1 vCPU) since revision `storemink-web-prod-00151-b9r` (2026-10-23, owner-approved, set once with `gcloud run services update --memory=2Gi`, after "Memory limit of 1024 MiB exceeded" on 12 and 16 Oct during `/_next/image` and upload bursts). The deploy step passes no `--memory`, so every later deploy keeps it; adding one there would also set dev, which shares the step and stays at 512 MiB. Production alerts, uptime checks and their email channel: **`docs/monitoring.md`** (created by `scripts/prod-monitoring.py`). CI on GitHub Actions (`.github/workflows/ci.yml`) runs the same eight checks as **FOUR PARALLEL JOBS** — `checks` (lint, typecheck, **db:lint**, **help:lint**, prettier), `test`, `shuffle` and `build`; since 2026-10-31 `test` and `shuffle` each run as four shards with no coverage (§5 item 8). Beside them a fifth job, `renderer` ("Native theme layout regression"), runs `scripts/theme-studio-renderer-check.mjs` and then `scripts/theme-studio-contrast-check.mjs` in offline Chromium (TS-1G, 2026-10-24); the contrast step runs even when the layout step fails, so one push reports both. ⚠ They are deliberately independent: nothing here needs another's output, so a `needs:` between them would only restore the 26.7-minute sequential run this split removed (measured on run 34834617499, where the two test invocations alone were 669s + 591s of 1603s). A `concurrency` group cancels a superseded run, because two pushes 22 seconds apart used to produce two complete runs and only the newer one's answer is ever read; it is safe because this workflow DEPLOYS NOTHING — Cloud Build owns that. `npm run typecheck` runs `next typegen` before `tsc --noEmit` because the Next-managed `next-env.d.ts` is deliberately gitignored and a clean checkout otherwise has no static-image or route declarations. The TypeScript process runs with an explicit 4 GiB V8 heap limit, avoiding the approximately 2 GiB default that exhausts memory on the full project on an 8 GiB Mac; type checking remains strict and includes tests. **`npm run build` gets the same explicit 4 GiB heap, through `NODE_OPTIONS`**: Next 16.3 type-checks by spawning `tsc` as a separate process (`experimental.useTypeScriptCli` defaults on) that inherits the parent's ENVIRONMENT but not its command-line flags, so `node --max-old-space-size=4096 next build` does not reach it (measured: the child still died at ~2 GiB). From 2026-10-07 the default limit ran out of memory in CI's Build job ("Failed to type check") while the separate typecheck job, already on 4 GiB, passed. The script, not the workflow, carries it so the Docker build Cloud Build runs for deploys gets it too, and it appends any `NODE_OPTIONS` already set rather than replacing it. **★★ DATABASE DDL IS NO LONGER A MANUAL GATE (2026-09-09): `cloudbuild.yaml` applies it, in the pipeline, before the deploy** — `build-push` → `tip-check` → `migrate` → `deploy`, with a failed migration stopping the deploy. No developer needs the production superuser credential, and the schema can no longer be behind the code. `npm run db:migrate:prod apply` still works and is now the emergency path only. Full contract, authoring rules and troubleshooting: **`docs/migrations.md`** (read it before writing a migration); the recovery tools stay in `drizzle/manual/README.md`.                                                                                                                                                                                                                                                                                                                                                 |
+| Layer     | Tech                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework | Next.js 16 (App Router; dev uses Webpack on ≤12 GB RAM, Turbopack above) — **breaking-changes version; read `node_modules/next/dist/docs/` before writing code** (see AGENTS.md)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| UI        | React 19, Tailwind CSS v4, shadcn/ui (`components/ui/`), Base UI, lucide-react, sonner (toasts), recharts (charts), TipTap (rich-text editor), CodeMirror 6 (`@uiw/react-codemirror` — website-builder code editor, lazy-loaded)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Backend   | Cloud SQL for PostgreSQL via Drizzle (`lib/db/`, RLS through the `app.current_user_id` GUC), Identity Platform auth (`lib/auth/`), Cloud Storage media (`lib/storage/`), server actions in `app/actions/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Email     | Resend (`lib/email/`), authenticated `/api/cron/send-emails` queue heartbeat (Cloud Scheduler every minute after Phase 5E rollout)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| AI        | Gemini (`lib/ai/gemini.ts`: Generate with AI asks `gemini-3.5-flash-lite`, then `gemini-3.5-flash` once, 30 s per attempt; it is rate-limited per store and per admin before a credit is taken, long fields are cut, and a request that fails gives its Mink credit back through `refundAiQuota` (`lib/ai/credited-copy.ts`)); per-store brand voice (`lib/ai/brand-voice.ts` + `store_brand_profiles`) with plan-capped usage metering (`lib/ai/quota.ts`); task prompts in `brand/tasks/`. The dashboard Mink drawer has a default-on Vertex/Gemini 3.7 agent available to every store in `lib/mink/` + `app/api/mink/`: its marked runtime system prompt is `docs/mink-ai-system-prompt.md`, validated and rendered by `lib/mink/system-prompt.ts`; its storefront image-provider prompt is `docs/mink-ai-image-prompt.md`, validated and rendered by `lib/mink/image-prompt.ts`. Phase 2 streams permission/location-aware store, catalogue, sales, order, inventory and Help reads; vague multi-location catalogue-stock questions now produce permission-safe multiple-choice clarification instead of silently using a combined total, while explicit comparison returns shelf-level counts. Phase 3 adds private proposals. Phase 4A adds independently gated product description/SEO actions; 4B adds unpublished, untracked draft-product creation; 4C adds disabled/hidden coupon create/update; and 4D adds customer-group metadata create/update. Phase 5A adds an independently gated, human-approved adjustment for one exact tracked SKU at one exact active accessible location; Phase 5B adds a separate 5-credit, maximum-20-line bulk inventory proposal and atomic approval; Phase 5C adds a separate one-credit, one-order, one-forward-step online-delivery status proposal/approval for pending → processing → shipped → delivered; Phase 5D adds a separate immediate/scheduled publication approval for one exact saved blog proposal plus a bounded conflict-safe worker; Phase 5E adds independently gated coupon-email audience selection, exact non-PII preview, final confirmation and immediate/scheduled queueing; Phase 5F adds an independently gated 1–20 exact-SKU bulk price proposal, one-unit basket impact review and atomic conflict-safe execution. Phase 6A adds a durable leased workflow runtime and an idempotent, read-only weekly trading report with persisted steps/events, safe cancellation, token-free waiting and background completion notification. Phase 6B adds a bounded, read-only 7/30/90-day revenue-decline investigation across exact channels, locations and leading products; Phase 6C adds a private exact-SKU product-launch readiness package covering catalogue, media, SEO, valid pricing, scoped inventory and shipping without live changes; Phase 6D adds a bounded location-aware slow-inventory workflow and a private, margin-guarded promotion recommendation that cannot create or activate an offer; Phase 6E adds a bounded PII-minimized delayed-pickup review, staff-confirmed preparation-delay copy and duplicate-safe handoff to the existing one-time reminder sweep. Phase 7A adds permission-gated current-store Website Builder page/section/design readers and strict code validation; Phase 7B adds one immutable 5-credit exact-section proposal with an isolated desktop/mobile preview; Phase 7C adds a separate default-off, human-only five-minute exact-diff approval that transactionally saves only that reviewed replacement to the private Builder draft with idempotency, conflict checks and audit. Every live action uses exact short-lived human approval, tenant/permission/tool/version rechecks, idempotent transactional execution and append-only outcomes; Phase 4 supports checkpointed safe rollback, while inventory, order-status, blog-publication, campaign, price and Builder corrections use fresh/manual domain workflows. Gemini receives checkpoint/proposal tools but no live execute tool; its durable workflow tools queue deterministic internal read work only. Transfers, cancellation/refunds/payment/shipment changes, pickup/POS lifecycle mutations, model-side product/bulk publication (human-approved CSV imports use the ordinary importer), arbitrary customer contact/group membership, unbounded catalogue repricing and arbitrary repository coding remain unavailable; Phase 7D adds separately gated human publication checks, approval and exact rollback after a completed Phase 7C save. The complete Website Builder tools add exact navigation/header/footer, appearance, page lifecycle/SEO, section creation/removal and checked publication proposals; authenticated humans approve each change. Mink cannot access shell/repository or deploy. Operators control every gate and inspect redacted metrics at `/dashboard/mink`; the live harness is `npm run mink:eval`, and the phase-wise manual catalogue is `docs/mink-ai-test-prompts.md`. An explicit global disable or missing invite retains the canned coming-soon response. Architecture and phased rollout are tracked in `docs/mink-ai-dashboard-plan.md`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Testing   | Vitest + Testing Library + jsdom, coverage via v8 (`coverage/` is generated output — never edit)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Browsers  | **`browserslist` in package.json is the stated floor: Chrome/Edge 111, Firefox 128, Safari/iOS 16.4.** Not a preference — Tailwind v4 depends on `@property` and `color-mix()` and does not work below it, so this records a constraint a dependency already imposed rather than inventing one. Two authored CSS features sit BELOW that floor and so are always available: `:has()` (Chrome 105+/Safari 15.4+/Firefox 121+) and container queries (Chrome 105+/Safari 16+/Firefox 110+), both used by the dashboard table compaction, which is nonetheless wrapped in `@supports selector(:has(+ *)) and (container-type: inline-size)` so the dependency is stated where it is used and stays graceful if the floor is ever lowered. **⚠ There is NO cross-browser test infrastructure** — vitest runs in jsdom, which renders nothing. Chrome is the only browser this has been exercised in                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Deploy    | **Google Cloud Run** via branch-specific Cloud Build triggers (`dev` → `storemink-web-dev`, `main` → `storemink-web-prod`; Dockerfile + `cloudbuild.yaml`). ⚠ The STAGING DEPLOYMENT was removed 2026-09-08 — no `staging` branch, no `storemink-web` service, no `staging.storemink.com`; **dev is the only pre-production environment**. The `storemink_staging` DATABASE remains and is dev's, so `db:migrate:staging` and `db:drift:staging` still target a live database despite the name. The Cloud Build deploy owns the complete runtime environment; Mink's model and limit settings are declared as substitutions. The global runtime defaults enabled, and the operator's per-store Mink AI switch is the fail-closed merchant boundary. ⚠ `_MINK_BETA_REQUIRE_INVITE` is RETIRED but still declared (empty) and read by a shim at the top of `build-push`: this file sets no `substitution_option: ALLOW_LOOSE`, so a trigger that still supplies the key would fail every build against a template that no longer mentions it — i.e. production would stop deploying until somebody remembered a manual step. The shim keeps the merge safe and warns in the build log; delete it and the default once all three triggers have had `--remove-substitutions` applied (**docs/gcp-ci-cd.md**). ★ MEMORY IS NOT A SUBSTITUTION: `storemink-web-prod` has run with 2 GiB (still 1 vCPU) since revision `storemink-web-prod-00151-b9r` (2026-10-23, owner-approved, set once with `gcloud run services update --memory=2Gi`, after "Memory limit of 1024 MiB exceeded" on 12 and 16 Oct during `/_next/image` and upload bursts). The deploy step passes no `--memory`, so every later deploy keeps it; adding one there would also set dev, which shares the step and stays at 512 MiB. Production alerts, uptime checks and their email channel: **`docs/monitoring.md`** (created by `scripts/prod-monitoring.py`). CI on GitHub Actions (`.github/workflows/ci.yml`) runs the same eight checks as **FOUR PARALLEL JOBS** — `checks` (lint, typecheck, **db:lint**, **help:lint**, prettier), `test`, `shuffle` and `build`; since 2026-10-31 `test` and `shuffle` each run as four shards with no coverage (§5 item 8). Beside them a fifth job, `renderer` ("Native theme layout regression"), runs `scripts/theme-studio-renderer-check.mjs` and then `scripts/theme-studio-contrast-check.mjs` in offline Chromium (TS-1G, 2026-10-24); the contrast step runs even when the layout step fails, so one push reports both. ⚠ They are deliberately independent: nothing here needs another's output, so a `needs:` between them would only restore the 26.7-minute sequential run this split removed (measured on run 34834617499, where the two test invocations alone were 669s + 591s of 1603s). A `concurrency` group cancels a superseded run, because two pushes 22 seconds apart used to produce two complete runs and only the newer one's answer is ever read; it is safe because this workflow DEPLOYS NOTHING — Cloud Build owns that. `npm run typecheck` runs `next typegen` before `tsc --noEmit` because the Next-managed `next-env.d.ts` is deliberately gitignored and a clean checkout otherwise has no static-image or route declarations. The TypeScript process runs with an explicit 4 GiB V8 heap limit, avoiding the approximately 2 GiB default that exhausts memory on the full project on an 8 GiB Mac; type checking remains strict and includes tests. **`npm run build` gets the same explicit 4 GiB heap, through `NODE_OPTIONS`**: Next 16.3 type-checks by spawning `tsc` as a separate process (`experimental.useTypeScriptCli` defaults on) that inherits the parent's ENVIRONMENT but not its command-line flags, so `node --max-old-space-size=4096 next build` does not reach it (measured: the child still died at ~2 GiB). From 2026-10-07 the default limit ran out of memory in CI's Build job ("Failed to type check") while the separate typecheck job, already on 4 GiB, passed. The script, not the workflow, carries it so the Docker build Cloud Build runs for deploys gets it too, and it appends any `NODE_OPTIONS` already set rather than replacing it. **★ `npm run build` is `node scripts/build.mjs` (22 Nov 2026), which runs `next build` and runs it AGAIN, up to four times in all, when and only when it failed because of a Google font, clearing the build cache first** (`isFontFetchFailure`, `scripts/build-font-retry.mjs`). `next/font/google` asks Google for one stylesheet per family on every build (about 35 families), and about one answer in a hundred (measured: 1 of 90) lists its files as `https://fonts.gstatic.com/l/font?kit=...&skey=...` where the usual form is `/s/<family>/<version>/<file>`. Turbopack carries that address in a query string of its own, splits it at the `&` and refuses it ("next/font/google queries have exactly one entry", shown as one "Module not found ... /internal/font/google/font" per file of that family). So a build failed roughly one time in four to seven, on a different family each time (Inter, then Roboto, on CI on 22 Nov 2026) with nothing wrong in the code, and would stop a production deploy the same way (the Dockerfile runs this script). ★★ It is NOT a network failure and waiting does not cure it: the first version of the script took it for one and ran the build again unchanged, and the further attempts failed in 8 and 2 seconds because the bundler read Google's same answer back from its cache. So `.next` is emptied (all but `.next/dev`, the dev server's) before each further attempt, which makes every attempt an independent draw. Any other failure (a type error, a missing module of ours) fails at once with its own exit code. The heap limit still travels in `NODE_OPTIONS` (set by the script for the child), and extra arguments pass through. ⚠ A mitigation: four bad draws in a row still fail the build (about 1 in 600 at the measured rate), and each bad draw costs a full build. The lasting fix is a build that does not ask Google at all (font files kept in the repository, where the ₹ sign and other non-Latin glyphs come from extra files that must each be carried over) or a bundler that reads these addresses; neither was done here. **★★ DATABASE DDL IS NO LONGER A MANUAL GATE (2026-09-09): `cloudbuild.yaml` applies it, in the pipeline, before the deploy** — `build-push` → `tip-check` → `migrate` → `deploy`, with a failed migration stopping the deploy. No developer needs the production superuser credential, and the schema can no longer be behind the code. `npm run db:migrate:prod apply` still works and is now the emergency path only. Full contract, authoring rules and troubleshooting: **`docs/migrations.md`** (read it before writing a migration); the recovery tools stay in `drizzle/manual/README.md`. |
 
 > **Mink Phase 7D map update (2026-09-05):** With drafting plus Builder
 > Manage, Mink may create one 5-credit immutable private generated-code
@@ -141,7 +141,14 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > bar (its first) and the panel's empty-state chips (up to four) both use. On
 > touch screens (`pointer: coarse`) a tap opens the panel straight away
 > (`openChat({ focusComposer: false })`, so the keyboard does not rise). It
-> renders only when Mink is enabled and the chat is closed. Closing the chat
+> renders only when Mink is enabled and the chat is closed. ★ The platform
+> console renders the same top bar with no ChatProvider (Mink AI works on one
+> store's data), so there the face and its bar are not shown at all
+> (`useHasChat()` in `chat-context.tsx`, 2026-11-21); before, the face was a
+> button that did nothing. A store whose Mink AI is switched off still has a
+> provider and keeps the face (`chat-context.test.tsx` pins both cases on the
+> real hook). "My Store" is likewise shown only when a `storeName` is passed,
+> since on the console "/" is the marketing site. Closing the chat
 > from its Close button returns focus to the control that opened it
 > (`app/dashboard/mink-opener.ts`: recorded at the click or at an open from
 > the address, used while it is still on the page, and forgotten whenever the
@@ -6695,6 +6702,387 @@ review-first and do not persist the raw image. Migration
 paragraph in place to describe this one-click private-draft and follow-up image
 handoff; it adds no Help Centre section.
 
+### What every existing storefront gets on deploy, by intent (2026-11-22)
+
+★★ THESE REACH EVERY STORE, WHATEVER ITS THEME, AND NONE HAS A MASTER SWITCH.
+They are storefront rules in the shared CSS and the shared chrome defaults,
+not part of a theme's own style rules (which apply only under `.sm-styled`),
+so a store on Basket, Studio or Vitrine with no theme stylesheet changes too.
+Each was asked for by the owner on 22 Nov 2026 as a rule for all stores
+(PR #303 review: recorded here because merchants will see their stores
+change):
+
+- **Section spacing** (`homepage.css`): a plain section's padding overlaps
+  the gap beside it and coloured bands touch, so pages sit closer together.
+  A merchant who used large padding to space a page out gets less space.
+- **Testimonials** are one row that scrolls sideways.
+- **Photo tiles on phones** show their words under the photo, not over it.
+- **A full-width opening photo** sits flush under the header, with no padding
+  above it even when the theme or the merchant set some.
+- **The header bar** is 68px tall (was 80px), and the height reserved for it
+  before the browser measures it is 68px (was 80px, 88px on tablets).
+- **A label inside the newsletter's own panel** takes the panel's colour.
+- **A one-photo product** under the thumbnails-left gallery shows its photo
+  at full width.
+- **Shopping extras** (`lib/chrome/types.ts` defaults): the heart and the
+  quick-view eye on product cards, Recently viewed under a product, and an
+  Our stores link in the footer for a store with a shop location, all ON by
+  default. Each has its own switch in the Website Builder, Brand, Shopping
+  extras; the CSS rules above have none.
+
+⚠ Not announced to merchants by anything in the product: no email, no banner.
+
+### Shopping extras: saved items, recently viewed, Our stores (2026-11-22)
+
+Owner: the storefront lacked three things premium themes have, and they are
+"on for every store" (the wishlist "on the shopper's device"; currency and
+language switching deliberately left out). Each is a merchant switch in the
+Website Builder's Brand row, under **Shopping extras**
+(`StorefrontAppearance.wishlist` / `recentlyViewed` / `storeLocator`,
+merchant-only like `cardPhoto`; `cleanAppearance` reads anything but a real
+`false` as on, so every row saved before reads as on).
+★★ THE LISTS LIVE ON THE SHOPPER'S DEVICE (`lib/storefront/device-lists.ts`,
+client-safe): product SLUGS only, in localStorage, which the browser scopes to
+the store's own origin (so no store id, and one store never reads another's).
+Saved items hold 60, recently viewed 12; every read and write is guarded, so
+blocked or full storage is an empty list, never an error, and a save storage
+refused is not shown as saved. Nothing is kept on a server.
+★★ THE CARDS COME FROM `POST /api/storefront/products` (`{ slugs }`). A POST so
+the list is in no access log (in a query string it would be in every one); it
+writes nothing. Like the search route: a route handler, the store from the
+Host, the shop grid's own catalogue (`getPublishedProducts`, so a product no
+longer sold is simply left out), masked (takedown), nothing for a store that
+has not opened, `no-store`.
+★ SAVED ITEMS: `WishlistButton` (`components/wishlist-button.tsx`) is rendered
+by every `ShopCard` (inside the photo frame, a `role="button"` that stops the
+card's link, as the quick-add button does) and on the product page, and shown
+only under the root class `sm-wishlist` (`storefront-theme.css`; the layout
+adds it, and `ChromeProvider` toggles it live in the builder). It paints its
+own surface chip (it lies over the photograph), is 44px, and badges never run
+under it. The page is `/wishlist` (`components/saved-products.tsx`, noindex,
+disallowed in robots), linked as **Saved items** in the account menu whether
+or not the shopper is signed in.
+★ RECENTLY VIEWED: `RecentlyViewed` (`shop/[slug]/recently-viewed.tsx`) under a
+product's recommendations, in both product layouts: the earlier products
+newest first, never the current one, and NOTHING (no heading, no gap) for a
+first visit, on the server, or when none is still sold.
+★ OUR STORES: `/stores` lists the store's shop locations with address lines
+and a maps directions link (`lib/storefront/store-locations.ts`). ★★ ONLY
+`type = shop`, ONLY active, ONLY a row with an address: a warehouse or dark
+store is never listed, and no other column (GSTIN, capabilities, stock) leaves
+the reader. `store_locations` is admin-only under RLS, so it is a service read
+of the public columns, cached five minutes (`unstable_cache`, so a new shop
+appears within five minutes); a failed read is "no shops". The storefront
+layout reads it for the footer's **Our stores** link (first in the legal row;
+not at all in the bare shell or when switched off).
+★★ A MERCHANT'S OWN PAGE ALWAYS WINS (`(pages)/[pageSlug]/built-in.tsx`).
+`/stores` and `/wishlist` are NOT static routes and NOT reserved: the merchant
+page route answers them only when the store has no page of its own at that
+address. A static route would hide a page a merchant already built there, and
+reserving the names would change `RESERVED_PAGE_SLUGS`, which every Theme
+Studio prompt since v19 prints (pinned byte for byte). ⚠ A store with its own
+page at `/wishlist` has no built-in saved-items page.
+★ BOTH PAGES SIT INSIDE THE SHOP PAGE'S GUTTERS (23 Nov 2026, owner's
+screenshot of Muse): they reuse the shop listing's classes, and skipped its
+`.shop-panel > .shop-panel-body` wrapper, which carries the side gutters, so
+their heading and text ran to the screen's left edge. Pinned in
+`wishlist.test.tsx` and `built-in.test.tsx`.
+★★ EVERY STOREFRONT PAGE STARTS BELOW THE HEADER'S MEASURED HEIGHT (same
+day). The same screenshot showed the Saved items heading under the menu: the
+shop listing reserved a fixed 80/88px, and the other pages 92 to 140px, all
+tuned for the 68px bar, while a stacked header is 108px, a utility header
+134px and the announcement bar adds 36px. Every page-top rule (shop listing,
+`.shop-main`, product page, cart, checkout, profile, orders, enquiries,
+notifications, account sidebar, blog hero and article, write-a-blog) is now
+`calc(var(--sm-header-h, 68px) + N)`, where N is its old number less 68, so
+a plain header with no bar keeps exactly the spacing it had and a taller one
+pushes the page down by what it adds. `--sm-header-h` is the server's
+default per header (`storefront-theme.css`) until `use-header-fit.ts`
+publishes the measured height. The market header's page overrides are more
+specific and unchanged (that header reserves itself on the root).
+`app/(storefront)/page-top-clearance.test.ts` pins each page's rule and
+fails on any storefront stylesheet that reserves a fixed 80px or more at a
+page top (two inner blog sections are named exceptions; mutation-checked).
+Checked offline in Chrome with the real stylesheets: the Saved items page
+under the classic, stacked, utility and centred headers, with and without
+the bar, at 390, 1024 and 1440px. Before: all 24 cases had the heading
+under the header or at the screen's edge (stacked with the bar at 1440px:
+47px under it). After: all 24 have it 44px below the header, inside the
+gutters. No Help Centre change: no merchant step changes.
+Tests: `lib/storefront/device-lists.test.ts`, `store-locations.test.ts`,
+`app/api/storefront/products/route.test.ts`, `components/wishlist.test.tsx`
+(heart, saved page, recently viewed), `[pageSlug]/built-in.test.tsx`, the
+footer and `lib/chrome/types.test.ts` cases; the stylesheet browser check
+draws the heart on every card. Help: `20261122_0286_shopping_extras_help` adds
+one step to the branding and layout guide. ⚠ Not built: `/stores` in the
+sitemap; saved items in a customer's account (owner chose the device); a
+privacy-policy sentence for the device lists (owner's lawyer to decide).
+
+### Quick view: the product over the page, from an eye on its card (2026-11-22)
+
+Owner: "build quick view", the last of the storefront extras premium themes
+have. A fourth **Shopping extras** switch, `StorefrontAppearance.quickView`,
+on for every store like the other three (absent or anything but a real `false`
+reads as on).
+★ THE EYE (`components/quick-view-button.tsx`) is rendered by every `ShopCard`
+inside the photo frame and shown only under the root class `sm-quickview` (the
+layout adds it; `ChromeProvider` toggles it live in the builder). The heart's
+own chip, 44px, a `role="button"` that stops the card's link. It sits under
+the heart (`.sm-wishlist.sm-quickview`, top 60px) and takes the heart's place
+when the wishlist is off: top right is the one corner no card style uses (the
+flag is top left, the overlay card's name runs along the bottom), and a badge
+never runs under it. ★ On a mouse it shows only while its card is hovered or
+holds focus (`hover: hover` and `pointer: fine`), so a grid is not a wall of
+eyes; on a touch screen it is always shown.
+★ THE DIALOG (`components/quick-view-dialog.tsx`) exists, and reads its
+product, only while open. It shows the photographs (the chosen variant's own,
+else its colour's, else the product's: the product page's rule; at most
+`QUICK_VIEW_THUMBS` 8 thumbnails), the category, name, price with its struck
+MRP and saving, the first lines of the description, the product page's size
+and colour pickers (`OptionPicker`), **Add to cart**, **Save for later** (the
+page heart, shown only under `sm-wishlist`) and **View full details**. It opens
+on the variant a per-colour card stands for (`variantOfHref` reads the card's
+`?variant=`), else the first variant that can be bought. Add to cart adds one,
+closes, and says so when the cart already holds every one there is. It follows
+the quick-add chooser's two rules (portalled into `.storefront-root`, where
+the theme's tokens live; its root stops propagation, because React bubbles a
+portal's events to the card's link) and adds a third: ★ Tab stays inside (a
+control the stylesheet hides is no stop), Escape and the backdrop close it,
+and focus returns to the eye. A bottom sheet on a phone, photo first, with
+Add to cart held at the sheet's foot while the rest scrolls under it; from
+768px a centred two-column panel.
+★ THE READ: `getQuickViewProduct` (`app/actions/quick-add-actions.ts`) is the
+chooser's read widened: one published product of the HOST's store under the
+anonymous role, nothing the product page does not show, with `gallery`
+(`productGallery`: distinct, primary first), `excerpt`
+(`lib/products/excerpt.ts`: the plain-text description folded to one line and
+cut on a word at 280 characters, so the whole text is never sent) and the
+product's own price and stock for one sold without variants.
+`getQuickAddProduct` now calls it and returns only the chooser's seven fields.
+Prices only preview: the cart re-prices at checkout.
+★★ THE ANSWER IS MASKED, AND A STORE THAT HAS NOT OPENED ANSWERS NOTHING
+(PR #303 fourth review, 22 Nov 2026). A file StoreMink has blocked is hidden
+by the page swap, not by row security (a published product keeps its row
+while one photo is blocked), and this read returned its primary photo,
+gallery, variant photos and colour photos unmasked: a blocked file's real
+address reached the shopper and was copied into the cart line. It now returns
+`maskBlockedMedia(product)` after the database scope closes, and
+`lib/moderation/mask-coverage.test.ts` lists this module (six reader modules),
+so a later export without the mask fails. Like `/api/storefront/products`, it
+also answers null on a gated store whose visitor is `locked`
+(`isStorefrontGated`, `storefrontAccess`), before anything is read.
+Tests: `components/quick-view.test.tsx` (the eye, the dialog, Tab, and a
+stylesheet guard that every rule for the eye is under the switch),
+`app/actions/quick-add-actions.test.ts`, `lib/products/excerpt.test.ts`,
+`lib/chrome/types.test.ts`. In local Chrome over the production CSS: the
+browser contrast check gained the dialog on every palette (its buy button is
+left out, as the chooser's is: the accent pair is the design contract's), the
+stylesheet check draws the eye on every card of all fourteen exemplars, and
+the eye and dialog were measured at 390 and 1280px on four themes (inside the
+photo, clear of the heart and the flag, nothing off screen). ⚠ Not run in a
+real storefront page by hand. ⚠ No quantity stepper, reviews, offers or
+low-stock note in the dialog: the product page has them. Help:
+`20261122_0287_quick_view_help` edits the Shopping extras step in place to
+name four.
+
+### ElevenLabs image provider: GPT Image 2.5 Sunburst for Theme Studio and redesign photos (2026-11-22)
+
+Owner's ask: "build the elevenlabs image provider with gpt image 2.5
+sunburst, 1k resolution, low quality/medium quality configurable from operator
+dashboard ... the calls made should be fully optimised. no extra images should
+be drawn". Google allows two image starts a minute per project, which is what
+makes a Theme Studio photo run and a storefront redesign slow; ElevenLabs'
+Image API took five and ten jobs at once in the 22 Nov test. ★ BUILT AND
+VERIFIED BY THE SUITES ONLY: no call was made to ElevenLabs during the build
+(owner's rule: no metered call without a yes), so the first live run is still
+to come.
+
+★ WHAT IT DRAWS. Only the two callers that draw through
+`ThemeStudioImageClient` (`lib/theme-studio/image-provider.ts`, whose
+`provider` union gained `"elevenlabs"`): Theme Studio's photo run
+(`worker.ts` `executeImages`, for a `vertex-gemini` run) and the storefront
+redesign's page photos (`lib/mink/revamp/photos.ts` `chosenImageClient`).
+Everything on `requestMinkImage` stays on Google whatever the choice: chat
+images, Refine, storefront personalisation and the redesign's product
+re-shoots.
+
+★ THE CHOICE IS ONE PLATFORM ROW. `image_generation_settings` (migration
+`20261122_0284`, a service-only singleton like `mink_voice_settings`):
+`provider` (`google`, the default, or `elevenlabs`), `elevenlabs_quality`
+(`low` default, `medium`) and `elevenlabs_resolution` (`1K` default, `2K`).
+`lib/images/provider-settings.ts` is the client-safe vocabulary;
+`provider-settings-store.ts` reads it. ★ `resolveImageProvider` answers
+ElevenLabs only when it is chosen AND `ELEVENLABS_API_KEY` is set; a failed
+read or a missing key means Google draws (logged), never a run that cannot
+draw. The operator console's Mink page shows it as three segmented choices
+(`image-provider-switch.tsx`), saved by `setImageGenerationSettings`
+(`app/actions/mink-operator-actions.ts`, platform superadmins only). A change
+applies to the next run that starts drawing; a Theme Studio run resumes its
+saved draws only for the provider and model that made them
+(`resumableImageClient(client, drawModel, ...)`).
+
+★★ ONE PICTURE, ONE JOB (`lib/images/elevenlabs-images.ts`
+`drawElevenLabsImage`). The API is asynchronous (POST `/v1/flows/image`
+answers with a job id, GET `/v1/flows/image/{id}` says when it is done, the
+picture is downloaded from a signed URL), takes no idempotency key, and bills
+a job once it is accepted. So:
+
+1. Before submitting, an uncollected job for the same picture is looked for
+   and waited on (below).
+2. A submit is sent again only after HTTP 429, which proves no job was made
+   (three more tries, 2 to 6 s apart, growing). A submit that timed out,
+   dropped or met a 5xx may have made a job and is never sent again; its job
+   is looked for instead (next paragraph but one), and when the search cannot
+   be sure the caller is told a job may exist (`jobMayExist`).
+3. Once a job id is known nothing submits again: a failed status read is read
+   again (every 2 s, backing off to 10 s after 30 s, as their guide asks), and
+   a failed download asks the job for a fresh URL (three tries). A job is
+   taken to be gone only after three "not found" answers in a row
+   (`ELEVENLABS_GONE_READS`), and an accepted job that vanished is reported
+   as one that may have been billed. A picture is fetched only over https
+   and never above 60 MB.
+4. `model`, `aspect_ratio`, `resolution` and `quality` are sent on every
+   request: the API's own default quality is `high`.
+5. A job the provider failed or moderated was not charged ("Failed
+   generations are not charged") and is reported as not drawn, so no budget
+   counts it.
+6. A draw waits 150 s for its job (`ELEVENLABS_WAIT_CEILING_MS`); a job not
+   done by then is left to be collected, not drawn again.
+
+★★ A SUBMITTED JOB IS COLLECTED, NEVER DRAWN TWICE
+(`lib/images/elevenlabs-generations.ts`, table `image_provider_generations`,
+0284). Every accepted job is written down with its scope (`revamp:{id}`,
+`theme-project:{id}`, so a Retry run collects what its earlier run paid
+for) and the request's digest (model, quality, resolution, shape,
+prompt and reference bytes, sha256). A draw cut off after its submit (the
+redesign's deadline, a restart, a Stop) leaves the row `submitted`; the next
+try for the same picture in the same scope claims it (one conditional write
+with `for update skip locked`, so two tries never collect one job; a claim
+older than 4 minutes belongs to a dead process) and waits for that job. A
+delivered picture is never handed out again, so the same request later is a
+deliberate redraw. Collectable for 6 hours; rows of both tables are pruned
+after 14 days (`lib/retention/prune.ts`). Every write is best effort, with
+one exception: ★★ A SUBMIT THAT COULD NOT BE WRITTEN DOWN IS NOT SENT (PR #303
+re-review, 22 Nov 2026). `openSubmit` answering null (the database could not
+be reached) ends the draw as `unavailable` with `jobMayExist: false`: nothing
+drawn, nothing charged, the caller's ordinary retry. It used to be sent
+anyway, and its job was then in no record, so another instance's search for a
+lost job, for another store, could take it as its own. A store that keeps no
+record by design says so (`GenerationStore.unrecorded`, `noGenerationStore`:
+scripts and tests only). Every other failed write costs only the saving: an
+answered submit whose job could not be recorded keeps its `sending` row,
+which every other search counts as a rival.
+
+★★ A SUBMIT WHOSE ANSWER WAS LOST IS FOUND BY WHEN ITS JOB WAS MADE (owner,
+22 Nov 2026: "check it and fix it"; `lib/images/elevenlabs-lost-jobs.ts`,
+table `image_provider_submits`, migration `20261122_0285`). With no answer
+there is no job id, so the record above cannot help, and the next try used to
+pay for the picture a second time. Their job list shows no prompt (a row is an
+id, a status and the picture's address), but, read from the live API with free
+calls: it is ordered newest first by CREATION time, and the paging cursor
+after a page is that page's last row, `<creation time>|<job id>` in base64
+(five jobs submitted at once and finished 13 to 16 s apart were stamped within
+half a second of each other, so it is the creation time). So:
+
+- every submit is written down BEFORE it leaves (`openSubmit`), and an
+  answered one deletes its row in the same transaction that records its job
+  (`recordSubmitted`), so a row left behind is a submit that was never
+  answered, with the seconds it was out for (`lost`; a `sending` row older
+  than a minute was left by a process that died, and counts the same);
+- `findLostJob` reads the list one row a page, back to the start of that
+  window, and takes a job ONLY when it was made inside the window (widened by
+  5 s of clock slack each side, `SUBMIT_CLOCK_SLACK_MS`), the record of
+  submitted jobs does not hold it, no other unanswered submit was out at the
+  same time, and it is the only such job. Anything less is `unsure` and takes
+  nothing: a wrong picture on a store is worse than a picture paid for twice;
+- the draw looks three times, 3 s apart, straight after the lost answer, and
+  a found job is waited on like any other (the photo does not fail); a caller
+  that has stopped is not kept waiting, and the next try for the same picture
+  looks once more before it submits. A clear view with nothing in it closes
+  the submit for good (`given_up`);
+- a found job is taken by one conditional insert on the job id's unique key,
+  so two tries never take one job, and its picture must have the shape that
+  was asked for (`hasShape`, within 3%) or it is not used.
+
+⚠ What is left: a job a search cannot attribute (two unanswered submits in
+the same seconds, as in a provider outage; more than 40 jobs since; an
+unreadable list) is still not collected, and a later try draws again. The
+cursor's shape is theirs and undocumented: every read of it is checked, and a
+cursor that does not parse makes the search `unsure`.
+★★ THE SEARCH RUNS ONLY WHERE THE KEY IS NOT SHARED (PR #303 re-review,
+22 Nov 2026). The record is one environment's, and a job shows no prompt in
+the list or in its own read (checked on the live API), so a job made in the
+same seconds by another environment on the same key would pass every rule if
+our own submit made nothing, and a store would get a picture drawn from
+another's prompt and product photos. `elevenLabsKeyIsExclusive`
+(`provider-settings-store.ts`) reads `ELEVENLABS_KEY_EXCLUSIVE=true` (Cloud
+Build `_ELEVENLABS_KEY_EXCLUSIVE`, empty by default, on the workers'
+allowlist); without it `drawElevenLabsImage` never reads the list
+(`findLostJobs`), and a lost submit ends as it did before the search existed:
+`timeout`, a job may exist, and the next try draws again. ⚠ Until a trigger
+sets it, the search is off everywhere, local development included. Tests:
+`elevenlabs-lost-jobs.test.ts`, the "answer was lost" block of
+`elevenlabs-images.test.ts` (each rule mutation-checked), and the opt-in
+`elevenlabs-generations.local.test.ts` (`IMAGE_PROVIDER_LOCAL_TEST=1`, the
+real statements as `app_service` on local Postgres; no call to ElevenLabs).
+
+★★ A 1K PICTURE IS ENLARGED ONCE, HERE, SO NOTHING REDRAWS IT FOR SIZE
+(`finishElevenLabsPicture`). The redesign draws a photo smaller than its frame
+a second time and then does not charge for it (B14), and every 1K picture
+(832x1040, 1280x720) is smaller than every frame, so each photo would have
+been drawn twice. The provider's PNG is re-encoded to JPEG q92 and, at 1K,
+enlarged to twice its size with Lanczos. It adds no detail: a 1K photo is
+softer than a 2K one, and the console says so.
+
+★ THE CLIENT (`lib/images/elevenlabs-theme-client.ts`
+`createElevenLabsImageClient`): the brief's prompt, then which attached image
+is which ("REFERENCE IMAGES, IN THE ORDER ATTACHED: 1. The image labelled
+ANCHOR."), then the brief's rule about people (this API has no per-request
+safety setting; a moderated job comes back `refused`). Five jobs in flight per
+process (`ELEVENLABS_IN_FLIGHT`). The redesign's drain signal stops any draw
+not yet sent, and a call stopped while its job was under way is marked
+`stoppedInFlight`. `timing.providerAttempts` is 1 only when a job exists or
+may exist, so the callers' draw budgets count exactly the pictures paid for.
+
+★★ A REFERENCE IS WHAT A PICTURE COSTS HERE. Measured through the API on 22
+Nov 2026 at 1K: about 130 credits with no reference (medium), about 475 (low)
+and 562 (medium) with one product photo attached; the quality setting moves
+the price little. Nearly every redesign photo carries the ANCHOR, so
+references are sent no larger than their job needs (`ELEVENLABS_REFERENCE_EDGE`:
+anchor and set 512 px, a merchant's product photo 1,024 px so its label stays
+readable; JPEG q88, never enlarged). ⚠ That a smaller reference costs fewer
+credits is expected, not measured. ElevenLabs publishes no per-image price, so
+the spend ledgers get an estimate (`elevenLabsCreditsEstimate` times
+`ELEVENLABS_MICRO_USD_PER_CREDIT`, the Scale plan's list price) through
+`ImageUsage.flatCostMicroUsd`, which `estimateImageCostMicroUsd`
+(`lib/theme-studio/cost.ts`) returns as it is. ⚠ Low quality with no reference
+was never measured (110 is an assumption).
+
+⚠ STILL TRUE WHATEVER THE PROVIDER: the redesign's and Theme Studio's own
+quality checks may turn a photo down and draw it again with the problems
+named (a different request, so a new job), inside their existing budgets (a
+redesign: 8 photos, 11 draws at most).
+
+Deployment: `ELEVENLABS_API_KEY` is the `_ELEVENLABS_API_KEY` Cloud Build
+substitution (empty by default, like `_SARVAM_API_KEY`: a regular Cloud Run
+environment variable, readable by whoever can inspect a trigger or revision),
+and is on the Theme Studio workers' allowlist
+(`scripts/theme-studio-workers.py`), as is `ELEVENLABS_KEY_EXCLUSIVE`
+(`_ELEVENLABS_KEY_EXCLUSIVE`, above; docs/gcp-ci-cd.md).
+★ A finished picture is fetched only from the provider's own storage
+(`isElevenLabsPictureHost`: `storage.googleapis.com` and `elevenlabs.io`,
+read from the live API on 22 Nov 2026), over https, never through a redirect,
+and its bytes are counted as they arrive and given up past 60 MB
+(`readCapped`): a chunked response declares no length, and used to be read
+whole before its size was looked at. ⚠ If the provider moves its pictures to
+another host, downloads fail as `unavailable` with a log line naming the
+host ("picture address on an unexpected host"); add the host there. Tests: `lib/images/*.test.ts` (the draw
+against a stand-in API: one submit per picture, no resend after an unknown
+answer, collection, the 429 retry, the wait ceiling, downloads, the enlarge;
+the job record; the settings read; the client), `photos.test.ts`,
+`worker-image-client.test.ts`, the operator action and console tests,
+`scripts/cloudbuild-yaml.test.ts`. Operator-only, so no Help Centre update.
+
 ### Global Mink voice provider (2026-09-14)
 
 Voice audit (2026-10-27): `docs/mink-voice-audit-2026-10-27.md` records the
@@ -7433,6 +7821,17 @@ wholesip/
 │                              # storemink-theme-studio-capture-dev (deleting that job is
 │                              # step A6, with the owner's OK); dev still BUILDS the
 │                              # capture image, so a broken Dockerfile fails on dev first.
+│                              # ★★ theme-workers-deploy finds its own Python (23 Nov
+│                              # 2026). It called bare `python3`, and the production
+│                              # build of commit 604ed60 failed there ("python3: command
+│                              # not found": the Cloud SDK image's tag floats) AFTER the
+│                              # migrations and the web deploy, leaving the two worker
+│                              # services on the previous image. It now uses python3
+│                              # from PATH, else the Python gcloud itself runs on
+│                              # (`gcloud info`, basic.python_location). ⚠ A build that
+│                              # fails at this step has ALREADY deployed the website:
+│                              # run scripts/theme-studio-workers.py --deploy by hand
+│                              # to bring the workers level.
 │                              # The deploy step also sets THEME_STUDIO_BUILD_ID to the
 │                              # commit (COMMIT_SHA, plan P3); it is empty on a manual
 │                              # build, so the app falls back to K_REVISION. It passes
@@ -7641,6 +8040,7 @@ wholesip/
 │   │       ├── structured-data.tsx  # homepage Organization + WebSite JSON-LD
 │   │       ├── json-ld.tsx          # generic <JsonLd> renderer; escapes through
 │   │       │                        # lib/seo/json-ld.ts (builders: lib/seo/schema.ts)
+│   │       ├── quick-view-button.tsx # the eye on product cards that opens the quick view (quick-view-dialog.tsx); shown under .sm-quickview
 │   │       ├── quick-add-button.tsx # "+ Add" on product cards (theme layout.card
 │   │       │                        # = "quick_add"; hidden by CSS otherwise)
 │   │       ├── studio-acceptance-probe.tsx # Theme Studio acceptance
@@ -8307,8 +8707,9 @@ wholesip/
 │   │                          # from any Help page), search-box, category-icon (§21)
 │   ├── themes/                # ★ Public metadata-driven theme catalog served at
 │   │                          # themes.storemink.com; own canonical/OG/CSS, industry
-│   │                          # filters, truthful demo/release/plan state, and a
-│   │                          # newest-first one-row carousel at every viewport
+│   │                          # filters, truthful demo/plan state, and a plain
+│   │                          # newest-first grid of pictures and names (no theme
+│   │                          # description on a card; owner, 23 Nov 2026)
 │   │
 │   ├── actions/               # ★ ALL SERVER ACTIONS ("use server") — one file per domain:
 │   │   │                      # product/category/coupon/coupon-email/blog/blog-social/
@@ -8678,10 +9079,20 @@ wholesip/
 │       │                      # routeStart + 52 s)), run even when an email queue
 │       │                      # throws (re-thrown after); `moderation` in the answer
 │       ├── cron/plan-expiry/  # ★ Daily: flips expired timed plans → free (§15)
+│       ├── cron/confirm-payments/ # ★ Every 5 minutes (21 Nov 2026): asks Razorpay
+│       │                      # about online orders waiting 2 to 45 minutes and marks
+│       │                      # the paid ones paid (confirmYoungPendingOrders,
+│       │                      # lib/orders/pending-payments.ts). NEVER cancels. Needs
+│       │                      # its own Cloud Scheduler job (docs/cron-jobs.md); until
+│       │                      # then the same pass runs at the top of the hourly reaper
 │       ├── cron/expire-pending-payments/ # ★ Hourly reaper for unpaid razorpay
-│       │                      # orders: mark paid if captured (capturing an authorized
-│       │                      # payment of the exact amount), skip if the gateway can't
-│       │                      # be READ, else cancel through releaseCancelledOrder; then
+│       │                      # orders, on lib/orders/pending-payments.ts since 21 Nov
+│       │                      # 2026: first confirm young paid orders, then mark paid if
+│       │                      # captured (capturing an authorized payment of the exact
+│       │                      # amount), skip if the gateway can't be READ or refuses
+│       │                      # the keys (for at most a week), else cancel through
+│       │                      # expireUnpaidOrder (releaseCancelledOrder, the coupon
+│       │                      # use and the OFFER uses); then
 │       │                      # records payments that landed after expiry (§18).
 │       │                      # ★ standingSweeps() (late payments, pickup expiry +
 │       │                      # reminders, WhatsApp COD follow-up, refunds, holds)
@@ -9066,6 +9477,29 @@ wholesip/
 │   │                          # refused). The first one read a stored
 │   │                          # +6591234567 as the ten digits 6591234567, so
 │   │                          # the POS OTP texted +916591234567 — see §23
+│   ├── images/provider-settings.ts # client-safe: which provider draws Theme Studio and
+│   │                          # redesign photos (google | elevenlabs), ElevenLabs
+│   │                          # quality (low | medium) and resolution (1K | 2K)
+│   ├── images/provider-settings-store.ts # server-only: reads image_generation_settings;
+│   │                          # resolveImageProvider (ElevenLabs only when chosen AND
+│   │                          # ELEVENLABS_API_KEY is set, else Google)
+│   ├── images/elevenlabs-images.ts # server-only: drawElevenLabsImage, one picture = one
+│   │                          # job (GPT Image 2.5 Sunburst); never resends a submit
+│   │                          # whose answer is unknown; enlarges 1K once; cost estimate
+│   ├── images/elevenlabs-generations.ts # server-only: the record of submitted jobs
+│   │                          # (image_provider_generations), so a paid job is
+│   │                          # collected by the next try, never drawn again
+│   ├── images/elevenlabs-lost-jobs.ts # server-only: findLostJob, the job of a submit
+│   │                          # whose answer was lost, found in the provider's list
+│   │                          # by its creation time (image_provider_submits); takes
+│   │                          # a job only when nothing else could have made it
+│   ├── images/elevenlabs-theme-client.ts # server-only: the ThemeStudioImageClient over
+│   │                          # it (prompt with reference labels, shrunk references,
+│   │                          # five in flight)
+│   ├── storefront/device-lists.ts # client-safe: the shopper's own saved items and
+│   │                          # recently viewed, as product slugs in localStorage
+│   ├── storefront/store-locations.ts # server-only: a store's SHOP locations for
+│   │                          # shoppers (never a warehouse), cached five minutes
 │   ├── http/byte-range.ts     # PURE: one HTTP Range header against a size (single
 │   │                          # range, suffix; several ranges → the whole file;
 │   │                          # "unsatisfiable" → 416). Used by the inbox media route
@@ -10113,6 +10547,49 @@ wholesip/
 │   │                          # package.security, the design review's serious findings
 │   │                          # except photos, Design N words, no run id);
 │   │                          # acceptanceRepairDraft kept.
+│   ├── theme-studio/style-rules.ts # v34: the theme stylesheet in the Studio: the
+│   │                          # prompt section built from the catalogue,
+│   │                          # parseStylesheetJson (repair issues, then salvage
+│   │                          # on the last attempt), direction "voices"
+│   ├── theme-studio/design-plan.ts # v34: the design plan a new theme is built from
+│   │                          # (colours, fonts, buttons, layout, styling), its
+│   │                          # check against every published theme, and what
+│   │                          # holds Stage B to it
+│   ├── theme-studio/reference-colours.ts # v34: a reference screenshot's colours,
+│   │                          # measured from its pixels for the planning stage
+│   ├── theme-studio/copy-tidy.ts # v34: a draft's long dashes rewritten and its
+│   │                          # title-style menu labels shortened, before compiling
+│   ├── themes/scheme-settle.ts # section colour schemes that narrowly fail to
+│   │                          # read, settled by shade (never hue) before a
+│   │                          # draft is judged
+│   ├── theme-studio/frame-shapes.ts # v34: a picture's shape comes from the frame
+│   │                          # it is shown in, and every opening slide gets a
+│   │                          # portrait photograph for phones
+│   ├── theme-studio/commitments.ts # v34: layout commitments for a new theme: what
+│   │                          # its direction allows and the catalogue uses
+│   │                          # least (header, card, product page, footer, page
+│   │                          # width, grid, hover); DIRECTION_SIGNATURES
+│   ├── theme-studio/follow-up-guard.ts # v35, pure: an automatic fix keeps the
+│   │                          # operator's latest request (the settings it
+│   │                          # moved may not be set back); worker.ts
+│   │                          # loadFollowUp finds that change
+│   ├── theme-studio/menu-fit.ts # v35, pure: a centred theme's menu planned to
+│   │                          # fit beside the logo (room prompt, links kept
+│   │                          # that fit, a change sent back once)
+│   ├── themes/text-width.ts   # pure: a text's px width in a catalogue font,
+│   │                          # from font-widths.json (Chrome-measured by
+│   │                          # scripts/theme-font-widths.mjs)
+│   ├── storefront/header-menu-room.ts # pure: the room the centred header
+│   │                          # leaves its menu (Header.module.css, pinned)
+│   ├── theme-studio/publish-distinctness.ts # server-only: the public catalogue's
+│   │                          # fingerprints, for Publish's lookalike refusal
+│   │                          # (fingerprint.ts publicationSimilarityBlocker)
+│   ├── themes/stylesheet.ts   # ★★ PURE: a theme's own style rules as data (hook
+│   │                          # catalogue, property allowlist, value scales),
+│   │                          # stylesheetIssues (vocabulary + contrast),
+│   │                          # compileStylesheet (scoped CSS), salvage, facts
+│   ├── themes/exemplars/stylesheets.ts # one hand-written stylesheet per exemplar (14)
+│   ├── themes/exemplars/later-directions.ts # the seven later directions' exemplars
 │   ├── help/                   # ★ Public Help reads/types plus Mink AI retrieval (§21):
 │   │                          # assistant-input.ts rejects low-signal turns; chunks.ts
 │   │                          # creates heading-aware plain-text sections; embeddings.ts
@@ -10295,6 +10772,21 @@ wholesip/
 │   │                          # renewal pending (collect.pendingReconcile), tried
 │   │                          # again next hour; with no invoice the cycle does not
 │   │                          # turn (alert 23, docs/monitoring.md).
+│   │                          # ★★ An automatic renewal is TWO steps (21 Nov 2026):
+│   │                          # collectOne asks the gateway about the mandate, issues
+│   │                          # the invoice and creates the NOTIFIED order (step 1);
+│   │                          # ★ debit-pass.ts (server-only) sendDueDebits sends each
+│   │                          # debit once its notice period has passed (step 2),
+│   │                          # after re-reading the plan, invoice, mandate and
+│   │                          # notice, behind ONE conditional claim (debit_sent_at).
+│   │                          # ★ mandate-check.ts (server-only): verifyMandate asks
+│   │                          # the gateway whether a mandate is still chargeable
+│   │                          # and brings the record in line; loadMandateRecord,
+│   │                          # isVerifiable.
+│   │                          # ★ order-state.ts (server-only): orderIsUntouched, the
+│   │                          # ONE rule for "nobody has paid this gateway order",
+│   │                          # used to free an unfinished checkout (enrol.ts) and
+│   │                          # to reopen one (manual-pay.ts, Continue payment).
 │   │                          # ★★ close-cycle.ts (server-only):
 │   │                          # closeUnreachedInvoices, ONE locking statement
 │   │                          # voiding every subscription invoice above the
@@ -10996,7 +11488,37 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0277 (0260 = redesign recovery fence,
+│                              # Next free: 0290 (0289 = deleting a Theme
+│                              # Studio theme stores use keeps the releases
+│                              # they pinned, and the install guard refuses
+│                              # a deleted id even with releases left, no
+│                              # Help; 0288 = a published Theme
+│                              # Studio theme can be changed: the project
+│                              # guard's new moves and one published
+│                              # publication per design, no Help; 0287 =
+│                              # Help: Quick view; 0286 = Help: the Shopping
+│                              # extras step in the branding and layout guide;
+│                              # 0285 = image_provider_submits,
+│                              # the record of submits that lets a lost image
+│                              # job be found by its creation time, no Help;
+│                              # 0284 = the ElevenLabs image
+│                              # provider: image_generation_settings and
+│                              # image_provider_generations, no Help;
+│                              # 0283 = Help: the payment
+│                              # window's upper limit for automatic payments;
+│                              # 0282 = Help: Pay now instead
+│                              # and Continue payment in the invoices guide;
+│                              # 0281 = two-step automatic
+│                              # renewal: billing_payment_attempts.debit_after
+│                              # and debit_sent_at, their partial index and one
+│                              # Help sentence; 0277 = Mink AI pop-out Help;
+│                              # 0278 = Mink
+│                              # credits refresh on the store's own date: usage
+│                              # carry and Help sentence; 0279 = payment
+│                              # robustness: store_payment_providers
+│                              # .webhook_last_event_at and five Help sentences;
+│                              # 0280 = orders.razorpay_key_id).
+│                              # Before that: 0277 (0260 = redesign recovery fence,
 │                              # 0261 = voice controls Help edit, 0262 and 0263 =
 │                              # private chat attachments, 0264 and 0265 = refunds
 │                              # and credit notes, 0266 to 0268 = GST, 0269 and
@@ -11198,7 +11720,7 @@ wholesip/
 │   │                          # (send-emails)"; the message alerts match by PREFIX
 │   │                          # (=~"^..."), because production logError appends the
 │   │                          # stack; the owner adds the mobile and SMS channels to 25
-│   │                          # to 27 by hand (P4). 28 policies in all;
+│   │                          # to 27 by hand (P4). 29 policies in all;
 │   │                          # scripts/prod-monitoring.test.ts reads the dry run and
 │   │                          # pins them. `python3 -I
 │   │                          # scripts/prod-monitoring.py` is a dry run that prints every
@@ -11316,7 +11838,27 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
-│   ├── theme-studio-exemplar-check.ts # ★ The seven exemplar themes (lib/themes/
+│   ├── theme-font-widths.mjs  # Writes lib/themes/font-widths.json: every catalogue
+│   │                          # font's character widths at weights 300 to 900, measured
+│   │                          # in local Chrome from .next/static/media; no network.
+│   ├── theme-studio-local.mjs # ★ `npm run theme-studio:local`: Theme Studio's
+│   │                          # schedulers for localhost. With a real provider a
+│   │                          # theme is moved along by a scheduler calling the
+│   │                          # worker and review routes and by the capture job;
+│   │                          # a laptop has none, so this loops all three
+│   │                          # against the dev server (node:http, since a build
+│   │                          # step answers after up to 19 minutes). Refuses a
+│   │                          # non-local origin (it sends CRON_SECRET), an
+│   │                          # expired Google sign-in and the fake provider;
+│   │                          # calls the review route once first so the stale
+│   │                          # capture sweep runs before its browser loop.
+│   │                          # Starts nothing itself. docs/theme-studio-local.md
+│   ├── theme-studio-stylesheet-check.ts # ★ `npm run theme-studio:stylesheets`: each
+│   │                          # exemplar's style rules over the production
+│   │                          # storefront CSS in local Chrome (every rule in
+│   │                          # effect, contrast, no sideways scroll); in CI's
+│   │                          # renderer job. --shots=<dir> saves screenshots.
+│   ├── theme-studio-exemplar-check.ts # ★ The fourteen exemplar themes (lib/themes/
 │   │                          # exemplars/) through the acceptance gates without a
 │   │                          # Studio project: the real package gates over a slot-form
 │   │                          # package with a digested manifest (no DB, no network);
@@ -11422,6 +11964,13 @@ wholesip/
 │   │                          # pos-wording rule of help-content-lint.mjs (Help
 │   │                          # migrations after 0253) and help-content-audit.mjs,
 │   │                          # so the two guards cannot drift (§5 #22).
+│   ├── theme-release-copy.ts  # ★ `npm run theme-release:copy`: export a Theme Studio
+│   │                          # theme's releases from one database and import them into
+│   │                          # another (dry run by default; releases, demo store, then
+│   │                          # the catalogue). Rules: theme-release-copy-core.ts
+│   ├── build.mjs              # ★ `npm run build`: next build, run again (4 attempts,
+│   │                          # build cache cleared) only when a Google font failed it;
+│   │                          # the rule is build-font-retry.mjs (pure, tested). §2 Deploy
 │   ├── dev-server.mjs         # ★ resource-aware Next dev runner: 2 GB heap on ≤12 GB
 │   │                          # machines, 3 GB on ≤20 GB, uncapped above; rotates
 │   │                          # generated .next/dev caches over 3 GB, ALWAYS reclaims
@@ -11510,7 +12059,19 @@ wholesip/
 │   │                          # `postgres` user (invisible to a non-root lsof, so
 │   │                          # the port looks free). Sets LC_ALL, without which
 │   │                          # the postmaster dies "became multithreaded during
-│   │                          # startup". start/stop/status/psql.
+│   │                          # startup". start/stop/status/psql. ★ Windows
+│   │                          # (Git Bash): the EDB portable binaries in
+│   │                          # ~/pgsql, cluster ~/pgsql-data, and `init` makes it
+│   │                          # (superuser postgres, trust, 127.0.0.1:5544, ICU
+│   │                          # en-US; Windows only, refused elsewhere).
+│   │                          # npm must use Git Bash as its script-shell there.
+│   │                          # Setup: docs/local-dev-performance.md "on Windows".
+│   ├── db-local-env.sh        # sourced by db-local-ctl.sh and db-local-sync.sh:
+│   │                          # port 5544, the binaries/data/log paths per platform
+│   │                          # (PG_HOME/PG_DATA/PG_LOG override, Windows-style paths
+│   │                          # converted with cygpath) and the local superuser
+│   │                          # (PGUSER=postgres on Windows). One copy, so the two
+│   │                          # scripts cannot talk to different binaries or users.
 │   ├── billing-verify.sql     # ★ §34 adversarial check of the APPLIED billing schema
 │   │                          # (26 checks; moved from the pre-ledger SQL folder).
 │   │                          # Mutations run in a plpgsql SUBTRANSACTION that is
@@ -11532,6 +12093,18 @@ wholesip/
 │                              # applied by hand and survives only in git history.
 │                              # Refuses on expired
 │                              # ADC, a dead proxy, or pg_dump older than the server.
+│                              # Before dropping anything it checks every staging
+│                              # extension is installable here (pgvector on Windows
+│                              # is built by hand). Before the restore it copies
+│                              # staging's roles, LOGIN/BYPASSRLS and the memberships
+│                              # between them (revoking any staging lacks), and
+│                              # creates `postgres` when missing (a Homebrew cluster
+│                              # has only the macOS user). Any restore error other
+│                              # than Cloud SQL's own roles stops the run before
+│                              # .env.local. Runs on Windows too (decodes the secret
+│                              # with node, no python). The root .gitattributes is
+│                              # `* text=auto eol=lf`: a CRLF checkout breaks the
+│                              # migration checksums, bash and Prettier's check.
 │   └── help-content-migrations.test.mjs # static contract for the 0019–0024 public Help
 │                              # baseline: exact file/order/article counts, unique slugs,
 │                              # complete metadata/substantial bodies, valid internal links,
@@ -11945,7 +12518,23 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     merchant copy, theme and alignment controls),
     `usp_bar` (fixed icon catalog `USP_ICONS` + label strip), `ticker`
     (scrolling marquee — `messages[]` + speed + text theme; CSS-animated
-    `ticker-section.tsx`, pauses on hover, static under reduced-motion),
+    `ticker-section.tsx`, pauses on hover, static under reduced-motion;
+    ★ with motion off each message shows ONCE, centred on one row, since
+    23 Nov 2026: a sequence holds the messages several times over to fill the
+    loop, and the still, wrapped band used to show every copy, so three
+    messages were a block of twelve, eight rows tall, for a shopper with
+    "Reduce motion" on AND in every Theme Studio catalogue picture, which the
+    capture job takes with motion off (the owner found it on Aurelle's card).
+    The copies carry `is-repeat` and `aria-hidden` (screen readers used to
+    read each message once per copy) and `homepage.css` drops them in its
+    reduced-motion block; `image_marquee` has the same fix, its copies also
+    out of the tab order. ⚠ A picture already captured keeps the old block:
+    a published theme's pictures are retaken only when a change to it is
+    published as its next release. Tests: `ticker-section.test.tsx` (markup
+    and the stylesheet's reduced-motion rules), `phase2c-sections.test.tsx`;
+    checked in Chrome on the Vitrine demo with motion off (three messages,
+    one row, 44px) and on (24 items, moving). No merchant step changes, so
+    no Help Centre update),
     `faq_accordion`
     (expandable Q/A with optional category-filter pills; plain-text answers),
     `accordion` (collapsible content: typed rows of copy, or copy with a
@@ -11973,6 +12562,26 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     Phase 3's renderers live in `media-text-section.tsx`, `gallery-section.tsx`,
     `testimonials-section.tsx`, `video-section.tsx`, and
     `newsletter-section.tsx`.
+    ★ TESTIMONIALS ARE ONE ROW THAT SCROLLS SIDEWAYS, AND A PHOTO TILE'S
+    WORDS SIT UNDER THE PHOTO ON A PHONE (owner, 22 Nov 2026, for every
+    store). `.home-testimonials` is a single grid row
+    (`grid-auto-flow: column`, scroll snap, no scrollbar): as many quotes as
+    the section's columns fit across and the rest are reached by swiping, so
+    with no more quotes than columns it looks as the grid did; at 820px three
+    columns become two, and at 560px one quote shows with the edge of the
+    next (`--home-testimonial-cols: 1.15`). The row is focusable and named
+    (`role="group"`, the heading as its label) so a keyboard reaches the
+    quotes off the edge. They used to wrap, and on a phone stacked into one
+    long column. At 560px and below a tile WITH a photo
+    (`.home-tile:has(> .home-tile-img)`) gives the photo a 4:3 box of its own
+    and draws its title and sentence beneath, in the colour of the section it
+    sits on; with an odd number of tiles the first takes the full width at
+    16:9, and a collage keeps each tile's shape. Two tiles across a phone are
+    about 170px wide, so words laid over the picture covered it. A tile with
+    no photo keeps its words on its colour. ⚠ The two `!important`s there
+    undo next/image `fill`'s inline box. Both are CSS in `homepage.css`; no
+    setting, no migration, no Help Centre update (nothing a merchant does
+    changes).
     `lib/sections/registry.ts` re-exports it and adds page-level helpers:
     `PageSectionItem`, `validateSections`, `RESERVED_PAGE_SLUGS`,
     `validatePageSlug`. - **Custom pages** live in `store_pages` (draft `sections` jsonb +
@@ -12387,18 +12996,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     by `proxy.ts` to `app/themes/`, never resolved as merchant tenancy. The
     server-rendered catalog receives only client-safe `ThemeMeta` from the
     runtime registry (with bundled `THEME_META` as fallback), so its
-    industry filters, plan badges, release labels, preview image, demo health,
-    and signup CTA share the exact source used by onboarding. The hero and
-    closing galleries receive a small serializable projection of every
-    selectable manifest entry and rotate automatically in the narrow
-    `theme-showcases.tsx` client boundary; manual controls pause rotation, and
-    reduced-motion visitors keep a stable composition. Publishing another
-    selectable theme therefore updates both galleries without page-specific
-    image wiring. The catalog cards are newest-first by `release.releasedAt` and
-    stay in one horizontally scrollable, snap-aligned row at desktop, tablet and
-    mobile widths; `theme-catalog-carousel.tsx` adds one-card previous/next
-    controls (wrapping at the ends) while leaving touch and trackpad scrolling
-    native. The catalog has its own
+    industry filters, plan labels, preview image, demo health and signup CTA
+    share the exact source used by onboarding.
+    ★ A PLAIN GRID, NOT A SHOWCASE (owner, 23 Nov 2026: "no need of theme
+    descriptions to show on the page. the overall vibe should be a bit like
+    shopify's themes page"). The page is one server component with no client
+    code: a SHORT sans headline band with one sentence and one button (the
+    first row of themes is on a laptop's first screen with no scrolling,
+    owner the same day: everything above the pictures comes to about 400px
+    at 1440px wide, and `themes.css` says to re-check a 760px-tall screen
+    before making it taller); then every
+    selectable theme at once, newest first by `release.releasedAt`, in a grid
+    (three across, two from 1024px down, one from 680px down; a `ul` named
+    "Theme collection"); then three plain points and one closing call to
+    action. A card is the theme's 4:3 preview picture shown whole, its name,
+    the plans it is on ("All plans", "Basic and Pro", "Pro only") and what it
+    suits in the filter's own words, with two text links: "View live store"
+    and "Start with (name)". ★ A card carries no description, no feature
+    list, no number and no badge, and `page.test.tsx` fails if a description
+    or a list comes back. The picture opens the live demo store when the demo
+    is healthy (a "Live preview" cue on hover); the text link under the name
+    says the same, so touch and keyboard lose nothing. The catalogue heading
+    names the chosen category ("Food & Beverages themes") beside a count
+    ("6 themes"), with nothing else above the pills. On a phone the category pills are one row that scrolls
+    sideways. White ground and Inter throughout; the announcement bar, the
+    header and the footer are as before. Removed with this:
+    `theme-showcases.tsx` (the rotating hero stage and closing art),
+    `theme-catalog-carousel.tsx` (the one-row rail and its previous/next
+    buttons), the serif display type, the release-status and plan badges over
+    the picture, and the dark "standard" band. `ThemeMeta.description` and
+    `catalog.features` stay in the data: the dashboard's theme picker and
+    Theme Studio still read them. Checked in Chrome at 1440px and at phone
+    width (one column, no sideways page scroll). No merchant step changes, so
+    no Help Centre update. The catalog has its own
     canonical/OG metadata (`public/themes/catalog-og.png`), robots host, and
     one-entry sitemap; the platform nav/footer links to it. Blocked or unhealthy
     demos render an honest unavailable state rather than a broken live link.
@@ -12453,7 +13083,36 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     bundled releases with `--commit`, and can explicitly select/restore a
     published pointer with `--activate id@version` (which refuses a package
     the readers would reject); it never advances an existing pointer during
-    routine import. Size is measured as `package_json::text` (`jsonbTextBytes`)
+    routine import. ★★ A THEME BUILT IN THEME STUDIO IS COPIED BETWEEN
+    ENVIRONMENTS BY `npm run theme-release:copy` (owner, 22 Nov 2026: "volt
+    and roast themes are on my local. push to production through CLI";
+    `scripts/theme-release-copy.ts`, rules in `theme-release-copy-core.ts`).
+    A generated theme exists only in the database it was built in, and the
+    import above handles bundled themes only, so a theme published on a
+    laptop could reach production only by being built there again. The
+    `export` mode reads the published `theme-studio` releases and the
+    catalogue pointer out of the database the shell points at. The `import`
+    mode is a DRY RUN by default: it validates every package with this
+    checkout's validator (the content digest must match), fetches every
+    picture it names (public addresses in the bucket every environment
+    reads), reads the target and prints the plan. With `--commit`,
+    `--confirm-database` naming the target and `--by` naming who, it writes
+    in Publish's own order, so exposure is last: the release rows oldest
+    first (`insertThemeReleaseWithDb`), the demo store (`upsertDemoStoreRow`
+    and `applyThemeDefinition` with reset), with `--root-domain` the demo's
+    four pages fetched, and only then the catalogue pointer with a
+    `theme_catalog_audit` row. It refuses a release that exists with
+    different content, a demo slug held by a real store and (since 23 Nov 2026) a theme id the target's Theme Studio deleted for good, and never
+    moves a catalogue that already offers a newer version. `--visibility hidden`
+    copies without offering. ⚠ It copies the RELEASES, not the Theme Studio
+    project: in the target the theme has no project, so it cannot be changed
+    from that environment's Theme Studio (change it where the project lives
+    and copy the next release), and that console has no Stop offering button
+    for it (`theme-registry:import` with `--activate` and
+    `--visibility hidden` hides it). ⚠ The target must already run code that
+    understands the package, or it stores a release it then refuses to
+    render. Tests: `scripts/theme-release-copy-core.test.ts`.
+    Size is measured as `package_json::text` (`jsonbTextBytes`)
     and actor ids must be `platform_admins.id` uuids. Full contract and rollout record:
     `docs/mink-ai-theme-studio-phase1.md`. This is internal infrastructure, so
     there is no merchant-visible change and no Help Centre migration.
@@ -12506,9 +13165,42 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     session-gated `deleteThemeStudioProjectAction` call migration
     `20261005_0161_theme_permanent_deletion`'s bounded service function. It
     locks the project and store installations, rejects stale revisions, active
-    generation/capture/QA/acceptance/publication, shared release projects and
-    installed merchant themes, then removes project history, private reference
-    bytes, preview/demo stores and its release/catalog records atomically.
+    generation/capture/QA/acceptance/publication and shared release projects,
+    then removes project history, private reference bytes, preview/demo stores
+    and its catalog records atomically.
+    ★★ A THEME STORES USE CAN BE DELETED, AND THEY KEEP IT (owner, 23 Nov 2026:
+    "store which uses this theme should remain as it is"; migration
+    `20261123_0289_theme_delete_keeps_store_releases`). Until then the
+    function refused while any merchant store used the theme ("Switch its
+    theme before permanently deleting it"), and a store cannot switch themes,
+    so an installed theme could never be deleted. Every store pins the release
+    it installed (`settings.theme.presetId` + `presetVersion`, written by
+    `lib/themes/apply.ts` and `switch.ts`) and renders it by id and version
+    straight from `theme_releases` (`resolveInstalledThemeDefinition`), never
+    through the catalogue, so the deletion now keeps each release a remaining
+    store is pinned to and deletes the theme's other releases (all of them when
+    no store uses it). It never writes to a store that keeps the theme. It
+    still refuses, deleting nothing, when a store uses the theme WITHOUT a
+    pinned release (only a legacy `template`, or no major.minor.patch
+    `presetVersion`): that store renders the catalogue's current release,
+    which the deletion removes; no store installed through StoreMink's install
+    paths is in that state. The answer gains `storesKept`; the action returns
+    it and the toast says "Theme deleted. The store using it keeps it as it
+    is." (or "The N stores using it keep it as it is."). The dialog says the
+    theme leaves the library so no new store can choose it, and that stores
+    already using it keep it exactly as it is, pictures included. The
+    merchant's Storefront page (`app/dashboard/storefront/page.tsx`
+    `keptCard`) shows such a theme's own name and picture from the kept
+    release, with "Your store uses a theme that is no longer in the library.
+    It keeps working." and no preview (its demo store is gone); it reads the
+    release only when the library no longer has the theme, and a failed read
+    falls back to the theme's id as before. ★ The install guard
+    (`theme_studio_deleted_install_guard`) now refuses a new store, or a store
+    moving, onto any id in the deletion receipt, even while releases remain
+    (0161 refused only once none remained); a store already on the theme is
+    untouched. `npm run theme-release:copy` refuses a theme id the target
+    deleted for good (`TargetTheme.deleted`), since the guard would refuse
+    its demo store after its releases were stored.
     Internal Studio FKs are immediate by default and deferred during removal
     to handle the run/version history cycles. Ordinary immutable history guards
     remain enforced; only the function owner's exact transaction scope permits
@@ -12526,8 +13218,11 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     images remain available because merchant content may reuse them independently
     of its installed theme. The confirmation dialog lives in
     `themes/studio/[projectId]/delete-theme-button.tsx`; rollback-only local
-    PostgreSQL tests cover role boundaries, FKs and refusals. Operator-only:
-    no merchant-visible change, no Help Centre update.
+    PostgreSQL tests cover role boundaries, FKs and refusals
+    (`THEME_STUDIO_DELETE_DB_TEST=1`; since 0289 also the kept release, the
+    unpinned refusal and the refused new installs, mutation-checked against
+    0161's functions). Operator-only: the merchant's step does not change, no
+    Help Centre update.
 
     **Mink AI Theme Studio Phase 3 (2026-09-23; Gemini generation
     pipeline, NOT yet run against a live model):** `pipeline.ts` runs Stage A
@@ -14436,7 +15131,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     the list's rows (the most recently changed first, at most 100) and every
     filter's count (over at most 1000 projects) in at most 4 statements,
     whatever the number of projects. `readThemeStudioBuildTimeRange` gives
-    "Usually N to M minutes" from the last 10 finished builds on a real
+    the New theme page's "Usually N to M minutes" from the last 10 finished builds on a real
     provider (the first build run to the first `auto_qa_passed`, rounded
     outward to 5 minutes), else 35 to 75 (the 4 Oct 2026 benchmark). Cost: a
     poll while building is 2 statements in one transaction plus the actor's
@@ -14493,8 +15188,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     **The theme page (TS-2B).** `[projectId]/page.tsx` gates first
     (`requireOperator`, then `getThemeStudioActor`; anyone else gets
     `SuperadminOnly` and nothing is read). It then reads
-    `readThemeStudioProgress` and `readThemeStudioBuildTimeRange` (one
-    `withService`, one after the other), then the project once through
+    `readThemeStudioProgress`, then the project once through
     `tab-reads.ts` `readStudioProject` (React `cache`, keyed by the id the
     progress read returns, so the open tab and the release controls share the
     one read of the whole project), reads the progress again when the project
@@ -14547,11 +15241,12 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     because the status is the current design's.
     `progress-card.tsx`, at the end of the chat: each step by name with its
     time, a repair round as its own row, "Next try at 10:31" only when a step
-    really waits for one, "Usually N to M minutes. You can leave this page."
-    (about 3 to 5 minutes for a re-check), "We'll let you know" only for the
-    operator who started the theme, and a Plan line (the current design's
-    assumptions and non-blocking gaps); it folds into "What Theme Studio did
-    last" once nothing works. `conversation.tsx`: Design N names, **Start
+    really waits for one, and a Plan line (the current design's assumptions
+    and non-blocking gaps); it folds into "What Theme Studio did last" once
+    nothing works. ★ No time estimate and no "You can leave this page. We'll
+    let you know when it's ready." under the steps (removed 22 Nov 2026,
+    owner); the New theme page still gives the estimate before a build is
+    started, and the phone bar keeps its own status sentence. `conversation.tsx`: Design N names, **Start
     building** (the saved brief, with the screenshots New theme uploaded),
     Send answer or Send message, **Screenshots** (upload, Earlier screenshots
     to attach again, Delete for an upload no message used), one idempotency
@@ -15239,6 +15934,611 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     pass). Help: `20261009_0180_page_templates_help` replaces the branding
     guide's layout step in place. Not yet run against live Gemini. A tile's
     picture is the merchant's; a Studio tile is a colour field.
+    **★★ PROMPT v34 (22 Nov 2026): THEMES THAT DO NOT LOOK THE SAME.** Owner:
+    "build step 3, the per-theme style rules ... all the themes should not
+    look same." Plan Phase 3 and Phase 4 items 1 to 3. Built and verified
+    offline and in local Chrome; **no live Gemini run yet** (the first v34
+    batch is the proof still owed).
+    ★ THE THEME STYLESHEET (plan Phase 3, "Track S";
+    `lib/themes/stylesheet.ts`, pure and client-safe). A theme may carry its
+    own style rules, `preset.stylesheet` (optional; absent on every release
+    made before): how its product names, prices, buttons, badges, headings,
+    photographs and hover states are set. ★★ RULES ARE DATA, NEVER CSS: a rule
+    is `{hook, state?, viewport?, declarations}` where the hook is a name from
+    a closed catalogue (60 hooks over 21 areas: `product-card.title`,
+    `button.primary`, `section.head`, `hero[variant=split].heading`, ...), a
+    property is one of 32 allowlisted names, and a value is one of that
+    property's listed values (font sizes `xs` to `6xl`, spaces, radii, shadow
+    presets, palette tokens). StoreMink's compiler writes the CSS, so there is
+    nothing to sanitise: no selector, length, colour, URL or function is ever
+    the author's. Limits: 200 rules, 14 declarations a rule, 32 KiB compiled.
+    ★★ COLOUR IS ALWAYS A READABLE PAIR: a label takes a `tone` (its
+    background and the text that goes with it), a box takes a `fill`, text
+    takes `color` ink, inkSoft or accent, and `stylesheetIssues` checks each
+    against the theme's own palette (4.5:1; 3:1 for headings), against every
+    surface that text can sit on (the fill of the box it lives in included),
+    and inside all four section colour schemes (`resolveScheme`). Elements
+    whose colour the storefront owns (copy over a photograph, the header, the
+    newsletter card) take type only (`ownsColour`); a label that can lie over
+    a photograph must paint its own background (`overPhoto`); a colour or
+    fill never reaches the overlay product card, which draws its text over
+    the photograph (`coloursOwnedUnder`, compiled as
+    `:not(.sm-card-overlay)`).
+    ★ COMPILED (`compileStylesheet`, `themeStylesheetCss`): every selector
+    under `.storefront-root.sm-styled.sm-styled` (the class twice: the rules
+    must beat the storefront's own variant rules without `!important`); base
+    rules, then viewport rules, then state rules; hover only under
+    `@media (hover: hover)`; transforms and transitions only under
+    `prefers-reduced-motion: no-preference`; a photo's hover is its card's
+    (`:hover` and `:focus-within`), and its frame clips a zoom; a disabled
+    button is never restyled. Everything is a palette token, so a merchant's
+    own colours and a section's scheme re-colour the rules too, and inline
+    styles the builder writes still win. The storefront layout writes the CSS
+    in a `<style data-sm="theme-styles">` inside the root and adds `sm-styled`
+    (`app/(storefront)/layout.tsx`); the cart drawer and sign-in dialog sit
+    outside the root and are untouched. The stored rules are read through
+    `salvageStylesheet` (vocabulary only) however they were stored, and the
+    compile itself reads the state and viewport from the closed lists (a
+    10,000-case random and hostile test found the one place that trusted
+    them). New markup hooks: `data-sm="header-brand"`, `"nav-link"`,
+    `"footer-heading"`, `"footer-links"`.
+    ★ IN THE STUDIO (`lib/theme-studio/style-rules.ts`): from v34 Stage B
+    writes `stylesheetJson`, one JSON string holding the array, the way v33
+    writes `templatesJson` (the answer schema grows by one string and stays
+    under what Vertex accepts). The prompt section is appended after
+    everything earlier revisions sent and is built from the catalogue, so
+    what the model is told and what the compiler accepts cannot drift. A new
+    theme must write at least 14 rules over at least 6 areas, the product
+    card, main button and section heading among them; a revision is shown its
+    base's rules and keeps them unless asked. ★★ A STYLESHEET NEVER FAILS A
+    THEME: its faults are repair issues while repairs remain, and on the last
+    attempt the sound rules are kept and the rest dropped. ⚠ Adding a hook,
+    property or value changes v34's prompt text, so it needs a new prompt
+    revision with the vocabulary gated, like the section lists.
+    ★ THE CATALOGUE FINGERPRINT gains an OPTIONAL `styling` axis
+    (`stylesheetFacts`: "hook:property=value", at most 160), set only when
+    Theme Studio asks (`themeFingerprint(theme, { styling: true })`) and
+    counted only when BOTH themes carry rules (`STYLING_WEIGHT` 40 beside the
+    104 of the layout axes). Every stored fingerprint, every theme without
+    rules and the storefront redesign's use of the type read exactly as
+    before. Two themes alike in every layout pick and different in every rule
+    score 0.28: a real difference, not a different theme (Shopify calls those
+    styles of one theme). `overusedStyling` feeds the facts most styled
+    catalogue themes share back into the stylesheet prompt.
+    ★★ PUBLISH REFUSES A LOOKALIKE (plan Phase 4 item 3; `fingerprint.ts`
+    `publicationSimilarityBlocker`, `publish-distinctness.ts`). Similarity
+    used to steer the prompt and show as a note; a theme scoring under
+    `PUBLICATION_DISTINCTNESS_THRESHOLD` (0.5) against any theme in the public
+    catalogue (its own earlier release excepted; bundled themes included) is
+    now refused at Publish, before anything is measured again or stored, with
+    the theme it resembles and what the two share, and the same line shows
+    among the theme page's blockers before Publish is pressed. Calibration:
+    each exemplar is 0.58 to 0.89 from its nearest neighbour.
+    ★ FOURTEEN DESIGN DIRECTIONS (plan Phase 4 item 2;
+    `design-directions.ts`): brutalist, scandinavian-utility, maximal-pattern,
+    dark-luxury, retro-catalogue, tech-spec and artisan-craft join the seven.
+    ★ `DESIGN_DIRECTIONS` (the seven) is unchanged and is still the storefront
+    redesign's vocabulary; Theme Studio reads `STUDIO_DESIGN_DIRECTIONS` from
+    v34 (Stage A schema twin and prompt gated, so earlier requests replay
+    byte for byte). Their font pairings live in `EXTENDED_DIRECTION_PAIRINGS`,
+    never in the pairing library's own lists (printed in every font prompt
+    since v25).
+    ★ LAYOUT COMMITMENTS (plan Phase 4 item 1; `commitments.ts`). On 4 Oct all
+    eight live themes chose the same page width and hover setting. A NEW theme
+    with no reference is now handed its header, card, product page, footer,
+    page width, grid columns and hover setting before Stage B writes
+    anything: per setting, the value its direction's signature
+    (`DIRECTION_SIGNATURES`) allows that the catalogue uses least, a tie
+    broken by the theme's id (deterministic, so a recovered run asks for the
+    same). A first draft that departs is sent back once with the list; the
+    second is accepted either way. Never for a revision or a reference-led
+    theme; never the grocery renderer.
+    Evidence: the fourteen exemplars, one per direction (the first seven, and
+    since 2026-11-22 the seven later directions in
+    `lib/themes/exemplars/later-directions.ts`: KERB, Hylla, Mor Bagh,
+    Nocturne, Ganapati Provisions, Lumen Works, Mitti & Marigold, each
+    following its direction's layout signature and borrowing a bundled
+    theme's pictures and catalogue through a linked `public/themes/exemplar-*`
+    folder), each carry a hand-written stylesheet
+    (`lib/themes/exemplars/stylesheets.ts`; every pair of the 91 differs in at
+    least 77% of what it says; 4 to 7.5 KB of CSS each) and pass the real
+    package gates (`npm run theme-studio:exemplars`, 6/6 for all fourteen).
+    ⚠ `EXEMPLAR_THEMES` is append-only: frozen request pins read the first
+    entries by position.
+    ★ A SALE PRICE MUST READ (found by the new exemplars, 2026-11-22): the
+    sale price is drawn in `palette.error` on the page and on cards, and no
+    package gate checked that pair, so a mustard and a clay page with the
+    stock red passed everything offline and failed in the browser (3.89:1
+    and 4.16:1). `saleColourIssues` (`lib/themes/stylesheet.ts`) checks it
+    against the page and cards; a product card's `fill` is checked against it
+    too; the v34 prompt says so; and the pipeline sends a new theme's draft
+    back with it while repairs remain (never the reason a theme fails, never
+    for a revision, never before v34). The seven new palettes are in
+    `scripts/theme-studio-contrast-check.mjs` (882 cases).
+    ★★ THE DESIGN PLAN, AND ALIKENESS SETTLED BEFORE ANYTHING IS DRAWN
+    (owner, 22 Nov 2026: "the planning is done beforehand ... it should also
+    plan the alikeness in this step ... on the basis of that, the theme
+    should be created"; `design-plan.ts`, feature `designPlan`, v34, a NEW
+    theme only). Before it, Stage A wrote prose and Stage B decided every
+    concrete thing; alikeness was measured after the build at 0.35 where
+    Publish asks 0.50, and not corrected at all for a theme built from
+    screenshots, so a theme could have every photograph drawn and then be
+    refused at Publish. Now:
+    (1) Stage A writes `designPlanJson` (one JSON string, like
+    `templatesJson`, so its enumerations never count against the schema size
+    limit; `withDesignPlan` in `schemas.ts`): page, surface, text and accent
+    colours, the font pairing, the buttons, styling in words, what sets it
+    apart, and, only when screenshots were supplied, the layout they show.
+    `parseDesignPlan` whitelists and bounds it and refuses a text colour
+    under 4.5:1 on the page or on cards. The plan is kept on the stored
+    intent (`ThemeIntent.designPlan`).
+    (2) StoreMink completes it (`completeDesignPlan`): a theme with no
+    screenshots gets the layout commitments as its plan's layout, whatever
+    the model wrote; a theme built from screenshots keeps the layout read
+    from them.
+    (3) THE PLAN IS CHECKED AGAINST EVERY PUBLISHED THEME before Stage B
+    (`designPlanIssues`): `planDistance` is the weighted share of what the
+    plan decides (layout, card, page colour, accent, fonts, buttons, page
+    width; the fingerprint's own weights) that differs, and under
+    `PLAN_DISTINCTNESS_FLOOR` 0.5 the plan goes back to Stage A naming the
+    theme and what they share. A plan never fails a theme: on Stage A's last
+    attempt a whole plan is kept as it is, and an unreadable one is left out
+    (the bare commitments then apply).
+    (4) Stage B is held to it (`designPlanBuildPrompt`, appended last;
+    `designPlanDepartures`, sent back once like a commitment): colours by
+    colour band (a shade may move so text reads, a family may not), the
+    rest by value.
+    (5) ★★ THE PUBLISH FLOOR IS MEASURED BEFORE ANY PHOTOGRAPH
+    (`pipeline.ts`): after Stage B the built theme is measured with
+    publishing's own function (`nearestPublishedTheme`, which
+    `publicationSimilarityBlocker` now also uses) against the published
+    themes in the run's frozen context. Under it, up to `FLOOR_CORRECTIONS`
+    (2) bounded corrections, for a theme built from screenshots too; a
+    correction is kept only if it moves away from that theme and never if it
+    newly puts a draft under the floor. Still under it, the run fails
+    `too_similar` with the theme's name, the alikeness and what they share,
+    and NOTHING IS DRAWN. A draft that clears it carries
+    `distinctness.publishFloor`. Publish keeps its own check: the catalogue
+    can change between a build and a publish.
+    (6) Which catalogue themes are PUBLISHED is frozen with the run
+    (`ExistingThemeFingerprint.published` and `name`, set in
+    `variety-context.ts` for a published release and a public bundled
+    theme; a context frozen earlier has neither, which reads as no floor).
+    (7) REFERENCE SCREENSHOTS ARE READ MORE CLOSELY: their colours are
+    MEASURED from the pixels (`reference-colours.ts`: 5-bit colour boxes
+    merged within 16 RGB steps, so a cream page and its white cards stay two
+    colours; the largest is the background, the strongest contrast the
+    text, the most saturated the accent; deterministic, never fatal) and
+    given to Stage A beside the brief; the screenshot's label says it is the
+    design to follow (never its logo, brand name, wording or photographs);
+    and Stage B is sent the screenshots too, where before it saw only
+    Stage A's notes.
+    ★ The offline drill (the fake provider) is exempt from both floors
+    (`GenerationInput.skipCatalogueFloor`, set only by the worker): its draft
+    is a bundled theme's own tokens.
+    In Theme Studio the Checks tab shows the plan (`design-plan-card.tsx`:
+    colours, fonts, buttons, layout and where it came from, styling, and what
+    the design was measured against before any picture was drawn), and a run
+    stopped at the floor says which theme it resembled
+    (`stoppedForAlikenessWords`, shown where a decline reason is; stop word
+    `too_similar`). Every request before v34, and every revision, is byte for
+    byte as it was; the Stage B pins are unchanged (the plan is appended at
+    the call, after everything they pin). Tests: `design-plan.test.ts`,
+    `design-plan-pipeline.test.ts` (the real pipeline over the offline
+    provider: the plan asked for and kept, the screenshots sent to Stage B,
+    an unusable plan repaired, a plan that never fails a theme, the stop
+    before any photograph, a correction that clears the floor, references
+    held to it, drafts and v33 not), `reference-colours.test.ts`,
+    `design-plan-card.test.tsx`. ⚠ NOT RUN LIVE: no model has written a
+    plan yet, and the reference fidelity loop (render, compare with the
+    screenshot region by region, repair; `theme-studio-variety-and-fidelity.md`
+    T-F4) is still not built, so how closely a result follows its
+    screenshots is still unmeasured during a build.
+    ★★ THE FIRST LIVE v34 BUILD, AND WHAT IT FIXED (22 Nov 2026, "Roast", on
+    localhost; `docs/theme-studio-local.md`). Stage A wrote a valid plan
+    first time (read from six screenshots; it cleared the plan check). Stage
+    B then spent every repair and the run failed `invalid_output` after 12
+    minutes and five paid calls, on one line: "Muted text in the Brand
+    scheme is hard to read (4.35:1, needs 4.5:1)". The saved answers were
+    replayed offline through the real pipeline to find it. Three fixes:
+    (a) `lib/themes/scheme-settle.ts` `settleSchemeContrast`: muted text is
+    76% of a band's text over its background, a colour no model writes, so
+    a scheme the theme uses or declares that fails the validator's own pairs
+    is settled by SHADE (text toward black or white, then the band's
+    background away from its text in 4% steps, then a card or button colour
+    dropped for the derived one). Only a failing scheme is touched, it
+    becomes a declared scheme so the palette and every other band are as
+    written, and a scheme it cannot settle is left for the ordinary repair.
+    `prepareDraft` applies it (option `settleSchemes`, v34) BEFORE the style
+    rules are judged against the bands. 1,000 random palettes all end
+    readable by `schemeProblems`.
+    (b) Every problem in one round: `assemblePackage` returns a `candidate`
+    (a structurally whole package that still has issues), and under v34 the
+    brief's unsupported claims are read from it, so an invented founding
+    year is reported WITH a style rule to mend, not a round later.
+    (c) A run that spends every repair records what its last draft failed on
+    (`outcome_detail.issues`, bounded); before, it said only
+    `invalid_output`.
+    Replayed with these, the same five saved answers end in a version, 75%
+    from the nearest published theme. Tests: `scheme-settle.test.ts` and the
+    last block of `design-plan-pipeline.test.ts`.
+    ★★ THE RETRY REACHED A FINISHED DESIGN, AND FOUND FIVE MORE (same day).
+    Design 1 was built in 6.5 minutes with one repair round; 18 photographs
+    were drawn by ElevenLabs (GPT Image 2.5 Sunburst, Medium, 2K; its first
+    live use) in 4.5 minutes, every one passing its check first time; the
+    final browser checks passed every gate.
+    (d) ★★ THE DESIGN REVIEW WAS REFUSED BY VERTEX, EVERY TIME. Its request
+    answered HTTP 400 INVALID_ARGUMENT twice and the theme stopped at its
+    last step (`qa_provider_failed`). Bisected with text-only calls: each
+    property of `VISUAL_QA_SCHEMA` is accepted alone, the whole is refused,
+    and it is accepted the moment `imageAssessments.maxItems: 64` (or every
+    `maxItems`) is removed. Structured output compiles a schema into a
+    grammar and a counted list multiplies its states. The schema now carries
+    NO `maxItems` or `uniqueItems`; the prompt states the bounds and
+    `parseVisualQaReport` keeps them by keeping the first
+    `VISUAL_QA_LIST_MAX` (20) findings and repairs and counting a rejection
+    once (it used to throw a whole paid review away for a twenty-first
+    finding). ⚠ The same schema is what production sends: check there.
+    (e) ★ THE LAYOUT CHECK NEEDS A PRODUCTION BUILD LOCALLY. On the dev
+    server it failed four times (`qa_probe_missing`, `capture_timeout`,
+    `capture_network`): Webpack dev compiles each page on demand (4 to 38 s)
+    and restarts itself when its 2 GB heap fills on an 8 GB machine. On
+    `npm run build && npm run start` the same pages took under half a second
+    and the check passed in under a minute. `docs/theme-studio-local.md`.
+    (f) `copy-tidy.ts` `tidyDraftCopy` (v34, every Stage B draft): long
+    dashes are rewritten with StoreMink's own rule (inside `...Json` fields
+    by parse and re-write, never as text) and a menu label written as a page
+    title ("Our Story | Roast Specialty Coffee") keeps the words before the
+    bar. Neither spends a model round. The reviewer had blamed the overflowing
+    labels on the platform (`renderer_fix_required`), which ends automatic
+    repairs.
+    (g) `CLAIMS_PROMPT` (`claims.ts`, appended to Stage B from v34) tells the
+    model the honest-copy rule BEFORE it breaks it (both live drafts invented
+    "EST. <year>"), and the plain word "organic" is now a claim the brief
+    must support (the review rejected "ORGANIC BEANS"; the check had let it
+    through). ★ That one rule applies from v34 only
+    (`unsupportedClaimIssues(..., { organic: stylesheetFeature })`; PR #303
+    review): a run on an older prompt version that replays its saved draft
+    is judged by the rules it was written under, and no longer pays for a
+    repair its prompt never warned it about. Every other claim rule predates
+    those versions and applies to all of them. The stylesheet prompt names `button.secondary` among the hooks
+    that need a tone with a background (both drafts wrote "outline").
+    ★ `ORGANIC_CLAIM_LABEL` (exported from `claims.ts`): the storefront
+    redesign's copy check (`lib/mink/revamp/copy-checks.ts`) has its own,
+    stricter "organic" rule and skips this label, so one word is reported
+    once there, not twice.
+    (h) `portraitProductBriefs` (`compiler.ts`, v34 new themes): a product
+    photography brief asked for in landscape is drawn at 4:5. A card never
+    crops a photograph, so the theme's 4:3 product photos sat inside their
+    portrait frames as small rectangles.
+    Tests: `visual-qa-request.test.ts` (no counted list may come back),
+    `copy-tidy.test.ts`, `claims.test.ts`, `design-plan-pipeline.test.ts`.
+    ★★ WHAT IS THE SAME IN EVERY THEME IS A RULE, NEVER A MODEL'S CHOICE
+    (owner, same day: "product photos, the nav bar design and all are the
+    things which are important in every theme, so these should be in the
+    params"). The storefront already knew each answer; Theme Studio had
+    never written them down, and the offline provider's hand-written answers
+    happened to be right, so no test could show a real model's habits.
+    (i) `frame-shapes.ts` `briefsInFrameShapes` (v34 new themes, after Stage
+    B has placed the pictures): a picture's shape is its FRAME's. A product
+    brief is portrait, a slideshow or banner picture wide, a category tile
+    square, and a section with a ratio setting (`image_ratio`,
+    `media_ratio`, `aspect_ratio`) draws that; orientation is what is held
+    (a 3:2 picture in a landscape frame keeps its ratio; one in the wrong
+    orientation takes the frame's canonical 4:5, 1:1, 4:3 or 21:9, the
+    ratios the storefront's own CSS uses). A tile grid's frames depend on
+    its layout, so nothing is claimed for them.
+    (j) `withPhoneOpening` (same file, same gate): every slide of the
+    homepage's opening gets a portrait brief of the same scene
+    (`<slot>-phone`, 4:5) and its `mobile_image_url`. A wide photograph in a
+    phone's tall band showed a third of its frame; the reviewer held the
+    theme at "responsive composition 3", and the only repair it could name
+    (a shorter band) is one `opening.ts` refuses. The storefront had the
+    field all along and the model, told it "may" use it, never did.
+    Measured on the theme: 390x487 photographs in a 390x460 band.
+    (k) `menuLabelIssues` (`copy-tidy.ts`, every v34 draft): a menu label is
+    at most `NAV_LABEL_MAX` (28) characters, after the title-bar shortening.
+    ★★ A STOREFRONT BUG THE THEME EXPOSED: A ONE-PHOTO PRODUCT UNDER THE
+    `thumbs-left` GALLERY SHOWED A 72px PHOTOGRAPH. The shape is a two-column
+    grid (72px thumbnails, then the photo) and a product with one photograph
+    renders no thumbnails, so the frame was the grid's only item and took
+    the thumbnail column. The owner saw it in the preview ("no product
+    picture") and the reviewer rejected it as an unfinished surface.
+    `product-gallery.tsx` marks the gallery `is-single` and `shop.css` drops
+    the grid for it and names the frame's column. The browser layout check
+    only ever laid galleries out with three photographs:
+    `theme-studio-renderer-check.mjs` now also lays every shape out with one
+    (1,283 cases; without the fix it fails "the only photograph is 72px wide
+    in a 420px gallery").
+    ★ RESULT: "Roast" reached Ready to publish on design 12, review 38 of 40
+    (29, then 36, then 38), from six reference screenshots. ⚠ Its nine
+    product photographs were drawn 4:3 before rule (i) existed and still sit
+    letterboxed in their portrait frames; redrawing them is the owner's call.
+    ★★ A PUBLISHED THEME CAN BE CHANGED (owner, 22 Nov 2026: "there should
+    be ability to change the published theme. the stores which uses that
+    theme, stays on the older version"; migration
+    `20261122_0288_theme_studio_change_published`). Until now a project that
+    had published was finished: the chat said "Live themes can't be changed
+    yet", the guard allowed only `archived`, and a project could publish
+    once. Releases were already immutable and numbered (1.0.0, then the next
+    minor) and every store already pinned the exact release it installed, so
+    only the lock had to go. - **The rule.** A project is `published` exactly while its CURRENT
+    version is one a publication published (the guard checks this on every
+    move into `published`, from any state). A live theme takes a change in
+    the chat (`reviseThemeStudioVersion`), a picture upload or redraw
+    (`slot-images.ts` `EDITABLE_STATES`, `IMAGE_STATES`) or another design
+    made current (`restoreThemeStudioVersion`), and leaves `published` for
+    the ordinary working states. It is built, checked and reviewed like any
+    design. Publishing it stores the theme's NEXT release, points the
+    catalogue at it and re-seeds the demo store; the earlier release row,
+    its pictures and every store that installed it are untouched. - **Back to live without a release.** A change that fails or is stopped
+    with nothing new current leaves the theme live
+    (`published-version.ts` `restingStatusSql`, used by the worker's
+    `settleProjectWithoutVersion`; `publishedReleaseOf` in `stop.ts`), and
+    making the published design current again is `live`
+    (`ThemeStudioRestoreOutcome`), with nothing checked or queued.
+    ★★ THREE GAPS CLOSED (PR #303 fourth review, 22 Nov 2026):
+    (1) `cancelThemeStudioRun` on a QUEUED change rests on
+    `restingStatusSql` too. It went to `ready`, so a live theme stopped
+    showing as live, Publish refused its design as already published and
+    Make current answered "already current". (2) Make current asks
+    `publishedReleaseOf` BEFORE its "already current" answer, so a project
+    left `ready` on a published design comes back to `published` by it.
+    (3) With two releases, making the EARLIER published design current went
+    published to published with another version, which the guard refuses
+    ("a theme studio published project cannot change its version"), and the
+    action failed with a database error; it now leaves `published` with the
+    new version and returns to it, two guarded moves in one transaction.
+    ★ THE CATALOGUE IS NOT MOVED BY MAKE CURRENT: which release new stores
+    get changes only by publishing or by the catalogue's own action. So the
+    outcome is `live` when the design is the release new stores get and
+    `earlier_release` when it is not (`restoreRelease` reads the catalogue),
+    the action returns both versions (`ThemeStudioRestoreRelease`), and the
+    message says so: "Design 3 is current. It was published as v1.0.0. New
+    stores still get v1.1.0, and a change you send now starts from this
+    design." ⚠ The status line still reads "Live, v1.1.0" then (it names
+    the catalogue's release), while the current design is the earlier one.
+    ⚠ Not built (the review's smaller note): while a change to a live theme
+    is being built or checked the header shows no live panel, so Stop
+    offering is reachable only after pressing Stop or once the change
+    finishes. - **One release per design.** `beginAttempt` refuses a design that is
+    already a release ("This design is already published as v1.0.0..."),
+    and the index `theme_studio_publications_one_published` is now per
+    (project, version); it was per project. - **Status** (`studio-status.ts`). Row 1 ("Live, v1.0.0") only while the
+    theme rests on a published design (`published`, or `archived`); it used
+    to be "a release exists, whatever the state". While a change is worked
+    on, the theme's own row applies and `StudioStatus.liveVersion` names the
+    release that stays live, shown as a second badge ("v1.0.0 stays live",
+    `StudioBadge`). A theme with a release is never offered "Remove from
+    list" on any row. `progress.ts` `restsLive` is the same rule for which
+    working facts are read. - **Words.** Under the chat box of a theme with a release: "v1.0.0 is
+    live. A change you publish becomes a new version, and stores already
+    using this theme keep the version they have." The Publish dialog says
+    the same (`ReleasePublishFacts.replaces`), and the live panel says how
+    to change it. - **Not built.** No "update available" for a store on an earlier
+    release: it stays there until its merchant picks a theme again (themes
+    are chosen once today), and going back to an earlier release for new
+    installs is still the server's `select_release`, with no button.
+    Tests: `contracts.test.ts` (the state table against the newest guard,
+    by name), `studio-status.test.ts`, `tab-rules.test.ts`,
+    `workspace.test.tsx`, `release-workspace.test.tsx`, and the opt-in
+    `publication-postgres.test.ts` case that runs the whole path on the real
+    guards: publish 1.0.0, a change, a failed change stays live, a second
+    design, 1.1.0, the 1.0.0 row byte-identical, the same design refused.
+    Operator-only: no Help Centre update.
+    ★ A REVIEW SCREENSHOT WAITS FOR ITS PHOTOGRAPHS (same day, found on the
+    first change to the live Roast theme). `capture-job.mjs`
+    `waitForPictures` runs in the page just before each design-review
+    screenshot: a picture with a source and a box that has not loaded is
+    waited for up to `PICTURE_WAIT_MS` (8 s); one that failed is asked for
+    once more, one still held back as lazy is started. The probe's own wait
+    is six seconds, and a picture still on its way after it was photographed
+    as an empty box: the reviewer saw "a blank, unrendered container", called
+    it a platform fault (`renderer_fix_required`) and failed a design whose
+    page rendered correctly a moment later. A picture that really is broken
+    still fails the probe's own `brokenImages`. Tests:
+    `capture-job.test.mjs` (the wait itself, and the order measure, wait,
+    screenshot). ★ AND ONE OVER THE SIZE LIMIT IS TAKEN AGAIN, SMALLER: a
+    full-page screenshot over `MAX_QA_SCREENSHOT_BYTES` (512 KiB, the web
+    app's own limit) is retaken at JPEG quality 40, 28, then 18
+    (`QA_SCREENSHOT_QUALITIES`) before the capture fails
+    `qa_screenshot_too_large`. The second live theme's long, photograph-heavy
+    home page passed the limit at quality 55 once every photograph was
+    waited for, and its final check stopped a finished theme.
+    ★ A PHONE PHOTOGRAPH IS NOT "UNUSED", AND A 2K PICTURE IS NOT "TOO
+    NARROW" (same day). The picture check (`acceptance-gates.ts`,
+    `assets.integrity`) listed a theme's pictures by following only the key
+    `image_url`, so every opening slide's `mobile_image_url` was reported
+    "declared but nothing renders it", on every theme since each slide got a
+    phone photograph. The design review is handed that line, and three times
+    on the first live theme it read it as a platform fault
+    (`renderer_fix_required`) and failed a finished design.
+    `lib/themes/image-keys.ts` `isImageUrlKey` (`image_url`, any
+    `*_image_url`, `poster_url`, `logo_url`; never `video_url`) is now what
+    both `collectThemeImageUrls` (themes/validation.ts and
+    theme-studio/contracts.ts) follow. And `below_target` warns only when a
+    stored picture is more than 15% narrower than its slot
+    (`BELOW_TARGET_FRACTION` 0.85): a wide picture at "2K" is 2,239px (21:9)
+    or 2,048px (16:9) for a 2,400px slot from every provider setting, so it
+    fired on every wide picture of every theme. Tests: `image-keys.test.ts`,
+    `acceptance-gates.test.ts` (mutation-checked).
+    ★★ INSIDE THE NEWSLETTER'S OWN PANEL THE EYEBROW TAKES THE PANEL'S
+    COLOUR (same day; it stopped the second live theme, "Volt", at its
+    layout check before a picture was drawn). A theme's `section.eyebrow`
+    style rule colours every `.home-section-eyebrow`, and the colour is
+    checked against the page and the section colour schemes; the newsletter
+    then paints a panel of its own, soft or ink, that no such check covers.
+    Volt's electric blue read 3.43:1 on the ink panel, the layout check
+    failed three designs running, and the automatic repair had no setting
+    that could change it (`qa_no_progress`). `homepage.css` now gives an
+    eyebrow inside `.home-newsletter` the panel's colour by weight (one
+    class more than a compiled rule carries); the theme still sets its type.
+    `scripts/theme-studio-stylesheet-check.ts` adds an accent eyebrow rule
+    to each exemplar and lays both panels out: the eyebrow must read and must
+    be the panel's colour (14 cases; all fail without the rule). ⚠ Any other
+    component that paints its own panel under a themed text hook needs the
+    same; the newsletter is the only one today.
+    ★★ A SECTION'S OWN PADDING AND THE GAP BETWEEN SECTIONS DO NOT ADD UP
+    (same day, owner on the Volt preview: "there is so much of space above
+    Flagship Lineup"; storefront CSS, so every store). `.home-sections`
+    already puts the page's section gap between every two sections, and a
+    section's `padding_y` then added itself on both sides on top: two "lg"
+    sections on a desktop stood 96 + 72 + 96 = 264px apart. Measured on Volt:
+    224 to 264px of bare page between most sections. For a section with no
+    colour of its own (no scheme band, no `background`) the padding now
+    overlaps the gap: each side gives back the smaller of its padding
+    (`--home-pad`, set by the `home-pad-*` class) and the gap, through a
+    negative margin. Two large sections are 120px apart, a large beside a
+    medium 96px, two medium the plain 72px gap; never less than the gap. A
+    BLOCK that paints itself edge to edge (a scheme band, a merchant's
+    background, a full-width hero, slideshow or banner) keeps all of its
+    padding, the room inside its colour, and gives back HALF the gap on each
+    side instead: two blocks touch (bands, a ticker under a hero), and a
+    block sits half a gap, plus whatever padding its neighbour has left,
+    from plain content. On Volt a pale band after a plain section went from
+    224 to 264px of apparent space to 132 to 156px. The first section's top
+    and the last one's bottom are untouched.
+    `theme-studio-renderer-check.mjs` lays ten sections out at five widths
+    and measures every distance (fails without the rule: "two large sections
+    are 264px apart"). ⚠ A merchant who set large padding on plain sections
+    to space a page out gets less space than before.
+    ★ THE OPENING SITS FLUSH UNDER THE HEADER (same day). `opening.ts`
+    `enforceHomepageOpening(..., { flush })` sets the opening section's
+    `style.padding_y` to `none` on v34 new themes: Roast's model wrote "sm",
+    which left a 28px strip of page colour between the header and the
+    slideshow. A full-bleed slideshow also has square corners now
+    (`.home-section.is-fullbleed > .home-carousel`, homepage.css).
+    `npm run theme-studio:stylesheets`
+    (`scripts/theme-studio-stylesheet-check.ts`, in CI's renderer job) lays
+    each one over the PRODUCTION storefront CSS in local Chrome at 390 and
+    1440px: every rule in effect (398 to 899 declarations a theme; nothing of
+    the storefront's wins over a rule), axe colour contrast clean with dark,
+    soft and tinted bands on the page, no sideways scroll.
+    `lib/themes/stylesheet-hooks.test.ts` reads the component sources so a
+    renamed class cannot silently switch off a hook (it found two dead ones
+    on its first run). Tests: `stylesheet.test.ts` (with the 10,000-case
+    fuzz), `style-rules.test.ts`, `fingerprint-styling.test.ts`,
+    `commitments.test.ts`, `design-directions.test.ts`, the v34 cases of
+    `pipeline.test.ts`, `publication.test.ts` and the opt-in
+    `publication-postgres.test.ts`; `stage-b-request.golden.json` holds v34's
+    pins and every v19 to v33 pin is unchanged.
+    **Prompt v35 (23 Nov 2026, owner: "ai theme builder should be capable of
+    understanding the follow ups the operator gives").** Muse's operator
+    asked "there is no navigation or shop button in the navbar. add that",
+    and the new design still showed no menu. Three changes, the prompt
+    ones behind `theme-studio-v35` (`followUpRepair`, `headerMenu`):
+    (a) `HEADER_MENU_PROMPT` (`prompts.ts`), appended LAST to Stage B's
+    system prompt and to the change scope's, says which
+    `design.layout.header` values show the menu on a computer (hamburger
+    never; centered and stacked always, a long menu on its own row; the
+    others only while it fits) and that a request for navigation or a Shop
+    link means a header that shows it; showing an existing menu is a
+    settings edit. Every v35 pin but `headerMenu@v35` equals v34's.
+    (b) ★★ AN AUTOMATIC FIX NEVER UNDOES THE OPERATOR'S REQUEST
+    (`follow-up-guard.ts`). A fix round's message is the review's findings
+    only (`visual-qa.ts`, `contextMessageIds: [message.id]`), so a round
+    could set back the very setting the operator's change made.
+    `loadFollowUp` (`worker.ts`) walks back from the version being fixed
+    through versions automatic runs made (at most 12) to the first one an
+    operator's `revise` made, and `followUpOf` records the request (2,000
+    characters) and every scalar setting that change moved
+    (`repairTargets` paths) with its earlier value; null for a chain from a
+    first build or an operator's picture request. The repair is given
+    `operatorRequest` and `FOLLOW_UP_REPAIR_RULE`; an edit that sets a moved
+    setting back to its earlier value is refused once with `undoneIssue`,
+    then dropped; a fix left with nothing else stops as
+    `repair_not_supported` ("Every automatic fix would undo the operator's
+    latest request."), which the operator clears with a change. Another
+    value for that setting, or any other setting, stays the fix's to
+    choose. Provenance `targeted-repair-v2` when a follow-up was carried.
+    (c) `browser.header_menu` (advisory, never blocks): the preview probe
+    reports the home page's menu (`headerMenu`: layout from the root's
+    `sm-header-*` class, top-level items of `[data-sm="header-menu"]`,
+    which `desktop-nav.tsx` now carries, and whether it is on screen), and
+    `headerMenuFindings` warns `menu_hidden` at laptop1024 and desktop1440
+    when a menu with links is not shown and the header is not hamburger
+    ("On a computer, the menu is hidden behind the menu button..."). In
+    `THEME_FIX_CHECKS` and the layout gates; older evidence has no value
+    and no finding. Tests: `follow-up-guard.test.ts` (mutation-checked),
+    `follow-up-postgres.test.ts` (opt-in, `THEME_STUDIO_RECOVERY_DB_TEST=1`,
+    mutation-checked), the v35 cases of `pipeline.test.ts` and
+    `prompt-features.test.ts`, `acceptance-gates.test.ts`,
+    `studio-acceptance-probe.test.tsx`; `stage-b-request.golden.json` holds
+    v35's pins. Operator-only: no Help Centre change.
+    (d) ★★ A CENTRED THEME'S MENU IS PLANNED TO FIT BESIDE THE LOGO (same
+    day, owner: "in the planning it should judge, if the logo is in the
+    center, how much space is to the left, and according to that design the
+    number of buttons, so that we do not have to go a line below"; prompt
+    feature `menuFit`). A model cannot count pixels, so StoreMink does the
+    arithmetic (`lib/theme-studio/menu-fit.ts`), measured where it is
+    tightest: 1025px, the narrowest screen with the centred layout, less a
+    15px scrollbar, with the logo at least 160px (a store's name is usually
+    longer than a theme's). PLAN: a new theme whose plan has the centred
+    header gets `menuRoomPrompt` appended last to Stage B's system prompt:
+    the room in px, how many characters of link text it holds in the
+    planned body font at 15px and in capitals at 14px/0.08em, and that
+    StoreMink keeps the pages that fit. BUILD: `fitHeaderMenuToRoom`, after
+    `assemblePackage`, keeps Shop (always) and, in page order, each derived
+    page link while the menu still fits, measured in the theme's own menu
+    type (`headerPartStyle`: the body font, 600, 15px, then the theme's
+    resting desktop `header.nav-link` rules, the variant's last: display
+    font, size, weight, capitals, letter-spacing); the rest leave the
+    header and stay in the footer, which lists every page. No model round.
+    CHANGE: `headerMenuFitIssues` sends a change whose centred menu no
+    longer fits back ONCE with the numbers and the ways out (shorter labels,
+    fewer header links, plainer type, or `"stacked"` when the operator asked
+    for that many); not when the base was already too wide and the change
+    left the menu as it was; what comes back is accepted. CHECK:
+    `browser.header_menu` also warns `menu_wraps` (advisory) when the probe's
+    `headerMenu.stacked` says a centred menu went to its own row at
+    laptop1024/desktop1440. Example (Muse-like: standard page width,
+    Bodoni Moda capitals at 0.12em): room 361px, seven links 801px, kept
+    Shop, New In, Collections; in plain Jost four are kept. The numbers:
+    `lib/themes/text-width.ts` + `font-widths.json` (every printable ASCII
+    advance of all 31 catalogue fonts at weights 300 to 900, measured in
+    Chrome by `scripts/theme-font-widths.mjs` from the served font files;
+    re-run it when a font is added, `text-width.test.ts` fails until then)
+    and `lib/storefront/header-menu-room.ts` (the centred grid's geometry;
+    `header-menu-room.test.ts` pins every number to `Header.module.css`).
+    Checked against Chrome laying out the real stylesheet with the real
+    fonts (16 menus, 1025 and 1440px, Jost and Bodoni capitals): menu
+    widths within 0.3%, room within 1px, every fits verdict the same; and
+    the table against Chrome's layout of 1,395 words in every font at five
+    weights (worst 2.9% wide, 0.7% narrow; it ignores kerning, so it errs
+    wide). ⚠ Only the centred header is planned; the others put the menu
+    after the logo with the row to share, or on its own row already. ⚠ A
+    font outside the catalogue is not measured, and the menu is left as it
+    is. Tests: `menu-fit.test.ts`, `menu-fit-pipeline.test.ts`,
+    `text-width.test.ts`, `header-menu-room.test.ts`, the `menu_wraps` cases
+    of `acceptance-gates.test.ts` and the probe test (each rule
+    mutation-checked). Golden pins unchanged (no golden fixture plans a
+    centred header). Operator-only: no Help Centre change.
+    **Prompt v36 (23 Nov 2026, owner: in Muse "the desktop view shows the
+    proper picture on the carousel but in phone view it compresses and the
+    image is not visible properly").** A slide with no phone photograph is
+    cropped around its centre below 768px (`hero-media.tsx`, or its focal
+    point), and Muse's wide slide has the model at the far right, so a phone
+    saw only the wall. `withPhoneOpening` (frame-shapes.ts) gave every
+    opening slide a portrait phone photograph only when a NEW theme was
+    built; a change that rewrote the slideshow, or a model that left
+    `mobile_image_url` out of its revised slides, left phones with the
+    centre crop. From v36 (`phoneOpeningChanges`) it runs on a change's
+    draft too: a slide whose phone photograph the change dropped gets the
+    same `<slot>-phone` slot back, so `carryOverSlotImages` keeps its picture
+    (pass 1, by slot id) and nothing is drawn; only a slide with a new
+    picture, or a base built before v34, gets a new portrait brief (one more
+    picture to draw per slide). No request text changes: every v36 golden
+    pin equals v35's. Test: `design-plan-pipeline.test.ts` ("from v36 a
+    change gives its opening slides phone photographs too", mutation-checked;
+    a v35 change is unchanged). ⚠ An existing theme gets them at its next
+    change under v36; until then its phones keep the centre crop. Operator
+    only: no Help Centre change.
+    The Website Builder's brand
+    panel lists a styled theme's rules read-only under **Theme styles**
+    (`ThemeDesignDefaults.styleRules`, `describeStyleRule`; at most 80; test
+    `app/dashboard/builder/theme-styles.test.tsx`). ⚠ Not built: a merchant
+    switch for the rules. No migration. No Help Centre change: no
+    merchant step changes (a theme simply arrives styled).
     **Phase 2e, second slice (same day; still prompt v32, unused by any
     run).** The rest of the plan's `templates` field. A `size_guide` product
     block (two to eight measurement columns, up to twelve sizes with one
@@ -16889,6 +18189,67 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     sliver without overlapping anything.
     ★ Every check starts from the full header, so a tablet rotated to
     landscape unfolds again.
+    ★★ THE CENTRED-LOGO HEADER STACKS ITS MENU, NEVER HIDES IT (owner, 23
+    Nov 2026, "menu on its own row", after Theme Studio's Muse showed no
+    menu on a 1440px screen: seven uppercase Didone links did not fit left
+    of the logo, so the fold put every link behind the hamburger and only
+    the server-rendered first paint showed them). A header whose CSS sets
+    `--sm-header-stack: 1` (`HEADER_STACK_PROPERTY`; only
+    `.sm-header-centered .header`, inside the 1025px desktop block) is
+    fitted with `STACK_CANDIDATES` instead of `COMPACT_CANDIDATES`: `stack`
+    moves the menu to a centred, wrapping row of its own under the logo
+    (`.header[data-header-compact~="stack"]`, the stacked header's rules),
+    so it never folds. ★ IT STACKS ONLY WHEN THE MENU IS WHAT DOES NOT FIT
+    (same day): the two side columns are equal and never take room from each
+    other, so the candidates fold the right-hand side first (`delivery`,
+    then `delivery search`) and only then try `stack`, `stack delivery`,
+    `stack delivery search`; tried in that order a crowded right side used
+    to put a menu that fitted onto a second row. `chooseCompaction` now takes
+    candidate step sets (`COMPACT_CANDIDATES` are the old prefixes, so every
+    other header folds exactly as before). Theme Studio plans a centred
+    theme's own menu to fit beside the logo (Prompt v35 (d) below), so the
+    second row is the fallback for a merchant's longer menu. The hook reads
+    the property on every fit (the media query changes with the width). Below
+    1025px the centred header is the ordinary row and folds as before; every
+    other header folds as before. Measured offline in Chrome with the real
+    stylesheets and the bundled fit rule (seven uppercase links): centred
+    at 1440, 1280 and 1100px is `stack` (menu shown under the logo, no
+    hamburger, bar 99px), at 1024px `nav`; classic at every width `nav`.
+    ⚠ A stacked bar is taller than the 68px the server reserves, so a store
+    whose menu stacks shifts its first section down once, when the hook
+    publishes the measured height after hydration. Tests:
+    `header-fit.test.ts` (order, never `nav`, the right side first, the CSS
+    pinned), `use-header-fit.test.tsx` (mutation-checked). No Help Centre
+    change: no merchant step changes, and no guide describes the centred
+    header.
+    ★ THE BAR IS 68px TALL (22 Nov 2026, owner: "this bar is too big"). It
+    was 80px: 16px of padding above and below a 48px "Deliver to" button.
+    Now 12px of padding (`.header`, and the same at 1024px and below, where
+    it had grown to 20px 32px) around a 44px button
+    (`delivery-location.module.css` `.trigger`), the touch-target floor.
+    ★★ AND A FULL-WIDTH OPENING PHOTOGRAPH MEETS IT EXACTLY (same day,
+    owner: "just below the Roast and above the homepage carousel there is so
+    much of gap"). Three things had left page colour between the bar and the
+    photograph, and each is now a storefront rule in `homepage.css`, for
+    every store and every theme release already installed:
+    (1) the opening section's own vertical padding (`padding_y`, a theme's or
+    a merchant's) pushed the photograph down inside it (Roast: 28px), so a
+    full-bleed first section that holds a hero or a slideshow has no padding
+    above it; (2) the page reserved `max(section gap, header)` above a
+    photograph-led opening, 72px on a wide screen under a 68px bar and more
+    on a spacious theme, so a full-bleed opening reserves the header's height
+    and nothing more (a hero drawn as a card keeps the gap, and the market
+    bar, which reserves on the root, gets none); (3) the height reserved
+    before the browser has measured the header (`--sm-header-h` in
+    `storefront-theme.css`) was still 80px, and 88px from 769 to 1024px,
+    after the bar became 68px: it is 68px at every width now, 69px for the
+    minimal header's desktop line, 108px stacked and 134px utility.
+    `scripts/storefront-header-layout-check.mjs` (2,496 cases: six widths,
+    eight headers, nine openings, before and after hydration, with and
+    without the announcement bar) now also measures where the photograph
+    starts inside its section, and ★ RUNS IN CI's renderer job: it was not
+    run there, 87 of its cases were failing after the bar was slimmed, and
+    nothing said so. `opening-clearance.test.ts` pins the rules' text.
     ★ Transitions are switched off while measuring
     (`data-header-measuring`). The search box animates its width and the
     header its padding, and a mid-animation reading once passed a fit that
@@ -17474,8 +18835,31 @@ running subscription is how you get chargebacks.
     transient errors). Paid stores use consecutive 30-day windows anchored to
     `billing_subscriptions.current_period_start`, matching StoreMink's billing
     duration instead of calendar-month arithmetic (yearly plans receive the
-    same 30-day included-credit windows inside the paid year); a store without
-    that paid-cycle anchor retains the UTC calendar-month fallback.
+    same 30-day included-credit windows inside the paid year).
+    ★★ EVERY STORE REFRESHES ON ITS OWN DATE (owner, 21 Nov 2026). A store
+    with no paid plan cycle (Free, or a plan StoreMink granted) used to be
+    metered by UTC calendar month, so all of them refreshed together on the
+    1st whatever day they joined. `minkCreditCycleAt` now takes the store's
+    creation date as a third argument and counts those stores' 30-day windows
+    from `stores.created_at`, with the same `cycle:<window start>` key;
+    `getMinkCreditCycle` reads both dates in one query from `stores` left
+    joined to `billing_subscriptions`. The paid cycle start wins whenever it
+    is readable and not in the future. The calendar month is left only for a
+    store whose row cannot be read. Moving from Free to a paid plan (or back)
+    changes the key, so the window starts again from that date.
+    Migration `20261121_0278` carries the current month's usage to the new
+    key by 0114's rule below (checked in a rolled-back local transaction: the
+    SQL key equals the JavaScript key to the millisecond) and corrects the
+    credits guide's reset sentence in place. The operator console follows:
+    `listAllStores` passes each store's creation date, and
+    `lib/platform/store-detail.ts` reads usage under the key
+    `getMinkCreditCycle` returns (it asked for the calendar month, so it
+    showed 0 used for every store on a paid cycle). Tests:
+    `lib/ai/quota-cycle.test.ts`, `lib/ai/quota.test.ts`.
+    ⚠ A store downgraded for non-payment keeps its last paid cycle start in
+    `billing_subscriptions` and goes on counting from it; one that cancelled
+    has it cleared and counts from its creation date. Both are the store's
+    own date.
     ★★ THE 0114 BACKFILL CARRIES THE OLD CALENDAR COUNTER ONLY WHEN THE
     CURRENT WINDOW ALREADY COVERED THE WHOLE RECORDED MONTH. `ai_usage.used` is
     an aggregate and cannot be split across two windows, so a store whose
@@ -17567,8 +18951,23 @@ running subscription is how you get chargebacks.
       Free, Basic and Pro) → Razorpay modal on the **PLATFORM's own account**
       (env `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`; totally separate from a
       store's BYO gateway) → `confirmCreditPurchase` (HMAC verify → paid →
-      `add_ai_credits`); dropped callbacks self-heal via reconcile-on-read on
-      page load (no webhook in v1). The linked accounting invoice is finalized
+      `add_ai_credits`). A dropped callback (the tab closed before the
+      confirm) is settled three ways since 21 Nov 2026, all through
+      `lib/ai/credit-purchase.ts`, which now holds the settle
+      (`settleCreditPurchase`, one conditional pending → paid claim, so
+      exactly one caller grants the credits and tells the merchant):
+      StoreMink's Razorpay webhook (`settleCreditPurchaseByOrder`, reached
+      when a captured payment matches no billing attempt), the hourly billing
+      job (`reconcilePendingCreditPurchases` with no store: purchases 3
+      minutes to 3 days old, 100 a run, newest first), and the page-load pass
+      as before. Every gateway-reported settle checks the captured amount and
+      currency against what the order was created for (`creditPurchasePaise`)
+      and grants nothing on a difference
+      (`billing.credit_pack_amount_mismatch`); the page-load pass used to
+      grant on any captured payment. Before this a merchant who paid and
+      closed the tab got the credits only when they next opened Plans &
+      Billing. Tests: `lib/ai/credit-purchase.test.ts`. The linked
+      accounting invoice is finalized
       directly as `paid` after capture: it is a receipt for the same one-time
       checkout, never a collectible subscription invoice. The Plans debt query
       filters `kind = 'subscription'`, and the payment starter repeats that
@@ -24285,6 +25684,564 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       second charge. ⚠ Only a `processing` attempt is resumable: the index also
       covers `created` (no order exists yet) and `authorized` (money already
       authorized — re-opening checkout would invite a second authorization).
+    - **★★ STOREFRONT PAYMENTS: THREE GAPS CLOSED IN ONE MODULE (21 Nov
+      2026, `lib/orders/pending-payments.ts`).** Everything that marks an
+      online order paid still goes through `markOrderPaid`; everything that
+      cancels an unpaid one now goes through `expireUnpaidOrder` (the
+      pending → failed claim, then `releaseCancelledOrder`, the coupon use
+      and the offer uses), and `settlePendingOrder(order, creds, { expire })`
+      is the one "ask Razorpay, then act" both use.
+      1. **A paid order whose tab closed.** The merchant's webhook is
+         optional and pasted in by hand; without it the order waited for the
+         hourly reaper (45 to 105 minutes) and the shopper came back to a
+         full cart. Now (a) `resumeMyUnfinishedPayment` (checkout-actions)
+         runs when the checkout page opens: the shopper's own waiting orders
+         are settled with Razorpay, a paid one for this cart shows its
+         confirmation and empties the cart, a paid one for a changed cart is
+         announced and the cart kept (`orderHoldsCart`: exact lines and
+         quantities, free gift lines ignored), and one still waiting for this
+         cart is announced with a "Continue that payment" action on the SAME
+         Razorpay order (an offer since 22 Nov, never the page's own retry:
+         see the follow-up review below); (b) `placeOrder` makes the same check before any
+         read or reservation and refuses with `paidOrder` instead of placing
+         a second order (a failed check never blocks a sale; with nothing
+         waiting no gateway is read); (c) `/api/cron/confirm-payments`
+         confirms young paid orders every 5 minutes and never cancels;
+         (d) the Razorpay panel says "receiving events" only once a verified
+         delivery has arrived (`webhook_last_event_at`, 0279, stamped by the
+         webhook route at most hourly, cleared when a new secret is
+         generated), else "not confirmed yet".
+      2. **Offer limits leaked.** An unpaid order's `offer_redemptions` rows
+         stayed, and `reserve_offer_use` counts them whatever became of the
+         order. `releaseOrderOfferUses` (`lib/offers/cart.ts`) deletes the
+         order's rows with `DELETE ... RETURNING` (the claim) and releases
+         each use and amount; it runs on expiry and in `placeOrder`'s
+         Razorpay rollback BEFORE the order row is deleted (deleting only
+         blanked the rows' order id). A shopper's own abandoned attempt past
+         the window is also cancelled when they return to checkout.
+      3. **Changing the Razorpay account mid-payment.** `disconnectRazorpay`
+         and `saveRazorpayCredentials` call `settleBeforeGatewayChange` with
+         the keys on file (the gateway is paused while it checks and put back
+         on a refusal): paid orders are confirmed, dead ones cancelled, and an
+         order still inside its window blocks the change with the time to try
+         again. New keys that can read the waiting orders are the same
+         account and pass; keys Razorpay already refuses never block their own
+         replacement; an unreachable Razorpay fails closed. The reaper also
+         stops waiting for ever on keys Razorpay refuses (a week, like an
+         unreadable connection).
+
+      Tests: `lib/orders/pending-payments.test.ts`, `lib/offers/cart.test.ts`,
+      `lib/payments/store-webhook.test.ts`, `lib/payments/capture.test.ts`,
+      the two cron route tests, `payment-provider-actions.test.ts`,
+      `checkout-actions.test.ts`, `store-webhook-route.test.ts`. ⚠ Not run in
+      a browser or against live Razorpay.
+      ★ Three follow-ups the same day: (a) `markOrderPaid(..., { strict })`
+      throws `MarkPaidWriteError` when the WRITE fails, where "unchanged"
+      used to mean both a replay and a database error: the store's webhook
+      now answers 503 for a payment it could not record (it acknowledged it
+      and Razorpay never retried), `confirmOnlinePayment` no longer answers
+      `paid: true` for it, and `settlePendingOrder` reports `unknown`;
+      (b) a PAUSED gateway's webhook is honoured (`loadPaymentWebhookSecret`
+      no longer requires `enabled`): pausing stops new checkouts, not the
+      payment of an order already placed, and a 503 for every delivery makes
+      Razorpay disable the webhook; (c) `orders.razorpay_key_id` (0280)
+      records the public key id an order was created with, pinned beside the
+      gateway order id (the order id alone when the column is not there yet),
+      and `refusedReadReason` uses it in the reaper's log to tell "the keys
+      changed since this order" from "the same keys are refused". A failed
+      `rzpCreateOrder` at checkout is a `logError`
+      (`checkout.razorpay_order_create`) with the key id, not a console line.
+
+    - **★★ THE RENEWAL PASS NEVER CHARGES AN INVOICE THAT IS `processing`
+      (21 Nov 2026).** The index above does NOT cover `unknown`, the state a
+      timed-out or 5xx debit is left in, while the invoice derived from it
+      reads `processing`. `collectOne` (`renewal-worker.ts`) went on to
+      `collectInvoice`, whose `beginAttempt` then succeeded, so the hourly run
+      after an unknown outcome debited the mandate a second time, an hour
+      before reconciliation (which runs after the collect pass) could have
+      found the first payment captured. Confirmed on the local database in a
+      rolled-back transaction: a `created` attempt is accepted beside an
+      `unknown` one on the same invoice. `collectOne` now returns `pending`
+      for a `processing` invoice, so reconciliation settles the attempt
+      (captured, or failed after `FAIL_AFTER_HOURS`) before anything is
+      collected again; test in `renewal-worker.test.ts`, mutation-checked. No
+      merchant step changes, so no Help Centre update.
+    - **★★ PR #303 REVIEW FIXES (22 Nov 2026, sm-AnuragGoyal; seven items,
+      all in billing, checkout and credit packs).** (1) A captured payment
+      whose order could not be marked paid is `captured_unrecorded`
+      (`settlePendingOrder`, `lib/orders/pending-payments.ts`), its own
+      outcome: it used to be `unknown`, the value for "Razorpay could not be
+      read", and the hourly reaper cancels an order it has been unable to ask
+      about for a week, so a paid order was cancelled with its stock and
+      credit given back. The reaper never expires it and reports
+      `capturedUnrecorded`; the shopper guard counts it as paid; a gateway
+      change is blocked by it. (2) The three tries count sent debits (next
+      item). (3) The renewal debit's contact is `resolveBillingEmail`, the
+      resolver enrolment uses (`gateway.ts` `resolveBillingContact`): it read
+      `admins.phone` alone, which the signup wizard never wrote, so a store
+      could enrol and then had every debit refused. (4) `placeOrder` never
+      places a second order beside an earlier one for the SAME cart that may
+      still be paid (a pending UPI approval): it resumes that order, replaces
+      it, or refuses (the follow-up review, next item). (5) A captured payment
+      on a FAILED credit purchase is `captured_on_failed` and logged as an
+      error (`billing.credit_pack_captured_on_failed`), never "already". A
+      purchase is failed only when its order or draft invoice could not be
+      made, when the payment window is never opened; closing the window
+      leaves it pending. Nothing is granted, because a payment needs its tax
+      invoice. (6) A manual checkout whose order is for an amount the invoice
+      no longer owes is closed when the gateway says nobody paid it
+      (`retireStaleCheckout`, `manual-pay.ts`, by `orderIsUntouched`) and a
+      new one starts; it used to block Pay now both ways for 72 hours. (7)
+      The debit pass sends the "autopay is no longer active" email only when
+      its own `verifyMandate` call changed the mandate (`verdict.changed`).
+      Tests beside each module, and scenario 26 of the hour-by-hour suite
+      (three undelivered notices, then a debit that pays). No merchant step
+      changes, so no Help Centre update: "tries up to three times" still
+      holds.
+    - **★★ AN EARLIER ORDER RAZORPAY COULD NOT BE ASKED ABOUT STOPS A SECOND
+      ORDER (PR #303 sixth review, 22 Nov 2026).** `settleShopperPendingOrders`
+      kept only `paid`, `captured_unrecorded` and `waiting`; an `unknown`
+      (timeout, 5xx, dropped connection) or `refused` read dropped the order
+      from its answer, so `placeOrder` saw nothing waiting and placed a
+      second order while the shopper's UPI approval on the first was still
+      being processed, and both were paid. Such orders are now reported as
+      `unchecked` (newest first) while they are inside their payment window
+      (`PAYMENT_GRACE_MINUTES`; past it they are the reaper's and the
+      late-payment sweep's, as before). `settleEarlierPayment` picks the
+      first one that holds this very cart, and `placeOrder` answers with
+      `unfinished` and NO `payment` before anything is priced, reserved or
+      written, whatever the payment method: "We couldn't check your earlier
+      payment for this cart (order X) just now, so we haven't placed a second
+      order. Please try again in a minute." It is checked before the waiting
+      order (a newer resumable order says nothing about this one), and it is
+      never resumed nor cancelled, because nobody knows whether money is
+      landing on it. Another cart is another purchase and goes ahead. A
+      payment found PAID still answers first. ⚠ If the shopper's orders
+      cannot even be listed, checkout carries on as before. Tests:
+      `pending-payments.test.ts`, `checkout-actions.test.ts`.
+    - **★★ A FAILED DEBIT IS NOT FINAL: NO SECOND DEBIT WHILE AN EARLIER ONE
+      MAY HOLD THE MONEY (PR #303 fourth review, 22 Nov 2026).** Two things
+      rested on "a failed debit is final": reconcile fails an automatic
+      attempt at once when every payment on its order reads `failed`, freeing
+      the invoice for the next try, and the closed-attempt scan read manual
+      checkouts only. Razorpay does not promise that: a payment marked failed
+      (a timeout, a slow bank answer) can be authorised late by the bank and,
+      with automatic capture on the order, captured. Try 2 then debited the
+      same renewal again, and with a missed webhook nothing recorded the
+      first payment at all. Now `earlierDebitsOf`
+      (`lib/billing/earlier-debits.ts`) re-reads, at the gateway, every
+      CLOSED automatic attempt of the invoice whose debit was sent, and
+      answers `clear`, `paid` (captured: filed for a person through
+      `fileClosedAttemptPayment`, `automatic: true`), `unsettled` (a payment
+      neither failed nor captured) or `unknown` (unreadable; it fails
+      closed). It is asked in three places, and only `clear` lets money
+      move: (a) the collect pass, before a retry (`history.count > 0`, so a
+      first try costs no gateway call): anything else is `pending` this run;
+      (b) the debit pass, last before the claim, because its try started a
+      day or more earlier: `paid` withdraws the attempt
+      (`earlier_debit_paid`), the others wait and end the try unsent after
+      `GATEWAY_SILENCE_DEADLINE_HOURS`; (c) `startInvoicePayment`: `paid`
+      answers `ALREADY_CAPTURED_INVOICE_MESSAGE`, `unsettled`
+      `PAYMENT_BEING_CONFIRMED_MESSAGE`. `findPaymentsOnClosedCheckouts` now
+      also reads an automatic attempt whose debit was sent (never one that
+      ended before its debit: nothing but our own call pays a recurring
+      order). The operator queue names such an item "A renewal debit recorded
+      as failed was captured later" (`LATE_DEBIT_COPY`). ★★ AND THE STORE IS NOT DOWNGRADED MEANWHILE (fifth review, same
+      day). The invoice stays open while the item waits for a person, and
+      grace used to run out on it: a merchant who had paid dropped to Free
+      with their payment in the queue. `downgradeExpired` now asks
+      `renewalPaymentHeld(storeId, currentCycleSeq)` (earlier-debits.ts)
+      before its claim and leaves the store as it is (`heldForPayment` in the
+      summary, `billing.downgrade_held_for_payment` in the log) while the
+      invoice of the cycle being entered is `open` and an unresolved
+      (`open` or `manual_review`) `closed_checkout_paid` item holds a payment
+      for EXACTLY what it owes (the gateway's amount, else the closed
+      attempt's; against the total less applied credits). A read that fails
+      holds too. A payment of another amount holds nothing, a cancelled plan
+      still ends on its day, and a person closing the item without settling
+      the invoice lets the next run downgrade. An alert is defined for the
+      filing line (`docs/monitoring.md` 29; the owner applies it). ⚠ The
+      payment is still not applied or refunded automatically, and the
+      merchant still sees an unpaid renewal and is asked to pay until a
+      person settles it (applying it automatically would need the payment
+      on a second attempt, which the unique index on payment ids forbids). Tests:
+      `earlier-debits.test.ts`, the worker, debit pass, Pay now, webhook and
+      reconcile tests, and scenario 27 of the hour-by-hour suite (one debit
+      in all, and no downgrade when grace ends; it fails with two debits when
+      the check always says clear, and with a downgrade when the hold is
+      removed).
+    - **★★ PR #303 FULL RE-REVIEW (22 Nov 2026, sm-AnuragGoyal; four
+      payments that could be taken and recorded nowhere).**
+      (1) A PAYMENT ON A CLOSED CHECKOUT IS NEVER DROPPED. Closing an attempt
+      does not close its Razorpay order: the order stays payable from a
+      Checkout window left open in another tab. Pay now closes a checkout
+      whose amount changed (`amount_changed`) and enrolment one whose GST,
+      plan or rail changed, each on the gateway's word that nobody had paid
+      YET; a payment made afterwards landed on a closed attempt, the state
+      machine rightly refused it, and nothing recorded it. Now
+      `fileClosedAttemptPayment` (`collect.ts`) files it for a person as a
+      `state_conflict` item with repair key `closed_checkout_paid:<payment>`
+      (once per payment in any status, by `billing_reconciliation_repair_once`;
+      never when a sibling attempt on the same order recorded that payment)
+      and logs `billing.payment_on_closed_attempt` as an error. Three paths
+      call it: the webhook (`applyBillingPaymentEvent` checks the attempt's
+      state FIRST, before its draft-invoice and amount exits, and answers
+      `closed_attempt`); the Pay now confirm (`confirmInvoicePayment` checks
+      a signature that fails for the newest order against the invoice's
+      closed attempts, `closedCheckoutSignedFor`, and answers
+      `PAID_ON_CLOSED_CHECKOUT_MESSAGE` where it used to say "We couldn't
+      verify that payment."); and the hourly reconcile
+      (`findPaymentsOnClosedCheckouts`: MANUAL attempts closed in the last 72
+      hours that hold an order, 100 a pass, `paidAfterClose` in the summary).
+      Nothing is applied or refunded automatically: the amount may not be the
+      one now due and the invoice may since have been paid. The operator
+      queue names it "Payment made on a checkout that had been closed" with
+      what to check and a link to the store; StoreMink's refund tools cannot
+      reach it (it is on no captured attempt), so the refund is made in the
+      Razorpay dashboard. ⚠ The enrolment, plan-change and location confirms
+      do not have the stale-tab message; the webhook and the hourly pass
+      cover their closed attempts.
+      (2) A BUSY ANSWER ON A READ IS NOT A REFUSAL. `failureOutcome`
+      (`lib/payments/razorpay.ts`) classes 408, 425 and 429 on a GET as
+      `unknown`; they were `rejected` like every 4xx, which callers read as
+      "these keys cannot read this order", so `settleBeforeGatewayChange`
+      skipped a paid order read in a busy minute, the store disconnected, and
+      the reaper later cancelled the order with its stock and credit given
+      back. On a write they stay `rejected` (turned away before anything was
+      created).
+      (3) AN ORDER ID LEAVES THE SERVER ONLY ONCE ITS ATTEMPT HOLDS IT.
+      `recordGatewayOrder` (`collect.ts`) is the one write the four checkout
+      starts use (Pay now, enrolment, plan change, extra locations): when the
+      attempt could not be moved to `processing` with its order, the start
+      answers "Couldn't start the payment", logs
+      `billing.checkout_order_unrecorded` and closes the attempt
+      (`order_unrecorded`) so the merchant can try again at once. The result
+      of that write used to be ignored and the order id returned anyway, so a
+      merchant could pay an order nothing knew about, and
+      `closeOrderlessAttempts` then closed the attempt as "never started".
+      (4) The image provider's unrecorded submits and shared keys: see
+      § ElevenLabs image provider.
+      Tests beside each module (16 mutants, all caught). No migration. No
+      Help Centre update: no merchant step changes (one new message in a rare
+      case).
+    - **★★ A WAITING ORDER IS RESUMED ONLY WHEN IT IS THE ORDER BEING ASKED
+      FOR (PR #303 follow-up review, 22 Nov 2026).** Item 4's first fix
+      resumed whenever the products and quantities matched, so a shopper who
+      came back to correct their address, or to switch to collection, was
+      handed the old order to pay: the old total, the parcel to the old
+      address. `placeOrder` now decides between three cases, before anything
+      is priced, reserved or written, for an earlier order of this shopper's
+      that holds the same cart and is still inside its payment window.
+      (1) THE SAME ORDER (paying online, the store still takes online
+      payments, and nothing the shopper chose differs): resumed on its own
+      Razorpay order (`resumed: true`). One Razorpay order takes one payment,
+      so reopening it cannot charge twice. (2) SOMETHING CHANGED, or another
+      way to pay was chosen, AND NOBODY IS PAYING THE OLD ORDER: the old
+      order is cancelled with everything it held given back, and the new
+      order is placed as asked. (3) SOMETHING CHANGED AND A PAYMENT MAY STILL
+      LAND ON THE OLD ORDER: no second order. The result is an `error` with
+      `unfinished` (`orderId`, `orderRef`, `minutesLeft`, and `payment` while
+      the store takes online payments): "A payment for this cart is still
+      being processed on order X. If you approved it, that order will be
+      confirmed shortly. To order with your changes instead, try again in
+      about N minutes." This covers cash on delivery too (it used to place a
+      second order beside the pending approval).
+      `lib/orders/checkout-details.ts` (pure, no imports) is the comparison:
+      `checkoutChanges(order, wanted)` returns what differs out of address,
+      phone, billing address, notes, coupon, delivery or collection, the
+      shop, the delivery option and its price. ★ CHOICES, NEVER A RECOMPUTED
+      TOTAL: the waiting order already holds the shopper's store credit, its
+      coupon use and its stock, so pricing the cart again differs for
+      reasons that are not the shopper's doing. ★ It fails toward "changed":
+      anything missing or unreadable on either side is a difference, and a
+      delivery with no option stated by the page is one too. In
+      `lib/orders/pending-payments.ts`: `waitingOrderChanges(orderId, wanted)`
+      reads the order's own columns (null when it cannot, which the caller
+      treats as changed); `retireWaitingOrder(order, creds)` asks Razorpay
+      about the gateway order and cancels through `expireUnpaidOrder` only
+      when `orderIsUntouched` says so (never opened, or every payment failed;
+      the rule Plans & Billing uses for its own checkouts), answering
+      `in_flight` for money on it, an approval still pending, a failed read,
+      or a payment that won the claim in the same instant;
+      `minutesUntilLapse` is the time left in the window.
+      `shippingAddressOf`, `orderNotesOf` and `billingAddressOf`
+      (checkout-actions) build those values once, for the order row and for
+      the comparison, so both sides are trimmed and capped alike.
+      ★ THE PAGE NEVER REOPENS AN OLD ORDER BY ITSELF. Its "Retry Payment"
+      state is matched on `orderKey` (the cart plus fulfilment, shop,
+      delivery option, address, billing address and note), so once any of
+      them changes Place order goes to the server. What the check on page
+      load finds, and what case 3 returns, is shown as a toast with a
+      "Continue that payment" action: an explicit choice to pay that order
+      as it was placed. A payment that still arrives on a cancelled order
+      (its Razorpay order stays payable from a window left open) is recorded
+      on it by the webhook, the shopper's callback or the hourly late-payment
+      sweep, which shows the money as owed back and tells the merchant;
+      nothing refunds it automatically, as for any order that lapsed.
+      Tests: `lib/orders/checkout-details.test.ts`,
+      `lib/orders/pending-payments.test.ts`, `checkout-actions.test.ts`
+      (seven mutants, all caught). ⚠ The checkout page has no test file and
+      was not run in a browser. No Help Centre update: "no second order is
+      started" still holds, and no merchant step changes.
+    - **★★ THREE AUTOMATIC TRIES, 24 HOURS APART, THEN THE MERCHANT PAYS BY
+      HAND (owner decision, 21 Nov 2026).** A declined debit leaves the
+      invoice `open`, and the hourly pass re-reads every subscription inside
+      the collection window, so it used to open a new attempt and debit the
+      mandate on every run: about 140 debits from T-4d to the end of grace.
+      The rule is pure: `autoCollectDecision` in `cycle.ts`
+      (`AUTO_COLLECT_MAX_ATTEMPTS` 3, `AUTO_COLLECT_RETRY_HOURS` 24), fed by
+      `automaticAttemptsOn` in `collect.ts` (a count that cannot be read is
+      "not this run", never "no tries yet"). ★★ A TRY IS A DEBIT THAT WAS
+      SENT (PR #303 review, 22 Nov 2026). Every automatic attempt on the
+      invoice used to count, whatever became of it, so attempts that never
+      asked the bank for money (a scheduled debit withdrawn by "Pay now
+      instead", a start that timed out, a notice that never arrived) used the
+      three tries up: the merchant was told autopay had stopped, and grace
+      ran, on a mandate nobody had tried. `automaticAttemptsOn` now returns
+      `count` (the TRIES: `debit_sent_at` or a payment id is set) and
+      `starts` (every attempt except one cancelled before its debit); the
+      rule stops at three tries, or at the backstop
+      `AUTO_COLLECT_MAX_STARTS` (6 starts, so an invoice whose attempts keep
+      ending before their debit does not start one a day until grace ends).
+      `autoCollectExhausted` is the one test both the next try and
+      `announceAutopayStopped` use; the 24 hours still run from the newest
+      attempt of any kind; the email counts starts. `collectOne`
+      asks it only when the debit would really be sent (`route.auto`):
+      `wait` is `pending`, `exhausted` is `manual`, and the invoice stays
+      open on Plans & Billing for the cycle turn to open grace on.
+      ★ THE ASKING: when the last try is recorded failed,
+      `announceAutopayStopped` (`renewal-worker.ts`) emails
+      `autopayStoppedTemplate` ("Automatic payment didn't go through", the
+      amount, the invoice, how many tries, and the day to pay by while it is
+      still ahead) and records `subscription.invoice_due` in-app. It is
+      called only where an attempt becomes `failed` (the collect pass for a
+      debit refused at once, reconciliation for one that failed later), so it
+      is said once, and it re-reads the invoice (still `open`, this store's,
+      a subscription invoice) and the count itself.
+      ★ A DEBIT THE GATEWAY REPORTS FAILED IS FAILED AT ONCE:
+      reconciliation (`reconcile.ts`) used to read only "not captured" and
+      wait `FAIL_AFTER_HOURS` (72), which held the next try and the grace
+      clock back three days. For a `mode = 'automatic'` attempt whose order
+      has payments and every one reads `failed`, it now settles `failed`
+      (`gateway_failed`) on that pass. Never for a manual checkout: its order
+      stays payable and a failed try in the window is routinely followed by
+      one that works. Tests: `cycle.test.ts`, `collect.test.ts`,
+      `renewal-worker.test.ts`, `reconcile.test.ts`, `dunning.test.ts`,
+      `billing-emails.test.ts`. Help: 0279 adds one sentence to the invoices
+      guide.
+    - **★★ THE REST OF THE AUDIT'S OPEN BILLING ITEMS, CLOSED (21 Nov
+      2026).**
+      1. **The passes page.** `collectDueRenewals`, `evaluateCycleTurns` and
+         `downgradeExpired` each read "the first 50 rows" with no ORDER BY,
+         and most of those rows were still there an hour later, so past a few
+         hundred subscribers the same 50 could come back every run. Each now
+         sorts oldest first by (time, store), takes `after: PassCursor`, and
+         returns `next` when its page was full; the collect query also skips a
+         subscription whose next invoice is already `paid`. The cron's
+         `drain` keeps asking for the next page until a short one, an error,
+         40 pages or 180 seconds, adds the counts up, and reports `more` only
+         when a pass stopped with a cursor left.
+      2. **An attempt that never got a gateway order** (starting a payment
+         timed out, or the request died between opening the attempt and
+         creating the order) was skipped by reconcile for ever, because it
+         asks by order id: the invoice read `processing` indefinitely, the
+         cycle turn waited on it, and the store kept a plan nobody paid for.
+         `closeOrderlessAttempts` settles such attempts `failed`
+         (`no_gateway_order`) once they are 15 minutes old: no order id ever
+         reached a browser or a debit, so no money can move on them.
+      3. **An automatic debit whose order never got a payment** is failed
+         after `AUTO_NO_PAYMENT_FAIL_AFTER_HOURS` (6), not 72: the renewal
+         pass records the order before it sends the debit and nothing else
+         can pay a recurring order.
+      4. **A manual payment is refused while an earlier one is `unknown`**
+         (`hasUnknownAttempt` in `collect.ts`, asked by `startInvoicePayment`
+         before it opens an attempt; `PAYMENT_BEING_CONFIRMED_MESSAGE`). The
+         in-flight index does not cover `unknown`, so a merchant could pay by
+         hand over an automatic debit still going through. Items 2 and 3 are
+         what keep that refusal short.
+      5. **StoreMink's own Razorpay webhook acts on `payment.captured` and
+         `payment.failed`** (`applyBillingPaymentEvent`,
+         `lib/billing/webhook.ts`): the attempt is found by its gateway order
+         and settled through `settleAttempt`, the plan advanced, and a failed
+         automatic debit that was the last try asks the merchant to pay. It
+         leaves alone a payment on an UNISSUED invoice (an on-session
+         purchase still inside its own checkout), a failed try in a manual
+         checkout, and an amount or currency that differs from the attempt's.
+         Always 200; the hourly reconcile stays the source of truth.
+         Both events are ticked on the live webhook for
+         `https://storemink.com/api/webhooks/razorpay` (owner, 21 Nov 2026).
+
+      Tests: `renewal-worker.test.ts`, `reconcile.test.ts`,
+      `manual-pay.test.ts`, `collect.test.ts`, `webhook.test.ts`, the billing
+      cron route test and `app/api/webhooks/razorpay/route.test.ts`. No
+      merchant step changes, so no Help Centre update.
+      ★★ THE RENEWAL DEBIT IS TWO STEPS, A NOTICE AND THEN THE DEBIT (21 Nov
+      2026, migration 0281). The 21 Nov test-mode run
+      (docs/autopay-verification.md) registered a mandate through the real
+      test Checkout with everything working as built, and then Razorpay
+      refused the renewal debit with HTTP 400 "The requested URL was not found
+      on the server." The cause was StoreMink's own flow: Razorpay requires
+      the renewal's ORDER to carry `payment_capture` and a `notification`
+      object (the pre-debit notice), and allows the debit only 36 hours 5
+      minutes after that notice is delivered for a card (25 hours for UPI).
+      The old code created a plain order and debited it at once, so every
+      automatic renewal was refused. Rebuilt:
+      1. **Step 1, the collect pass.** `collectOne` first asks the gateway
+         whether the mandate still stands (`verifyMandate`,
+         `lib/billing/mandate-check.ts`; only a `confirmed` token may be
+         debited, and the customer can cancel or pause it at their bank), so
+         the one issue notice says "nothing to do" or "pay this" truthfully.
+         `collectInvoice` then asks `RecurringGateway.notify` for the
+         notified order and records the attempt `processing` with the order
+         id and `debit_after`. No money moves.
+      2. **Step 2, the debit pass.** `sendDueDebits`
+         (`lib/billing/debit-pass.ts`), run by the same hourly job after
+         collect and before reconcile, takes each automatic attempt whose
+         `debit_after` has passed and re-reads everything that can have
+         changed: the invoice (still owed), the plan (`cycleRefusal`: not
+         cancelled, not ended), StoreMink's mandate record, the mandate at the
+         gateway, and the notice (`readNotice`: delivered, and its period
+         passed by the gateway's own clock). Then ONE conditional write claims
+         the debit (`debit_sent_at`, set only while null), and only the
+         claimant calls `POST /payments/create/recurring`.
+      3. **A try is a notice plus a debit**, so the three tries fall about a
+         day and a half apart for a card (debits at about T-2.5d, T-1d and
+         just after T0); the invoice is `processing` meanwhile, so no grace
+         starts on a payment in flight.
+      4. **An attempt is never closed over a debit in flight.** Every write
+         that ends a notified attempt without debiting it (plan cancelled,
+         invoice closed, mandate gone, notice never delivered) moves it only
+         while `debit_sent_at` is null (`settleAttempt`'s `onlyIfUnsent`): a
+         closed attempt never reopens, so a capture arriving afterwards would
+         be ignored.
+      5. **Waiting ends.** A gateway that does not answer decides nothing for
+         that run, but a notified attempt holds its invoice `processing` and
+         so holds off grace. After `GATEWAY_SILENCE_DEADLINE_HOURS` (24) past
+         its debit time the try is failed, a notice undelivered
+         `NOTICE_DELIVERY_DEADLINE_HOURS` (12) past it likewise, and at issue
+         an unanswered mandate check holds the invoice back at most
+         `MANDATE_CHECK_HOLD_HOURS` (24) before it is issued to pay by hand.
+         ⚠ Razorpay answers a deleted mandate "The id provided does not
+         exist"; that is read as "could not be asked", never as cancelled,
+         because a wrong key or account answers the same for every mandate.
+      6. **The mandate record follows the gateway**: cancelled or rejected
+         becomes `revoked` or `failed`, expired `expired`, paused `unknown`
+         (and `active` again when resumed, unless a newer mandate took its
+         place). The call that takes it off `active` sends the "Autopay is no
+         longer active" email once (`announceAutopayStopped` with
+         `cause: "mandate"`).
+      7. **Cancelling withdraws a scheduled debit at once**
+         (`withdrawUnsentDebits`, from `cancelAtPeriodEnd`), and
+         `readNextInvoice` reads an invoice that is `processing` only for a
+         debit not yet sent as an unpaid invoice that won't be charged.
+      8. **Reconcile leaves a waiting attempt alone** and runs its 6-hour and
+         72-hour clocks from `debit_sent_at`.
+      9. **Plans & Billing** shows "Your renewal is scheduled" with "Autopay
+         on or after" the date (`PayableInvoice.autopayAt`) where it said
+         "Payment in progress"; the renewal email says the bank or card
+         issuer sends a notice first.
+      10. **"Pay now instead" (22 Nov 2026, owner's request).** The scheduled
+          row has a button; after a confirmation naming the amount and what is
+          cancelled, `startPayInvoice(invoiceId, true)` reaches
+          `startInvoicePayment` with `insteadOfAutopay`, which withdraws the
+          scheduled debit (`withdrawUnsentDebits`, the guarded write of item
+          4, so a debit already sent is never replaced) and opens an ordinary
+          checkout. Only the literal `true` asks for it, and every refusal
+          that applies to any invoice is checked before the withdrawal.
+      11. **"Continue payment".** A payment window opened and closed without
+          paying left its invoice reading "Payment in progress" for 72 hours.
+          Now the row offers Continue payment (`PayableInvoice.resumable`) and
+          the start reopens the SAME gateway order after reading it: never one
+          that is paid, one with a payment waiting for approval, or one that
+          could not be read (`orderIsUntouched`, `lib/billing/order-state.ts`,
+          moved out of `enrol.ts` so both use one rule). A merchant who never
+          comes back is covered as before: reconciliation gives the attempt up
+          after 72 hours and the next automatic try starts with a new notice.
+
+      Tests: `debit-pass.test.ts`, `mandate-check.test.ts`, `gateway.test.ts`,
+      `collect.test.ts`, `renewal-worker.test.ts`, `reconcile.test.ts`,
+      `cancel.test.ts`, the billing cron route test,
+      `lib/payments/razorpay.test.ts`, `open-invoices.test.tsx`,
+      `manual-pay.test.ts`, `order-state.test.ts` and the email tests. Step 1 was run in Razorpay test mode through the real gateway
+      functions on 21 Nov 2026 (mandate read, notified order, notice read).
+      ⚠ NOT PROVEN, AND REFUSED WHEN TRIED: all four notified test orders
+      were debited on 23 Nov 2026 after their notice periods and every one
+      was refused (below); no renewal debit has ever been accepted.
+      ★★ A MANDATE IS REGISTERED `as_presented` (22 Nov 2026, owner's
+      request; `MANDATE_FREQUENCY` in `lib/billing/enrol.ts`). It was
+      `monthly` or `yearly`, and a mandate with a calendar frequency allows
+      one successful debit in each of its own cycles (NPCI's rule, on
+      Razorpay's UPI page). StoreMink's cycles are 30 and 365 days: a monthly
+      plan's debits creep a day earlier through every 31-day month until two
+      fall in one month and the second is refused, a yearly plan's does the
+      same in a leap year, and a merchant who moves from yearly to monthly
+      billing keeps a mandate that would refuse eleven renewals of twelve.
+      `as_presented` has no cycle of its own; the ceiling, the expiry, RBI's
+      ₹15,000 limit and the bank's notice still bound every debit. Accepted on
+      both rails in test mode. Razorpay's window then words the ceiling as
+      chargeable "anytime", so the review step says "The payment window shows
+      an upper limit, not what you pay ..." and the plan guide says the same.
+      ⚠ A mandate authorised earlier keeps its frequency (nothing can change
+      it, and the token read does not report it); a renewal refused for
+      falling in the same month is retried about a day and a half later.
+      ★★ AUTHORISED END TO END ON BOTH RAILS, TEST MODE, 22 Nov 2026
+      (docs/autopay-verification.md): Checkout, the signature and capture
+      checks, the token read (`confirmed`), `checkMandate`, the renewal's
+      notified order and its notice, on a card and on UPI Autopay (the default
+      rail, never authorised through this code before). Two defects it found,
+      fixed the same day in `lib/billing/gateway.ts`:
+      1. **UPI needs 25 hours' notice, not the 24 Razorpay's page states.**
+         The API refused 24 h 25 min ("Debit can be attempted 25 hours after
+         sending the pre-debit notification") and exactly 25 h, and accepted
+         25 h 01 min. With 24 in `NOTICE_PERIOD_MS` every UPI renewal was
+         refused at its first step. Now 25 h 5 min.
+      2. **A card token's `expired_at` is not its mandate's expiry**: on a
+         five-year mandate it read the last second of the CURRENT MONTH with
+         the status `confirmed`. `checkMandate` ended any confirmed token past
+         that date, so every card mandate would have been marked expired on
+         the 1st, for good. A card mandate is now ended only by its status
+         (a token past the date is logged,
+         `billing.mandate_token_past_expiry`); a UPI token's `expired_at` is
+         its real five-year expiry and still ends it.
+
+      ★★ THE DEBIT ITSELF WAS TRIED FOUR TIMES ON 23 NOV 2026 AND REFUSED
+      EVERY TIME (test mode; docs/autopay-verification.md, "23 Nov 2026: all
+      four test debits refused"): UPI `as_presented` at 02:14 IST, card
+      `monthly` at 11:37 and 11:39, card `as_presented` at 13:30. With the
+      notice delivered, its period passed, the mandate confirmed and
+      `readNotice` ready, Razorpay answered HTTP 400 "The requested URL was
+      not found on the server" (source `internal`), counted an attempt on the
+      order and created no payment: the answer the plain order got on 21 Nov.
+      So the notification is necessary and not shown to be sufficient, and
+      the cause is not the rail or the frequency: test mode or the account's
+      setup, which only Razorpay can say. `mapGatewayStatus` has never met a
+      real debit's status, and `as_presented` on a second debit in a month is
+      untested (no first debit was accepted). The debit pass records it
+      as a refused try (`gateway_rejected`), which is true and safe. Since
+      that night a refused debit is logged, where it left no line before:
+      `billing.debit_pass.refused` (a warning, every refusal, with the
+      gateway's words) and `billing.gateway.debit_unavailable` (an error, for
+      this answer only, `isDebitUnavailableAnswer` in
+      `lib/billing/gateway.ts`: it is about the gateway account, not one
+      merchant's mandate). `RECURRING_CHARGE_VERIFIED` is unchanged (owner's
+      decision). No merchant step changes, so no Help Centre update.
+      ★ THE WHOLE RENEWAL RUNS HOUR BY HOUR IN A LOCAL TEST
+      (`lib/billing/renewal-scenarios.local.test.ts`, run with
+      `npm run billing:scenarios:local`; opt-in, so plain `vitest` reports it
+      as skipped): twenty-six scenarios on dummy stores whose subscriptions
+      began months ago, from a Free store subscribing to a downgrade, the hourly job's passes run once per
+      simulated hour against local Postgres, with only Razorpay's HTTP API
+      simulated (holding the rules seen in test mode, and failing the run on
+      an early or a second debit). Rollback-only. The scenario table is in
+      docs/autopay-verification.md. `lib/ai/quota.local.test.ts`
+      (`AI_QUOTA_LOCAL_TEST=1`) covers the Mink credit window on stores
+      created in previous months.
+      Help: `0281` rewrites the invoices guide's autopay sentence; `0282` adds
+      Pay now instead and Continue payment to it; `0283` adds the upper limit
+      paragraph to the plan guide.
+      (A credit pack paid in a tab that then closed is settled by
+      the webhook and the hourly job: `lib/ai/credit-purchase.ts`.)
+
     - **★★ THE AMOUNT PICKS THE MANDATE RAIL, AND SOMETIMES THERE ISN'T ONE**
       (`autopayRailFor`, `lib/billing/mandate-types.ts`). RBI's AFA-exempt limit
       is **₹15,000 on cards and UPI ALIKE** — the intuition that a card is more
@@ -25829,11 +27786,13 @@ way — an entry there is a deliberate act, not a way to silence the guard.
       in `lib/payments/razorpay.ts`; runbook in `docs/autopay-verification.md`).
       The API shapes come from Razorpay's published reference (2026-08-14), not
       inference. Two things shaped it:
-      - **★ A RECURRING CHARGE IS TWO CALLS.** `/payments/create/recurring`
-        requires an `order_id`, so an order is created and then charged. The gap
-        between them is the risk — an order created and a charge we never got an
-        answer to is indistinguishable from one that worked — so every failure
-        maps deliberately and the DEFAULT is `unknown`, never `failed`. A
+      - **★ A RECURRING CHARGE IS TWO CALLS, A DAY OR MORE APART** (since 21
+        Nov 2026; see "THE RENEWAL DEBIT IS TWO STEPS" above).
+        `/payments/create/recurring` requires an `order_id` created with its
+        pre-debit `notification`, and accepts the debit only after the notice
+        period. A debit we never got an answer to is indistinguishable from
+        one that worked, so every failure maps deliberately and the DEFAULT is
+        `unknown`, never `failed`. A
         missing status is read as `created` (Razorpay documents file-based bank
         charging leaving it there), never as `captured`.
       - **★★ ₹99,999 IS RAZORPAY'S CEILING on `token.max_amount`**, and Pro
@@ -25850,12 +27809,12 @@ way — an entry there is a deliberate act, not a way to silence the guard.
         when credentials exist. Roll back the flag on any provider-shape mismatch.
       - **★★ THE PROVIDER ORDER IS DURABLE BEFORE THE DEBIT.** Razorpay's
         published recurring API does not promise a provider-side idempotency
-        header. `collectInvoice` therefore gives the provider seam a write-once
-        recorder; `chargeMandateViaRazorpay` persists `provider_order_id` before
-        calling `/payments/create/recurring`. A timeout can then be reconciled by
-        asking for payments on that order, and failure to persist the handle
-        refuses the debit. An order-creation timeout is a known non-charge
-        because the debit endpoint was never called.
+        header. `collectInvoice` (step 1) records `provider_order_id` and
+        `debit_after` on the attempt when the notified order is created, a day
+        or more before the debit pass sends anything, and the debit pass reads
+        only attempts that carry an order. A timeout can then be reconciled by
+        asking for payments on that order. An order-creation timeout is a
+        known non-charge because the debit endpoint was never called.
       - **★★ THE AUTHORISED CEILING IS DURABLE BEFORE CHECKOUT**
         (`billing_09`). Razorpay's payment response supplies the token but not
         the `token.max_amount` shown to the merchant. The exact server-computed
@@ -28297,7 +30256,8 @@ npm run dev -- --no-fs-cache  # force it OFF (DEV_FS_CACHE=0); default is OFF on
 npm run dev:all     # ↑ dev + the Cloud SQL Auth Proxy together (concurrently) — one command
 npm run dev:all:lean # ↑ force the 2 GB heap + proxy (normally identical on this 8 GB Mac)
 npm run dev:all:full # ↑ uncapped dev + proxy
-npm run db:local:start  # ★ start the LOCAL dev Postgres (Homebrew @17, port 5544)
+npm run db:local:init   # Windows only, once: create the cluster in ~/pgsql-data
+npm run db:local:start  # ★ start the LOCAL dev Postgres (Homebrew @17 or Windows ~/pgsql, port 5544)
 npm run db:local:status # cluster state + storemink_local table count
 npm run db:local:sync   # rebuild storemink_local from staging (add -- --schema-only to skip data)
 npm run db:local:psql   # psql into storemink_local
@@ -28481,8 +30441,10 @@ see `docs/mink-sarvam-realtime-audit-2026-10-27.md` for existing latency evidenc
   still a draft", `docs/monitoring.md` 23 and 24, applied by the owner after
   the GST release, and the four takedown alerts, `docs/monitoring.md` 25 to 28,
   watching the every-minute takedown follow-ups and the `send-emails`
-  schedule, applied by the owner after the takedown release: 28 policies
-  defined), three uptime checks (storemink.com, a merchant store and its
+  schedule, applied by the owner after the takedown release, and one
+  payments alert, `docs/monitoring.md` 29, for a merchant's payment held on
+  a closed attempt, applied by the owner after the payments release: 29
+  policies defined), three uptime checks (storemink.com, a merchant store and its
   dashboard login, every 60 s from USA, Europe and Asia Pacific), the
   log-based counter `mink_chat_run_failures` (and, defined for the takedown
   release, `moderation_followups_ran`) and one email channel ("StoreMink
@@ -28631,6 +30593,15 @@ model refused`, logError); the fallback is final, so the worst case is about
   Sarvam Saaras v4 requires server-only **`SARVAM_API_KEY`**. The Cloud Run
   service account holds least-privilege **`roles/speech.client`** to call
   Speech-to-Text. Neither credential is exposed to the dashboard.
+  Theme Studio and storefront redesign photos are drawn by Google unless a
+  platform operator chooses ElevenLabs on the console's Mink page
+  (`image_generation_settings`), which needs server-only
+  **`ELEVENLABS_API_KEY`** (Cloud Build `_ELEVENLABS_API_KEY`, also on the
+  Theme Studio workers' allowlist); chosen without the key, Google still
+  draws (§ ElevenLabs image provider). **`ELEVENLABS_KEY_EXCLUSIVE`** (`true`
+  only where no other environment uses that key; Cloud Build
+  `_ELEVENLABS_KEY_EXCLUSIVE`, empty by default) allows the search for a lost
+  submit's job.
   Theme Studio reads **`THEME_STUDIO_PROVIDER`** (code default `fake`, the offline
   test provider; `vertex-gemini` sends new runs to the allowlisted models
   and must not be set until the dedicated worker job exists — §4

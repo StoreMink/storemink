@@ -13,6 +13,12 @@ vi.mock("@/lib/payments/crypto", () => ({
 vi.mock("@/lib/payments/razorpay", () => ({
   validateCredentials: vi.fn(),
 }));
+vi.mock("@/lib/payments/provider", () => ({
+  lookupStoreGateway: vi.fn(),
+}));
+vi.mock("@/lib/orders/pending-payments", () => ({
+  settleBeforeGatewayChange: vi.fn(),
+}));
 
 // The ported data layer: with* runners invoke the callback with the mock db.
 const dbHolder = vi.hoisted(() => ({ current: null as any }));
@@ -32,6 +38,8 @@ import {
 } from "./payment-provider-actions";
 import { getManagerUserId } from "@/app/dashboard/lib/access";
 import { validateCredentials } from "@/lib/payments/razorpay";
+import { lookupStoreGateway } from "@/lib/payments/provider";
+import { settleBeforeGatewayChange } from "@/lib/orders/pending-payments";
 
 const STORE = "a0000000-0000-4000-8000-000000000001";
 const KEY_ID = "rzp_live_abc123XYZ";
@@ -47,6 +55,122 @@ beforeEach(() => {
     ok: true,
     data: true,
   } as any);
+  // Nothing connected yet, so there is nothing waiting on an old account.
+  vi.mocked(lookupStoreGateway).mockResolvedValue({ status: "none" });
+  vi.mocked(settleBeforeGatewayChange).mockResolvedValue(CLEAR);
+});
+
+const OLD_CREDS = { keyId: "rzp_live_old000000", keySecret: "old_secret" };
+const CLEAR = {
+  ok: true,
+  paid: 0,
+  expired: 0,
+  waiting: 0,
+  unreadable: 0,
+  clearBy: null,
+};
+const connected = (enabled = true) =>
+  vi.mocked(lookupStoreGateway).mockResolvedValue({
+    status: "connected",
+    gateway: { creds: OLD_CREDS, enabled },
+  } as any);
+
+// 21 Nov 2026: the keys on file are the only ones that can say whether an
+// order still waiting for payment was paid, so they are never removed or
+// replaced while one is waiting.
+describe("★★ changing the Razorpay account while payments are in progress", () => {
+  const WAITING = {
+    ...CLEAR,
+    ok: false,
+    waiting: 2,
+    clearBy: "2026-11-21T10:15:00.000Z",
+  };
+  const basic = () =>
+    (dbHolder.current = makeDbMock({
+      selectQueue: [[storeRow("basic")]],
+      returning: [{ store_id: STORE }],
+    }));
+
+  it("disconnect settles the waiting orders with the keys on file, then removes them", async () => {
+    connected();
+    const res = await disconnectRazorpay();
+    expect(res).toEqual({ success: true });
+    expect(settleBeforeGatewayChange).toHaveBeenCalledWith(
+      STORE,
+      OLD_CREDS,
+      null,
+    );
+    expect(dbHolder.current.calls.delete).toHaveLength(1);
+  });
+
+  it("★★ disconnect is REFUSED while a payment is in progress, and says until when", async () => {
+    connected();
+    vi.mocked(settleBeforeGatewayChange).mockResolvedValue(WAITING);
+    const res = await disconnectRazorpay();
+    expect(res.error).toContain("2 online payments are still in progress");
+    expect(res.error).toContain("3:45 pm IST");
+    expect(res.error).toContain("Nothing was changed");
+    expect(dbHolder.current.calls.delete).toHaveLength(0);
+  });
+
+  it("★ the gateway is paused while it checks, and put back as it was on a refusal", async () => {
+    connected(true);
+    vi.mocked(settleBeforeGatewayChange).mockResolvedValue(WAITING);
+    await disconnectRazorpay();
+    const switched = dbHolder.current.calls.set.map((s: any) => s.enabled);
+    expect(switched).toEqual([false, true]);
+  });
+
+  it("a gateway that was already paused is not switched at all", async () => {
+    connected(false);
+    vi.mocked(settleBeforeGatewayChange).mockResolvedValue(WAITING);
+    await disconnectRazorpay();
+    expect(dbHolder.current.calls.set).toHaveLength(0);
+  });
+
+  it("★★ connecting ANOTHER account is refused while a payment is in progress", async () => {
+    basic();
+    connected();
+    vi.mocked(settleBeforeGatewayChange).mockResolvedValue({
+      ...WAITING,
+      waiting: 1,
+    });
+    const res = await saveRazorpayCredentials(KEY_ID, SECRET);
+    expect(res.error).toContain("1 online payment is still in progress");
+    expect(res.error).toContain("a different account can't confirm them");
+    expect(dbHolder.current.calls.insert).toHaveLength(0);
+    // The new keys are handed over so keys on the SAME account pass.
+    expect(settleBeforeGatewayChange).toHaveBeenCalledWith(STORE, OLD_CREDS, {
+      keyId: KEY_ID,
+      keySecret: SECRET,
+    });
+  });
+
+  it("a key change that can still read the waiting orders is saved", async () => {
+    basic();
+    connected();
+    const res = await saveRazorpayCredentials(KEY_ID, SECRET);
+    expect(res).toEqual({ success: true });
+    expect(dbHolder.current.calls.insert).toHaveLength(1);
+  });
+
+  it("★ fails closed when Razorpay cannot be asked", async () => {
+    connected();
+    vi.mocked(settleBeforeGatewayChange).mockResolvedValue({
+      ...CLEAR,
+      ok: false,
+      unreadable: 1,
+    });
+    const res = await disconnectRazorpay();
+    expect(res.error).toContain("couldn't check your in-progress payments");
+    expect(dbHolder.current.calls.delete).toHaveLength(0);
+  });
+
+  it("a connection that cannot be read protects nothing, so it never blocks", async () => {
+    vi.mocked(lookupStoreGateway).mockResolvedValue({ status: "error" });
+    expect(await disconnectRazorpay()).toEqual({ success: true });
+    expect(settleBeforeGatewayChange).not.toHaveBeenCalled();
+  });
 });
 
 // saveRazorpayCredentials — select #1 = the plan-gate stores read.
@@ -153,6 +277,8 @@ describe("getChannelState", () => {
       planAllowsOnlinePayments: true,
       // Whether a webhook EXISTS, never its signing secret.
       webhookConfigured: false,
+      // And whether Razorpay has ever delivered to it: nothing yet.
+      webhookLastEventAt: null,
       webhookUrl: null,
     });
     // The provider-row projection never asks for the encrypted secret column.

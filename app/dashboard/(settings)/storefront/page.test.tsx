@@ -7,6 +7,8 @@ const h = vi.hoisted(() => ({
   canManage: true,
   canBuild: true,
   canBrand: true,
+  installed: null as any,
+  installedError: null as Error | null,
 }));
 
 vi.mock("../../lib/access", () => ({
@@ -22,7 +24,13 @@ vi.mock("../../lib/access", () => ({
 vi.mock("@/lib/observability/logger", () => ({ logError: vi.fn(() => {}) }));
 vi.mock("@/lib/themes/runtime-registry", async () => {
   const meta = await import("@/lib/themes/meta");
-  return { getThemeCatalog: vi.fn(async () => meta.THEME_META) };
+  return {
+    getThemeCatalog: vi.fn(async () => meta.THEME_META),
+    resolveInstalledThemeDefinition: vi.fn(async () => {
+      if (h.installedError) throw h.installedError;
+      return h.installed;
+    }),
+  };
 });
 vi.mock("@/lib/themes/switch", () => ({
   loadThemeSwitchContext: vi.fn(async () => {
@@ -35,6 +43,7 @@ vi.mock("./storefront-client", () => ({
 }));
 
 import { requireSectionAccess } from "../../lib/access";
+import { resolveInstalledThemeDefinition } from "@/lib/themes/runtime-registry";
 import { StorefrontClient } from "./storefront-client";
 import StorefrontPage, { metadata } from "./page";
 
@@ -68,6 +77,9 @@ describe("Storefront page (server)", () => {
     h.canManage = true;
     h.canBuild = true;
     h.canBrand = true;
+    h.installed = null;
+    h.installedError = null;
+    vi.mocked(resolveInstalledThemeDefinition).mockClear();
   });
 
   it("is titled Storefront and still gated on the `themes` permission key", async () => {
@@ -86,6 +98,62 @@ describe("Storefront page (server)", () => {
     expect(props.library).toEqual([]);
     expect(props.canCustomise).toBe(true);
     expect(props.canEditBranding).toBe(true);
+  });
+
+  it("a theme in the library is read from the library, not the store's release", async () => {
+    h.context = contextFor(
+      { theme: { presetId: "vitrine", presetVersion: "1.0.0" } },
+      false,
+    );
+    await renderedProps();
+    expect(resolveInstalledThemeDefinition).not.toHaveBeenCalled();
+  });
+
+  it("★ a theme deleted from the library shows its own name and picture from the release the store kept", async () => {
+    h.installed = {
+      id: "vanta",
+      name: "Vanta",
+      catalog: {
+        previewImage: "https://storage.googleapis.com/x/vanta.webp",
+        industries: ["fashion"],
+        minPlan: "pro",
+      },
+    };
+    h.context = contextFor(
+      { theme: { presetId: "vanta", presetVersion: "1.0.0" } },
+      false,
+    );
+    const props = await renderedProps();
+    expect(resolveInstalledThemeDefinition).toHaveBeenCalledWith({
+      id: "vanta",
+      version: "1.0.0",
+    });
+    expect(props.currentId).toBe("vanta");
+    expect(props.current).toEqual({
+      id: "vanta",
+      name: "Vanta",
+      description:
+        "Your store uses a theme that is no longer in the library. It keeps working.",
+      previewImage: "https://storage.googleapis.com/x/vanta.webp",
+      industries: ["fashion"],
+      minPlanName: null,
+      locked: false,
+      previewSlug: null,
+      previewUnavailableReason: null,
+    });
+    expect(props.library).toEqual([]);
+    expect(props.canCustomise).toBe(true);
+  });
+
+  it("a failed read of that release keeps the page, naming the theme by its id", async () => {
+    h.installedError = new Error("db down");
+    h.context = contextFor(
+      { theme: { presetId: "vanta", presetVersion: "1.0.0" } },
+      false,
+    );
+    const props = await renderedProps();
+    expect(props.currentId).toBe("vanta");
+    expect(props.current).toBeNull();
   });
 
   it("Customise storefront needs Website Builder manage", async () => {

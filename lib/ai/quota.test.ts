@@ -42,6 +42,7 @@ import {
   AI_COPY_RATE_LIMITED_MESSAGE,
   AI_COPY_RATE_LIMITS,
   consumeAiQuota,
+  getMinkCreditCycle,
   refundAiQuota,
 } from "./quota";
 import { withService } from "@/lib/db/client";
@@ -56,7 +57,11 @@ const ACTOR = { actorId: ADMIN };
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-/** A Basic store on its legacy 10-a-month allowance, no paid cycle anchor. */
+/**
+ * A Basic store on its legacy 10-a-month allowance. The credit window is read
+ * from `stores` too (joined to the subscription): that second read finds no
+ * row here, so the window falls back to the calendar month.
+ */
 function basicStore(executeQueue: any[][]) {
   dbHolder.current = makeDbMock({
     selectByTable: {
@@ -69,12 +74,65 @@ function basicStore(executeQueue: any[][]) {
             comp_expires_at: null,
           },
         ],
+        [],
       ],
-      billing_subscriptions: [[]],
     },
     executeQueue,
   });
 }
+
+// Owner, 21 Nov 2026: the included allowance refreshes on the store's own
+// date. The pure rule is pinned in quota-cycle.test.ts; this is the read that
+// feeds it.
+describe("getMinkCreditCycle", () => {
+  const NOW = new Date("2026-11-21T10:00:00.000Z");
+
+  function windowRow(row: { startedAt: string | null; createdAt: string }) {
+    dbHolder.current = makeDbMock({ selectByTable: { stores: [[row]] } });
+    vi.mocked(withService).mockImplementation((fn: any) =>
+      Promise.resolve(fn(dbHolder.current.db)),
+    );
+  }
+
+  it("★★ a store with no paid cycle refreshes 30 days from the day it was created", async () => {
+    windowRow({
+      startedAt: null,
+      createdAt: "2026-10-18 14:45:30.120456+05:30",
+    });
+    expect(await getMinkCreditCycle(STORE, NOW)).toEqual({
+      period: "cycle:2026-11-17T09:15:30.120Z",
+      resetsAt: "2026-12-17T09:15:30.120Z",
+    });
+  });
+
+  it("★ a paid plan cycle is counted from its own start", async () => {
+    windowRow({
+      startedAt: "2026-11-09 08:00:00+00",
+      createdAt: "2026-01-03 00:00:00+00",
+    });
+    expect(await getMinkCreditCycle(STORE, NOW)).toEqual({
+      period: "cycle:2026-11-09T08:00:00.000Z",
+      resetsAt: "2026-12-09T08:00:00.000Z",
+    });
+  });
+
+  it("reads the store and its subscription in one query, from the store outwards", async () => {
+    windowRow({ startedAt: null, createdAt: "2026-10-18 00:00:00+00" });
+    await getMinkCreditCycle(STORE, NOW);
+    expect(dbHolder.current.calls.select).toHaveLength(1);
+    expect(dbHolder.current.calls.leftJoin).toHaveLength(1);
+  });
+
+  it("a failed read falls back to the calendar month and never throws", async () => {
+    vi.mocked(withService).mockRejectedValueOnce(new Error("db down"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await getMinkCreditCycle(STORE, NOW)).toEqual({
+      period: "2026-11",
+      resetsAt: "2026-12-01T00:00:00.000Z",
+    });
+    spy.mockRestore();
+  });
+});
 
 describe("consumeAiQuota", () => {
   beforeEach(() => {
@@ -324,9 +382,9 @@ describe("the low-balance notice after a take", () => {
   function storeAtThreeLeft(executeQueue: any[][]) {
     dbHolder.current = makeDbMock({
       selectByTable: {
-        // The take's plan read, then the notice's own.
-        stores: [[basicRow], [basicRow]],
-        billing_subscriptions: [[], []],
+        // The take reads the plan, then the credit window; the notice reads
+        // the window first, then the plan. Both window reads find no row.
+        stores: [[basicRow], [], [], [basicRow]],
         ai_usage: [[{ used: 7 }]],
         ai_credit_balances: [[{ balance: 0 }]],
       },

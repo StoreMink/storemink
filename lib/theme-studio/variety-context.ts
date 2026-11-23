@@ -70,6 +70,10 @@ export async function loadVarietyContext(
     ORDER BY c.updated_at DESC, c.theme_id LIMIT 76
   `);
   const entries = new Map<string, ExistingThemeFingerprint>();
+  // ★ Which of them are PUBLISHED is kept (with the name an operator knows
+  //   them by): a new theme is held to the publish floor against exactly
+  //   those, before anything is drawn (design-plan.ts, pipeline.ts).
+  const publishedRows = new Set<unknown>(published.rows);
   for (const row of [...published.rows, ...recent.rows] as {
     theme_id: string;
     package_json: unknown;
@@ -81,7 +85,15 @@ export async function loadVarietyContext(
     entries.set(row.theme_id, {
       themeId: row.theme_id,
       direction: intent.ok ? (intent.value.designDirection ?? null) : null,
-      fingerprint: themeFingerprint(pkg.value.definition),
+      // With the styling axis: a v34 draft is compared on its style rules
+      // too, against the themes that carry some.
+      fingerprint: themeFingerprint(pkg.value.definition, { styling: true }),
+      ...(publishedRows.has(row)
+        ? {
+            published: true,
+            name: pkg.value.definition.name.slice(0, 120),
+          }
+        : {}),
     });
   }
   for (const theme of THEME_DEFINITIONS)
@@ -89,7 +101,14 @@ export async function loadVarietyContext(
       entries.set(theme.id, {
         themeId: theme.id,
         direction: null,
-        fingerprint: themeFingerprint(theme),
+        // With the styling axis when it is one a new store can choose, as
+        // publishing compares it (publish-distinctness.ts).
+        fingerprint: themeFingerprint(theme, {
+          styling: theme.catalog.visibility === "public",
+        }),
+        ...(theme.catalog.visibility === "public"
+          ? { published: true, name: theme.name.slice(0, 120) }
+          : {}),
       });
   // Bundled fallback can grow independently of the published catalogue.
   const context = readVarietyContext([...entries.values()].slice(0, 100));

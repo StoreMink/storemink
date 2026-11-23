@@ -18,6 +18,7 @@ import {
 import { BuilderOverlay } from "@/app/(storefront)/components/sections/builder-overlay";
 import type { PageSectionItem } from "@/lib/sections/registry";
 import { getStoreSetting } from "@/lib/settings/resolve";
+import { builtInPage } from "./built-in";
 import "@/app/(storefront)/(pages)/shop/shop.css"; // .shop-card styles for product sections
 import "@/app/(storefront)/components/homepage/homepage.css";
 
@@ -58,7 +59,8 @@ export async function generateMetadata({
   }
 
   const page = await getPublishedPage(storeId, pageSlug);
-  if (!page) return {};
+  // No page of the merchant's own: a built-in one may live here (built-in.tsx).
+  if (!page) return (await builtInPage(pageSlug, storeId))?.metadata ?? {};
 
   const brand = await getStoreBrand();
   const title = page.seo_title || page.title || brand.name;
@@ -145,7 +147,13 @@ export default async function StorePage({ params, searchParams }: Props) {
   }
 
   const page = await getPublishedPage(storeId, pageSlug);
-  if (!page) notFound();
+  if (!page) {
+    // ★ Only now, with no page of the merchant's own at this address: the
+    //   built-in "Our stores" and "Saved items" pages (built-in.tsx).
+    const builtIn = await builtInPage(pageSlug, storeId);
+    if (builtIn) return <main>{builtIn.element}</main>;
+    notFound();
+  }
 
   return renderSections(page.published_sections ?? [], storeId, false);
 }

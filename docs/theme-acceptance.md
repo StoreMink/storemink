@@ -369,6 +369,14 @@ are warnings the operator may publish past.
   older, Publish starts a re-check on today's build first (about 3 to 5
   minutes, nothing redrawn), and the warnings the theme carries are recorded
   with the publish, with the rules version.
+- **No lookalikes (22 Nov 2026).** Publish refuses a theme that is under 50%
+  different from any theme already in the public catalogue (its own earlier
+  release excepted). The theme's page says so before Publish is pressed,
+  names the theme it resembles and what the two share (the layouts, the
+  product card, the homepage opening, the page colour, the fonts, the button
+  style, the style rules). The way past is a change to the theme, never an
+  override: ask for one that sets it apart, then publish
+  (`lib/theme-studio/fingerprint.ts` `publicationSimilarityBlocker`).
 
 The database enforces the core of it: a project reaches Ready to publish, or a
 publish attempt, only with a passed check run over the version's exact package

@@ -52,6 +52,7 @@ import {
   validateProjectInput,
   type CreateThemeStudioProjectInput,
   type ThemeStudioRestoreOutcome,
+  type ThemeStudioRestoreRelease,
 } from "@/lib/theme-studio/repository";
 import {
   discardProjectPreviews,
@@ -75,6 +76,8 @@ export interface ThemeStudioActionResult {
   ok: boolean;
   error?: string;
   id?: string;
+  /** Delete only: how many stores keep the deleted theme (their release). */
+  storesKept?: number;
 }
 
 const NOT_AUTHORIZED: ThemeStudioActionResult = {
@@ -292,8 +295,9 @@ export async function deleteThemeStudioProjectAction(
 ): Promise<ThemeStudioActionResult> {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
+  let storesKept: number;
   try {
-    await deleteThemeStudioProject(actor, input);
+    ({ storesKept } = await deleteThemeStudioProject(actor, input));
   } catch (error) {
     return failure(error, "delete theme");
   }
@@ -308,7 +312,7 @@ export async function deleteThemeStudioProjectAction(
   } catch (error) {
     logError("theme studio: deleted theme cache invalidation failed", error);
   }
-  return { ok: true };
+  return { ok: true, storesKept };
 }
 
 const MALFORMED: ThemeStudioActionResult = {
@@ -426,20 +430,25 @@ export async function restoreThemeStudioVersionAction(input: {
   ThemeStudioActionResult & {
     changed?: boolean;
     outcome?: ThemeStudioRestoreOutcome;
+    /** For a published design: its release, and the one new stores get. */
+    release?: ThemeStudioRestoreRelease;
   }
 > {
   const actor = await getThemeStudioActor();
   if (!actor) return NOT_AUTHORIZED;
   if (!Number.isInteger(input?.expectedRevision)) return MALFORMED;
   try {
-    const { changed, outcome } = await restoreThemeStudioVersion(actor, {
-      projectId: String(input.projectId),
-      versionId: String(input.versionId),
-      expectedRevision: input.expectedRevision,
-    });
+    const { changed, outcome, release } = await restoreThemeStudioVersion(
+      actor,
+      {
+        projectId: String(input.projectId),
+        versionId: String(input.versionId),
+        expectedRevision: input.expectedRevision,
+      },
+    );
     revalidatePath(STUDIO_PATH);
     revalidatePath(`${STUDIO_PATH}/${input.projectId}`, "layout");
-    return { ok: true, changed, outcome };
+    return { ok: true, changed, outcome, ...(release ? { release } : {}) };
   } catch (error) {
     return failure(error, "restore version");
   }

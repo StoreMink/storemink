@@ -39,13 +39,11 @@ import {
 import type {
   ThemeStudioProjectDetail,
   ThemeStudioRestoreOutcome,
+  ThemeStudioRestoreRelease,
   ThemeStudioVersionView,
 } from "@/lib/theme-studio/repository";
 import type { DistinctnessReport } from "@/lib/theme-studio/fingerprint";
-import type {
-  ThemeStudioBuildTimeRange,
-  ThemeStudioProgress,
-} from "@/lib/theme-studio/progress";
+import type { ThemeStudioProgress } from "@/lib/theme-studio/progress";
 import {
   Dialog,
   DialogContent,
@@ -121,16 +119,29 @@ export function restoredMessage(
   versionNumber: number,
   outcome: ThemeStudioRestoreOutcome | undefined,
   changed = true,
+  release?: ThemeStudioRestoreRelease,
 ): string {
   const design = designLabel(versionNumber);
-  if (!changed) return `${design} is already current.`;
+  // ★ An earlier published design is NOT what new stores get, and the words
+  //   never say it is: Make current does not move the catalogue.
+  const earlier =
+    outcome === "earlier_release" && release?.liveVersion
+      ? ` It was published as v${release.version}. New stores still get v${release.liveVersion}, and a change you send now starts from this design.`
+      : outcome === "earlier_release"
+        ? " It was published as an earlier version, and a change you send now starts from this design."
+        : "";
+  if (!changed) return `${design} is already current.${earlier}`;
   switch (outcome) {
+    case "earlier_release":
+      return `${design} is current.${earlier}`;
     case "ready_to_publish":
       return `${design} is current and Ready to publish.`;
     case "rechecking":
       return `${design} is current. Checking it again on today's StoreMink build, about 3 to 5 minutes.`;
     case "checking":
       return `${design} is current. Checking it now, about 3 to 5 minutes.`;
+    case "live":
+      return `${design} is current. It is the published design, so the theme is live on it.`;
     default:
       return `${design} is current.`;
   }
@@ -901,6 +912,7 @@ function MakeCurrentButton({
                 version.versionNumber,
                 result.outcome,
                 result.changed,
+                result.release,
               ),
             );
             onDone();
@@ -1012,7 +1024,11 @@ function DesignPicker({
                   <strong>{designLabel(design.versionNumber)}</strong>
                   {isCurrent ? (
                     <StudioBadge
-                      status={{ words: status.words, tone: status.tone }}
+                      status={{
+                        words: status.words,
+                        tone: status.tone,
+                        liveVersion: status.liveVersion,
+                      }}
                     />
                   ) : null}
                   {design.id === viewedId ? (
@@ -1271,8 +1287,10 @@ const OWN_INTENTS: readonly StudioActionKind[] = [
   ...PICTURES_INTENTS,
 ];
 const WORKING_ROWS = new Set([2, 5, 6]);
-const REVISABLE = new Set(["ready", "candidate", "approved"]);
-const RESTORABLE = new Set(["ready", "blocked", "candidate"]);
+// A live theme takes a change, and another design can be made current on it
+// (migration 0288): publishing the result is the theme's next release.
+const REVISABLE = new Set(["ready", "candidate", "approved", "published"]);
+const RESTORABLE = new Set(["ready", "blocked", "candidate", "published"]);
 const TAB_LABEL: Record<StudioTabKey, string> = {
   preview: "Preview",
   checks: "Checks",
@@ -1290,7 +1308,6 @@ export interface ProjectWorkspaceProps {
    * it, so the page refreshes once when the live row leaves it (or reaches a
    * release row) even at the same revision. */
   serverRow: number;
-  buildTime: ThemeStudioBuildTimeRange;
   /** The tab the server rendered (`?tab=`, default preview). */
   tab: StudioTabKey;
   /** The address named a tab: a phone then opens on it, not on the chat. */
@@ -1316,7 +1333,6 @@ export function ProjectWorkspace({
   project,
   initialProgress,
   serverRow,
-  buildTime,
   tab,
   explicitTab,
   versionId,
@@ -1436,15 +1452,14 @@ export function ProjectWorkspace({
   // a theme its checks blocked with no questions open takes a change.
   const canRevise =
     !working &&
-    !facts.release &&
     (REVISABLE.has(project.status) ||
       (project.status === "blocked" && !answering)) &&
     packaged.length > 0;
   // Make current: the client copy of the server's rule (repository.ts
-  // restoreThemeStudioVersion). Not offered on a live or removed theme; held
-  // back, with the reason under it, while something works.
+  // restoreThemeStudioVersion). Not offered on a removed theme; held back,
+  // with the reason under it, while something works.
   const restore = {
-    offered: !facts.release && project.status !== "archived",
+    offered: project.status !== "archived",
     allowed: !working && RESTORABLE.has(project.status),
     reason: working
       ? "Theme Studio is working on this theme. Make another design current once it finishes."
@@ -1774,13 +1789,11 @@ export function ProjectWorkspace({
         ? "Publishing now. You can send changes after it finishes."
         : WORKING_ROWS.has(status.row)
           ? "You can send changes when it finishes."
-          : facts.release
-            ? "Live themes can't be changed yet. Start a new theme from this brief instead."
-            : project.status === "archived"
-              ? "This theme was removed from the list, so it can't be changed."
-              : status.row === 8
-                ? "This theme had too many rounds of questions. Start a new theme from this brief."
-                : null;
+          : project.status === "archived"
+            ? "This theme was removed from the list, so it can't be changed."
+            : status.row === 8
+              ? "This theme had too many rounds of questions. Start a new theme from this brief."
+              : null;
 
   const phoneBar =
     status.row === 15 || status.row === 16
@@ -1889,6 +1902,11 @@ export function ProjectWorkspace({
           now={facts.now}
           working={working}
           lockedReason={lockedReason}
+          liveNote={
+            facts.release
+              ? `v${facts.release.version} is live. A change you publish becomes a new version, and stores already using this theme keep the version they have.`
+              : null
+          }
           apiRef={composer}
           onViewDesign={(id) =>
             api.openTab("preview", {
@@ -1905,13 +1923,11 @@ export function ProjectWorkspace({
             <ProgressCard
               progress={live.progress}
               status={status}
-              buildTime={buildTime}
               plan={
                 plan && (plan.assumptions.length || plan.leftOut.length)
                   ? plan
                   : null
               }
-              notifiesViewer={notifiesViewer}
             />
           }
         />
@@ -2037,7 +2053,11 @@ export function ProjectWorkspace({
             <h1 className="studio-title">{project.name}</h1>
             <span className="studio-head-status">
               <StudioBadge
-                status={{ words: status.words, tone: status.tone }}
+                status={{
+                  words: status.words,
+                  tone: status.tone,
+                  liveVersion: status.liveVersion,
+                }}
               />
             </span>
             <div className="studio-head-actions">

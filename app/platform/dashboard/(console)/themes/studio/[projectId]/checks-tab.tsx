@@ -57,6 +57,7 @@ import {
 } from "./versions/[versionId]/images/generate-images-button";
 import { pictureName } from "./versions/[versionId]/images/picture-names";
 import { CheckAgainButton } from "./workspace";
+import { DesignPlanCard } from "./design-plan-card";
 
 // ---------------------------------------------------------------------------
 // The Checks tab (wave TS-2, builder 2C; plan section 4, "Theme page, ready
@@ -373,6 +374,9 @@ export async function ChecksTab({
             {Math.round(distinct.threshold * 100)}% counts as distinct). This is
             a warning; it does not stop Publish.
           </p>
+        ) : null}
+        {version.designPlan ? (
+          <DesignPlanCard plan={version.designPlan} distinctness={distinct} />
         ) : null}
         {canCheckAgain ? (
           <div className="flex flex-wrap items-start gap-3">

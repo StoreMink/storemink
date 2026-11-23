@@ -4,9 +4,26 @@ import { isUniqueViolation } from "@/lib/db/errors";
 import { billingWebhookEvents } from "@/drizzle/schema";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
 import { logInfo, logWarn } from "@/lib/observability/logger";
+import {
+  applyBillingPaymentEvent,
+  type BillingWebhookOutcome,
+} from "@/lib/billing/webhook";
+import {
+  settleCreditPurchaseByOrder,
+  type CreditWebhookOutcome,
+} from "@/lib/ai/credit-purchase";
 
 /**
- * Razorpay webhooks — verified, deduplicated, and currently ACTING ON NOTHING.
+ * Razorpay webhooks for StoreMink's OWN account: verified, deduplicated, and
+ * (since 21 Nov 2026) acting on exactly two events, `payment.captured` and
+ * `payment.failed`, for payments made against a billing payment attempt
+ * (`applyBillingPaymentEvent`, lib/billing/webhook.ts). A renewal debit is
+ * settled the moment the gateway answers, not at the next hourly reconcile.
+ * A captured payment that belongs to no attempt is offered to the Mink credit
+ * pack settle (`settleCreditPurchaseByOrder`, lib/ai/credit-purchase.ts).
+ * Everything else is recorded and ignored, as described below.
+ *
+ * ── What follows is why `subscription.*` is still never acted on ──
  *
  * ★★ THIS ROUTE USED TO DRIVE RECURRING BILLING, and that is exactly why it must
  * not any more. It processed `subscription.*` events and wrote `stores.plan` /
@@ -28,10 +45,11 @@ import { logInfo, logWarn } from "@/lib/observability/logger";
  *      and the two things worth keeping — raw-body HMAC verification and the
  *      exactly-once event marker — are already here and proved.
  *
- * ⚠ NOTHING IN THE NEW SYSTEM DEPENDS ON A WEBHOOK TODAY. Enrolment, manual
- * payment, plan changes and location purchases all confirm ON SESSION against a
- * verified signature, and the renewal worker reconciles on a schedule. That is
- * why removing the processing costs nothing.
+ * ⚠ NOTHING DEPENDS ON A WEBHOOK ARRIVING. Enrolment, manual payment, plan
+ * changes and location purchases all confirm ON SESSION against a verified
+ * signature, and the renewal worker reconciles on a schedule. The two payment
+ * events only get a renewal's result recorded sooner; a delivery that is
+ * missed, or that this route fails to apply, is settled by that reconcile.
  *
  * Security is unchanged: the RAW body is HMAC-verified against
  * `RAZORPAY_WEBHOOK_SECRET` before anything else happens, and every
@@ -46,7 +64,17 @@ interface WebhookBody {
   created_at?: number;
   payload?: {
     subscription?: { entity?: { id?: string } };
-    payment?: { entity?: { id?: string } };
+    payment?: {
+      entity?: {
+        id?: string;
+        order_id?: string;
+        amount?: number;
+        currency?: string;
+        /** When the payment was made, in seconds. */
+        created_at?: number;
+        error_description?: string;
+      };
+    };
   };
 }
 
@@ -100,16 +128,69 @@ async function handle(request: Request) {
     return NextResponse.json({ error: "marker failed" }, { status: 500 });
   }
 
-  // Recorded, not acted on. A `subscription.*` event here describes a gateway
-  // object StoreMink no longer manages — worth seeing in the logs, never worth
-  // applying.
+  // ★ THE TWO EVENTS THAT ARE ACTED ON. A payment result for a billing
+  // payment attempt goes to the same conditional settle reconcile uses.
+  // Best-effort and always 200: the marker above has already recorded this
+  // delivery, so a retry would be skipped as a duplicate anyway, and whatever
+  // is not applied here the hourly reconcile settles.
+  let outcome: BillingWebhookOutcome | null = null;
+  const payment = event.payload?.payment?.entity;
+  if (
+    (event.event === "payment.captured" || event.event === "payment.failed") &&
+    payment?.id &&
+    payment.order_id
+  ) {
+    outcome = await applyBillingPaymentEvent({
+      result: event.event === "payment.captured" ? "captured" : "failed",
+      providerOrderId: payment.order_id,
+      providerPaymentId: payment.id,
+      amountPaise: typeof payment.amount === "number" ? payment.amount : null,
+      currency: payment.currency ?? null,
+      failureReason: payment.error_description ?? null,
+    });
+  }
+
+  // ★ A CAPTURED PAYMENT THAT IS NOT A BILLING ATTEMPT'S MAY BE A MINK CREDIT
+  // PACK (21 Nov 2026). A pack is its own purchase with its own Razorpay
+  // order and no payment attempt, so the settle above does not know it. A
+  // merchant who paid for one and whose tab closed before the page confirmed
+  // it used to get the credits only when they next opened Plans & Billing.
+  // Same rule as above: best-effort, and the scheduled pass settles whatever
+  // this does not.
+  let credits: CreditWebhookOutcome | null = null;
+  if (
+    outcome === "unmatched" &&
+    event.event === "payment.captured" &&
+    payment?.id &&
+    payment.order_id
+  ) {
+    credits = await settleCreditPurchaseByOrder({
+      providerOrderId: payment.order_id,
+      providerPaymentId: payment.id,
+      amountPaise: typeof payment.amount === "number" ? payment.amount : null,
+      currency: payment.currency ?? null,
+      paidAtSeconds:
+        typeof payment.created_at === "number" ? payment.created_at : null,
+    });
+  }
+
+  // Everything else is recorded, not acted on. A `subscription.*` event
+  // describes a gateway object StoreMink no longer manages: worth seeing in
+  // the logs, never worth applying.
   logInfo("razorpay webhook received", {
     eventType: event.event ?? "unknown",
     subjectId,
-    acted: false,
+    acted: outcome === "settled" || credits === "settled",
+    outcome,
+    credits,
   });
 
-  return NextResponse.json({ ok: true, acknowledged: true });
+  return NextResponse.json({
+    ok: true,
+    acknowledged: true,
+    outcome,
+    credits,
+  });
 }
 
 export const POST = handle;

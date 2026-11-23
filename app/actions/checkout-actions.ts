@@ -39,6 +39,7 @@ import {
   loadOffersForStorefront,
   recordOfferRedemptions,
   releaseOfferUses,
+  releaseOrderOfferUses,
   reserveOfferUses,
   resolveOffersForCart,
   type ReservedOffer,
@@ -65,6 +66,7 @@ import {
 } from "@/lib/payments/capture";
 import { emitEvent } from "@/lib/notifications/record";
 import { logError } from "@/lib/observability/logger";
+import { isSchemaNotReady } from "@/lib/db/errors";
 import { reportStockChanges } from "@/lib/inventory/alerts";
 import { resolveFulfilmentLocation } from "@/lib/fulfilment/resolve";
 import { isPaymentMethodAllowed } from "@/lib/fulfilment/payment-policy";
@@ -97,6 +99,16 @@ import type { WhatsAppConsentInput } from "@/lib/whatsapp/consent-copy";
 import { summariseItems } from "@/lib/notifications/format";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import type { OrderPlacedEvent } from "@/lib/orders/mark-paid";
+import {
+  expectedGatewayPaise,
+  listShopperPendingOrders,
+  minutesUntilLapse,
+  orderHoldsCart,
+  retireWaitingOrder,
+  settleShopperPendingOrders,
+  waitingOrderChanges,
+  type PendingOnlineOrder,
+} from "@/lib/orders/pending-payments";
 import { formatIndianMobile, textablePhone } from "@/lib/phone";
 import {
   rowToBillingSettings,
@@ -206,8 +218,39 @@ export type CheckoutResult =
       /** Present for online payments — everything the client needs to open
        *  Razorpay Standard Checkout. The amount is the SERVER-computed total. */
       payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
+      /**
+       * True when NO new order was placed: the shopper already has an order
+       * for this same cart inside its payment window, and `payment` reopens
+       * that order's own Razorpay order.
+       */
+      resumed?: true;
     }
-  | { error: string };
+  | {
+      error: string;
+      /**
+       * Set when the order was NOT placed because an earlier payment of this
+       * shopper's turned out to have gone through: that order is confirmed
+       * now. `sameCart` says the confirmed order holds exactly this cart, so
+       * the page can show its confirmation and empty the cart.
+       */
+      paidOrder?: { orderId: string; orderRef: string; sameCart: boolean };
+      /**
+       * Set when the order was NOT placed because an earlier order for this
+       * same cart may still be paid. Two cases: an approval is pending on it
+       * and what the shopper is asking for now differs from it; or Razorpay
+       * could not be asked about it at all, whatever is being asked for.
+       * `payment`, present only in the first case, reopens that earlier order
+       * exactly as it was placed; the page offers it as a choice, never by
+       * itself. An order nobody could check is never reopened or cancelled.
+       */
+      unfinished?: {
+        orderId: string;
+        orderRef: string;
+        /** Minutes until that order's payment window closes. */
+        minutesLeft: number;
+        payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
+      };
+    };
 
 // Normalize a coupon code the same way coupon-actions does (stored uppercased,
 // no whitespace) so the usage-increment lookup matches the stored row.
@@ -784,6 +827,59 @@ export interface PickupOptions {
 }
 
 /**
+ * The delivery address as an order stores it: trimmed, length-capped, the
+ * phone formatted. ★ One function for the order row and for the resume
+ * check, so "is this the same address?" compares like with like.
+ */
+function shippingAddressOf(form: CheckoutFormData, deliveryPhone: string) {
+  return {
+    firstName: cleanField(form.firstName),
+    lastName: cleanField(form.lastName),
+    addressLine1: cleanField(form.addressLine1),
+    addressLine2: cleanField(form.addressLine2),
+    city: cleanField(form.city),
+    state: cleanField(form.state),
+    postalCode: cleanField(form.postalCode),
+    country: cleanField(form.country),
+    email: cleanField(form.email),
+    phone: deliveryPhone,
+  };
+}
+
+/** The order note as stored, or null. */
+function orderNotesOf(form: CheckoutFormData): string | null {
+  return cleanField(form.notes, MAX_NOTES_LEN) || null;
+}
+
+/**
+ * A separate billing address as an order stores it, or null for "same as
+ * delivery". Optional, and trimmed and capped exactly like the delivery one:
+ * it prints on the invoice, so it is merchant-visible text from an untrusted
+ * source.
+ */
+function billingAddressOf(
+  billingInput: BillingAddressInput | null | undefined,
+): Record<string, string> | null {
+  if (!billingInput || typeof billingInput !== "object") return null;
+  const b = (v: unknown, max = 120) =>
+    typeof v === "string" ? v.trim().slice(0, max) : "";
+  const line1 = b(billingInput.addressLine1);
+  const city = b(billingInput.city, 60);
+  if (!line1 || !city) return null;
+  return {
+    firstName: b(billingInput.firstName, 60),
+    lastName: b(billingInput.lastName, 60),
+    addressLine1: line1,
+    addressLine2: b(billingInput.addressLine2),
+    city,
+    state: b(billingInput.state, 60),
+    postalCode: b(billingInput.postalCode, 20),
+    country: b(billingInput.country, 60) || "India",
+    phone: b(billingInput.phone, 20),
+  };
+}
+
+/**
  * Shops this cart could be collected from.
  *
  * Takes the cart so it can say which shops actually have the goods — offering
@@ -1008,6 +1104,124 @@ export async function placeOrder(
   // The order belongs to the store the shopper is actually on (the host),
   // never a store inferred from client-supplied cart contents.
   const storeId = await getCurrentStoreId();
+
+  // ★★ AN EARLIER PAYMENT THAT WENT THROUGH IS CONFIRMED, NEVER PAID FOR
+  // AGAIN (21 Nov 2026). A shopper who paid and whose tab closed before the
+  // confirmation came back to a full cart and could place, and pay for, a
+  // second order. Their own waiting orders are settled with Razorpay first:
+  // BEFORE the rate reads, the coupon, the offers and the stock reserve, so a
+  // refusal here leaves nothing half-written. It also cancels their own
+  // abandoned attempts that are past the payment window, which frees the
+  // stock and offer uses those were holding against this very order.
+  // Costs nothing for a shopper with no waiting order (one indexed read).
+  const earlier = await settleEarlierPayment(storeId, user.id, items);
+  if (earlier.paid) {
+    return {
+      error: earlier.paid.sameCart
+        ? `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. You have not been charged again.`
+        : `Your earlier payment went through, so order ${earlier.paid.orderRef} is confirmed. Check your cart before you place another order.`,
+      paidOrder: earlier.paid,
+    };
+  }
+  // ★★ AN EARLIER ORDER FOR THIS CART THAT RAZORPAY COULD NOT BE ASKED ABOUT
+  // STOPS THE ORDER (PR #303 review, 22 Nov 2026). A timeout, a 5xx or a
+  // refused read used to count as "nothing waiting", so this went on to a
+  // second order while the shopper's UPI approval on the first was still
+  // being processed, and they paid for both. Nobody knows what is happening
+  // on that order, so it is neither resumed (its payment may already be in
+  // hand) nor cancelled (money may be landing on it): the shopper is asked
+  // to try again shortly. Checked BEFORE the waiting order below, because a
+  // newer order being resumable says nothing about this one. Only inside its
+  // payment window, and only for this same cart: another cart is another
+  // purchase.
+  if (earlier.unchecked) {
+    const order = earlier.unchecked;
+    const minutesLeft = minutesUntilLapse(order);
+    return {
+      error: `We couldn't check your earlier payment for this cart (order ${order.order_ref ?? ""}) just now, so we haven't placed a second order. Please try again in a minute. If you approved that payment, the order will be confirmed shortly.`,
+      unfinished: {
+        orderId: order.id,
+        orderRef: order.order_ref ?? "",
+        minutesLeft,
+      },
+    };
+  }
+  // ★★ AND ONE STILL WAITING, FOR THIS SAME CART, IS NEVER PAID FOR BESIDE
+  // A SECOND ORDER (PR #303 review, 22 Nov 2026). The check above stops a
+  // second order only once the first is PAID. A shopper whose UPI approval
+  // was still pending could come back, press Place order again, and get a
+  // second order with a second Razorpay order; when both approvals completed
+  // they had paid twice for one cart. Three cases, decided here before
+  // anything is priced, reserved or written:
+  //
+  //   1. THE SAME ORDER: paying online, and every choice on the form is what
+  //      the waiting order was placed with (`waitingOrderChanges`: address,
+  //      phone, billing address, notes, coupon, delivery or collection, the
+  //      shop, the delivery option and its price). It is RESUMED on its own
+  //      Razorpay order. One Razorpay order takes one payment, so reopening
+  //      it cannot charge twice.
+  //   2. SOMETHING CHANGED (or another way to pay was chosen), and the
+  //      gateway says nobody is paying the old order: the old order is
+  //      cancelled, everything it held is given back, and the new order is
+  //      placed below as asked (`retireWaitingOrder`).
+  //   3. SOMETHING CHANGED and a payment may still land on the old order:
+  //      no second order. The shopper is told, with the choice to continue
+  //      that payment as it was or to wait for it to lapse.
+  //
+  // ★ The first version resumed on the products alone (follow-up review):
+  //   a shopper who came back to correct their address, or to switch to
+  //   collection, was handed the old total and the old address to pay.
+  if (earlier.waiting?.sameCart) {
+    const waiting = earlier.waiting;
+    const order = waiting.order;
+    const resumable =
+      paymentMethod === "razorpay" &&
+      waiting.enabled &&
+      Boolean(order.razorpay_order_id);
+    const changes = resumable
+      ? await waitingOrderChanges(order.id, {
+          shippingAddress: shippingAddressOf(form, deliveryPhone),
+          billingAddress: billingAddressOf(billingInput),
+          notes: orderNotesOf(form),
+          couponCode: couponCode ? normalizeCode(couponCode) : null,
+          pickupLocationId: pickupLocationId || null,
+          shippingRateId: selectedShippingRateId || null,
+          shippingAmount:
+            typeof selectedShippingRateAmount === "number"
+              ? selectedShippingRateAmount
+              : null,
+        })
+      : null;
+    const payment = order.razorpay_order_id
+      ? {
+          rzpOrderId: order.razorpay_order_id,
+          keyId: waiting.keyId,
+          amountPaise: expectedGatewayPaise(order),
+        }
+      : null;
+    if (resumable && payment && changes && changes.length === 0) {
+      return {
+        success: true,
+        orderId: order.id,
+        orderRef: order.order_ref ?? "",
+        resumed: true,
+        payment,
+      };
+    }
+    const retired = await retireWaitingOrder(order, waiting.creds);
+    if (retired !== "retired") {
+      const minutesLeft = minutesUntilLapse(order);
+      return {
+        error: `A payment for this cart is still being processed on order ${order.order_ref ?? ""}. If you approved it, that order will be confirmed shortly. To order with your changes instead, try again in about ${minutesLeft} ${minutesLeft === 1 ? "minute" : "minutes"}.`,
+        unfinished: {
+          orderId: order.id,
+          orderRef: order.order_ref ?? "",
+          minutesLeft,
+          ...(payment && waiting.enabled ? { payment } : {}),
+        },
+      };
+    }
+  }
 
   // Orders/order_items are written with a service-role (RLS-bypassing) scope:
   // there is no customer INSERT RLS policy on those tables by design, and all
@@ -1511,19 +1725,8 @@ export async function placeOrder(
 
   // Store only trimmed, length-capped values (the fields render in the admin
   // dashboard; React escapes output, but we keep the stored data clean too).
-  const shippingAddress = {
-    firstName: cleanField(form.firstName),
-    lastName: cleanField(form.lastName),
-    addressLine1: cleanField(form.addressLine1),
-    addressLine2: cleanField(form.addressLine2),
-    city: cleanField(form.city),
-    state: cleanField(form.state),
-    postalCode: cleanField(form.postalCode),
-    country: cleanField(form.country),
-    email: cleanField(form.email),
-    phone: deliveryPhone,
-  };
-  const notes = cleanField(form.notes, MAX_NOTES_LEN) || null;
+  const shippingAddress = shippingAddressOf(form, deliveryPhone);
+  const notes = orderNotesOf(form);
 
   // The order id is generated up front so the order row and its stock-ledger
   // movements share it. What follows is a reserve → create → reserve → rollback
@@ -1841,26 +2044,7 @@ export async function placeOrder(
   // A separate billing address is optional and trimmed/capped exactly like the
   // shipping one — it prints on the invoice, so it is merchant-visible text
   // from an untrusted source.
-  let billingAddress: Record<string, string> | null = null;
-  if (billingInput && typeof billingInput === "object") {
-    const b = (v: unknown, max = 120) =>
-      typeof v === "string" ? v.trim().slice(0, max) : "";
-    const line1 = b(billingInput.addressLine1);
-    const city = b(billingInput.city, 60);
-    if (line1 && city) {
-      billingAddress = {
-        firstName: b(billingInput.firstName, 60),
-        lastName: b(billingInput.lastName, 60),
-        addressLine1: line1,
-        addressLine2: b(billingInput.addressLine2),
-        city,
-        state: b(billingInput.state, 60),
-        postalCode: b(billingInput.postalCode, 20),
-        country: b(billingInput.country, 60) || "India",
-        phone: b(billingInput.phone, 20),
-      };
-    }
-  }
+  const billingAddress = billingAddressOf(billingInput);
 
   // The code the customer shows at the counter (roadmap Step 3). Minted before
   // the insert so the confirmation email can carry it — a collection order that
@@ -2476,6 +2660,16 @@ export async function placeOrder(
     const rollback = async () => {
       await releaseHolds();
       await releaseStock();
+      // ★ BEFORE the order row goes. `recordOfferRedemptions` has already
+      // written this order's redemptions, and deleting the order only blanks
+      // their order id: the rows stayed, so a "one per customer" offer was
+      // used up by a checkout that failed to start. This gives those uses
+      // back from the ledger and forgets them; `releaseDiscounts` then gives
+      // back only what the ledger did not hold.
+      const released = await releaseOrderOfferUses(storeId, order.id);
+      reservedOffers = reservedOffers.filter(
+        (r) => !released.some((x) => x.offerId === r.offerId),
+      );
       await deleteOrder();
       await releaseDiscounts();
       await releaseCredit();
@@ -2487,7 +2681,15 @@ export async function placeOrder(
       notes: { order_id: order.id, store_id: storeId },
     });
     if (!rzpRes.ok) {
-      console.error("placeOrder (razorpay create):", rzpRes.error);
+      // ★ logError, not console.error: a store whose keys Razorpay now
+      // refuses fails EVERY online checkout here, and until this reached
+      // error reporting nobody but its shoppers could see it.
+      logError("checkout.razorpay_order_create", new Error(rzpRes.error), {
+        storeId,
+        orderId: order.id,
+        keyId: gatewayCreds.keyId,
+        refused: rzpRes.outcome === "rejected",
+      });
       await rollback();
       return {
         error:
@@ -2495,14 +2697,27 @@ export async function placeOrder(
       };
     }
 
+    // ★ The order records WHICH connected account it was created on (the
+    // public key id, 0280), beside the gateway order id. Before this nothing
+    // said, so when a read was refused later there was no telling a revoked
+    // key from an order made on an account connected before the current one.
+    const pin = (values: { razorpayOrderId: string; razorpayKeyId?: string }) =>
+      withService((db) =>
+        db.update(orders).set(values).where(eq(orders.id, order.id)),
+      );
     let pinFailed = false;
     try {
-      await withService((db) =>
-        db
-          .update(orders)
-          .set({ razorpayOrderId: rzpRes.data.id })
-          .where(eq(orders.id, order.id)),
-      );
+      try {
+        await pin({
+          razorpayOrderId: rzpRes.data.id,
+          razorpayKeyId: gatewayCreds.keyId,
+        });
+      } catch (err) {
+        // The column's migration has not run here yet: pin the order id alone
+        // rather than fail every online checkout over a diagnostic field.
+        if (!isSchemaNotReady(err)) throw err;
+        await pin({ razorpayOrderId: rzpRes.data.id });
+      }
     } catch (err) {
       console.error("placeOrder (razorpay pin):", errMsg(err));
       pinFailed = true;
@@ -2535,6 +2750,166 @@ export async function placeOrder(
 }
 
 // ---- Payment confirmation & reconciliation ---------------------------------
+
+/** A shopper's unfinished online payment, as checkout shows it. */
+export interface UnfinishedPayment {
+  /**
+   * `paid`: an earlier order's payment went through and it is confirmed now.
+   * `waiting`: an order is still inside its payment window.
+   * `none`: nothing is waiting (or it could not be checked).
+   */
+  state: "none" | "paid" | "waiting";
+  orderId?: string;
+  orderRef?: string;
+  /** The order holds exactly the cart the shopper is looking at. */
+  sameCart?: boolean;
+  /** For `waiting` on the same cart: what reopens the SAME Razorpay order. */
+  payment?: { rzpOrderId: string; keyId: string; amountPaise: number };
+}
+
+/**
+ * Settle the signed-in shopper's own waiting orders against Razorpay.
+ *
+ * The one implementation behind both callers: checkout's own check when the
+ * page opens (`resumeMyUnfinishedPayment`) and `placeOrder`'s guard. Never
+ * throws; anything it cannot check reads as "nothing waiting".
+ */
+async function settleEarlierPayment(
+  storeId: string,
+  userId: string,
+  items: readonly CartItem[],
+): Promise<{
+  paid: { orderId: string; orderRef: string; sameCart: boolean } | null;
+  waiting: {
+    order: PendingOnlineOrder;
+    sameCart: boolean;
+    keyId: string;
+    enabled: boolean;
+    /** The account that order was read on, for asking about it again. */
+    creds: { keyId: string; keySecret: string };
+  } | null;
+  /**
+   * An earlier order for THIS cart, still inside its payment window, that
+   * Razorpay could not be asked about. Never resumed and never cancelled:
+   * nobody knows whether a payment is landing on it.
+   */
+  unchecked: PendingOnlineOrder | null;
+}> {
+  const nothing = { paid: null, waiting: null, unchecked: null };
+  try {
+    // Cheap first: most shoppers have nothing waiting, and then no gateway
+    // credentials are read and Razorpay is never called.
+    const pending = await listShopperPendingOrders(storeId, userId);
+    if (pending.length === 0) return nothing;
+
+    // ★ NOT the "live" gateway: a store that has since paused online payments
+    // can still confirm an order placed while they were on.
+    const gateway = await getStoreGateway(storeId);
+    if (!gateway) return nothing;
+
+    const settled = await settleShopperPendingOrders(
+      storeId,
+      userId,
+      gateway.creds,
+    );
+    const cart = Array.isArray(items)
+      ? items.map((item) => ({
+          productId: item?.productId,
+          variantId: item?.variantId ?? null,
+          quantity: item?.quantity,
+        }))
+      : [];
+    if (settled.paid) {
+      return {
+        paid: {
+          orderId: settled.paid.id,
+          orderRef: settled.paid.order_ref ?? "",
+          sameCart: await orderHoldsCart(settled.paid.id, cart),
+        },
+        waiting: null,
+        unchecked: null,
+      };
+    }
+    // The newest unread order that holds this very cart, if there is one.
+    let unchecked: PendingOnlineOrder | null = null;
+    for (const order of settled.unchecked ?? []) {
+      if (await orderHoldsCart(order.id, cart)) {
+        unchecked = order;
+        break;
+      }
+    }
+    if (settled.waiting) {
+      return {
+        paid: null,
+        waiting: {
+          order: settled.waiting,
+          sameCart: await orderHoldsCart(settled.waiting.id, cart),
+          keyId: gateway.creds.keyId,
+          enabled: gateway.enabled,
+          creds: gateway.creds,
+        },
+        unchecked,
+      };
+    }
+    return { paid: null, waiting: null, unchecked };
+  } catch (err) {
+    logError("checkout.settle_earlier_payment", err, { storeId });
+    return nothing;
+  }
+}
+
+/**
+ * Called by the checkout page when it opens: does this shopper have an online
+ * payment that was never confirmed?
+ *
+ * ★★ WHY (21 Nov 2026). The page only learned a payment had succeeded from
+ * Razorpay's success handler in the SAME tab. A tab that closed during
+ * payment (switching to a UPI app on a phone) left the order waiting for the
+ * hourly reaper, and the shopper returned to a full cart and no confirmation.
+ * Now the page asks, and:
+ *   • a payment that went through confirms its order at once (`paid`);
+ *   • an order still inside its payment window, for this same cart, comes
+ *     back with what "Retry payment" needs to reopen the SAME Razorpay order,
+ *     so a reload no longer leads to a duplicate order (`waiting`).
+ *
+ * Signed-in shoppers only, their own orders only, rate limited.
+ */
+export async function resumeMyUnfinishedPayment(
+  items: CartItem[],
+): Promise<UnfinishedPayment> {
+  const user = await getServerUser();
+  if (!user) return { state: "none" };
+
+  const rl = await rateLimit(`resume-payment:${user.id}`, {
+    max: 10,
+    windowSeconds: 60,
+  });
+  if (!rl.allowed) return { state: "none" };
+
+  const storeId = await getCurrentStoreId();
+  const earlier = await settleEarlierPayment(storeId, user.id, items);
+  if (earlier.paid) return { state: "paid", ...earlier.paid };
+  if (earlier.waiting) {
+    const { order, sameCart, keyId, enabled } = earlier.waiting;
+    return {
+      state: "waiting",
+      orderId: order.id,
+      orderRef: order.order_ref ?? "",
+      sameCart,
+      // Only for the same cart (the Razorpay order is for THAT order's
+      // amount), and only while the store still takes online payments.
+      payment:
+        sameCart && enabled && order.razorpay_order_id
+          ? {
+              rzpOrderId: order.razorpay_order_id,
+              keyId,
+              amountPaise: expectedGatewayPaise(order),
+            }
+          : undefined,
+    };
+  }
+  return { state: "none" };
+}
 
 export interface ConfirmPaymentResult {
   success?: boolean;
@@ -2703,7 +3078,19 @@ export async function confirmOnlinePayment(
     );
   }
 
-  const outcome = await markOrderPaid(orderId, rzpPaymentId);
+  // ★ `strict`: a write that FAILED must not be reported as paid. It used to
+  // come back as "unchanged" and this answered `paid: true` for an order
+  // still pending. The payment itself is verified and safe: the confirmation
+  // page reconciles it, and so does the scheduled pass.
+  let outcome: Awaited<ReturnType<typeof markOrderPaid>>;
+  try {
+    outcome = await markOrderPaid(orderId, rzpPaymentId, { strict: true });
+  } catch {
+    return {
+      error:
+        "Your payment was received and is still being confirmed. Don't pay again; this order updates as soon as it's through.",
+    };
+  }
   if (outcome === "late") {
     return {
       error:

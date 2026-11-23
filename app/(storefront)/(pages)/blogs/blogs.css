@@ -36,8 +36,8 @@
 
 .blog-hero {
   position: relative;
-  /* Clear the fixed 90px storefront header, then breathe. */
-  padding: 132px 24px 36px;
+  /* Clear the fixed storefront header (its measured height), then breathe. */
+  padding: calc(var(--sm-header-h, 68px) + 64px) 24px 36px;
   text-align: center;
   background: var(--blog-bg);
   overflow: hidden;
@@ -896,7 +896,7 @@
 
 .blog-detail-page-section {
   background: var(--blog-bg);
-  padding: 140px 24px 80px;
+  padding: calc(var(--sm-header-h, 68px) + 72px) 24px 80px;
 }
 
 /* The market header reserves space on the root itself; remove double padding
@@ -1429,11 +1429,11 @@
 
 @media (max-width: 640px) {
   .blog-hero {
-    padding: 80px 20px 60px;
+    padding: calc(var(--sm-header-h, 68px) + 12px) 20px 60px;
   }
 
   .blog-detail-page-section {
-    padding: 110px 20px 64px;
+    padding: calc(var(--sm-header-h, 68px) + 42px) 20px 64px;
   }
 
   /* Stack the detail toolbar so "Back to Blog" never gets squeezed into a

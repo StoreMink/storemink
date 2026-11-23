@@ -47,8 +47,10 @@ function readCoarse() {
  * view) on a new chat.
  *
  * On a touch screen the tab is a plain button that opens the panel. It
- * renders nothing while Mink AI is off (also the platform console, which has
- * no chat provider) and while the chat is open: the panel replaces it. CSS
+ * renders nothing while Mink AI is off and while the chat is open: the panel
+ * replaces it. The platform console never mounts it (the top bar gates the
+ * face and this bar on useHasChat); its fallback of rendering nothing outside
+ * a provider is only a second line of defence. CSS
  * hides it below 768px, in the Website Builder, in analytics edit mode and on
  * pages with a pinned save bar (dashboard.css, mink-dock-css.test.ts).
  */

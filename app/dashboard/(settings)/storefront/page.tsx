@@ -8,8 +8,12 @@ import {
   themeCategoriesFor,
   type ThemeMeta,
 } from "@/lib/themes/meta";
-import { getThemeCatalog } from "@/lib/themes/runtime-registry";
+import {
+  getThemeCatalog,
+  resolveInstalledThemeDefinition,
+} from "@/lib/themes/runtime-registry";
 import { loadThemeSwitchContext } from "@/lib/themes/switch";
+import type { ThemeDefinition } from "@/lib/themes/types";
 import { StorefrontClient, type ThemeCard } from "./storefront-client";
 
 export const metadata = { title: "Storefront" };
@@ -28,6 +32,27 @@ function toCard(theme: ThemeMeta, plan: Plan): ThemeCard {
     previewUnavailableReason: canPreviewTheme(theme)
       ? null
       : theme.demo.unavailableReason || "Preview is temporarily unavailable",
+  };
+}
+
+/**
+ * ★ A theme no longer in the library (deleted in Theme Studio, owner, 23 Nov
+ * 2026) is still the store's: the deletion keeps the release the store
+ * installed (migration 0289), so its name and picture come from there. There
+ * is nothing to preview: its demo store went with it.
+ */
+function keptCard(theme: ThemeDefinition): ThemeCard {
+  return {
+    id: theme.id,
+    name: theme.name,
+    description:
+      "Your store uses a theme that is no longer in the library. It keeps working.",
+    previewImage: theme.catalog.previewImage,
+    industries: theme.catalog.industries,
+    minPlanName: null,
+    locked: false,
+    previewSlug: null,
+    previewUnavailableReason: null,
   };
 }
 
@@ -64,6 +89,17 @@ export default async function StorefrontPage() {
   const currentMeta = currentId
     ? (catalog.find((theme) => theme.id === currentId) ?? null)
     : null;
+  // Read only when the library no longer has the store's theme. A failed
+  // read keeps the page: the card then names the theme by its id.
+  const kept =
+    currentId && !currentMeta && context
+      ? await resolveInstalledThemeDefinition(
+          readThemeSelection(context.settings),
+        ).catch((err) => {
+          logError("themes.page_installed_theme", err, { storeId });
+          return null;
+        })
+      : null;
   const pending = context?.facts.firstTheme === true;
   const operatorStore = !context || context.managedByOperators;
 
@@ -77,7 +113,9 @@ export default async function StorefrontPage() {
 
   return (
     <StorefrontClient
-      current={currentMeta ? toCard(currentMeta, plan) : null}
+      current={
+        currentMeta ? toCard(currentMeta, plan) : kept ? keptCard(kept) : null
+      }
       currentId={currentId}
       library={library.map((theme) => toCard(theme, plan))}
       categories={themeCategoriesFor(library)}

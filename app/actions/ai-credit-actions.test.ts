@@ -66,7 +66,11 @@ vi.mock("@/lib/billing/credit-invoice", () => invoice);
 const store = vi.hoisted(() => ({ loadTaxSnapshot: vi.fn() }));
 vi.mock("@/lib/billing/invoice-store", () => store);
 
-vi.mock("@/lib/notifications/record", () => ({ emitEvent: vi.fn() }));
+vi.mock("@/lib/notifications/record", () => ({
+  emitEvent: vi.fn(),
+  // The reconcile pass tells the merchant itself (lib/ai/credit-purchase.ts).
+  recordEvent: vi.fn(async () => null),
+}));
 vi.mock("@/lib/ai/quota", () => ({ getAiUsage: vi.fn() }));
 vi.mock("@/lib/ai/credit-pricing", () => ({
   getMinkCreditPackLive: vi.fn(async (id: string) =>
@@ -82,6 +86,7 @@ import {
   getAiUsagePageData,
   startCreditPurchase,
 } from "./ai-credit-actions";
+import { emitEvent } from "@/lib/notifications/record";
 
 const STORE = "a0000000-0000-4000-8000-000000000001";
 
@@ -335,6 +340,30 @@ describe("startCreditPurchase", () => {
 });
 
 describe("confirmCreditPurchase", () => {
+  // 21 Nov 2026: the webhook can settle a purchase a moment before this
+  // confirm arrives, and it tells the merchant itself.
+  describe("★★ only the settle that made it paid announces it", () => {
+    it("announces when this confirm made the purchase paid", async () => {
+      await confirmCreditPurchase("pur-1", "pay_1", "sig");
+      expect(emitEvent).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(emitEvent).mock.calls[0][0]).toMatchObject({
+        type: "ai.credits_purchased",
+        payload: { credits: pendingPurchase().credits },
+      });
+    });
+
+    it("says nothing when the claim was already taken (the webhook got there first)", async () => {
+      dbHolder.current = makeDbMock({
+        selectQueue: [[pendingPurchase()]],
+        returning: [],
+      });
+      const res = await confirmCreditPurchase("pur-1", "pay_1", "sig");
+      // Still a success for the merchant: the credits are theirs.
+      expect("success" in res).toBe(true);
+      expect(emitEvent).not.toHaveBeenCalled();
+    });
+  });
+
   it("★★ ISSUES the invoice once the payment verifies", async () => {
     const res = await confirmCreditPurchase("pur-1", "pay_1", "sig");
     expect("success" in res).toBe(true);
@@ -453,6 +482,9 @@ describe("reconcile-on-read (getAiUsagePageData)", () => {
     credits: 25,
     pack_id: "small",
     rzp_order_id: "order_1",
+    // What the order was created for: the pack's ₹59 plus GST.
+    amount_inr: 59,
+    amount_paise: 6_962,
   };
   // 31 Aug 2026, 23:00 IST: before a GST start at midnight.
   const CAPTURED_AT_SECONDS = Date.parse("2026-08-31T17:30:00.000Z") / 1000;

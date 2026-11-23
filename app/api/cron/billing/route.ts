@@ -10,16 +10,19 @@ import {
   collectDueRenewals,
   downgradeExpired,
   evaluateCycleTurns,
+  type PassCursor,
 } from "@/lib/billing/renewal-worker";
 import {
   chargeUnavailableReason,
-  getRecurringCharge,
+  getRecurringGateway,
 } from "@/lib/billing/gateway";
+import { sendDueDebits, type DebitSummary } from "@/lib/billing/debit-pass";
 import {
   issueCapturedDrafts,
   reconcileStrandedAttempts,
 } from "@/lib/billing/reconcile";
 import { processBillingRefunds } from "@/lib/billing/refunds";
+import { reconcilePendingCreditPurchases } from "@/lib/ai/credit-purchase";
 import {
   promoteDueTaxChange,
   type PromotedTaxChange,
@@ -32,8 +35,12 @@ import { bustPlatformTax } from "@/lib/billing/public-tax";
 //
 //   PROMOTE   every run: a scheduled GST change that has started is copied
 //             into the in-force columns (lib/billing/platform-settings.ts).
-//   COLLECT   at T-4d: issue the next cycle's invoice and charge it.
-//   RECONCILE every run: settle payments we never heard back about.
+//   COLLECT   at T-4d: issue the next cycle's invoice and create its order
+//             with the pre-debit notice (step 1; no money moves).
+//   DEBIT     every run: send the debit of each notified order whose notice
+//             period has passed (step 2, lib/billing/debit-pass.ts).
+//   RECONCILE every run: settle payments we never heard back about, then
+//             Mink credit packs paid for and never confirmed.
 //   REPAIR    every run: a captured payment whose invoice is still a draft
 //             gets its invoice (issueCapturedDrafts, lib/billing/reconcile.ts).
 //   EVALUATE  at T0:   paid: advance the cycle; failed: grace starts.
@@ -96,13 +103,65 @@ async function priceFor(plan: Plan, period: "monthly" | "yearly") {
   };
 }
 
+/**
+ * How long the three paged passes may keep reading further pages, from the
+ * start of the request. The request has 300 seconds; the rest is left for
+ * reconcile, repair and refunds, which run once each.
+ */
+const PAGING_BUDGET_MS = 180_000;
+
+/** A hard stop on pages per pass, whatever the clock says: 40 x 50 rows. */
+const MAX_PAGES_PER_PASS = 40;
+
+/**
+ * Run one pass page after page until it returns a short page.
+ *
+ * ★★ WHY (21 Nov 2026). Each pass used to read one page of 50 and stop, in no
+ * particular order, and most rows it read were still there an hour later. So
+ * past a few hundred subscribers the same 50 could be read every hour while
+ * the rest were never invoiced, advanced or downgraded, with nothing
+ * reporting it. The passes now sort oldest first and hand back a cursor
+ * (`PassCursor`), and this keeps asking for the next page.
+ *
+ * It stops at a short page, at an error (a failing pass is retried by the
+ * scheduler, not hammered here), at the page limit, or when the time budget
+ * is spent; in the last two cases the summary keeps its `next`, which is what
+ * `more` reports. Counts are added up across pages.
+ */
+async function drain<S extends { errors: number; next: PassCursor | null }>(
+  run: (after: PassCursor | null) => Promise<S>,
+  deadline: number,
+): Promise<S> {
+  let total = await run(null);
+  let pages = 1;
+  while (
+    total.next &&
+    total.errors === 0 &&
+    pages < MAX_PAGES_PER_PASS &&
+    Date.now() < deadline
+  ) {
+    const page = await run(total.next);
+    const merged = { ...total } as Record<string, unknown>;
+    for (const [key, value] of Object.entries(page)) {
+      if (typeof value === "number") {
+        merged[key] = Number(merged[key] ?? 0) + value;
+      }
+    }
+    merged.next = page.next;
+    total = merged as S;
+    pages += 1;
+  }
+  return total;
+}
+
 async function handle(request: Request) {
   if (!authorized(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const now = new Date();
-  const charge = getRecurringCharge();
+  const pagingDeadline = Date.now() + PAGING_BUDGET_MS;
+  const charge = getRecurringGateway();
   const chargeBlocked = chargeUnavailableReason();
 
   // ★ PROMOTE FIRST, ONE UPDATE. Nothing below depends on it (`termsAt`
@@ -129,18 +188,49 @@ async function handle(request: Request) {
   // merchant pays it on /dashboard/plans. NOT a stub charge — an unreachable
   // provider is an UNKNOWN outcome, not a decline, so every attempt would sit in
   // reconciliation forever.
-  const collect = await collectDueRenewals({
-    now,
-    limit: RENEWAL_BATCH,
-    charge,
-    priceFor,
-  });
+  const collect = await drain(
+    (after) =>
+      collectDueRenewals({
+        now,
+        limit: RENEWAL_BATCH,
+        charge,
+        priceFor,
+        after,
+      }),
+    pagingDeadline,
+  );
+
+  // ★★ THEN THE DEBITS WHOSE NOTICE PERIOD HAS PASSED (21 Nov 2026). An
+  // automatic renewal is two steps: the pass above creates the order with its
+  // pre-debit notice, and a day or more later this one sends the debit
+  // (lib/billing/debit-pass.ts). After collect, so a renewal notified in this
+  // run is never also debited in it (its debit time is a day away); before
+  // reconcile, so a debit sent now is read back by the next run, not this
+  // one. With no gateway there is nothing to send.
+  const debits: DebitSummary = charge
+    ? await sendDueDebits({ gateway: charge, now })
+    : {
+        considered: 0,
+        sent: 0,
+        waiting: 0,
+        failed: 0,
+        cancelled: 0,
+        errors: 0,
+      };
 
   // ★★ RECONCILE BEFORE EVALUATING. A payment we never learned about is money
   // already in — and pass 2 decides grace and downgrade from whether the
   // invoice is paid. Running it after would downgrade a merchant whose payment
   // this very request was about to discover.
   const reconcile = await reconcileStrandedAttempts({ now });
+
+  // ★ MINK CREDIT PACKS PAID FOR AND NEVER CONFIRMED (21 Nov 2026). A pack is
+  // not a payment attempt, so the pass above does not see it; until now one
+  // whose merchant closed the tab was only settled when they next opened
+  // Plans & Billing. Before the repair pass, which issues the receipt of any
+  // pack this makes paid. Never throws; a purchase Razorpay could not be
+  // asked about is simply asked about again next hour.
+  const creditPacks = await reconcilePendingCreditPurchases({ now });
 
   // ★★ REPAIR AFTER RECONCILE, BEFORE EVALUATING (GST design 5.4b and 5.12). A
   // captured payment whose invoice is still a draft gets its invoice here, so a
@@ -150,13 +240,21 @@ async function handle(request: Request) {
   // and asked again next run.
   const repair = await issueCapturedDrafts({ now });
 
-  const evaluate = await evaluateCycleTurns({
-    now,
-    limit: RENEWAL_BATCH,
-    // Only affects the wording of the overdue email — see evaluateCycleTurns.
-    autopayConfigured: !!charge,
-  });
-  const downgrade = await downgradeExpired({ now, limit: RENEWAL_BATCH });
+  const evaluate = await drain(
+    (after) =>
+      evaluateCycleTurns({
+        now,
+        limit: RENEWAL_BATCH,
+        // Only affects the wording of the overdue email (evaluateCycleTurns).
+        autopayConfigured: !!charge,
+        after,
+      }),
+    pagingDeadline,
+  );
+  const downgrade = await drain(
+    (after) => downgradeExpired({ now, limit: RENEWAL_BATCH, after }),
+    pagingDeadline,
+  );
 
   // ★ AFTER DOWNGRADE, with the same clock: a plan end above closes its
   // unreached invoices, and this pass owes, sends and settles the money on
@@ -167,21 +265,23 @@ async function handle(request: Request) {
   const errors =
     promoteErrors +
     collect.errors +
+    debits.errors +
     reconcile.errors +
+    creditPacks.errors +
     repair.errors +
     evaluate.errors +
     downgrade.errors +
     refunds.errors;
 
-  // More work than one batch could hold. Reported so a caller can run again
-  // sooner, but NOT an error: a backlog draining is normal.
+  // More work than this run could reach: a paged pass stopped with pages
+  // still ahead of it (the time budget or the page limit), or the repair or
+  // refund pass filled its batch. Reported so a caller can run again sooner,
+  // but NOT an error: a backlog draining is normal.
   const more =
-    collect.considered >= RENEWAL_BATCH ||
+    !!collect.next ||
     repair.more ||
-    evaluate.advanced + evaluate.graced + evaluate.waiting + evaluate.ended >=
-      RENEWAL_BATCH ||
-    downgrade.downgraded + downgrade.ended + downgrade.advancedAfterGrace >=
-      RENEWAL_BATCH ||
+    !!evaluate.next ||
+    !!downgrade.next ||
     refunds.more;
 
   const body = {
@@ -189,7 +289,9 @@ async function handle(request: Request) {
     collectionSkipped: chargeBlocked,
     promote: { promoted, errors: promoteErrors },
     collect,
+    debits,
     reconcile,
+    creditPacks,
     repair,
     evaluate,
     downgrade,

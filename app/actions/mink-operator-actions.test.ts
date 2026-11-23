@@ -18,10 +18,11 @@ vi.mock("@/lib/observability/logger", () => ({
   logError: vi.fn(),
 }));
 import {
+  setImageGenerationSettings,
   setMinkSpeechSettings,
   setMinkVoiceProvider,
 } from "./mink-operator-actions";
-import { minkVoiceSettings } from "@/drizzle/schema";
+import { imageGenerationSettings, minkVoiceSettings } from "@/drizzle/schema";
 const storeId = "11111111-1111-4111-8111-111111111111";
 beforeEach(() => {
   vi.resetAllMocks();
@@ -116,5 +117,69 @@ describe("global read-aloud switch", () => {
       ).error,
     ).toMatch(/Choose whether/);
     expect(h.service).not.toHaveBeenCalled();
+  });
+});
+
+// 22 Nov 2026: which provider draws Theme Studio's and the storefront
+// redesign's photos, and ElevenLabs' quality and resolution.
+describe("image provider setting", () => {
+  const CHOICE = {
+    provider: "elevenlabs",
+    elevenlabsQuality: "medium",
+    elevenlabsResolution: "2K",
+  } as const;
+
+  it("stores the provider, the quality and the resolution in the one row", async () => {
+    expect(await setImageGenerationSettings(CHOICE)).toEqual({
+      success: true,
+      settings: CHOICE,
+    });
+    expect(h.insert).toHaveBeenCalledWith(imageGenerationSettings);
+    expect(h.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: true,
+        provider: "elevenlabs",
+        elevenlabsQuality: "medium",
+        elevenlabsResolution: "2K",
+        updatedBy: "operator@example.test",
+      }),
+    );
+    expect(h.conflict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: imageGenerationSettings.id,
+        set: expect.objectContaining({ provider: "elevenlabs" }),
+      }),
+    );
+  });
+
+  it("★★ only a superadmin, and only the values that exist: nothing else reaches the database", async () => {
+    h.viewer.mockResolvedValue({ role: "member", email: "staff@example.test" });
+    expect((await setImageGenerationSettings(CHOICE)).error).toMatch(
+      /superadmin/,
+    );
+    h.viewer.mockResolvedValue({
+      role: "superadmin",
+      email: "operator@example.test",
+    });
+    for (const bad of [
+      { ...CHOICE, provider: "openai" },
+      // The API also offers high, xhigh and max; they are never asked for.
+      { ...CHOICE, elevenlabsQuality: "high" },
+      { ...CHOICE, elevenlabsQuality: "max" },
+      { ...CHOICE, elevenlabsResolution: "4K" },
+      { provider: "elevenlabs" },
+    ]) {
+      expect(
+        (await setImageGenerationSettings(bad as never)).error,
+      ).toBeTruthy();
+    }
+    expect(h.service).not.toHaveBeenCalled();
+  });
+
+  it("a write that fails says so, and reports no success", async () => {
+    h.service.mockRejectedValue(new Error("db down"));
+    const result = await setImageGenerationSettings(CHOICE);
+    expect(result.success).toBeUndefined();
+    expect(result.error).toMatch(/Could not change the image provider/);
   });
 });

@@ -26,10 +26,13 @@ const worker = vi.hoisted(() => ({
 vi.mock("@/lib/billing/renewal-worker", () => worker);
 
 const gateway = vi.hoisted(() => ({
-  getRecurringCharge: vi.fn(),
+  getRecurringGateway: vi.fn(),
   chargeUnavailableReason: vi.fn(),
 }));
 vi.mock("@/lib/billing/gateway", () => gateway);
+
+const debitPass = vi.hoisted(() => ({ sendDueDebits: vi.fn() }));
+vi.mock("@/lib/billing/debit-pass", () => debitPass);
 
 const recon = vi.hoisted(() => ({
   reconcileStrandedAttempts: vi.fn(),
@@ -45,6 +48,11 @@ vi.mock("@/lib/billing/public-tax", () => publicTax);
 
 const refundPass = vi.hoisted(() => ({ processBillingRefunds: vi.fn() }));
 vi.mock("@/lib/billing/refunds", () => refundPass);
+
+const creditPacks = vi.hoisted(() => ({
+  reconcilePendingCreditPurchases: vi.fn(),
+}));
+vi.mock("@/lib/ai/credit-purchase", () => creditPacks);
 
 const pricing = vi.hoisted(() => ({
   getPlanPricingLive: vi.fn(),
@@ -65,10 +73,27 @@ function req(auth?: string) {
 const EMPTY_COLLECT = {
   considered: 0,
   collected: 0,
+  notified: 0,
   failed: 0,
   pendingReconcile: 0,
   manualRequired: 0,
   errors: 0,
+  next: null as { at: string; storeId: string } | null,
+};
+const EMPTY_DEBITS = {
+  considered: 0,
+  sent: 0,
+  waiting: 0,
+  failed: 0,
+  cancelled: 0,
+  errors: 0,
+};
+/** The four calls an automatic renewal is made of (lib/billing/collect.ts). */
+const GATEWAY = {
+  checkMandate: vi.fn(),
+  notify: vi.fn(),
+  readNotice: vi.fn(),
+  debit: vi.fn(),
 };
 const EMPTY_EVAL = {
   advanced: 0,
@@ -76,13 +101,21 @@ const EMPTY_EVAL = {
   waiting: 0,
   ended: 0,
   errors: 0,
+  next: null as { at: string; storeId: string } | null,
 };
 const EMPTY_DOWN = {
   downgraded: 0,
+  heldForPayment: 0,
   shiftsClosed: 0,
   ended: 0,
   advancedAfterGrace: 0,
   errors: 0,
+  next: null as { at: string; storeId: string } | null,
+};
+/** Where a full page stopped (lib/billing/renewal-worker.ts PassCursor). */
+const CURSOR = {
+  at: "2026-09-03 00:00:00+00",
+  storeId: "a0000000-0000-4000-8000-000000000050",
 };
 const EMPTY_REPAIR = {
   considered: 0,
@@ -133,8 +166,14 @@ beforeEach(() => {
   recon.issueCapturedDrafts.mockResolvedValue({ ...EMPTY_REPAIR });
   taxSettings.promoteDueTaxChange.mockResolvedValue(null);
   refundPass.processBillingRefunds.mockResolvedValue({ ...EMPTY_REFUNDS });
-  gateway.getRecurringCharge.mockReturnValue(vi.fn());
+  creditPacks.reconcilePendingCreditPurchases.mockResolvedValue({
+    considered: 0,
+    settled: 0,
+    errors: 0,
+  });
+  gateway.getRecurringGateway.mockReturnValue(GATEWAY);
   gateway.chargeUnavailableReason.mockReturnValue(null);
+  debitPass.sendDueDebits.mockResolvedValue({ ...EMPTY_DEBITS });
   pricing.getPlanPricingLive.mockResolvedValue({
     free: { monthlyInr: 0, yearlyInr: 0 },
     basic: { monthlyInr: 1500, yearlyInr: 15000 },
@@ -220,7 +259,7 @@ describe("the three passes", () => {
 
 describe("★ collection with no gateway configured", () => {
   beforeEach(() => {
-    gateway.getRecurringCharge.mockReturnValue(null);
+    gateway.getRecurringGateway.mockReturnValue(null);
     gateway.chargeUnavailableReason.mockReturnValue("endpoint not verified");
   });
 
@@ -247,6 +286,12 @@ describe("★ collection with no gateway configured", () => {
     expect(body.collect).not.toBeNull();
   });
 
+  it("★ sends no debit: there is no gateway to send one through", async () => {
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(debitPass.sendDueDebits).not.toHaveBeenCalled();
+    expect(body.debits).toEqual(EMPTY_DEBITS);
+  });
+
   it("★ still 200s — an unconfigured gateway is not an outage", async () => {
     expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(200);
   });
@@ -255,6 +300,59 @@ describe("★ collection with no gateway configured", () => {
     await GET(req(`Bearer ${SECRET}`));
     expect(worker.evaluateCycleTurns).toHaveBeenCalled();
     expect(worker.downgradeExpired).toHaveBeenCalled();
+  });
+});
+
+// 21 Nov 2026: an automatic renewal is two steps. The collect pass creates the
+// order with its pre-debit notice; a day or more later this pass sends the
+// debit.
+describe("★★ the debit pass: step 2 of an automatic renewal", () => {
+  it("runs with the same gateway and the same clock as the collect pass", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    expect(debitPass.sendDueDebits).toHaveBeenCalledTimes(1);
+    const input = debitPass.sendDueDebits.mock.calls[0][0];
+    expect(input.gateway).toBe(GATEWAY);
+    expect(input.now).toBe(worker.collectDueRenewals.mock.calls[0][0].now);
+    expect(worker.collectDueRenewals.mock.calls[0][0].charge).toBe(GATEWAY);
+  });
+
+  it("★ runs AFTER collect and BEFORE reconcile", async () => {
+    // After collect, so a renewal notified in this run is never also debited
+    // in it. Before reconcile, so a debit sent now is read back by the next
+    // run, when the gateway has had time to settle it.
+    await GET(req(`Bearer ${SECRET}`));
+    const debitAt = debitPass.sendDueDebits.mock.invocationCallOrder[0];
+    expect(worker.collectDueRenewals.mock.invocationCallOrder[0]).toBeLessThan(
+      debitAt,
+    );
+    expect(debitAt).toBeLessThan(
+      recon.reconcileStrandedAttempts.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reports what it did", async () => {
+    debitPass.sendDueDebits.mockResolvedValue({
+      ...EMPTY_DEBITS,
+      considered: 4,
+      sent: 2,
+      waiting: 1,
+      cancelled: 1,
+    });
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(body.debits).toMatchObject({ sent: 2, waiting: 1, cancelled: 1 });
+    expect(body.ok).toBe(true);
+  });
+
+  it("★ 503s when a debit could not be handled, so Scheduler runs it again", async () => {
+    debitPass.sendDueDebits.mockResolvedValue({ ...EMPTY_DEBITS, errors: 1 });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(503);
+    expect((await res.json()).ok).toBe(false);
+  });
+
+  it("a debit the gateway refused is an outcome, not an error", async () => {
+    debitPass.sendDueDebits.mockResolvedValue({ ...EMPTY_DEBITS, failed: 3 });
+    expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(200);
   });
 });
 
@@ -302,10 +400,13 @@ describe("status contract", () => {
     expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(200);
   });
 
-  it("★ reports `more` while a backlog drains, still at 200", async () => {
+  it("★ reports `more` when a pass still had pages ahead of it, still at 200", async () => {
+    // Every page is full, so the pass stops at its page limit with a cursor
+    // left over: that is what `more` means now.
     worker.collectDueRenewals.mockResolvedValue({
       ...EMPTY_COLLECT,
       considered: 50,
+      next: CURSOR,
     });
     const res = await GET(req(`Bearer ${SECRET}`));
     expect(res.status).toBe(200);
@@ -317,6 +418,15 @@ describe("status contract", () => {
       ...EMPTY_COLLECT,
       considered: 2,
     });
+    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(
+      false,
+    );
+  });
+
+  it("a full page that was followed to its end is not `more`", async () => {
+    worker.collectDueRenewals
+      .mockResolvedValueOnce({ ...EMPTY_COLLECT, considered: 50, next: CURSOR })
+      .mockResolvedValue({ ...EMPTY_COLLECT, considered: 3 });
     expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(
       false,
     );
@@ -350,7 +460,7 @@ describe("★★ reconciliation", () => {
   it("runs even when the gateway charge is unavailable", async () => {
     // Reconciliation reads the VERIFIED order endpoint, not the recurring one —
     // so it works today, when nothing can be charged automatically.
-    gateway.getRecurringCharge.mockReturnValue(null);
+    gateway.getRecurringGateway.mockReturnValue(null);
     gateway.chargeUnavailableReason.mockReturnValue("not verified");
     await GET(req(`Bearer ${SECRET}`));
     expect(recon.reconcileStrandedAttempts).toHaveBeenCalled();
@@ -450,40 +560,95 @@ describe("★★ the refund pass", () => {
   });
 });
 
-describe("★ `more` counts every downgrade-pass outcome", () => {
-  it("counts subscriptions the pass ENDED", async () => {
-    worker.downgradeExpired.mockResolvedValue({ ...EMPTY_DOWN, ended: 50 });
-    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(true);
+// 21 Nov 2026: each pass read one page of 50 in no fixed order and stopped,
+// so past a few hundred subscribers the same rows could be read every hour
+// and the rest never reached.
+describe("★★ every pass is read page after page", () => {
+  it("collect: the next page is asked for with the cursor the last one returned, and the counts add up", async () => {
+    worker.collectDueRenewals
+      .mockResolvedValueOnce({
+        ...EMPTY_COLLECT,
+        considered: 50,
+        collected: 40,
+        manualRequired: 10,
+        next: CURSOR,
+      })
+      .mockResolvedValueOnce({
+        ...EMPTY_COLLECT,
+        considered: 7,
+        collected: 5,
+        failed: 2,
+      });
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(worker.collectDueRenewals).toHaveBeenCalledTimes(2);
+    expect(worker.collectDueRenewals.mock.calls[0][0].after).toBeNull();
+    expect(worker.collectDueRenewals.mock.calls[1][0].after).toEqual(CURSOR);
+    expect(body.collect).toMatchObject({
+      considered: 57,
+      collected: 45,
+      failed: 2,
+      manualRequired: 10,
+      next: null,
+    });
+    expect(body.more).toBe(false);
   });
 
-  it("counts renewals it ADVANCED after grace", async () => {
+  it("evaluate and downgrade page the same way", async () => {
+    worker.evaluateCycleTurns
+      .mockResolvedValueOnce({ ...EMPTY_EVAL, waiting: 50, next: CURSOR })
+      .mockResolvedValueOnce({ ...EMPTY_EVAL, advanced: 4 });
+    worker.downgradeExpired
+      .mockResolvedValueOnce({ ...EMPTY_DOWN, downgraded: 50, next: CURSOR })
+      .mockResolvedValueOnce({ ...EMPTY_DOWN, downgraded: 1, ended: 2 });
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(worker.evaluateCycleTurns.mock.calls[1][0].after).toEqual(CURSOR);
+    expect(worker.downgradeExpired.mock.calls[1][0].after).toEqual(CURSOR);
+    expect(body.evaluate).toMatchObject({ waiting: 50, advanced: 4 });
+    expect(body.downgrade).toMatchObject({ downgraded: 51, ended: 2 });
+    expect(body.more).toBe(false);
+  });
+
+  it("★ every page of a pass shares one clock: the same `now`", async () => {
+    worker.collectDueRenewals
+      .mockResolvedValueOnce({ ...EMPTY_COLLECT, considered: 50, next: CURSOR })
+      .mockResolvedValue({ ...EMPTY_COLLECT });
+    await GET(req(`Bearer ${SECRET}`));
+    const [first, second] = worker.collectDueRenewals.mock.calls;
+    expect(second[0].now).toBe(first[0].now);
+  });
+
+  it("★★ a page that reported an error stops the paging: the scheduler retries, this does not hammer", async () => {
+    worker.collectDueRenewals.mockResolvedValue({
+      ...EMPTY_COLLECT,
+      considered: 50,
+      errors: 1,
+      next: CURSOR,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(worker.collectDueRenewals).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(503);
+  });
+
+  it("★ it never pages for ever: a pass that keeps returning full pages stops at its limit and reports `more`", async () => {
     worker.downgradeExpired.mockResolvedValue({
       ...EMPTY_DOWN,
       advancedAfterGrace: 50,
+      next: CURSOR,
     });
-    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(true);
+    const body = await (await GET(req(`Bearer ${SECRET}`))).json();
+    expect(worker.downgradeExpired).toHaveBeenCalledTimes(40);
+    expect(body.downgrade.advancedAfterGrace).toBe(2000);
+    expect(body.more).toBe(true);
   });
 
-  it("adds the three together", async () => {
-    worker.downgradeExpired.mockResolvedValue({
-      ...EMPTY_DOWN,
-      downgraded: 20,
-      ended: 20,
-      advancedAfterGrace: 10,
-    });
-    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(true);
-  });
-
-  it("stays false below a batch", async () => {
-    worker.downgradeExpired.mockResolvedValue({
-      ...EMPTY_DOWN,
-      downgraded: 10,
-      ended: 10,
-      advancedAfterGrace: 10,
-    });
-    expect((await (await GET(req(`Bearer ${SECRET}`))).json()).more).toBe(
-      false,
-    );
+  it("the later passes still run after an earlier one paged", async () => {
+    worker.collectDueRenewals
+      .mockResolvedValueOnce({ ...EMPTY_COLLECT, considered: 50, next: CURSOR })
+      .mockResolvedValue({ ...EMPTY_COLLECT });
+    await GET(req(`Bearer ${SECRET}`));
+    expect(recon.reconcileStrandedAttempts).toHaveBeenCalledTimes(1);
+    expect(worker.evaluateCycleTurns).toHaveBeenCalledTimes(1);
+    expect(worker.downgradeExpired).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -633,5 +798,49 @@ describe("★★ the refund pass stays LAST", () => {
     ]) {
       expect(earlier.mock.invocationCallOrder[0]).toBeLessThan(refunds);
     }
+  });
+});
+
+// 21 Nov 2026: a credit pack paid for in a tab that then closed was settled
+// only when the merchant next opened Plans & Billing.
+describe("★★ Mink credit packs paid for and never confirmed", () => {
+  it("are settled every hour, for every store, and reported", async () => {
+    creditPacks.reconcilePendingCreditPurchases.mockResolvedValue({
+      considered: 4,
+      settled: 2,
+      errors: 0,
+    });
+    const res = await GET(req(`Bearer ${SECRET}`));
+    expect(res.status).toBe(200);
+    expect((await res.json()).creditPacks).toEqual({
+      considered: 4,
+      settled: 2,
+      errors: 0,
+    });
+    // No store named: the scheduled pass over all of them, on the run's clock.
+    const [input] = creditPacks.reconcilePendingCreditPurchases.mock.calls[0];
+    expect(input.storeId).toBeUndefined();
+    expect(input.now).toBeInstanceOf(Date);
+  });
+
+  it("★ runs after reconcile and BEFORE the repair pass, which issues the receipt", async () => {
+    await GET(req(`Bearer ${SECRET}`));
+    const order = (fn: { mock: { invocationCallOrder: number[] } }) =>
+      fn.mock.invocationCallOrder[0];
+    expect(order(recon.reconcileStrandedAttempts)).toBeLessThan(
+      order(creditPacks.reconcilePendingCreditPurchases),
+    );
+    expect(order(creditPacks.reconcilePendingCreditPurchases)).toBeLessThan(
+      order(recon.issueCapturedDrafts),
+    );
+  });
+
+  it("its errors make the run a 503, like any other pass", async () => {
+    creditPacks.reconcilePendingCreditPurchases.mockResolvedValue({
+      considered: 0,
+      settled: 0,
+      errors: 1,
+    });
+    expect((await GET(req(`Bearer ${SECRET}`))).status).toBe(503);
   });
 });

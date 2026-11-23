@@ -95,6 +95,8 @@ vi.mock("./invoice-store", () => store);
 const collect = vi.hoisted(() => ({
   beginAttempt: vi.fn(),
   settleAttempt: vi.fn(),
+  // The new order is recorded on its attempt unless a test says it was not.
+  recordGatewayOrder: vi.fn(),
   // RC-F1b: no earlier captured purchase unless a test says so.
   capturedDraftPurchases: vi.fn(async (): Promise<unknown[] | null> => []),
   capturedAttemptForInvoice: vi.fn(async (): Promise<unknown> => null),
@@ -112,6 +114,7 @@ const receipts = vi.hoisted(() => ({ notifyPlanActivated: vi.fn() }));
 vi.mock("./receipts", () => receipts);
 
 import {
+  MANDATE_FREQUENCY,
   completeEnrolmentPurchase,
   confirmEnrolment,
   ensureBillingAccount,
@@ -248,6 +251,7 @@ beforeEach(() => {
     idempotencyKey: "key-1",
   });
   collect.settleAttempt.mockResolvedValue("captured");
+  collect.recordGatewayOrder.mockResolvedValue(true);
 });
 
 describe("startEnrolment", () => {
@@ -258,6 +262,19 @@ describe("startEnrolment", () => {
     priceFor,
     now: NOW,
   };
+
+  // PR #303 re-review, 22 Nov 2026. The write that records the new order on
+  // its attempt can fail (a pool wait running out). The order id used to be
+  // returned anyway, so the merchant could pay an order nothing knew about.
+  it("★★ an order the attempt could not record is NEVER handed to the browser", async () => {
+    collect.recordGatewayOrder.mockResolvedValue(false);
+    const res = await startEnrolment(args);
+    expect(res).toEqual({
+      ok: false,
+      error: "Couldn't start the payment. Please try again.",
+    });
+    expect(collect.recordGatewayOrder).toHaveBeenCalledTimes(1);
+  });
 
   it("★★ DECLARES THE RAIL ON THE ORDER — omitting it is what hid UPI", async () => {
     // Razorpay fixes the mandate rail on the ORDER: "card" for a card mandate,
@@ -297,6 +314,31 @@ describe("startEnrolment", () => {
     expect(
       rzp.rzpCreateAuthorizationOrder.mock.calls[0][1].terms.maxAmountPaise,
     ).toBe(15_000_00);
+  });
+
+  // 22 Nov 2026. A `monthly` or `yearly` mandate allows one successful debit
+  // in each of ITS cycles, and StoreMink's 30-day and 365-day cycles do not
+  // line up with a calendar: sooner or later two renewals fall in one month
+  // and the second is refused. A yearly mandate would also refuse eleven of
+  // twelve renewals after a move to monthly billing.
+  it.each(["monthly", "yearly"] as const)(
+    "★★ a %s plan's mandate is registered AS PRESENTED, never on a calendar frequency",
+    async (period) => {
+      await startEnrolment({ ...args, plan: "basic", period });
+      const terms = rzp.rzpCreateAuthorizationOrder.mock.calls[0][1].terms;
+      expect(terms.frequency).toBe("as_presented");
+      expect(MANDATE_FREQUENCY).toBe("as_presented");
+    },
+  );
+
+  it("★ the ceiling and the expiry still bound the mandate", async () => {
+    await startEnrolment({ ...args, plan: "basic", period: "monthly" });
+    const terms = rzp.rzpCreateAuthorizationOrder.mock.calls[0][1].terms;
+    expect(terms.maxAmountPaise).toBeGreaterThan(0);
+    // Unix SECONDS, about five years out.
+    const years = (terms.expireAtUnix * 1000 - Date.now()) / (365 * 86_400_000);
+    expect(years).toBeGreaterThan(4);
+    expect(years).toBeLessThan(6);
   });
 
   it("★ but keeps real reprice headroom below the limit", async () => {

@@ -14,7 +14,7 @@ import {
 import { ArrowRight, Search, Store, Menu, X } from "lucide-react";
 import { TopbarProfile } from "./topbar-profile";
 import { useMobileNav } from "./dashboard-mobile-nav";
-import { useChat } from "./chat-context";
+import { useChat, useHasChat } from "./chat-context";
 import { NotificationBell } from "./components/notification-bell";
 import { LocationTag } from "./location-tag";
 import { MinkMark } from "./mink-mark";
@@ -137,6 +137,8 @@ export function DashboardTopbar({
   const router = useRouter();
   const { setOpen } = useMobileNav();
   const { isChatOpen, toggleChat } = useChat();
+  // No chat here (the platform console): no Mink AI button, never a dead one.
+  const hasChat = useHasChat();
   const planPill = PLAN_PILL[planId ?? "free"] ?? PLAN_PILL.free;
   const desktopSearchRef = useRef<HTMLDivElement>(null);
   const mobileSearchRef = useRef<HTMLDivElement>(null);
@@ -387,14 +389,18 @@ export function DashboardTopbar({
 
       {/* Right */}
       <div className="flex items-center gap-0.5 sm:gap-3 shrink-0 justify-end">
-        <button
-          type="button"
-          onClick={() => window.open("/", "_blank")}
-          className="hidden sm:flex items-center gap-2 text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 h-[34px] px-3 rounded-lg text-[13px] font-medium transition-colors shrink-0"
-        >
-          <Store className="h-4 w-4" />
-          My Store
-        </button>
+        {/* Store-only, like the store name: the platform console passes no
+            storeName, and there "/" is the marketing site, not a store. */}
+        {storeName && (
+          <button
+            type="button"
+            onClick={() => window.open("/", "_blank")}
+            className="hidden sm:flex items-center gap-2 text-slate-300 hover:text-white bg-slate-700 hover:bg-slate-600 h-[34px] px-3 rounded-lg text-[13px] font-medium transition-colors shrink-0"
+          >
+            <Store className="h-4 w-4" />
+            My Store
+          </button>
+        )}
 
         <button
           type="button"
@@ -407,24 +413,26 @@ export function DashboardTopbar({
 
         {/* The "Ask Mink AI" pop-out bar hangs under the face, positioned
             against this wrapper (mink-dock.tsx, dashboard.css). */}
-        <div className="dash-mink-dock relative shrink-0">
-          <button
-            type="button"
-            onClick={toggleChat}
-            className={`relative text-slate-300 hover:text-white w-8 h-8 rounded-md flex items-center justify-center transition-colors hover:bg-slate-700 shrink-0 ${
-              isChatOpen ? "bg-slate-700 text-white" : ""
-            }`}
-            aria-label="Mink AI"
-            // Names the panel only while it is on screen: a reference to a
-            // hidden element tells assistive tech nothing.
-            aria-controls={isChatOpen ? "mink-chat-panel" : undefined}
-            aria-expanded={isChatOpen}
-            data-mink-toggle=""
-          >
-            <MinkMark size="sm" />
-          </button>
-          <MinkDock />
-        </div>
+        {hasChat && (
+          <div className="dash-mink-dock relative shrink-0">
+            <button
+              type="button"
+              onClick={toggleChat}
+              className={`relative text-slate-300 hover:text-white w-8 h-8 rounded-md flex items-center justify-center transition-colors hover:bg-slate-700 shrink-0 ${
+                isChatOpen ? "bg-slate-700 text-white" : ""
+              }`}
+              aria-label="Mink AI"
+              // Names the panel only while it is on screen: a reference to a
+              // hidden element tells assistive tech nothing.
+              aria-controls={isChatOpen ? "mink-chat-panel" : undefined}
+              aria-expanded={isChatOpen}
+              data-mink-toggle=""
+            >
+              <MinkMark size="sm" />
+            </button>
+            <MinkDock />
+          </div>
+        )}
 
         <NotificationBell />
 

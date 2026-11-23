@@ -10,6 +10,7 @@ import {
   themeStudioVisualQaRuns,
 } from "@/drizzle/schema";
 import { withService, type Db } from "@/lib/db/client";
+import { publishedReleaseOf } from "./published-version";
 import { pgErrorCode } from "@/lib/db/errors";
 import type { ThemeStudioActor } from "./access";
 import type { ThemeStudioProjectState } from "./contracts";
@@ -388,7 +389,14 @@ export async function stopThemeStudioChecks(
           }
         }
         currentVersionId = settled ?? project.currentVersionId;
-        status = currentVersionId ? "ready" : "failed";
+        // Nothing new became current and the design it kept is a published
+        // one: a stopped change leaves a live theme live (0288).
+        status = !currentVersionId
+          ? "failed"
+          : !settled &&
+              (await publishedReleaseOf(db, project.id, currentVersionId))
+            ? "published"
+            : "ready";
       }
       await db
         .update(themeStudioProjects)

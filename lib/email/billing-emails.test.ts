@@ -16,6 +16,7 @@ import {
   planDowngradedTemplate,
   renewalDueTemplate,
   renewalOverdueTemplate,
+  autopayStoppedTemplate,
   refundTemplate,
   refundSentTemplate,
   refundRecordedTemplate,
@@ -1170,6 +1171,79 @@ describe("renewalOverdueTemplate: `attempted` must be truthful", () => {
     expect(attempted.html).toContain("We couldn't collect payment");
     expect(unattempted.html).not.toContain("couldn't collect");
     expect(unattempted.html).toContain("renewal hasn't been paid");
+  });
+});
+
+describe("autopayStoppedTemplate: automatic collection stopped, pay by hand", () => {
+  const base = {
+    storeName: "Echos",
+    planName: "Pro",
+    amountPaise: 240_000,
+    tax: null,
+    invoiceRef: "SM/2026-27/00042",
+    attempts: 3,
+    manageUrl: MANAGE,
+  };
+
+  it("★★ says how many tries, that no more will be made, and asks for payment by the renewal day", () => {
+    const e = autopayStoppedTemplate({
+      ...base,
+      payBy: "2026-11-07T06:30:00.000Z",
+    });
+    expect(e.subject).toBe("Action needed: pay ₹2,400 for your Pro plan");
+    expect(e.html).toContain("We tried 3 times");
+    expect(e.html).toContain("We won't try again automatically");
+    expect(e.html).toContain("7 Nov 2026");
+    expect(e.html).toContain("48 hours' grace");
+    expect(e.html).toContain("SM/2026-27/00042");
+    expect(e.html).toContain("Pay now");
+    expect(e.html).toContain(MANAGE);
+  });
+
+  // 21 Nov 2026: the mandate itself was cancelled or paused at the bank, so
+  // counting tries would be untrue (there may have been none).
+  it("★★ a mandate that is gone says so, and never counts tries", () => {
+    const e = autopayStoppedTemplate({
+      ...base,
+      attempts: 0,
+      cause: "mandate",
+      payBy: "2026-11-07T06:30:00.000Z",
+    });
+    expect(e.subject).toBe("Action needed: pay ₹2,400 for your Pro plan");
+    expect(e.html).toContain("Autopay is no longer active");
+    expect(e.html).toContain(
+      "has been cancelled or paused with your bank or card",
+    );
+    expect(e.html).not.toContain("We tried");
+    expect(e.html).not.toContain("0 times");
+    expect(e.html).toContain("7 Nov 2026");
+    expect(e.html).toContain("Pay now");
+    expect(e.subject + e.html).not.toContain("\u2014");
+  });
+
+  it("with no cause given it is the tries-used message", () => {
+    const e = autopayStoppedTemplate({ ...base, payBy: null });
+    expect(e.html).toContain("Automatic payment didn&#39;t go through");
+    expect(e.html).not.toContain("Autopay is no longer active");
+  });
+
+  it("★ after the renewal day it names no date, only what an unpaid renewal leads to", () => {
+    const e = autopayStoppedTemplate({ ...base, payBy: null });
+    expect(e.html).not.toContain("Pay by");
+    expect(e.html).toContain("as soon as you can");
+    expect(e.html).toContain("48 hours after it falls due");
+  });
+
+  it("one try reads as once; the store name is escaped; no long dash anywhere", () => {
+    const e = autopayStoppedTemplate({
+      ...base,
+      storeName: "A<b>",
+      attempts: 1,
+      payBy: null,
+    });
+    expect(e.html).toContain("We tried once");
+    expect(e.html).not.toContain("A<b>");
+    expect(e.subject + e.html).not.toContain("\u2014");
   });
 });
 

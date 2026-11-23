@@ -18,7 +18,7 @@
 
 import type { PageSectionItem, SectionStyle } from "@/lib/sections/registry";
 import { EMPTY_CONFIG } from "@/lib/homepage/section-types";
-import type { DesignDirection } from "@/lib/theme-studio/design-directions";
+import type { StudioDesignDirection as DesignDirection } from "@/lib/theme-studio/design-directions";
 import type {
   ThemeCatalogSize,
   ThemeFeature,

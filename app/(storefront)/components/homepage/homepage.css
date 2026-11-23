@@ -55,6 +55,44 @@
   );
 }
 
+/* ★★ A FULL-WIDTH PHOTOGRAPH MEETS THE HEADER EXACTLY (owner, 22 Nov 2026).
+   The rule above floors the reserve at the page's section gap, which is
+   right for a hero drawn as a card (the space around it is its design) and
+   wrong for a photograph running edge to edge: with the bar now 68px tall,
+   a 72px gap on a wide screen, or a spacious theme's larger one, left a
+   strip of page colour between the header and the picture. A full-width
+   opening reserves the header's height and nothing more; under the market
+   bar, which reserves its own height on the root, it reserves nothing. */
+.storefront-root:not(.sm-header-market):not(.sm-header-transparent)
+  .home-sections:has(
+    > .home-section.is-fullbleed:first-child > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: var(--sm-header-h, 68px);
+}
+.storefront-root.sm-header-market
+  .home-sections:has(
+    > .home-section.is-fullbleed:first-child > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: 0;
+}
+
+/* ★★ AND THE PHOTOGRAPH ITSELF STARTS THERE (owner, 22 Nov 2026: "just
+   below the Roast and above the homepage carousel there is so much of gap").
+   The rule above puts the opening SECTION flush under the header, but a
+   section's own vertical padding (a theme's or a merchant's `padding_y`) then
+   pushed the photograph down inside it: the Roast theme's "sm" left 28px of
+   page colour under a 68px bar, which read as a header half as tall again.
+   A full-width photograph that opens the page has no padding above it, under
+   every header, whatever the section's padding setting says; its padding
+   below is kept. A contained hero (not full width) keeps its padding: there
+   the space around the card is the design. */
+.home-sections
+  > .home-section.is-fullbleed:first-child:has(
+    > :is(.home-hero, .home-carousel)
+  ) {
+  padding-top: 0;
+}
+
 /* The transparent header (theme layout.header = "transparent") floats over
    the opening photograph the way Shopify themes do, so a hero- or
    carousel-led page starts at the very top and its picture runs under the
@@ -148,14 +186,88 @@
   ) {
   padding-inline: 0;
 }
+/* A slideshow running from edge to edge is a band, not a card: its corners
+   are square. Rounded, they showed the page colour in the screen's own
+   corners. */
+.home-section.is-fullbleed > .home-carousel {
+  border-radius: 0;
+}
 .home-section.home-pad-sm {
-  padding-block: clamp(16px, 2.5vw, 28px);
+  --home-pad: clamp(16px, 2.5vw, 28px);
+  padding-block: var(--home-pad);
 }
 .home-section.home-pad-md {
-  padding-block: clamp(32px, 5vw, 56px);
+  --home-pad: clamp(32px, 5vw, 56px);
+  padding-block: var(--home-pad);
 }
 .home-section.home-pad-lg {
-  padding-block: clamp(56px, 8vw, 96px);
+  --home-pad: clamp(56px, 8vw, 96px);
+  padding-block: var(--home-pad);
+}
+/* ★★ A SECTION'S OWN PADDING AND THE GAP BETWEEN SECTIONS DO NOT ADD UP
+   (owner, 22 Nov 2026: "there is so much of space above Flagship Lineup",
+   then the same above a pale band). `.home-sections` already puts the page's
+   section gap between every two sections. A section with vertical padding
+   then added that on BOTH sides on top of it: two "large" sections on a
+   desktop stood 96 + 72 + 96 = 264px apart, a third of a screen of bare
+   page, and a theme that gave most of its sections padding (the "Volt"
+   theme did) read as full of holes. Two rules, both by a negative margin:
+
+   1. A PLAIN section (no scheme band, no background, not a full-width
+      photograph): its padding is more of the same page colour as the gap,
+      so the two overlap. Each side gives back the smaller of its padding
+      and the gap. Two large sections are then 120px apart, a large beside
+      a medium 96px, two medium the plain 72px gap; never less than the gap.
+   2. A BLOCK that paints itself edge to edge (a scheme band, a merchant's
+      background, a full-width hero, slideshow or banner) keeps ALL of its
+      padding, which is the room inside its colour. It gives back half the
+      gap on each side instead: two blocks touch, the way coloured bands
+      and a ticker under a hero are meant to, and a block sits half a gap
+      (plus whatever padding its neighbour has left) from plain content,
+      never against it.
+
+   ★ Never above the first section (the header's reserve) nor below the last
+     (the footer). A later section is painted over an earlier one's padding
+     where the two overlap, and padding is all that ever overlaps. */
+.home-sections
+  > .home-section[class*="home-pad-"]:not(
+    :is(
+      .sm-scheme,
+      [style*="background"],
+      .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+    )
+  ):not(:first-child) {
+  margin-top: calc(
+    -1 * min(var(--home-pad), var(--sm-section-gap, clamp(40px, 6vw, 72px)))
+  );
+}
+.home-sections
+  > .home-section[class*="home-pad-"]:not(
+    :is(
+      .sm-scheme,
+      [style*="background"],
+      .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+    )
+  ):not(:last-child) {
+  margin-bottom: calc(
+    -1 * min(var(--home-pad), var(--sm-section-gap, clamp(40px, 6vw, 72px)))
+  );
+}
+.home-sections
+  > .home-section:is(
+    .sm-scheme,
+    [style*="background"],
+    .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+  ):not(:first-child) {
+  margin-top: calc(-0.5 * var(--sm-section-gap, clamp(40px, 6vw, 72px)));
+}
+.home-sections
+  > .home-section:is(
+    .sm-scheme,
+    [style*="background"],
+    .is-fullbleed:has(> :is(.home-hero, .home-carousel, .home-banner))
+  ):not(:last-child) {
+  margin-bottom: calc(-0.5 * var(--sm-section-gap, clamp(40px, 6vw, 72px)));
 }
 
 /* ---- Colour schemes (SectionShell `sm-scheme sm-scheme-<id>`) ----
@@ -1562,6 +1674,11 @@
     transform: translateX(-50%);
   }
 }
+/* ★ Motion off: the band stands still and shows each message ONCE, centred.
+   A sequence holds the messages several times over to fill the loop; those
+   copies (.is-repeat) used to wrap into a block eight rows tall, on a
+   shopper's screen and in every Theme Studio catalogue picture, which is
+   taken with motion off (23 Nov 2026; ticker-section.tsx). */
 @media (prefers-reduced-motion: reduce) {
   .home-ticker-track {
     animation: none;
@@ -1569,14 +1686,21 @@
   }
   .home-ticker-seq {
     flex-wrap: wrap;
+    justify-content: center;
     width: 100%;
     gap: 12px;
   }
-  .home-ticker-seq[aria-hidden="true"] {
+  .home-ticker-seq[aria-hidden="true"],
+  .home-ticker-item.is-repeat {
     display: none;
   }
   .home-ticker-item {
     white-space: normal;
+    text-align: center;
+  }
+  /* The mark sits BETWEEN messages; nothing follows the last one now. */
+  .home-ticker-item.is-last::after {
+    display: none;
   }
 }
 
@@ -1919,21 +2043,51 @@ a.home-gallery-card:hover .home-gallery-image {
   line-height: 1.45;
 }
 
+/* ★ ONE ROW THAT SCROLLS SIDEWAYS (owner, 22 Nov 2026: "the testimonials
+   should be in scroll fashion from left to right"). The quotes used to wrap
+   onto more rows, and on a phone stacked into one long column that pushed
+   the rest of the page three screens down. Now they are a single row: as
+   many as the section's column count fit across, and the rest are reached by
+   swiping (touch, trackpad, Shift+wheel, or Tab: the row is focusable).
+   With no more quotes than columns it looks exactly as the grid did.
+   `--home-testimonial-cols` is the number of cards across; a fraction makes
+   the next card peek in so the row reads as swipeable. */
 .home-testimonials {
+  --home-testimonial-gap: clamp(14px, 2vw, 24px);
+  --home-testimonial-cols: 3;
+  position: relative; /* contains absolute descendants; see .home-product-scroll */
   display: grid;
-  gap: clamp(14px, 2vw, 24px);
+  grid-auto-flow: column;
+  grid-auto-columns: calc(
+    (100% - (var(--home-testimonial-cols) - 1) * var(--home-testimonial-gap)) /
+      var(--home-testimonial-cols)
+  );
+  gap: var(--home-testimonial-gap);
   max-width: var(--sm-page-width, 1320px);
   margin-inline: auto;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.home-testimonials::-webkit-scrollbar {
+  display: none;
+}
+.home-testimonials:focus-visible {
+  outline: 2px solid var(--sm-accent);
+  outline-offset: 4px;
 }
 .home-testimonials.cols-2 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  --home-testimonial-cols: 2;
 }
 .home-testimonials.cols-3 {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  --home-testimonial-cols: 3;
 }
 .home-testimonial {
   display: flex;
   min-width: 0;
+  scroll-snap-align: start;
   min-height: 260px;
   flex-direction: column;
   margin: 0;
@@ -2072,6 +2226,30 @@ a.home-gallery-card:hover .home-gallery-image {
 .home-newsletter.theme-light .home-newsletter-sub {
   color: color-mix(in srgb, var(--sm-on-ink) 72%, transparent);
 }
+/* ★★ INSIDE THE NEWSLETTER'S OWN PANEL THE EYEBROW TAKES THE PANEL'S
+   COLOUR, whatever a theme's style rules say (22 Nov 2026). A theme may
+   colour every section eyebrow (lib/themes/stylesheet.ts `section.eyebrow`),
+   and that colour is checked against the page and the section colour
+   schemes. The newsletter paints a panel of its own on top of those, soft or
+   ink, which no such check covers: the "Volt" theme's electric blue eyebrow
+   read 3.43:1 on the ink panel, the layout check failed it three times, and
+   the automatic repair had no setting that could change it, so a theme
+   stopped before a single picture was drawn. The theme still sets the
+   eyebrow's type; only its colour here is the panel's. One class more than a
+   compiled style rule carries (.storefront-root, twice its own class, and
+   the hook), so this wins by weight, never by order. */
+.storefront-root
+  .home-section
+  .home-newsletter.home-newsletter.home-newsletter
+  .home-section-eyebrow {
+  color: var(--sm-ink-soft);
+}
+.storefront-root
+  .home-section
+  .home-newsletter.home-newsletter.theme-light
+  .home-section-eyebrow {
+  color: color-mix(in srgb, var(--sm-on-ink) 72%, transparent);
+}
 .home-newsletter-form {
   display: flex;
   flex-direction: column;
@@ -2158,9 +2336,11 @@ a.home-gallery-card:hover .home-gallery-image {
     max-width: 680px;
   }
   .home-gallery.cols-3,
-  .home-gallery.cols-4,
-  .home-testimonials.cols-3 {
+  .home-gallery.cols-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .home-testimonials.cols-3 {
+    --home-testimonial-cols: 2;
   }
   .home-newsletter {
     grid-template-columns: 1fr;
@@ -2171,10 +2351,17 @@ a.home-gallery-card:hover .home-gallery-image {
   .home-gallery.layout-editorial,
   .home-gallery.cols-2,
   .home-gallery.cols-3,
-  .home-gallery.cols-4,
+  .home-gallery.cols-4 {
+    grid-template-columns: 1fr;
+  }
+  /* One quote and the edge of the next, so a phone shows there is more. A
+     single quote takes the whole width. */
   .home-testimonials.cols-2,
   .home-testimonials.cols-3 {
-    grid-template-columns: 1fr;
+    --home-testimonial-cols: 1.15;
+  }
+  .home-testimonials:has(> .home-testimonial:only-child) {
+    --home-testimonial-cols: 1;
   }
   .home-testimonial {
     min-height: 220px;
@@ -2686,7 +2873,8 @@ a.home-gallery-card:hover .home-gallery-image {
 
 /* ---- Image marquee (image-marquee-section.tsx; logo strip "scroll") ----
    The ticker's track, with pictures: two sequences, -50% translate, pause
-   on hover, static and wrapped under reduced motion. */
+   on hover; with motion off, still, wrapped and each picture ONCE (the
+   copies that fill the loop, .is-repeat, are dropped: 23 Nov 2026). */
 .home-marquee {
   overflow: hidden;
   padding: 6px 0;
@@ -2749,7 +2937,8 @@ a.home-gallery-card:hover .home-gallery-image {
     flex-wrap: wrap;
     justify-content: center;
   }
-  .home-marquee-track .home-marquee-seq[aria-hidden] {
+  .home-marquee-track .home-marquee-seq[aria-hidden],
+  .home-marquee-item.is-repeat {
     display: none;
   }
   .home-marquee-seq {
@@ -3249,6 +3438,88 @@ a.home-gallery-card:hover .home-gallery-image {
   .home-tile-grid.layout-collage .home-tile.span-2x2,
   .home-tile-grid.layout-collage .home-tile.span-2x1 {
     grid-column: span 2;
+    aspect-ratio: 2 / 1;
+  }
+}
+
+/* ★ ON A PHONE A PHOTO TILE'S WORDS SIT UNDER THE PHOTO, NOT ON IT (owner,
+   22 Nov 2026: "these photos are covered with text which does not look
+   good"). Two tiles across a phone are about 170px wide, so a title and a
+   sentence laid over the picture covered all of it. Now the photo keeps a
+   4:3 box of its own and the words are a caption below, in the colour of the
+   section they sit on. With an odd number of tiles the first takes the full
+   width, so no tile is left alone on a row. A tile with no photo (a colour
+   field) keeps its words on the colour.
+   ⚠ The photo is next/image `fill`, whose box is set inline (height 100%,
+   bottom 0): those two are the only `!important`s, and they are what lets
+   the photo be shorter than its tile. */
+@media (max-width: 560px) {
+  .home-tile-grid .home-tile:has(> .home-tile-img) {
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    min-height: 0;
+    overflow: visible;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    box-shadow: none;
+    transform: none;
+  }
+  .home-tile-grid .home-tile:has(> .home-tile-img)::before {
+    content: "";
+    display: block;
+    flex: none;
+    aspect-ratio: 4 / 3;
+  }
+  .home-tile-grid .home-tile:has(> .home-tile-img) > .home-tile-img {
+    bottom: auto !important;
+    height: auto !important;
+    aspect-ratio: 4 / 3;
+    border-radius: var(--sm-radius-card, 16px);
+  }
+  .home-tile-grid .home-tile:has(> .home-tile-img)::after {
+    content: none;
+  }
+  .home-tile-grid .home-tile:has(> .home-tile-img) .home-tile-copy {
+    padding: 10px 2px 0;
+    color: inherit;
+    text-shadow: none;
+  }
+  .home-tile-grid.layout-grid
+    .home-tile:has(> .home-tile-img):first-child:nth-last-child(odd):not(
+      :only-child
+    ) {
+    grid-column: 1 / -1;
+  }
+  .home-tile-grid.layout-grid
+    .home-tile:has(> .home-tile-img):first-child:nth-last-child(odd):not(
+      :only-child
+    )::before,
+  .home-tile-grid.layout-grid
+    .home-tile:has(> .home-tile-img):first-child:nth-last-child(odd):not(
+      :only-child
+    )
+    > .home-tile-img {
+    aspect-ratio: 16 / 9;
+  }
+  /* A collage keeps each tile's own shape for its photo. */
+  .home-tile-grid.layout-collage .home-tile:has(> .home-tile-img),
+  .home-tile-grid.layout-collage
+    .home-tile:is(.span-2x1, .span-1x2, .span-2x2):has(> .home-tile-img) {
+    aspect-ratio: auto;
+  }
+  .home-tile-grid.layout-collage .home-tile:has(> .home-tile-img)::before,
+  .home-tile-grid.layout-collage
+    .home-tile:has(> .home-tile-img)
+    > .home-tile-img {
+    aspect-ratio: 1 / 1;
+  }
+  .home-tile-grid.layout-collage
+    .home-tile:is(.span-2x1, .span-2x2):has(> .home-tile-img)::before,
+  .home-tile-grid.layout-collage
+    .home-tile:is(.span-2x1, .span-2x2):has(> .home-tile-img)
+    > .home-tile-img {
     aspect-ratio: 2 / 1;
   }
 }

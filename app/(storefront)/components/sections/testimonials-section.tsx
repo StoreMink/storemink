@@ -31,8 +31,13 @@ export function TestimonialsSection({
           )}
         </div>
       )}
+      {/* One row that scrolls sideways (homepage.css). Focusable and named,
+          so a keyboard reaches the quotes that are off the edge. */}
       <div
         className={`home-testimonials layout-${config.layout} cols-${config.columns}`}
+        role="group"
+        aria-label={config.heading || "What customers say"}
+        tabIndex={0}
       >
         {config.items.map((item, index) => (
           <blockquote

@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v33";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v36";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -60,5 +60,51 @@ export function themePromptFeatures(version: string) {
      * same templates as one JSON string, `templatesJson`, which the compiler
      * parses and checks; earlier requests keep their schema byte for byte. */
     templatesJson: revision >= 33,
+    /** The theme's own style rules (plan Phase 3, owner 22 Nov 2026): Stage
+     * B writes `stylesheetJson`, a JSON string holding rules from the closed
+     * vocabulary in lib/themes/stylesheet.ts, which the compiler parses and
+     * checks into preset.stylesheet. Two themes with the same layout picks
+     * then still differ. Earlier requests keep their schema and prompt byte
+     * for byte. */
+    stylesheet: revision >= 34,
+    /** Fourteen design directions in place of seven (plan Phase 4 item 2;
+     * design-directions.ts STUDIO_DESIGN_DIRECTIONS): Stage A's schema and
+     * prompt offer the seven later ones too. Earlier requests keep the
+     * first seven byte for byte. */
+    moreDirections: revision >= 34,
+    /** Layout commitments (plan Phase 4 item 1; commitments.ts): a new
+     * theme is given the header, card, product page, footer, page width and
+     * grid its catalogue uses least, and asked to keep them. */
+    commitments: revision >= 34,
+    /** The design plan (owner 22 Nov 2026; design-plan.ts): Stage A decides
+     * a new theme's colours, fonts, buttons, styling and (from screenshots)
+     * layout and writes them as `designPlanJson`; the plan is checked
+     * against every published theme, Stage B is held to it and also sees the
+     * screenshots, the screenshots' colours are measured from their pixels,
+     * and a built theme under the publish floor is corrected or stopped
+     * BEFORE any photograph is drawn. */
+    designPlan: revision >= 34,
+    /** Owner, 23 Nov 2026 ("ai theme builder should be capable of
+     * understanding the follow ups the operator gives"): an automatic fix
+     * round is given the operator's latest request, and may not set back a
+     * setting that change made (follow-up-guard.ts). */
+    followUpRepair: revision >= 35,
+    /** The same day, after Muse's menu stayed hidden through "add
+     * navigation": Stage B and the change scope are told which header
+     * layouts show the menu's links on a computer (HEADER_MENU_PROMPT),
+     * appended last so every earlier request keeps its bytes. */
+    headerMenu: revision >= 35,
+    /** Owner, 23 Nov 2026 ("in the planning it should judge ... how much
+     * space is to the left, and design the number of buttons"): a new
+     * centred-logo theme is told its menu's room, its header keeps only the
+     * links that fit beside the logo, and a change that makes the menu too
+     * wide is sent back once (menu-fit.ts). */
+    menuFit: revision >= 35,
+    /** Owner, 23 Nov 2026 (Muse on a phone showed only the wall behind the
+     * model): a CHANGE also gives every opening slide a portrait phone
+     * photograph (frame-shapes.ts withPhoneOpening), as a new theme has
+     * since v34. A slide whose phone photograph the change dropped gets the
+     * same slot back, so its picture carries over. No request text changes. */
+    phoneOpeningChanges: revision >= 36,
   };
 }

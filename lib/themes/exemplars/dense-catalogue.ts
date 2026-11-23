@@ -6,6 +6,7 @@
 import { DESIGN_FONTS } from "../fonts";
 import { basket } from "../definitions/basket";
 import { catalogueOf, exemplar, exemplarMeta, img, section } from "./shared";
+import { EXEMPLAR_STYLESHEETS } from "./stylesheets";
 
 const ID = "exemplar-dense-catalogue";
 const pic = (name: string) => img(ID, name);
@@ -455,6 +456,8 @@ export const denseCatalogue = exemplar(
         { label: "Refund policy", href: "/refund-policy" },
       ],
     },
+    // The theme's own style rules (./stylesheets.ts, plan Phase 3).
+    stylesheet: EXEMPLAR_STYLESHEETS["dense-catalogue"],
     sampleData: catalogue,
   },
 );

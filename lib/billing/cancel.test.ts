@@ -32,6 +32,13 @@ const worker = vi.hoisted(() => ({
 }));
 vi.mock("./renewal-worker", () => worker);
 
+// Withdrawing a scheduled debit is the collect module's, proved by its own
+// suite; here it is a seam, so a test can say what the cancel asked for.
+const collector = vi.hoisted(() => ({
+  withdrawUnsentDebits: vi.fn(async (): Promise<number | null> => 0),
+}));
+vi.mock("./collect", () => collector);
+
 import {
   cancelAtPeriodEnd,
   getSubscriptionView,
@@ -244,9 +251,88 @@ describe("cancelAtPeriodEnd", () => {
     expect(where.params).toEqual([STORE, "subscription", 4]);
     const inFlight = render(dbHolder.current.calls.select[1].inFlight);
     // ★ The outer table named by hand: a bare "id" would be the attempt's own.
+    // ★ A notified automatic attempt whose debit has not been sent is not a
+    // payment in flight: no money can move until it is.
     expect(inFlight.sql).toBe(
-      "exists ( select 1 from public.billing_payment_attempts a where a.invoice_id = \"billing_invoices\".\"id\" and a.state in ('created', 'processing', 'authorized', 'unknown'))",
+      "exists ( select 1 from public.billing_payment_attempts a where a.invoice_id = \"billing_invoices\".\"id\" and a.state in ('created', 'processing', 'authorized', 'unknown') and not (a.mode = 'automatic' and a.state = 'processing' and a.debit_after is not null and a.debit_sent_at is null))",
     );
+    const scheduled = render(dbHolder.current.calls.select[1].scheduled);
+    expect(scheduled.sql).toBe(
+      "exists ( select 1 from public.billing_payment_attempts a where a.invoice_id = \"billing_invoices\".\"id\" and a.mode = 'automatic' and a.state = 'processing' and a.debit_after is not null and a.debit_sent_at is null)",
+    );
+  });
+
+  // 21 Nov 2026: an automatic renewal waits a day or more between its bank
+  // notice and its debit, so a merchant can cancel in between.
+  describe("★★ a renewal whose debit is scheduled but not sent", () => {
+    it("reads as an unpaid invoice with nothing in flight: it won't be charged", async () => {
+      seedActive({}, [
+        nextInvoiceRow({
+          status: "processing",
+          inFlight: false,
+          scheduled: true,
+        }),
+      ]);
+      const res = await cancelAtPeriodEnd(args);
+      expect(res.ok && res.data.nextInvoice).toMatchObject({
+        status: "open",
+        inFlight: false,
+      });
+      expect(receipts.notifySubscriptionCancelled).toHaveBeenCalledWith(
+        expect.objectContaining({
+          nextInvoice: expect.objectContaining({
+            status: "open",
+            inFlight: false,
+          }),
+        }),
+      );
+    });
+
+    it("★ a debit already SENT is still a payment in flight", async () => {
+      seedActive({}, [
+        nextInvoiceRow({
+          status: "processing",
+          inFlight: true,
+          scheduled: false,
+        }),
+      ]);
+      const res = await cancelAtPeriodEnd(args);
+      expect(res.ok && res.data.nextInvoice).toMatchObject({
+        status: "processing",
+        inFlight: true,
+      });
+    });
+
+    it("★★ the scheduled debit is withdrawn at once, for that invoice", async () => {
+      seedActive({}, [
+        nextInvoiceRow({ status: "processing", scheduled: true }),
+      ]);
+      await cancelAtPeriodEnd(args);
+      expect(collector.withdrawUnsentDebits).toHaveBeenCalledTimes(1);
+      expect(collector.withdrawUnsentDebits).toHaveBeenCalledWith({
+        invoiceId: "inv-4",
+        code: "plan_cancelled",
+        reason: "the plan was cancelled before the debit",
+        now: NOW,
+      });
+    });
+
+    it("a withdrawal that could not be made does not fail the cancel", async () => {
+      // The debit pass refuses a cancelled plan's debit by itself.
+      collector.withdrawUnsentDebits.mockResolvedValueOnce(null);
+      seedActive({}, [
+        nextInvoiceRow({ status: "processing", scheduled: true }),
+      ]);
+      expect((await cancelAtPeriodEnd(args)).ok).toBe(true);
+    });
+
+    it("nothing is withdrawn with no next invoice, or when the claim was lost", async () => {
+      seedActive();
+      await cancelAtPeriodEnd(args);
+      seedActive({ cancelAtPeriodEnd: true });
+      await cancelAtPeriodEnd(args);
+      expect(collector.withdrawUnsentDebits).not.toHaveBeenCalled();
+    });
   });
 
   it("★ a lost claim reads nothing more and says nothing", async () => {

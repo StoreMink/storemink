@@ -42,6 +42,7 @@ import { PLAN_META, normalizePlan } from "@/lib/plans";
 import { logError } from "@/lib/observability/logger";
 import { recordEvent } from "@/lib/notifications/record";
 import {
+  autopayStoppedTemplate,
   emailTaxFromInvoice,
   manageUrl,
   planDowngradedTemplate,
@@ -129,6 +130,73 @@ export async function notifyInvoiceIssued(input: {
     });
   } catch (err) {
     logError("billing.notify_invoice_issued", err, { storeId: input.storeId });
+  }
+}
+
+/**
+ * Automatic collection has used every try on a renewal and stopped (owner
+ * decision, 21 Nov 2026: three tries, 24 hours apart, then ask the merchant
+ * to pay by hand).
+ *
+ * ★ THIS IS THE ASKING. The issue notice told the merchant there was nothing
+ * to do, so without this they would learn the debit failed only when the
+ * cycle turned and the 48-hour clock was already running.
+ *
+ * `dueAt` is when the cycle the invoice opens begins. The email names it only
+ * while it is still ahead; after it, the overdue notice owns the deadline.
+ */
+export async function notifyAutopayStopped(input: {
+  storeId: string;
+  plan: string;
+  amountPaise: number;
+  tax?: InvoiceTaxColumns | null;
+  dueAt: Date | null;
+  invoiceRef: string | null;
+  attempts: number;
+  /** Why autopay stopped: every try used, or the mandate itself is gone. */
+  cause?: "exhausted" | "mandate";
+  now?: Date;
+}): Promise<void> {
+  try {
+    const to = await resolveBillingEmail(input.storeId);
+    if (!to) return;
+    const now = input.now ?? new Date();
+    const payBy =
+      input.dueAt && input.dueAt.getTime() > now.getTime()
+        ? input.dueAt.toISOString()
+        : null;
+    await sendBillingEmail(
+      to.email,
+      autopayStoppedTemplate({
+        storeName: to.storeName,
+        planName: planName(input.plan),
+        amountPaise: input.amountPaise,
+        tax: input.tax ? emailTaxFromInvoice(input.tax) : null,
+        payBy,
+        invoiceRef: input.invoiceRef,
+        attempts: input.attempts,
+        cause: input.cause ?? "exhausted",
+        manageUrl: manageUrl(to.slug),
+      }),
+      input.storeId,
+    );
+    // In-app: the same "an invoice is due" event the issue notice records,
+    // because that is what is now true for the merchant.
+    await recordEvent({
+      type: "subscription.invoice_due",
+      storeId: input.storeId,
+      subject: { type: "invoice", id: input.invoiceRef ?? undefined },
+      payload: {
+        amount: input.amountPaise / 100,
+        currency: "INR",
+        due_at: (input.dueAt ?? now).toISOString(),
+        reference: input.invoiceRef ?? "",
+      },
+    });
+  } catch (err) {
+    logError("billing.notify_autopay_stopped", err, {
+      storeId: input.storeId,
+    });
   }
 }
 

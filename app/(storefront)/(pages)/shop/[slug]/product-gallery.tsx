@@ -135,7 +135,15 @@ export function ProductGallery({
   const thumbs = mode === "thumbs-bottom" || mode === "thumbs-left";
 
   return (
-    <div className={`${p}-gallery sm-gallery mode-${mode}`}>
+    // ★ `is-single`: a product with one photograph renders no thumbnails, and
+    //   a shape that lays the thumbnails out in their own column must not
+    //   keep that column (shop.css). Without it the lone photograph was the
+    //   gallery's only grid item and took the 72px thumbnail column: a
+    //   product page with a postage stamp for a picture (found on the first
+    //   live Theme Studio v34 theme, 22 Nov 2026).
+    <div
+      className={`${p}-gallery sm-gallery mode-${mode}${multi ? "" : " is-single"}`}
+    >
       <div className="sm-gallery-frame">
         <div
           ref={track}

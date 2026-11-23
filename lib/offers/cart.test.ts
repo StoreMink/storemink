@@ -44,6 +44,7 @@ import {
   loadOffersForStorefront,
   recordOfferRedemptions,
   releaseOfferUses,
+  releaseOrderOfferUses,
   reserveOfferUses,
   resolveOffersForCart,
 } from "./cart";
@@ -308,5 +309,65 @@ describe("★★ a gift StoreMink has blocked, by channel (D18)", () => {
     expect(offers.map((o) => [o.id, o.giftAvailable])).toEqual([
       [OFFER, false],
     ]);
+  });
+});
+
+// 21 Nov 2026: an online order that was never paid gives its offer uses back.
+describe("releaseOrderOfferUses: an unpaid order's offers go back, from the ledger", () => {
+  function ledger(rows: unknown[]) {
+    const mock = makeDbMock({ returning: rows });
+    h.withService.mockImplementation(async (fn: (db: unknown) => unknown) =>
+      fn(mock.db),
+    );
+    return mock;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("★★ deletes the order's redemptions and gives each use and its amount back", async () => {
+    const mock = ledger([
+      { offerId: OFFER, amountPaise: 5_000 },
+      { offerId: "44444444-4444-4444-8444-444444444444", amountPaise: "1200" },
+    ]);
+    const released = await releaseOrderOfferUses(STORE, ORDER);
+    expect(released).toEqual([
+      { offerId: OFFER, amountPaise: 5_000 },
+      {
+        offerId: "44444444-4444-4444-8444-444444444444",
+        amountPaise: 1_200,
+      },
+    ]);
+    // The DELETE is the claim: one statement, scoped to this store and order.
+    expect(mock.calls.delete).toHaveLength(1);
+    // One release_offer_use per redemption it claimed.
+    expect(mock.calls.execute).toHaveLength(2);
+  });
+
+  it("★ an order with no redemptions releases nothing", async () => {
+    const mock = ledger([]);
+    expect(await releaseOrderOfferUses(STORE, ORDER)).toEqual([]);
+    expect(mock.calls.execute).toHaveLength(0);
+  });
+
+  it("★★ a second pass over the same order finds nothing left to give back", async () => {
+    const first = ledger([{ offerId: OFFER, amountPaise: 5_000 }]);
+    await releaseOrderOfferUses(STORE, ORDER);
+    expect(first.calls.execute).toHaveLength(1);
+    // The rows are gone, so the same order cannot return one use twice.
+    const second = ledger([]);
+    await releaseOrderOfferUses(STORE, ORDER);
+    expect(second.calls.execute).toHaveLength(0);
+  });
+
+  it("never throws: a failed delete gives nothing back and is logged without the query", async () => {
+    h.withService.mockRejectedValue(queryFailed());
+    expect(await releaseOrderOfferUses(STORE, ORDER)).toEqual([]);
+    expect(h.logError).toHaveBeenCalledWith(
+      "release order offer uses failed",
+      "deadlock detected",
+      { storeId: STORE, orderId: ORDER },
+    );
   });
 });

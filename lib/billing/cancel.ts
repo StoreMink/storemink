@@ -37,6 +37,7 @@ import {
   billingSubscriptions,
 } from "@/drizzle/schema";
 import { logError, logInfo } from "@/lib/observability/logger";
+import { withdrawUnsentDebits } from "./collect";
 import type { NextInvoiceView, SubscriptionView } from "./invoice-types";
 import { AFA_EXEMPT_PAISE } from "./mandate-types";
 import { notifySubscriptionCancelled } from "./receipts";
@@ -106,6 +107,14 @@ function requesterKind(
  * whether a payment on it is still in flight: an attempt that is `created`,
  * `processing`, `authorized` or `unknown`, in which money may still land.
  *
+ * ★★ A SCHEDULED AUTOMATIC DEBIT IS NOT A PAYMENT IN FLIGHT (21 Nov 2026).
+ * An automatic renewal is a notified order and, a day or more later, its
+ * debit. Until the debit is sent (`debit_sent_at` is null) no money can move,
+ * and cancelling withdraws it. So an invoice that is `processing` only for
+ * such an attempt reads here as `open` with nothing in flight: "your renewal
+ * invoice won't be charged" is the true sentence, where "a payment is under
+ * way and can't be stopped" was not.
+ *
  * ⚠ The correlated subquery names the outer table BY HAND
  * (`"billing_invoices"."id"`): Drizzle writes a select list's columns without
  * their table, so `${billingInvoices.id}` would render as a bare `"id"` and
@@ -125,7 +134,18 @@ async function readNextInvoice(
       inFlight: sql<boolean>`exists (
         select 1 from public.billing_payment_attempts a
          where a.invoice_id = "billing_invoices"."id"
-           and a.state in ('created', 'processing', 'authorized', 'unknown'))`,
+           and a.state in ('created', 'processing', 'authorized', 'unknown')
+           and not (a.mode = 'automatic'
+                    and a.state = 'processing'
+                    and a.debit_after is not null
+                    and a.debit_sent_at is null))`,
+      scheduled: sql<boolean>`exists (
+        select 1 from public.billing_payment_attempts a
+         where a.invoice_id = "billing_invoices"."id"
+           and a.mode = 'automatic'
+           and a.state = 'processing'
+           and a.debit_after is not null
+           and a.debit_sent_at is null)`,
     })
     .from(billingInvoices)
     .where(
@@ -137,12 +157,16 @@ async function readNextInvoice(
     )
     .limit(1);
   if (!row) return null;
+  const inFlight = row.inFlight === true;
   return {
     id: row.id,
-    status: row.status,
+    status:
+      row.status === "processing" && !inFlight && row.scheduled === true
+        ? "open"
+        : row.status,
     totalPaise: Number(row.totalPaise),
     invoiceRef: row.invoiceRef ?? null,
-    inFlight: row.inFlight === true,
+    inFlight,
   };
 }
 
@@ -281,6 +305,22 @@ export async function cancelAtPeriodEnd(input: {
   const mandateRevoked = sub.mandateId
     ? await revokeMandate(sub.mandateId, now)
     : false;
+
+  // ★★ WITHDRAW THE RENEWAL'S SCHEDULED DEBIT NOW (21 Nov 2026). A renewal
+  // whose bank notice has gone out waits a day or more for its debit; the
+  // merchant has just been told that invoice won't be charged. The debit pass
+  // would refuse it anyway (it re-reads the cancellation, the invoice and the
+  // mandate before every debit), so this is not what makes that true: it makes
+  // the invoice read as unpaid from this moment. Best-effort for that reason.
+  // A debit already sent is left alone, and is refunded if it completes.
+  if (claimed.nextInvoice) {
+    await withdrawUnsentDebits({
+      invoiceId: claimed.nextInvoice.id,
+      code: "plan_cancelled",
+      reason: "the plan was cancelled before the debit",
+      now,
+    });
+  }
 
   logInfo("billing.cancelled", {
     storeId: input.storeId,

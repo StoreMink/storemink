@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   chooseCompaction,
+  STACK_CANDIDATES,
   COMPACT_STEPS,
+  STACK_STEPS,
   headerFits,
   headerRows,
   type CompactStep,
@@ -121,6 +123,63 @@ describe("chooseCompaction", () => {
     const h = header(99);
     expect(chooseCompaction(h.measure)).toEqual([...COMPACT_STEPS]);
   });
+
+  it("★ a header that can stack never folds its menu: the right side folds first, then the menu takes its own row", () => {
+    // Owner, 23 Nov 2026: Muse's centred-logo header hid every link behind
+    // the hamburger on a 1440px screen; the menu now goes under the logo.
+    const h = header(99);
+    expect(chooseCompaction(h.measure, STACK_CANDIDATES)).toEqual([
+      "stack",
+      "delivery",
+      "search",
+    ]);
+    expect(h.seen).toEqual([
+      "",
+      "delivery",
+      "delivery search",
+      "stack",
+      "stack delivery",
+    ]);
+    expect(h.seen.some((s) => s.includes("nav"))).toBe(false);
+    expect(STACK_STEPS).not.toContain("nav");
+  });
+
+  it("★ a menu that fits beside the logo stays there when only the right side is crowded", () => {
+    // A centred header: the menu (left) fits; the controls (right) need the
+    // delivery control folded. The menu must not move to a second row.
+    const seen: string[] = [];
+    const measure = (steps: readonly CompactStep[]) => {
+      seen.push(steps.join(" "));
+      const right = steps.includes("delivery")
+        ? { left: 700, right: 980 }
+        : { left: 560, right: 980 };
+      return layout([
+        { left: 24, right: 380 },
+        { left: 450, right: 570 },
+        right,
+      ]);
+    };
+    expect(chooseCompaction(measure, STACK_CANDIDATES)).toEqual(["delivery"]);
+    expect(seen).toEqual(["", "delivery"]);
+  });
+
+  it("★ the menu takes its own row only when it is what does not fit", () => {
+    const seen: string[] = [];
+    const measure = (steps: readonly CompactStep[]) => {
+      seen.push(steps.join(" "));
+      // The menu overlaps the logo until it is stacked.
+      const menu = steps.includes("stack")
+        ? { left: 24, right: 980, top: 80, bottom: 110 }
+        : { left: 24, right: 470, top: 10, bottom: 50 };
+      return layout([
+        menu,
+        { left: 450, right: 570, top: 10, bottom: 50 },
+        { left: 700, right: 980, top: 10, bottom: 50 },
+      ]);
+    };
+    expect(chooseCompaction(measure, STACK_CANDIDATES)).toEqual(["stack"]);
+    expect(seen).toEqual(["", "delivery", "delivery search", "stack"]);
+  });
 });
 
 describe("every step folds something", () => {
@@ -172,8 +231,41 @@ describe("every step folds something", () => {
     ).toBe(true);
   });
 
+  it("stack puts the centred header's menu on a wrapping row of its own", () => {
+    const desktop = header.slice(
+      header.indexOf("Centered-logo and minimal variants"),
+    );
+    const body = (selector: string) => {
+      const at = desktop.indexOf(selector);
+      expect(at).toBeGreaterThan(-1);
+      const open = desktop.indexOf("{", at);
+      return desktop.slice(open + 1, desktop.indexOf("}", open));
+    };
+    // Only inside the desktop block: tablets and phones keep the one row.
+    const before = header.slice(0, header.indexOf("--sm-header-stack: 1"));
+    expect(before.slice(before.lastIndexOf("@media"))).toMatch(
+      /^@media \(min-width: 1025px\)/,
+    );
+    expect(body(":global(.sm-header-centered) .header {")).toMatch(
+      /--sm-header-stack:\s*1/,
+    );
+    const nav = body(
+      ':global(.sm-header-centered) .header[data-header-compact~="stack"] .navLinks {',
+    );
+    expect(nav).toMatch(/grid-row:\s*2/);
+    expect(nav).toMatch(/grid-column:\s*1 \/ -1/);
+    expect(nav).toMatch(/flex-wrap:\s*wrap/);
+    expect(
+      body(
+        ':global(.sm-header-centered) .header[data-header-compact~="stack"] {',
+      ),
+    ).toMatch(/grid-template-rows:\s*auto auto/);
+    // No other header can stack: they fold as before.
+    expect(header.match(/--sm-header-stack:/g)).toHaveLength(1);
+  });
+
   it("covers every step there is", () => {
-    for (const step of COMPACT_STEPS) {
+    for (const step of [...COMPACT_STEPS, ...STACK_STEPS]) {
       expect(`${header}\n${delivery}`).toContain(
         `[data-header-compact~="${step}"]`,
       );

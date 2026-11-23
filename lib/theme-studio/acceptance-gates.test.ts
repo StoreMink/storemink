@@ -5,6 +5,7 @@ import { collectThemeImageUrls } from "@/lib/themes/validation";
 import type { ThemeDefinition } from "@/lib/themes/types";
 import { logWarn } from "@/lib/observability/logger";
 import {
+  BELOW_TARGET_FRACTION,
   type BrowserStateSample,
   acceptanceAssetsDigest,
   acceptanceEvidenceDigest,
@@ -14,6 +15,7 @@ import {
   evaluatePackageGates,
   gate,
   gateBlocks,
+  headerMenuFindings,
   imageRuleCode,
   internalLinks,
   linkFindings,
@@ -498,6 +500,115 @@ function fullCoverage(surfaces: AcceptanceSurface[]): BrowserSample[] {
     ),
   );
 }
+
+describe("★ the header menu on a computer (owner, 23 Nov 2026)", () => {
+  // Muse's menu sat behind the menu button on a 1440px screen through two
+  // designs, and no check said so.
+  const hidden = { layout: "classic", links: 7, shown: false };
+
+  it("warns when a computer screen shows the menu button instead of the menu", () => {
+    const findings = headerMenuFindings([
+      sample({ headerMenu: hidden }),
+      sample({
+        viewport: "laptop1024",
+        width: 1024,
+        headerMenu: { ...hidden, links: 1 },
+      }),
+    ]);
+    expect(findings).toEqual([
+      {
+        code: "menu_hidden",
+        message:
+          "The header's 7 menu links are hidden behind the menu button on this screen: they do not fit beside the logo (classic header).",
+        where: "desktop1440 · home",
+      },
+      {
+        code: "menu_hidden",
+        message:
+          "The header's menu link is hidden behind the menu button on this screen: it does not fit beside the logo (classic header).",
+        where: "laptop1024 · home",
+      },
+    ]);
+  });
+
+  it("says nothing for a shown menu, a hamburger header, phones and tablets, an empty menu or older evidence", () => {
+    expect(
+      headerMenuFindings([
+        sample({ headerMenu: { ...hidden, shown: true } }),
+        sample({ headerMenu: { ...hidden, layout: "hamburger" } }),
+        sample({ headerMenu: { ...hidden, links: 0 } }),
+        sample({ viewport: "tablet768", width: 768, headerMenu: hidden }),
+        sample({ viewport: "phone390", width: 390, headerMenu: hidden }),
+        sample({ surface: "shop", path: "/shop", headerMenu: hidden }),
+        sample(),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("★ warns when a centred menu had to move to a row of its own under the logo", () => {
+    // Theme Studio plans a centred theme's menu to fit beside the logo
+    // (menu-fit.ts); a second row says the plan missed or a change grew it.
+    const wraps = { layout: "centered", links: 6, shown: true, stacked: true };
+    expect(headerMenuFindings([sample({ headerMenu: wraps })])).toEqual([
+      {
+        code: "menu_wraps",
+        message:
+          "The header's menu does not fit beside the centred logo on this screen, so it sits on a row of its own under it (6 links).",
+        where: "desktop1440 · home",
+      },
+    ]);
+    // One row, or evidence from before the probe reported it: nothing.
+    expect(
+      headerMenuFindings([
+        sample({ headerMenu: { ...wraps, stacked: false } }),
+        sample({ headerMenu: { layout: "centered", links: 6, shown: true } }),
+      ]),
+    ).toEqual([]);
+    const parsed = parseBrowserEvidence({
+      userAgent: "test",
+      samples: [sample({ headerMenu: wraps })],
+    });
+    expect(parsed.ok && parsed.value.samples[0].headerMenu).toEqual(wraps);
+    const gates = evaluateBrowserGates(
+      {
+        userAgent: "test",
+        samples: fullCoverage(["home"]).map((s) =>
+          s.viewport === "desktop1440" ? { ...s, headerMenu: wraps } : s,
+        ),
+      },
+      ["home"],
+    );
+    const menu = gates.find((g) => g.id === "browser.header_menu")!;
+    expect(menu.findings.map((f) => [f.code, f.severity])).toEqual([
+      ["menu_wraps", "minor"],
+    ]);
+    expect(gateBlocks(menu)).toBe(false);
+  });
+
+  it("is a warning that never stops a run, and the probe's value survives parsing", () => {
+    const samples = fullCoverage(["home"]).map((s) =>
+      s.viewport === "desktop1440" ? { ...s, headerMenu: hidden } : s,
+    );
+    const parsed = parseBrowserEvidence({ userAgent: "test", samples });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(
+      parsed.value.samples.find((s) => s.viewport === "desktop1440")
+        ?.headerMenu,
+    ).toEqual(hidden);
+    const gates = evaluateBrowserGates(parsed.value, ["home"]);
+    const menu = gates.find((g) => g.id === "browser.header_menu")!;
+    expect(menu).toMatchObject({ required: false, status: "advisory" });
+    expect(menu.findings.map((f) => f.severity)).toEqual(["minor"]);
+    expect(gateBlocks(menu)).toBe(false);
+    // A malformed value is "not measured", never a parse failure.
+    const odd = parseBrowserEvidence({
+      userAgent: "test",
+      samples: [sample({ headerMenu: { layout: 3 } as never })],
+    });
+    expect(odd.ok && odd.value.samples[0].headerMenu).toBeUndefined();
+  });
+});
 
 describe("browser evidence", () => {
   it("bounds diagnostic examples and preserves contrast details in repair findings", () => {
@@ -1198,6 +1309,27 @@ describe("severity (severity-v1)", () => {
     ({ pkg, rows } = fixture());
     resize(pkg, rows, c, 1599, 1199);
     expect(integrity(pkg, rows).findings).toEqual([]);
+    // ★ Nor is a picture within 15% of its slot (22 Nov 2026): every wide
+    //   picture drawn at "2K" is 2,239px (21:9) or 2,048px (16:9) for a
+    //   2,400px slot, so the warning fired on every theme and the design
+    //   review listed it as a finding each time.
+    expect(BELOW_TARGET_FRACTION).toBe(0.85);
+    for (const [width, height] of [
+      [2239, 960],
+      [2048, 1152],
+    ]) {
+      ({ pkg, rows } = fixture());
+      resize(pkg, rows, c, width, height);
+      expect(
+        integrity(pkg, rows).findings.map((f) => f.code),
+        `${width}x${height}`,
+      ).not.toContain("below_target");
+    }
+    ({ pkg, rows } = fixture());
+    resize(pkg, rows, c, 2000, 1125);
+    expect(integrity(pkg, rows).findings.map((f) => f.code)).toContain(
+      "below_target",
+    );
     // Below the minimum it is too small, which is serious, and only that.
     ({ pkg, rows } = fixture());
     resize(pkg, rows, c, 760, 570);
@@ -1211,6 +1343,59 @@ describe("severity (severity-v1)", () => {
     expect(integrity(pkg, rows).findings.map((f) => f.code)).not.toContain(
       "below_target",
     );
+  });
+
+  it('★ a slide\'s phone photograph is a picture the theme renders, never "unused" (22 Nov 2026)', () => {
+    // The check followed only the key `image_url`, so every opening slide's
+    // `mobile_image_url` was reported "declared but nothing renders it"; the
+    // design review read that as a platform fault and failed finished
+    // designs. Move one section picture to each picture field in turn.
+    for (const key of ["mobile_image_url", "poster_url", "logo_url"]) {
+      const { pkg, rows } = fixture();
+      const text = JSON.stringify(pkg.definition);
+      // A picture one section names, once, and nothing else does.
+      const once = new Set(
+        pkg.assets
+          .map((asset) => asset.path)
+          .filter((path) => text.split(JSON.stringify(path)).length === 2),
+      );
+      let moved: string | null = null;
+      const visit = (value: unknown): void => {
+        if (moved || !value || typeof value !== "object") return;
+        if (Array.isArray(value)) return value.forEach(visit);
+        const record = value as Record<string, unknown>;
+        const url = record.image_url;
+        if (typeof url === "string" && once.has(url)) {
+          moved = url;
+          delete record.image_url;
+          record[key] = url;
+          return;
+        }
+        Object.values(record).forEach(visit);
+      };
+      for (const page of pkg.definition.preset.pages)
+        for (const section of page.sections) visit(section.config);
+      expect(moved, "the fixture has such a section picture").not.toBeNull();
+      const id = pkg.assets.find((asset) => asset.path === moved)!.id;
+      expect(
+        integrity(pkg, rows)
+          .findings.filter((f) => f.code === "unused")
+          .map((f) => f.where),
+        key,
+      ).not.toContain(id);
+    }
+    // A picture nothing names at all is still reported.
+    const { pkg, rows } = fixture();
+    const text = JSON.stringify(pkg.definition);
+    const orphan = pkg.assets.find(
+      (asset) => asset.kind !== "reference" && !text.includes(asset.path),
+    );
+    if (orphan)
+      expect(
+        integrity(pkg, rows).findings.some(
+          (f) => f.code === "unused" && f.where === orphan.id,
+        ),
+      ).toBe(true);
   });
 
   it("keeps every package-level problem serious", () => {

@@ -333,10 +333,14 @@ export async function listAllStores(q?: string): Promise<PlatformStoreRow[]> {
       const startByStore = new Map(
         subscriptions.map((row) => [row.store_id, row.started_at]),
       );
+      // The same two dates the meter counts from (lib/ai/quota.ts): the paid
+      // cycle start, else the day the store was created.
+      const periodNow = new Date();
       const periodByStore = new Map(
-        ids.map((id) => [
-          id,
-          minkCreditCycleAt(new Date(), startByStore.get(id)).period,
+        list.map((s) => [
+          s.id,
+          minkCreditCycleAt(periodNow, startByStore.get(s.id), s.created_at)
+            .period,
         ]),
       );
       const usage = await db

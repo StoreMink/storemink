@@ -24,19 +24,41 @@ it("rejects malformed deletion operands before querying", async () => {
   ).rejects.toThrow(/malformed/);
   expect(state.execute).not.toHaveBeenCalled();
 });
-it("surfaces the database usage refusal without reporting deletion", async () => {
+it("surfaces the database refusal without reporting deletion", async () => {
   state.execute.mockResolvedValue({
-    rows: [{ result: { ok: false, error: "A store is using this theme." } }],
+    rows: [
+      {
+        result: {
+          ok: false,
+          error:
+            "A store uses this theme without a fixed release, so deleting it would change how that store looks. Nothing was deleted.",
+        },
+      },
+    ],
   });
   await expect(deleteThemeStudioProject(actor, input)).rejects.toThrow(
-    /store is using/,
+    /without a fixed release/,
   );
 });
-it("returns only the deleted theme ID after a successful transaction", async () => {
+it("returns the deleted theme ID and how many stores keep it", async () => {
   state.execute.mockResolvedValue({
-    rows: [{ result: { ok: true, themeId: "clay-co" } }],
+    rows: [{ result: { ok: true, themeId: "clay-co", storesKept: 3 } }],
   });
   await expect(deleteThemeStudioProject(actor, input)).resolves.toEqual({
     themeId: "clay-co",
+    storesKept: 3,
   });
+});
+it("reads an answer without a usable count as no store kept it", async () => {
+  // The function before 0289 never says, and only succeeded when no store
+  // used the theme.
+  for (const storesKept of [undefined, -1, 1.5, "2", null]) {
+    state.execute.mockResolvedValue({
+      rows: [{ result: { ok: true, themeId: "clay-co", storesKept } }],
+    });
+    await expect(deleteThemeStudioProject(actor, input)).resolves.toEqual({
+      themeId: "clay-co",
+      storesKept: 0,
+    });
+  }
 });
