@@ -409,3 +409,59 @@ it("names an absolutely positioned box that escapes a fitting scroll container",
   expect(evidence.overflowPx).toBe(540);
   expect(evidence.overflowOffenders).toEqual(["span.sr-only"]);
 });
+
+// Owner, 23 Nov 2026: Muse's menu sat behind the menu button on a 1440px
+// screen and no check said so. The probe reports the header's menu on the
+// home page: its layout, top-level items and whether it is on screen.
+it("reports the header menu on the home page: layout, items and whether it shows", async () => {
+  vi.useFakeTimers();
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+  vi.mocked(axe.run).mockResolvedValue({ violations: [] } as never);
+  const { container } = render(
+    <div className="storefront-root sm-header-centered">
+      <header data-header-compact="stack">
+        <nav aria-label="Main" data-sm="header-menu">
+          <a href="#shop">Shop</a>
+          <a href="#lookbook">Lookbook</a>
+          <button type="button">Collections</button>
+        </nav>
+      </header>
+      <StudioAcceptanceProbe />
+    </div>,
+  );
+  const nav = container.querySelector("nav")!;
+  const box = (width: number) =>
+    vi
+      .spyOn(nav, "getBoundingClientRect")
+      .mockReturnValue({ width, height: width ? 24 : 0 } as DOMRect);
+  box(640);
+  let pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  expect((await pending).headerMenu).toEqual({
+    layout: "centered",
+    links: 3,
+    shown: true,
+    // On a row of its own under the centred logo (use-header-fit.ts).
+    stacked: true,
+  });
+  // Folded behind the menu button: the element takes no space.
+  box(0);
+  pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  expect((await pending).headerMenu).toMatchObject({ shown: false });
+  // Beside the logo, on one row.
+  container.querySelector("header")!.setAttribute("data-header-compact", "");
+  box(640);
+  pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  expect((await pending).headerMenu).toMatchObject({
+    shown: true,
+    stacked: false,
+  });
+  // Only the home page reports it.
+  window.history.pushState({}, "", "/shop");
+  pending = window.__smThemeStudioMeasure!();
+  await vi.runAllTimersAsync();
+  expect(await pending).not.toHaveProperty("headerMenu");
+  window.history.pushState({}, "", "/");
+});

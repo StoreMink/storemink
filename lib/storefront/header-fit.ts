@@ -12,6 +12,18 @@
 //   (it moves to the drawer, behind the hamburger), then the delivery
 //   control (also in the drawer), then the search box (a search icon opens
 //   the same search). Everything folded away stays one tap away.
+// ★ A HEADER THAT CAN STACK KEEPS ITS MENU (owner, 23 Nov 2026, after Muse's
+//   centred-logo header hid every link behind the hamburger on a 1440px
+//   screen: "menu on its own row"). Where the layout can put the menu on a
+//   row of its own under the logo (STACK_STEPS; the centred-logo header on a
+//   desktop screen, which says so in its CSS), the menu is never folded: the
+//   row wraps instead. ★ It stacks only when the MENU is what does not fit
+//   (STACK_CANDIDATES): the right-hand controls are folded first, because in
+//   that grid the two sides have equal columns and never take room from each
+//   other, so a crowded right side used to move a menu that fitted onto a
+//   second row. Theme Studio plans a centred theme's menu to fit beside the
+//   logo (lib/theme-studio/menu-fit.ts), so the second row is the fallback
+//   for a merchant's longer menu.
 // ★ The phone layout (≤768px) is still plain CSS, so a phone never waits on
 //   this; the check only ever removes more than CSS already did.
 // ★ ROWS, NOT ONE LINE (plan Phase 2d). The stacked and utility headers put
@@ -23,7 +35,29 @@
 // ---------------------------------------------------------------------------
 
 export const COMPACT_STEPS = ["nav", "delivery", "search"] as const;
-export type CompactStep = (typeof COMPACT_STEPS)[number];
+/** The steps of a header that can move its menu to a row of its own. */
+export const STACK_STEPS = ["stack", "delivery", "search"] as const;
+export type CompactStep =
+  | (typeof COMPACT_STEPS)[number]
+  | (typeof STACK_STEPS)[number];
+type Candidates = readonly (readonly CompactStep[])[];
+
+/** One step at a time, in order: nothing, the menu, then the delivery
+ *  control, then the search box. */
+export const COMPACT_CANDIDATES: Candidates = COMPACT_STEPS.map((_, n) =>
+  COMPACT_STEPS.slice(0, n),
+).concat([[...COMPACT_STEPS]]);
+
+/** A header that can stack: the right-hand controls fold first, and the menu
+ *  moves to its own row only when folding them did not make it fit. */
+export const STACK_CANDIDATES: Candidates = [
+  [],
+  ["delivery"],
+  ["delivery", "search"],
+  ["stack"],
+  ["stack", "delivery"],
+  ["stack", "delivery", "search"],
+];
 
 /** Clear space required between neighbouring header items. */
 export const MIN_ITEM_GAP = 12;
@@ -86,16 +120,18 @@ export function headerFits(
 }
 
 /**
- * The fewest steps that make the header fit. `measure` applies the given
- * steps to the live header and reports the result; the last step is taken
- * even if it still does not fit, because there is nothing left to fold.
+ * The first candidate that makes the header fit. `measure` applies the given
+ * steps to the live header and reports the result; the last candidate is
+ * taken even if it still does not fit, because there is nothing left to fold.
+ * `candidates` is COMPACT_CANDIDATES, or STACK_CANDIDATES for a header that
+ * can stack.
  */
 export function chooseCompaction(
   measure: (steps: readonly CompactStep[]) => HeaderLayout,
+  candidates: Candidates = COMPACT_CANDIDATES,
 ): CompactStep[] {
-  for (let n = 0; n < COMPACT_STEPS.length; n++) {
-    const steps = COMPACT_STEPS.slice(0, n);
-    if (headerFits(measure(steps))) return steps;
+  for (let n = 0; n < candidates.length - 1; n++) {
+    if (headerFits(measure(candidates[n]))) return [...candidates[n]];
   }
-  return [...COMPACT_STEPS];
+  return [...candidates[candidates.length - 1]];
 }

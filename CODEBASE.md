@@ -10440,6 +10440,18 @@ wholesip/
 │   │                          # its direction allows and the catalogue uses
 │   │                          # least (header, card, product page, footer, page
 │   │                          # width, grid, hover); DIRECTION_SIGNATURES
+│   ├── theme-studio/follow-up-guard.ts # v35, pure: an automatic fix keeps the
+│   │                          # operator's latest request (the settings it
+│   │                          # moved may not be set back); worker.ts
+│   │                          # loadFollowUp finds that change
+│   ├── theme-studio/menu-fit.ts # v35, pure: a centred theme's menu planned to
+│   │                          # fit beside the logo (room prompt, links kept
+│   │                          # that fit, a change sent back once)
+│   ├── themes/text-width.ts   # pure: a text's px width in a catalogue font,
+│   │                          # from font-widths.json (Chrome-measured by
+│   │                          # scripts/theme-font-widths.mjs)
+│   ├── storefront/header-menu-room.ts # pure: the room the centred header
+│   │                          # leaves its menu (Header.module.css, pinned)
 │   ├── theme-studio/publish-distinctness.ts # server-only: the public catalogue's
 │   │                          # fingerprints, for Publish's lookalike refusal
 │   │                          # (fingerprint.ts publicationSimilarityBlocker)
@@ -11697,6 +11709,9 @@ wholesip/
 │   ├── storefront-header-layout-check.mjs # Offline header/ticker clearance: four header
 │   │                          # variants, portrait/landscape, server/measured heights and
 │   │                          # both CSS load orders; local Chrome, no network or DB.
+│   ├── theme-font-widths.mjs  # Writes lib/themes/font-widths.json: every catalogue
+│   │                          # font's character widths at weights 300 to 900, measured
+│   │                          # in local Chrome from .next/static/media; no network.
 │   ├── theme-studio-local.mjs # ★ `npm run theme-studio:local`: Theme Studio's
 │   │                          # schedulers for localhost. With a real provider a
 │   │                          # theme is moved along by a scheduler calling the
@@ -16253,7 +16268,99 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     `commitments.test.ts`, `design-directions.test.ts`, the v34 cases of
     `pipeline.test.ts`, `publication.test.ts` and the opt-in
     `publication-postgres.test.ts`; `stage-b-request.golden.json` holds v34's
-    pins and every v19 to v33 pin is unchanged. The Website Builder's brand
+    pins and every v19 to v33 pin is unchanged.
+    **Prompt v35 (23 Nov 2026, owner: "ai theme builder should be capable of
+    understanding the follow ups the operator gives").** Muse's operator
+    asked "there is no navigation or shop button in the navbar. add that",
+    and the new design still showed no menu. Three changes, the prompt
+    ones behind `theme-studio-v35` (`followUpRepair`, `headerMenu`):
+    (a) `HEADER_MENU_PROMPT` (`prompts.ts`), appended LAST to Stage B's
+    system prompt and to the change scope's, says which
+    `design.layout.header` values show the menu on a computer (hamburger
+    never; centered and stacked always, a long menu on its own row; the
+    others only while it fits) and that a request for navigation or a Shop
+    link means a header that shows it; showing an existing menu is a
+    settings edit. Every v35 pin but `headerMenu@v35` equals v34's.
+    (b) ★★ AN AUTOMATIC FIX NEVER UNDOES THE OPERATOR'S REQUEST
+    (`follow-up-guard.ts`). A fix round's message is the review's findings
+    only (`visual-qa.ts`, `contextMessageIds: [message.id]`), so a round
+    could set back the very setting the operator's change made.
+    `loadFollowUp` (`worker.ts`) walks back from the version being fixed
+    through versions automatic runs made (at most 12) to the first one an
+    operator's `revise` made, and `followUpOf` records the request (2,000
+    characters) and every scalar setting that change moved
+    (`repairTargets` paths) with its earlier value; null for a chain from a
+    first build or an operator's picture request. The repair is given
+    `operatorRequest` and `FOLLOW_UP_REPAIR_RULE`; an edit that sets a moved
+    setting back to its earlier value is refused once with `undoneIssue`,
+    then dropped; a fix left with nothing else stops as
+    `repair_not_supported` ("Every automatic fix would undo the operator's
+    latest request."), which the operator clears with a change. Another
+    value for that setting, or any other setting, stays the fix's to
+    choose. Provenance `targeted-repair-v2` when a follow-up was carried.
+    (c) `browser.header_menu` (advisory, never blocks): the preview probe
+    reports the home page's menu (`headerMenu`: layout from the root's
+    `sm-header-*` class, top-level items of `[data-sm="header-menu"]`,
+    which `desktop-nav.tsx` now carries, and whether it is on screen), and
+    `headerMenuFindings` warns `menu_hidden` at laptop1024 and desktop1440
+    when a menu with links is not shown and the header is not hamburger
+    ("On a computer, the menu is hidden behind the menu button..."). In
+    `THEME_FIX_CHECKS` and the layout gates; older evidence has no value
+    and no finding. Tests: `follow-up-guard.test.ts` (mutation-checked),
+    `follow-up-postgres.test.ts` (opt-in, `THEME_STUDIO_RECOVERY_DB_TEST=1`,
+    mutation-checked), the v35 cases of `pipeline.test.ts` and
+    `prompt-features.test.ts`, `acceptance-gates.test.ts`,
+    `studio-acceptance-probe.test.tsx`; `stage-b-request.golden.json` holds
+    v35's pins. Operator-only: no Help Centre change.
+    (d) ★★ A CENTRED THEME'S MENU IS PLANNED TO FIT BESIDE THE LOGO (same
+    day, owner: "in the planning it should judge, if the logo is in the
+    center, how much space is to the left, and according to that design the
+    number of buttons, so that we do not have to go a line below"; prompt
+    feature `menuFit`). A model cannot count pixels, so StoreMink does the
+    arithmetic (`lib/theme-studio/menu-fit.ts`), measured where it is
+    tightest: 1025px, the narrowest screen with the centred layout, less a
+    15px scrollbar, with the logo at least 160px (a store's name is usually
+    longer than a theme's). PLAN: a new theme whose plan has the centred
+    header gets `menuRoomPrompt` appended last to Stage B's system prompt:
+    the room in px, how many characters of link text it holds in the
+    planned body font at 15px and in capitals at 14px/0.08em, and that
+    StoreMink keeps the pages that fit. BUILD: `fitHeaderMenuToRoom`, after
+    `assemblePackage`, keeps Shop (always) and, in page order, each derived
+    page link while the menu still fits, measured in the theme's own menu
+    type (`headerPartStyle`: the body font, 600, 15px, then the theme's
+    resting desktop `header.nav-link` rules, the variant's last: display
+    font, size, weight, capitals, letter-spacing); the rest leave the
+    header and stay in the footer, which lists every page. No model round.
+    CHANGE: `headerMenuFitIssues` sends a change whose centred menu no
+    longer fits back ONCE with the numbers and the ways out (shorter labels,
+    fewer header links, plainer type, or `"stacked"` when the operator asked
+    for that many); not when the base was already too wide and the change
+    left the menu as it was; what comes back is accepted. CHECK:
+    `browser.header_menu` also warns `menu_wraps` (advisory) when the probe's
+    `headerMenu.stacked` says a centred menu went to its own row at
+    laptop1024/desktop1440. Example (Muse-like: standard page width,
+    Bodoni Moda capitals at 0.12em): room 361px, seven links 801px, kept
+    Shop, New In, Collections; in plain Jost four are kept. The numbers:
+    `lib/themes/text-width.ts` + `font-widths.json` (every printable ASCII
+    advance of all 31 catalogue fonts at weights 300 to 900, measured in
+    Chrome by `scripts/theme-font-widths.mjs` from the served font files;
+    re-run it when a font is added, `text-width.test.ts` fails until then)
+    and `lib/storefront/header-menu-room.ts` (the centred grid's geometry;
+    `header-menu-room.test.ts` pins every number to `Header.module.css`).
+    Checked against Chrome laying out the real stylesheet with the real
+    fonts (16 menus, 1025 and 1440px, Jost and Bodoni capitals): menu
+    widths within 0.3%, room within 1px, every fits verdict the same; and
+    the table against Chrome's layout of 1,395 words in every font at five
+    weights (worst 2.9% wide, 0.7% narrow; it ignores kerning, so it errs
+    wide). ⚠ Only the centred header is planned; the others put the menu
+    after the logo with the row to share, or on its own row already. ⚠ A
+    font outside the catalogue is not measured, and the menu is left as it
+    is. Tests: `menu-fit.test.ts`, `menu-fit-pipeline.test.ts`,
+    `text-width.test.ts`, `header-menu-room.test.ts`, the `menu_wraps` cases
+    of `acceptance-gates.test.ts` and the probe test (each rule
+    mutation-checked). Golden pins unchanged (no golden fixture plans a
+    centred header). Operator-only: no Help Centre change.
+    The Website Builder's brand
     panel lists a styled theme's rules read-only under **Theme styles**
     (`ThemeDesignDefaults.styleRules`, `describeStyleRule`; at most 80; test
     `app/dashboard/builder/theme-styles.test.tsx`). ⚠ Not built: a merchant
@@ -17909,6 +18016,39 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     sliver without overlapping anything.
     ★ Every check starts from the full header, so a tablet rotated to
     landscape unfolds again.
+    ★★ THE CENTRED-LOGO HEADER STACKS ITS MENU, NEVER HIDES IT (owner, 23
+    Nov 2026, "menu on its own row", after Theme Studio's Muse showed no
+    menu on a 1440px screen: seven uppercase Didone links did not fit left
+    of the logo, so the fold put every link behind the hamburger and only
+    the server-rendered first paint showed them). A header whose CSS sets
+    `--sm-header-stack: 1` (`HEADER_STACK_PROPERTY`; only
+    `.sm-header-centered .header`, inside the 1025px desktop block) is
+    fitted with `STACK_CANDIDATES` instead of `COMPACT_CANDIDATES`: `stack`
+    moves the menu to a centred, wrapping row of its own under the logo
+    (`.header[data-header-compact~="stack"]`, the stacked header's rules),
+    so it never folds. ★ IT STACKS ONLY WHEN THE MENU IS WHAT DOES NOT FIT
+    (same day): the two side columns are equal and never take room from each
+    other, so the candidates fold the right-hand side first (`delivery`,
+    then `delivery search`) and only then try `stack`, `stack delivery`,
+    `stack delivery search`; tried in that order a crowded right side used
+    to put a menu that fitted onto a second row. `chooseCompaction` now takes
+    candidate step sets (`COMPACT_CANDIDATES` are the old prefixes, so every
+    other header folds exactly as before). Theme Studio plans a centred
+    theme's own menu to fit beside the logo (Prompt v35 (d) below), so the
+    second row is the fallback for a merchant's longer menu. The hook reads
+    the property on every fit (the media query changes with the width). Below
+    1025px the centred header is the ordinary row and folds as before; every
+    other header folds as before. Measured offline in Chrome with the real
+    stylesheets and the bundled fit rule (seven uppercase links): centred
+    at 1440, 1280 and 1100px is `stack` (menu shown under the logo, no
+    hamburger, bar 99px), at 1024px `nav`; classic at every width `nav`.
+    ⚠ A stacked bar is taller than the 68px the server reserves, so a store
+    whose menu stacks shifts its first section down once, when the hook
+    publishes the measured height after hydration. Tests:
+    `header-fit.test.ts` (order, never `nav`, the right side first, the CSS
+    pinned), `use-header-fit.test.tsx` (mutation-checked). No Help Centre
+    change: no merchant step changes, and no guide describes the centred
+    header.
     ★ THE BAR IS 68px TALL (22 Nov 2026, owner: "this bar is too big"). It
     was 80px: 16px of padding above and below a 48px "Deliver to" button.
     Now 12px of padding (`.header`, and the same at 1024px and below, where

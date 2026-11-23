@@ -95,7 +95,8 @@ export type GateId =
   | "browser.image_crops"
   | "browser.accessibility"
   | "browser.media"
-  | "browser.performance";
+  | "browser.performance"
+  | "browser.header_menu";
 
 export interface GateFinding {
   code: string;
@@ -149,6 +150,7 @@ export const GATE_LABELS: Record<GateId, string> = {
   "browser.accessibility": "Accessibility (axe)",
   "browser.media": "Media loading",
   "browser.performance": "Performance",
+  "browser.header_menu": "Header menu",
 };
 
 /** Findings per gate are capped: a reviewer needs the pattern, not 400 rows.
@@ -1031,6 +1033,70 @@ export interface BrowserSample {
    * them on the home page only, and the coverage gate requires them there;
    * absent on every other surface and on older evidence. */
   states?: BrowserStateSample[];
+  /** The header's menu as this screen showed it (home page only; absent on
+   * older evidence): the header layout, its top-level items, whether they
+   * were on screen or behind the menu button, and whether they had to move
+   * to a row of their own under a centred logo (absent on older evidence). */
+  headerMenu?: {
+    layout: string;
+    links: number;
+    shown: boolean;
+    stacked?: boolean;
+  };
+}
+
+/** The widths a shopper reads as a computer, where a hidden menu is a
+ *  finding. Phones and the portrait tablet always use the menu button. */
+const HEADER_MENU_VIEWPORTS: readonly AcceptanceViewport[] = [
+  "laptop1024",
+  "desktop1440",
+];
+
+/**
+ * A menu a shopper on a computer cannot see (owner, 23 Nov 2026: Muse's
+ * menu sat behind the menu button on a 1440px screen through two designs,
+ * and no check said so). The hamburger header hides it on purpose, so it is
+ * never a finding there. Advisory: a theme may still choose a menu button;
+ * the operator is told, and a change to design.layout.header clears it.
+ * ★ The same day: a centred header's menu that had to move to a row of its
+ *   own under the logo (`menu_wraps`). Theme Studio plans a new theme's menu
+ *   to fit beside the logo (menu-fit.ts), so this says the plan's measure
+ *   missed or a change made the menu longer. Advisory too.
+ */
+export function headerMenuFindings(
+  samples: readonly BrowserSample[],
+): GateFinding[] {
+  return samples.flatMap((sample) => {
+    const menu = sample.headerMenu;
+    if (
+      sample.surface !== "home" ||
+      !HEADER_MENU_VIEWPORTS.includes(sample.viewport) ||
+      !menu ||
+      menu.links === 0 ||
+      menu.layout === "hamburger"
+    )
+      return [];
+    if (menu.shown)
+      return menu.stacked
+        ? [
+            {
+              code: "menu_wraps",
+              message: `The header's menu does not fit beside the centred logo on this screen, so it sits on a row of its own under it (${menu.links} ${menu.links === 1 ? "link" : "links"}).`,
+              where: `${sample.viewport} · ${sample.surface}`,
+            },
+          ]
+        : [];
+    return [
+      {
+        code: "menu_hidden",
+        message:
+          menu.links === 1
+            ? `The header's menu link is hidden behind the menu button on this screen: it does not fit beside the logo (${menu.layout} header).`
+            : `The header's ${menu.links} menu links are hidden behind the menu button on this screen: they do not fit beside the logo (${menu.layout} header).`,
+        where: `${sample.viewport} · ${sample.surface}`,
+      },
+    ];
+  });
 }
 
 /** One chrome state (menu drawer, search sheet, cart drawer, account menu,
@@ -1159,6 +1225,7 @@ export function parseBrowserEvidence(
     const states =
       s.states === undefined ? undefined : parseStates(s.states, index);
     if (states && !states.ok) return states;
+    const headerMenu = parseHeaderMenu(s.headerMenu);
     const imageCropIssues = Array.isArray(s.imageCropIssues)
       ? s.imageCropIssues.slice(0, 40).flatMap((item) => {
           if (!item || typeof item !== "object") return [];
@@ -1188,9 +1255,26 @@ export function parseBrowserEvidence(
       cls: finiteNumber(s.cls, 0, 1_000),
       ...(contrastUnresolved ? { contrastUnresolved } : {}),
       ...(states ? { states: states.value } : {}),
+      ...(headerMenu ? { headerMenu } : {}),
     });
   }
   return { ok: true, value: { userAgent, samples } };
+}
+
+/** The probe's header menu; anything malformed is treated as not measured. */
+function parseHeaderMenu(raw: unknown): BrowserSample["headerMenu"] | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const value = raw as Record<string, unknown>;
+  const layout = str(value.layout, 20);
+  const links = finiteNumber(value.links, 0, 200);
+  if (!layout || links === null || typeof value.shown !== "boolean")
+    return null;
+  return {
+    layout,
+    links,
+    shown: value.shown,
+    ...(typeof value.stacked === "boolean" ? { stacked: value.stacked } : {}),
+  };
 }
 
 type Parsed<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -1683,6 +1767,9 @@ export function evaluateBrowserGates(
     // Speed is a warning while the gate is advisory. A deployment that makes
     // it required wants slowness to stop a run, so its findings are measured
     // as serious; "unmeasured" is serious either way.
+    gate("browser.header_menu", headerMenuFindings(measured), {
+      required: false,
+    }),
     gate(
       "browser.performance",
       performanceRequired

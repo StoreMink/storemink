@@ -28,6 +28,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreDirections: false,
     commitments: false,
     designPlan: false,
+    followUpRepair: false,
+    headerMenu: false,
+    menuFit: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -52,6 +55,9 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreDirections: false,
     commitments: false,
     designPlan: false,
+    followUpRepair: false,
+    headerMenu: false,
+    menuFit: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -76,8 +82,11 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreDirections: true,
     commitments: true,
     designPlan: true,
+    followUpRepair: true,
+    headerMenu: true,
+    menuFit: true,
   });
-  expect(themePromptFeatures("theme-studio-v34")).toEqual(
+  expect(themePromptFeatures("theme-studio-v35")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -157,7 +166,6 @@ it("writes the templates as a JSON string only from v33, so v32 requests replay 
 });
 
 it("adds the theme stylesheet only from v34, so v33 requests replay unchanged", () => {
-  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v34");
   expect(themePromptFeatures("theme-studio-v33").stylesheet).toBe(false);
   expect(themePromptFeatures("theme-studio-v34").stylesheet).toBe(true);
   expect(themePromptFeatures("theme-studio-v34").templatesJson).toBe(true);
@@ -171,4 +179,15 @@ it("adds the theme stylesheet only from v34, so v33 requests replay unchanged", 
     expect(themePromptFeatures("theme-studio-v33")[feature]).toBe(false);
     expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(true);
   }
+});
+
+it("keeps follow-ups through automatic fixes and explains the header menu only from v35, so v34 requests replay unchanged", () => {
+  // Owner, 23 Nov 2026: "ai theme builder should be capable of
+  // understanding the follow ups the operator gives".
+  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v35");
+  for (const feature of ["followUpRepair", "headerMenu", "menuFit"] as const) {
+    expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(false);
+    expect(themePromptFeatures("theme-studio-v35")[feature]).toBe(true);
+  }
+  expect(themePromptFeatures("theme-studio-v35").stylesheet).toBe(true);
 });

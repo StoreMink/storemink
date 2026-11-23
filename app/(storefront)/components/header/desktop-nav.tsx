@@ -67,7 +67,14 @@ export function DesktopNav({ links }: { links: readonly NavLink[] }) {
   }, [open]);
 
   return (
-    <nav className={styles.navLinks} ref={navRef} aria-label="Main">
+    <nav
+      className={styles.navLinks}
+      ref={navRef}
+      aria-label="Main"
+      // Theme Studio's page check reads whether shoppers see the menu
+      // (studio-acceptance-probe.tsx headerMenu).
+      data-sm="header-menu"
+    >
       {links.map((link, index) => {
         const key = `${link.href}|${link.label}`;
         const kind = navPanelKind(link);

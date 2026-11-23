@@ -1,6 +1,6 @@
 /** Persisted versions keep their request shape. Future prompt revisions inherit
  * these introduced capabilities rather than silently reverting to legacy calls. */
-export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v34";
+export const THEME_STUDIO_PROMPT_VERSION = "theme-studio-v35";
 
 export function themePromptFeatures(version: string) {
   const revision = Number(/^theme-studio-v(\d+)$/.exec(version)?.[1] ?? 0);
@@ -84,5 +84,21 @@ export function themePromptFeatures(version: string) {
      * and a built theme under the publish floor is corrected or stopped
      * BEFORE any photograph is drawn. */
     designPlan: revision >= 34,
+    /** Owner, 23 Nov 2026 ("ai theme builder should be capable of
+     * understanding the follow ups the operator gives"): an automatic fix
+     * round is given the operator's latest request, and may not set back a
+     * setting that change made (follow-up-guard.ts). */
+    followUpRepair: revision >= 35,
+    /** The same day, after Muse's menu stayed hidden through "add
+     * navigation": Stage B and the change scope are told which header
+     * layouts show the menu's links on a computer (HEADER_MENU_PROMPT),
+     * appended last so every earlier request keeps its bytes. */
+    headerMenu: revision >= 35,
+    /** Owner, 23 Nov 2026 ("in the planning it should judge ... how much
+     * space is to the left, and design the number of buttons"): a new
+     * centred-logo theme is told its menu's room, its header keeps only the
+     * links that fit beside the logo, and a change that makes the menu too
+     * wide is sent back once (menu-fit.ts). */
+    menuFit: revision >= 35,
   };
 }

@@ -46,6 +46,9 @@ export const THEME_FIX_CHECKS: readonly GateId[] = [
   "browser.tap_targets",
   "browser.image_crops",
   "browser.accessibility",
+  // A hidden menu is cleared by design.layout.header (prompts.ts
+  // HEADER_MENU_PROMPT). Advisory, so it never stops a run on its own.
+  "browser.header_menu",
 ];
 
 const THEME_FIX: ReadonlySet<string> = new Set(THEME_FIX_CHECKS);
