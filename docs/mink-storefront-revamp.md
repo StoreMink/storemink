@@ -1143,10 +1143,11 @@ pressed in our own facility") are fine.
 - Product studio photos: Mink's existing product photo path
   (`generateMinkMediaImage`, purpose `product`, the merchant's photo as the
   only reference, the store's card shape), 3 at a time. Ownership of the
-  merchant's photo is checked again before it is read. Every one is asked
-  for on the same backdrop, the redesign's page colour (the theme's when the
-  redesign keeps it, white when no hex colour is known), so the shop grid
-  reads as one shoot. Each draw takes its turn on the image model's shared
+  merchant's photo is checked again before it is read. Every one keeps the
+  background, surface and surroundings of the merchant's photo and improves
+  only the light, sharpness and framing (owner, 22 Nov 2026; it used to put
+  every product on one plain backdrop of the redesign's page colour), and the
+  check expects that setting to stay. Each draw takes its turn on the image model's shared
   capacity, start-paced like the shoot (a 429 is shared with every other
   caller on the model, nothing is sent once the drain began, and a draw
   still waiting for its turn then stops waiting, so it takes no start from
@@ -1183,8 +1184,9 @@ pressed in our own facility") are fine.
   refinement takes over the studio photo an earlier version made of a
   product it carries, when the key, name and photo all match, instead of
   drawing it again.
-- Offline (`MINK_REVAMP_PROVIDER=fake`) the merchant's own photo is placed on
-  a card-shaped canvas of the backdrop colour instead of calling a model.
+- Offline (`MINK_REVAMP_PROVIDER=fake`) the merchant's own photo, with its own
+  background, is padded to the card's shape with the redesign's page colour
+  instead of calling a model.
 
 ## 9. Ownership
 
