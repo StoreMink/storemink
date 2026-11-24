@@ -448,20 +448,3 @@ export function guessIndustry(
 export function startRefusedKey(projectId: string): string {
   return `studio:start-refused:${projectId}`;
 }
-
-/**
- * A fresh idempotency key for one start (repository.ts accepts
- * `^[A-Za-z0-9_-]{16,80}$`). `crypto.randomUUID` exists only in a secure
- * context, and a local `*.localtest.me` address over http is not one, so
- * `getRandomValues` (available everywhere) is the fallback.
- */
-export function newIdempotencyKey(
-  source: Pick<Crypto, "getRandomValues"> &
-    Partial<Pick<Crypto, "randomUUID">> = globalThis.crypto,
-): string {
-  if (typeof source.randomUUID === "function") return source.randomUUID();
-  const bytes = source.getRandomValues(new Uint8Array(16));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-    "",
-  );
-}

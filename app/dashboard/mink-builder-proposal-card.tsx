@@ -1,4 +1,5 @@
 "use client";
+import { randomUuid, randomUuidStrict } from "@/lib/random-uuid";
 import { useEffect, useRef, useState } from "react";
 import { CustomCodeFrame } from "@/app/(storefront)/components/sections/custom-code-frame";
 import {
@@ -126,7 +127,7 @@ export function MinkBuilderProposalCard({
     setBusy(true);
     setError(null);
     try {
-      idempotency.current ??= crypto.randomUUID();
+      idempotency.current ??= randomUuid();
       const response = await fetch(
         `/api/mink/drafts/${proposal.draftId}/builder-action`,
         {
@@ -378,11 +379,24 @@ function CodeChecks({
   digest: string;
   onChecked: (value: MinkStorefrontBrowserValidation) => void;
 }) {
-  const [token] = useState(() => crypto.randomUUID());
+  // Authenticates the frame's results: never from Math.random. Minted in a
+  // try, so a browser with no secure random source shows the checks as
+  // unavailable instead of throwing during render.
+  const [token] = useState(() => {
+    try {
+      return randomUuidStrict();
+    } catch {
+      return null;
+    }
+  });
   const frames = useRef<
     Partial<Record<"desktop" | "mobile", MinkStorefrontBrowserFrameResult>>
   >({});
-  const [status, setStatus] = useState("Checking desktop and mobile…");
+  const [status, setStatus] = useState(
+    token
+      ? "Checking desktop and mobile…"
+      : "Code checks can't run in this browser. Use a current Chrome, Edge, Firefox or Safari.",
+  );
   function result(value: MinkStorefrontBrowserFrameResult) {
     frames.current[value.viewport] = value;
     const { desktop, mobile } = frames.current;
@@ -419,23 +433,24 @@ function CodeChecks({
         Custom section {id}: {status}
       </summary>
       <div className="mt-2 max-h-72 overflow-auto">
-        {(["desktop", "mobile"] as const).map((viewport) => (
-          <div
-            key={viewport}
-            style={{ width: MINK_STOREFRONT_BROWSER_WIDTHS[viewport] }}
-          >
-            <CustomCodeFrame
-              config={config}
-              strictNetworkIsolation
-              validation={{
-                token,
-                viewport,
-                width: MINK_STOREFRONT_BROWSER_WIDTHS[viewport],
-                onResult: result,
-              }}
-            />
-          </div>
-        ))}
+        {token &&
+          (["desktop", "mobile"] as const).map((viewport) => (
+            <div
+              key={viewport}
+              style={{ width: MINK_STOREFRONT_BROWSER_WIDTHS[viewport] }}
+            >
+              <CustomCodeFrame
+                config={config}
+                strictNetworkIsolation
+                validation={{
+                  token,
+                  viewport,
+                  width: MINK_STOREFRONT_BROWSER_WIDTHS[viewport],
+                  onResult: result,
+                }}
+              />
+            </div>
+          ))}
       </div>
     </details>
   );

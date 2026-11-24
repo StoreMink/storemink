@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   createContext,
   useCallback,
@@ -42,6 +43,9 @@ interface LandingAttribution {
   utm: { source?: string; medium?: string; campaign?: string };
   paidClick: boolean;
 }
+
+/** Warned once per page load when an event cannot be built (track below). */
+let warnedUnbuildableEvent = false;
 
 /**
  * Where this page load came from, read ONCE, in memory only. A client-side
@@ -198,16 +202,29 @@ export function MerchantTracking({
   const track = useCallback<TrackStorefrontEvent>(
     (type, details) => {
       if (!firstPartyEnabled || !consent?.analytics) return;
-      landing.current ??= readLandingAttribution();
-      const payload = JSON.stringify({
-        eventId: crypto.randomUUID(),
-        type,
-        path: window.location.pathname,
-        ...(details?.productId ? { productId: details.productId } : {}),
-        // Attribution rides on page views; the rollup credits a session by
-        // its first one.
-        ...(type === "page_view" ? landing.current : {}),
-      });
+      // Building the event can only fail on a bug in its fields (a value
+      // JSON cannot serialise); collection must never interrupt a shopper
+      // action, so the event is dropped, with one console line per page load
+      // so a tracker that stops counting leaves a trace.
+      let payload: string;
+      try {
+        landing.current ??= readLandingAttribution();
+        payload = JSON.stringify({
+          eventId: randomUuid(),
+          type,
+          path: window.location.pathname,
+          ...(details?.productId ? { productId: details.productId } : {}),
+          // Attribution rides on page views; the rollup credits a session by
+          // its first one.
+          ...(type === "page_view" ? landing.current : {}),
+        });
+      } catch (error) {
+        if (!warnedUnbuildableEvent) {
+          warnedUnbuildableEvent = true;
+          console.warn("storefront analytics: event dropped", error);
+        }
+        return;
+      }
       try {
         if (navigator.sendBeacon) {
           navigator.sendBeacon(

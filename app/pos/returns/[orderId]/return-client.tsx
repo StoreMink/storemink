@@ -4,6 +4,7 @@
 // the server decides what that is worth — this screen's total is a preview
 // computed with the same pure function, never the figure that gets refunded.
 
+import { randomUuid } from "@/lib/random-uuid";
 import { useMemo, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -34,19 +35,6 @@ const METHODS: { id: RefundMethod; label: string }[] = [
   { id: "card", label: "Card" },
   { id: "upi", label: "UPI" },
 ];
-
-/**
- * A fresh retry key for one return attempt. `crypto.randomUUID()` needs a
- * secure context (the till is always served over https), with a
- * getRandomValues fallback so an odd kiosk browser still sends a valid key —
- * 32 hex characters, which the server's 10–100 `[A-Za-z0-9_-]` rule accepts.
- */
-function newAttemptKey(): string {
-  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 export function ReturnClient({ sale }: { sale: ReturnableSale }) {
   const router = useRouter();
@@ -129,7 +117,9 @@ export function ReturnClient({ sale }: { sale: ReturnableSale }) {
         reason: reason || null,
       });
       if (attempt.current?.fingerprint !== fingerprint) {
-        attempt.current = { fingerprint, key: newAttemptKey() };
+        // A UUID (36 characters) meets the server's 10 to 100
+        // `[A-Za-z0-9_-]` rule, on a plain-http kiosk page too.
+        attempt.current = { fingerprint, key: randomUuid() };
       }
       const res = await processReturn(
         sale.orderId,

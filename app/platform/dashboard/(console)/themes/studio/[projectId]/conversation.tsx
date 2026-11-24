@@ -30,7 +30,7 @@ import {
   stopNeedsThemeChange,
 } from "../studio-ui";
 import { clockWords, designLabel, stopReasonWords } from "../studio-words";
-import { newIdempotencyKey } from "../new/new-theme-helpers";
+import { randomUuid } from "@/lib/random-uuid";
 import { StudioPopover } from "./studio-tabs";
 
 // ---------------------------------------------------------------------------
@@ -306,7 +306,7 @@ export function ThemeConversation({
     if (busy.current || disabled || !text) return;
     busy.current = true;
     setSending(true);
-    const idempotencyKey = (key.current ??= newIdempotencyKey());
+    const idempotencyKey = (key.current ??= randomUuid());
     try {
       const common = {
         projectId: project.id,

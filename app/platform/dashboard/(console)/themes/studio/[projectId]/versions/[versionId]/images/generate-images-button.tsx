@@ -19,7 +19,7 @@ import {
 import type { StudioActionKind } from "../../../../studio-status";
 import { plainText } from "../../../../studio-ui";
 import { designLabel } from "../../../../studio-words";
-import { newIdempotencyKey } from "../../../../new/new-theme-helpers";
+import { randomUuid } from "@/lib/random-uuid";
 import { useStudioIntent } from "../../../studio-tabs";
 
 // ---------------------------------------------------------------------------
@@ -246,7 +246,7 @@ export function GenerateImagesButton({
           versionId,
           expectedRevision: revision,
           expectedPackageDigest: packageDigest,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey: randomUuid(),
         });
         return result.ok ? null : (result.error ?? "That didn't start.");
       }}
@@ -326,7 +326,7 @@ export function RedrawPicturesButton({
           versionId,
           expectedRevision: revision,
           expectedPackageDigest: packageDigest,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey: randomUuid(),
           slotIds: [...slotIds],
         });
         return result.ok ? null : (result.error ?? "That didn't start.");
@@ -395,7 +395,7 @@ export function RetryPicturesButton({
         const result = await retryThemeStudioRunAction({
           projectId,
           runId,
-          idempotencyKey: newIdempotencyKey(),
+          idempotencyKey: randomUuid(),
         });
         return result.ok ? null : (result.error ?? "That didn't start.");
       }}

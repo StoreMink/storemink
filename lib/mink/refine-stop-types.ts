@@ -24,7 +24,11 @@ export type RefineStopAnswer =
   /** The browser could not find out. */
   | { outcome: "unknown" };
 
-/** A random (v1 to v8) UUID, as `crypto.randomUUID()` and minkRandomUuid() make. */
+/**
+ * A random (v1 to v8) UUID. The client mints the stop token with
+ * randomUuidStrict() (lib/random-uuid.ts), never the weaker randomUuid(): the
+ * token authorises a stop, so it must never come from Math.random.
+ */
 export const REFINE_STOP_TOKEN_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

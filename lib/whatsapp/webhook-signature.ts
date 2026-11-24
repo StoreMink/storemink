@@ -21,7 +21,7 @@ import "server-only";
 // matches. Callers pass `await request.text()`, never a parsed object.
 // ---------------------------------------------------------------------------
 
-import crypto from "crypto";
+import crypto from "node:crypto";
 
 const PREFIX = "sha256=";
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import {
   useCallback,
   useEffect,
@@ -325,10 +326,7 @@ export function DashboardCanvas({
   const addSection = () => {
     changeDraft((current) => {
       if (current.length >= MAX_ANALYTICS_SECTIONS) return current;
-      const suffix =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}`;
+      const suffix = randomUuid();
       return [
         ...current,
         {

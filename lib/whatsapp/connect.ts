@@ -1,6 +1,6 @@
 import "server-only";
 
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { and, eq, ne } from "drizzle-orm";
 import { withService } from "@/lib/db/client";
 import { isUniqueViolation, pgConstraint } from "@/lib/db/errors";

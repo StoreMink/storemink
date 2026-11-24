@@ -22,7 +22,7 @@ import { fromAddress } from "@/lib/email/sender";
 import { sendEmail } from "@/lib/email/send";
 import { PLATFORM_URL } from "@/lib/site";
 import { getRequestOrigin } from "@/lib/request-url";
-import { randomInt } from "crypto";
+import { randomInt } from "node:crypto";
 import {
   assertCanInviteStaff,
   PlanEntitlementError,

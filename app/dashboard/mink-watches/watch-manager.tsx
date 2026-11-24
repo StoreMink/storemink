@@ -1,4 +1,5 @@
 "use client";
+import { randomUuid } from "@/lib/random-uuid";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { InfoTip } from "@/components/ui/info-tip";
 import { WATCH_KINDS } from "@/lib/mink/watch-policy";
@@ -105,7 +106,7 @@ export function MinkWatchManager() {
             onSubmit={(event) => {
               event.preventDefault();
               const values = new FormData(event.currentTarget);
-              creationKey.current ??= crypto.randomUUID();
+              creationKey.current ??= randomUuid();
               void mutate({
                 action: "create",
                 confirmed,

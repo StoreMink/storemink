@@ -23,6 +23,7 @@ import {
   type RefObject,
 } from "react";
 import { usePoll } from "@/lib/pos/use-poll";
+import { randomUuid } from "@/lib/random-uuid";
 import {
   ACTIVE_REVAMP_STATUSES,
   REVAMP_STEP_LABELS,
@@ -216,7 +217,7 @@ export function MinkRevampCard({ artifact }: { artifact: RevampArtifact }) {
         const preview = await requestApply(draftId, {
           action: "preview",
           expectedDraftVersion: 0,
-          idempotencyKey: idempotencyKey(),
+          idempotencyKey: randomUuid(),
         });
         exact = preview.approval?.id ? { id: preview.approval.id } : null;
         if (!exact) throw new Error("The safety check returned no approval.");
@@ -1252,20 +1253,6 @@ function normalizeUndo(value: unknown): RevampUndoResult {
     restored: Array.isArray(row.restored) ? row.restored : [],
     kept: Array.isArray(row.kept) ? row.kept : [],
   };
-}
-
-/** A v4 UUID even on a plain-http host, where `randomUUID` is missing. */
-function idempotencyKey(): string {
-  const source = globalThis.crypto;
-  if (typeof source?.randomUUID === "function") return source.randomUUID();
-  const bytes = new Uint8Array(16);
-  source.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
-    "",
-  );
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function messageOf(error: unknown, fallback: string): string {

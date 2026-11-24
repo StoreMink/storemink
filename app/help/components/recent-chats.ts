@@ -11,6 +11,7 @@
  * the Help Centre or an oversized render.
  */
 
+import { randomUuid } from "@/lib/random-uuid";
 import type {
   HelpAssistantAnswer,
   HelpAssistantSource,
@@ -58,30 +59,12 @@ const ID_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 const HELP_PATH = /^\/help\/[a-z0-9-]+(\/[a-z0-9-]+)?$/;
 
 /**
- * A random id for a chat or a message. crypto.randomUUID needs a secure
- * context, which a phone reaching the dev server over plain http is not, so
- * it falls back to getRandomValues and then to Math.random.
+ * A random id for a chat or a message: 32 hex characters (a UUID without its
+ * dashes). randomUuid() works on a plain-http page too, which is what a phone
+ * reaching the dev server is.
  */
 export function newMinkId(): string {
-  const cryptoApi =
-    typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
-  if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
-    try {
-      return cryptoApi.randomUUID().replace(/-/g, "");
-    } catch {
-      // Not a secure context; fall through.
-    }
-  }
-  if (cryptoApi && typeof cryptoApi.getRandomValues === "function") {
-    const bytes = new Uint8Array(16);
-    cryptoApi.getRandomValues(bytes);
-    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(
-      "",
-    );
-  }
-  let id = "";
-  while (id.length < 32) id += Math.random().toString(36).slice(2);
-  return id.slice(0, 32);
+  return randomUuid().replace(/-/g, "");
 }
 
 /** A chat's title: its first question, cut at a word. */

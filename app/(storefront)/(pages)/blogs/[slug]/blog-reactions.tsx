@@ -1,5 +1,6 @@
 "use client";
 
+import { randomUuid } from "@/lib/random-uuid";
 import { useEffect, useRef, useState } from "react";
 import { MessageSquarePlus, SmilePlus } from "lucide-react";
 import { toggleBlogReaction } from "@/app/actions/blog-social";
@@ -31,16 +32,22 @@ const FAN = (() => {
   });
 })();
 
+// The id used when the browser refuses storage (site data blocked), so a
+// reaction still reaches the server instead of failing before it is sent.
+let memoryVisitorId: string | null = null;
+
 function getVisitorId(): string {
-  let id = localStorage.getItem(VISITOR_KEY);
-  if (!id) {
-    id =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `v_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    localStorage.setItem(VISITOR_KEY, id);
+  try {
+    let id = localStorage.getItem(VISITOR_KEY);
+    if (!id) {
+      id = randomUuid();
+      localStorage.setItem(VISITOR_KEY, id);
+    }
+    return id;
+  } catch {
+    memoryVisitorId ??= randomUuid();
+    return memoryVisitorId;
   }
-  return id;
 }
 
 /**
@@ -114,8 +121,15 @@ export function BlogReactions({
 
   const total = BLOG_REACTIONS.reduce((sum, r) => sum + (counts[r] || 0), 0);
 
-  const persist = (set: Set<BlogReaction>) =>
-    localStorage.setItem(mineKey, JSON.stringify([...set]));
+  // Remembering the choice is a convenience: blocked storage must not stop
+  // the reaction from being sent.
+  const persist = (set: Set<BlogReaction>) => {
+    try {
+      localStorage.setItem(mineKey, JSON.stringify([...set]));
+    } catch {
+      /* storage blocked: the reaction still counts, it just isn't remembered */
+    }
+  };
 
   const react = async (r: BlogReaction) => {
     const active = !mine.has(r);
