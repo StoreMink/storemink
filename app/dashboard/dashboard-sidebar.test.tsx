@@ -451,6 +451,67 @@ describe("DashboardSidebar on a settings page", () => {
     expect(screen.getByRole("link", { name: "Staff" })).toHaveClass("active");
   });
 
+  it("★ highlights nothing, not Home, for a role without Settings on Account Settings", () => {
+    path.current = "/dashboard/settings/account";
+    render(
+      <DashboardSidebar
+        groups={[
+          {
+            group: "Workspace",
+            items: [{ href: "/dashboard", label: "Home", icon: "home" }],
+          },
+          {
+            group: "Online store",
+            items: [
+              {
+                href: "/dashboard/storefront",
+                label: "Storefront",
+                icon: "themes",
+              },
+            ],
+          },
+        ]}
+        settingsFrame
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Home" })).not.toHaveClass(
+      "active",
+    );
+    expect(screen.getByRole("link", { name: "Storefront" })).not.toHaveClass(
+      "active",
+    );
+  });
+
+  it("opens General from the sidebar's Settings item, and keeps it lit on the home", () => {
+    path.current = "/dashboard/settings";
+    render(<DashboardSidebar groups={FRAME_NAV} settingsFrame />);
+
+    const settings = screen.getByRole("link", { name: "Settings" });
+    expect(settings).toHaveAttribute("href", "/dashboard/settings/general");
+    expect(settings).toHaveClass("active");
+  });
+
+  it("keeps the Settings item's own address where the frame is not used", () => {
+    path.current = "/dashboard";
+    render(
+      <DashboardSidebar
+        groups={[
+          {
+            group: "Workspace",
+            items: [{ href: "/dashboard", label: "Home", icon: "home" }],
+          },
+          ...FRAME_NAV,
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings",
+    );
+  });
+
   it("★ keeps the Settings panel on a printable invoice, which has no frame", () => {
     path.current = "/dashboard/plans/invoices/abc";
     render(

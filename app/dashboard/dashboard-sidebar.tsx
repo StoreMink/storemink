@@ -24,6 +24,8 @@ import {
 import {
   inSettingsFrame,
   settingsOwnerOverride,
+  SETTINGS_GENERAL,
+  SETTINGS_HOME,
 } from "./(settings)/settings/settings-nav";
 import { pathMatches } from "./nav-path";
 
@@ -212,11 +214,17 @@ export function DashboardSidebar({
   // owner that IS in this viewer's nav counts: a role with Branding but not
   // Storefront sees Branding as its own top-level item, which the tree finds.
   // The printable invoice and credit note are outside the frame, so they keep
-  // the Settings panel with Plans & Billing open.
+  // the Settings panel with Plans & Billing open. Home is never the owner:
+  // resolveActiveSection falls back to it for any address it cannot place,
+  // so a role without Settings would see Home lit on Account Settings. With
+  // no owner each link uses its own match and nothing is lit.
   const framed = settingsFrame && !inLogs && inSettingsFrame(pathname);
   const settingsOwner = framed
     ? ([settingsOwnerOverride(pathname), activeSection?.href].find(
-        (href) => !!href && allItems.some((i) => i.href === href),
+        (href) =>
+          !!href &&
+          href !== "/dashboard" &&
+          allItems.some((i) => i.href === href),
       ) ?? null)
     : null;
 
@@ -338,7 +346,14 @@ export function DashboardSidebar({
                     {g.items.map((item) => (
                       <SidebarNavLink
                         key={item.href}
-                        href={item.href}
+                        href={
+                          // Settings opens General directly: the home would
+                          // only redirect there on a wide frame. A phone
+                          // reaches the menu by the page's back link.
+                          settingsFrame && item.href === SETTINGS_HOME
+                            ? SETTINGS_GENERAL
+                            : item.href
+                        }
                         label={item.label}
                         icon={item.icon}
                         badge={item.badge}

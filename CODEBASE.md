@@ -6618,7 +6618,12 @@ settings, Website Builder) to be in the menu too.
   asks whether the page column is visible (the frame's container query hides
   it below 1000px) and, only where it shows, replaces the address with
   `/dashboard/settings/general`; a ResizeObserver on the frame does the same
-  when a narrow window widens. A role without Settings view sees "Choose a
+  when a narrow window widens. The sidebar's Settings item opens
+  `/dashboard/settings/general` directly, so a wide frame skips the home;
+  a phone reaches the menu by the page's "Settings" back link. On the
+  home no menu item is marked open and the menu's title is the page's h1.
+  Taxes & invoices drops its pinned header's negative top margin under the
+  back link, which it would otherwise cover. A role without Settings view sees "Choose a
   page from the settings menu." on the home. The time zone's label comes
   from `analyticsTimeZoneLabel` (`lib/analytics/range.ts`), which the inbox's
   automatic replies use too.
@@ -6632,7 +6637,9 @@ settings, Website Builder) to be in the menu too.
   when that item is in the viewer's nav: a role with Branding but not
   Storefront sees Branding as its own top-level item and that stays lit. The
   printable invoice and credit note are outside the frame and keep the
-  Settings sub-panel.
+  Settings sub-panel. Home is never taken as the owner (it is the
+  fallback for any address the match cannot place), so a role without
+  Settings sees nothing lit on Account Settings.
 - The Policies, Domain and Analytics tracking pages now use the same page
   header and width as the other settings pages.
 - Tests: `settings-nav.test.ts` (every item has a real page, an icon and a
@@ -8319,7 +8326,7 @@ wholesip/
 │   │   │                      # assignee and label, searches inside messages, and
 │   │   │                      # writes notes, quotes and photo/PDF replies.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
-│   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
+│   │   ├── (settings)/admins/ roles/ # ★ THE ONE STAFF PAGE + the read-only roles reference
 │   │   │                      # (§41). admins/ lists dashboard admins AND register
 │   │   │                      # staff (pos_staff) together, each with a role from
 │   │   │                      # the PLATFORM's list (platform_roles — operators
@@ -8336,7 +8343,7 @@ wholesip/
 │   │   │                      # else uses it. Before 2026-10-14 any store's
 │   │   │                      # superadmin could act on any admin, and delete any
 │   │   │                      # login, by uid.
-│   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
+│   │   ├── (settings)/storefront/ # ★ Storefront (§11; was themes/ until 2026-10-11 —
 │   │   │                      # next.config.ts 307s /dashboard/themes here on store
 │   │   │                      # hosts only, so the operator console's own
 │   │   │                      # /dashboard/themes is untouched). A theme is chosen
@@ -8351,7 +8358,7 @@ wholesip/
 │   │   │                      # the redesign starts), Edit in Website Builder and
 │   │   │                      # View your store, plus a Branding card. Permission
 │   │   │                      # key is still `themes` (saved roles store the key)
-│   │   ├── branding/          # per-store branding editor; nested under Storefront
+│   │   ├── (settings)/branding/ # per-store branding editor; nested under Storefront
 │   │   │                      # in the sidebar (`parent: "themes"`, its own
 │   │   │                      # `branding` permission key kept). ★ ONE editor
 │   │   │                      # (revamped 31 Oct 2026): page.tsx reads the brand,
@@ -8382,9 +8389,9 @@ wholesip/
 │   │   │                      # marks. View-only roles see every field disabled
 │   │   │                      # and a notice. branding.css is `.dashboard-shell`
 │   │   │                      # scoped and uses the --dash-* tokens.
-│   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
+│   │   ├── (settings)/billing/ # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
-│   │   ├── channels/          # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
+│   │   ├── (settings)/channels/ # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
 │   │                          # whatsapp/templates/ = the template manager (every
 │   │                          # template with Meta's answer; add, delete, refresh);
 │   │                      # Shiprocket, Twilio and WhatsApp (whatsapp-modal.tsx +
@@ -8440,7 +8447,7 @@ wholesip/
 │   │                          # (settings)/admins/, roles/, channels/, billing/,
 │   │                          # storefront/, branding/, builder/settings/ and the two
 │   │                          # plans pages; URLs unchanged), general-settings.tsx + general/
-│   │                          # (the home page) +
+│   │                          # (General) + settings-home-redirect.tsx (the home) +
 │   │                          # account/ + domain/ + shipping/ (checkout rate policy) +
 │   │                          # ★ notices/ (takedown, convention 45): Notices from
 │   │                          # StoreMink, a Settings child (view = Settings view,
@@ -13219,7 +13226,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     is." (or "The N stores using it keep it as it is."). The dialog says the
     theme leaves the library so no new store can choose it, and that stores
     already using it keep it exactly as it is, pictures included. The
-    merchant's Storefront page (`app/dashboard/storefront/page.tsx`
+    merchant's Storefront page (`app/dashboard/(settings)/storefront/page.tsx`
     `keptCard`) shows such a theme's own name and picture from the kept
     release, with "Your store uses a theme that is no longer in the library.
     It keeps working." and no preview (its demo store is gone); it reads the

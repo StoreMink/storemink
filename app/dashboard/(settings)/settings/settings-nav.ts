@@ -259,17 +259,15 @@ export const SETTINGS_NAV_ITEMS: SettingsNavItem[] = SETTINGS_NAV.flatMap(
 );
 
 /**
- * The menu item for this path: the longest wrapped href that matches, and
- * General on the Settings home (which shows General beside the menu).
+ * The menu item for this path: the longest wrapped href that matches. The
+ * Settings home has none: on a narrow frame it is only the menu, and on a
+ * wide one it moves to General, which matches by its own address.
  */
 export function activeSettingsItem(
   pathname: string,
   items: SettingsNavItem[] = SETTINGS_NAV_ITEMS,
 ): SettingsNavItem | undefined {
   const path = normalizePath(pathname);
-  if (path === SETTINGS_HOME) {
-    return items.find((i) => i.href === SETTINGS_GENERAL);
-  }
   if (UNFRAMED_PREFIXES.some((p) => path.startsWith(p))) return undefined;
   return items
     .filter((i) => i.wrapped && pathMatches(path, i.href))

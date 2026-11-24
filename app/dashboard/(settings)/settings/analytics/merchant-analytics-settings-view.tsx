@@ -309,7 +309,7 @@ export function MerchantAnalyticsSettingsView({
           a merchant who had typed an ID could not see that anything was left
           to do — the status line told them it was already saved and the only
           contradicting control was off screen. */}
-      <div className="sticky bottom-0 -mx-6 flex items-center justify-end gap-3 border-t border-slate-200 bg-white/95 px-6 py-3 backdrop-blur">
+      <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-slate-200 bg-white/95 py-3 backdrop-blur">
         {dirty && initial.canManage ? (
           <span className="mr-auto inline-flex items-center gap-2 text-sm font-semibold text-amber-700">
             <span className="h-2 w-2 rounded-full bg-amber-500" />

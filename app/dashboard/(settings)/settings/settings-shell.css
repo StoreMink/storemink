@@ -257,6 +257,13 @@
     color: #4b5563;
   }
 
+  /* Taxes & invoices pins its header with a negative top margin that climbs
+     into .dash-content's padding. Here the back link comes first, so that
+     margin would pull the header over the link. */
+  .dashboard-shell .sm-settings[data-home="false"] .billHead {
+    margin-top: 0;
+  }
+
   .dashboard-shell .sm-settings-item {
     min-height: 44px;
     font-size: 14px;

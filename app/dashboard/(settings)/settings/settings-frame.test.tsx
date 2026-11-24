@@ -97,20 +97,32 @@ describe("SettingsFrame", () => {
     expect(screen.getByText("Page")).toBeInTheDocument();
   });
 
-  it("marks General as open on the Settings home, and says which view it is", () => {
+  it("marks nothing open on the Settings home, heads it, and says which view it is", () => {
     const { container } = render(
       <SettingsFrame groups={GROUPS}>
         <p>Page</p>
       </SettingsFrame>,
     );
-    expect(screen.getByRole("link", { name: /General/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /General/ })).not.toHaveAttribute(
       "aria-current",
-      "page",
     );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Settings" }),
+    ).toBeInTheDocument();
     expect(container.querySelector(".sm-settings")).toHaveAttribute(
       "data-home",
       "true",
     );
+  });
+
+  it("leaves the heading to the page away from the home", () => {
+    path.current = "/dashboard/settings/domain";
+    render(
+      <SettingsFrame groups={GROUPS}>
+        <p>Page</p>
+      </SettingsFrame>,
+    );
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
   });
 
   it("opens the Website Builder in a new tab and says so", () => {

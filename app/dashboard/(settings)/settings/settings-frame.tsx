@@ -78,6 +78,9 @@ export function SettingsRail({
   const { storemink } = useUnreadCounts();
   const noticesBadge = unreadBadge(storemink);
   const activeKey = activeSettingsItem(pathname)?.key;
+  // On the Settings home the menu is the page, so its title is the page's
+  // heading; elsewhere the page beside it has its own h1.
+  const Title = normalizePath(pathname) === SETTINGS_HOME ? "h1" : "div";
 
   const shown = useMemo(() => {
     if (!query.trim()) return groups;
@@ -92,7 +95,7 @@ export function SettingsRail({
   return (
     <aside className="sm-settings-rail">
       <div className="sm-settings-rail-inner">
-        <div className="sm-settings-rail-title">Settings</div>
+        <Title className="sm-settings-rail-title">Settings</Title>
         <div className="sm-settings-search">
           <Search className="sm-settings-search-icon" aria-hidden />
           <input

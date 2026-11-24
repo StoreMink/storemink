@@ -108,9 +108,12 @@ describe("settings menu registry", () => {
 });
 
 describe("activeSettingsItem", () => {
-  it("shows General as open on the Settings home", () => {
-    expect(activeSettingsItem("/dashboard/settings")?.key).toBe("general");
-    expect(activeSettingsItem("/dashboard/settings/")?.key).toBe("general");
+  it("marks nothing open on the Settings home, which is only the menu", () => {
+    expect(activeSettingsItem("/dashboard/settings")).toBeUndefined();
+    expect(activeSettingsItem("/dashboard/settings/")).toBeUndefined();
+    expect(activeSettingsItem("/dashboard/settings/general")?.key).toBe(
+      "general",
+    );
   });
 
   it("picks the longest matching page", () => {
