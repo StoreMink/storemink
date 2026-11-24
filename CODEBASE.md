@@ -6594,8 +6594,8 @@ operator pricing editor). Browser code now calls `randomUuid()` from
 (ids only, never a secret; the Refine stop token and the custom-code frame's
 token use `randomUuidStrict()`, which throws instead); the local copies (the
 redesign card, the Help chat ids, Theme Studio's keys, the POS return page's
-attempt key, `minkRandomUuid` in `lib/mink/memory-suggestion.ts`) now call
-it, and the site compiler, which called `globalThis.crypto.randomUUID()`
+attempt key, and the Mink memory card's save key in
+`lib/mink/memory-suggestion.ts`, whose own copy was removed) now call it, and the site compiler, which called `globalThis.crypto.randomUUID()`
 directly, does too.
 `lib/random-uuid-coverage.test.ts` is the guard (§5 convention 47). Production
 is HTTPS, so live pages were never affected.
@@ -15173,9 +15173,9 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     building** (the saved brief, with the screenshots New theme uploaded),
     Send answer or Send message, **Screenshots** (upload, Earlier screenshots
     to attach again, Delete for an upload no message used), one idempotency
-    key per message made on its first send (`newIdempotencyKey`, never
-    `crypto.randomUUID` at render: a phone reaching the dev server over http
-    has no secure context, so it lacks it) and a `ComposerApi`
+    key per message made on its first send (`randomUuid()` from
+    `lib/random-uuid.ts`, never `crypto.randomUUID`: a phone reaching the dev
+    server over http has no secure context, so it lacks it) and a `ComposerApi`
     for the page. `versions/[versionId]/preview-frame.tsx`: Desktop, Tablet
     and Phone frames fitted to the tab's width and height (`previewScale`),
     opening at Tablet below 900 px of box and at Phone below 600 px

@@ -1,6 +1,6 @@
 "use client";
 
-import { randomUuid } from "@/lib/random-uuid";
+import { randomUuid, randomUuidStrict } from "@/lib/random-uuid";
 import {
   CheckCircle2,
   Clock3,
@@ -99,11 +99,23 @@ export function MinkStorefrontPublicationControls({
   const rolledBack = publicationResult?.approval.operation === "rollback";
 
   function runChecks() {
+    // The run id authenticates the frames' results (receiveFrame), so it is
+    // never made from Math.random: with no secure random source the checks
+    // say they cannot run rather than accept a guessable token.
+    let run: string;
+    try {
+      run = randomUuidStrict();
+    } catch {
+      setError(
+        "Publication checks can't run in this browser. Use a current Chrome, Edge, Firefox or Safari.",
+      );
+      return;
+    }
     setError(null);
     setApproval(null);
     setBrowserValidation(null);
     setFrames({});
-    setValidationRun(randomUuid());
+    setValidationRun(run);
     setBusy("checks");
   }
 

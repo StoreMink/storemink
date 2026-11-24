@@ -15,8 +15,9 @@ import { describe, expect, it } from "vitest";
  * own (lib/mink/voice-turn.ts was one), so the guard cannot wait for a
  * "use client" line. A file counts as server code only when it starts with
  * "use server", imports `server-only`, imports a `node:*` module (a value
- * import: `import type` is erased at build time and proves nothing), or is a
- * route handler under `app/` (`route.ts` or `route.tsx`).
+ * import: `import type`, or an import whose every name is `type`, is erased
+ * at build time and proves nothing), or is a route handler under `app/`
+ * (`route.ts` or `route.tsx`).
  *
  * ★ A BARE `crypto` IMPORT IS NOT SERVER CODE. Next bundles it for the
  * browser as `crypto-browserify`, which has no `randomUUID`, so such a call
@@ -25,14 +26,17 @@ import { describe, expect, it } from "vitest";
  *
  * ★ IT MATCHES THE NAME, NOT THE CALL. `const { randomUUID } = crypto`,
  * `window.crypto.randomUUID()` and `crypto.randomUUID?.()` all throw the same
- * way, so any `randomUUID` identifier in browser code fails. The file is
+ * way, so any `randomUUID` identifier in browser code fails, and so does the
+ * string "randomUUID" used as a key or a call argument
+ * (`crypto["randomUUID"]()`, `Reflect.get(crypto, "randomUUID")`). The file is
  * parsed with TypeScript itself, so a comment or a string that names it does
  * not count, and a string such as `accept="image/*"` or a template literal
  * cannot hide code from the parse.
  *
  * ⚠ What it cannot see: script built as a string and injected into a page or
  * frame (custom-code-frame.tsx does this), and third-party code in
- * node_modules. It covers our own .ts and .tsx files only.
+ * node_modules. It covers our own .ts, .tsx, .js, .jsx and .mjs files (the
+ * storefront's header and footer are client .jsx files).
  */
 const ROOT = process.cwd();
 const DIRS = ["app", "components", "lib", "hooks"];
@@ -45,26 +49,56 @@ function sourceFiles(dir: string): string[] {
     if (SKIP_DIRS.has(name)) continue;
     const path = join(dir, name);
     if (statSync(path).isDirectory()) out.push(...sourceFiles(path));
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) {
+    else if (
+      /\.(ts|tsx|js|jsx|mjs)$/.test(name) &&
+      !/\.test\.(ts|tsx|js|jsx|mjs)$/.test(name)
+    ) {
       out.push(path);
     }
   }
   return out;
 }
 
-/** The file parsed as TypeScript (as TSX for a .tsx file). */
+/** The script kind TypeScript parses a file as. Next allows JSX in .js. */
+function scriptKind(path: string): ts.ScriptKind {
+  if (path.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (path.endsWith(".ts")) return ts.ScriptKind.TS;
+  if (path.endsWith(".mjs")) return ts.ScriptKind.JS;
+  return ts.ScriptKind.JSX;
+}
+
+/** The file parsed by TypeScript, in the kind its extension says. */
 function parse(source: string, path: string): ts.SourceFile {
   return ts.createSourceFile(
     path,
     source,
     ts.ScriptTarget.Latest,
     false,
-    path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    scriptKind(path),
+  );
+}
+
+/**
+ * Whether an import is erased at build time: `import type { X }`, or
+ * `import { type X, type Y }` with no default and no value name (with
+ * `isolatedModules` and no `verbatimModuleSyntax`, the whole import goes).
+ */
+function isTypeOnlyImport(statement: ts.ImportDeclaration): boolean {
+  const clause = statement.importClause;
+  if (!clause) return false;
+  if (clause.isTypeOnly) return true;
+  const bindings = clause.namedBindings;
+  return (
+    !clause.name &&
+    !!bindings &&
+    ts.isNamedImports(bindings) &&
+    bindings.elements.length > 0 &&
+    bindings.elements.every((element) => element.isTypeOnly)
   );
 }
 
 const NODE_MODULE = /^node:.+$/;
-const ROUTE_HANDLER = /^app\/.*\/route\.tsx?$/;
+const ROUTE_HANDLER = /^app\/.*\/route\.[jt]sx?$/;
 
 /** `path` is relative to the repository root, with forward slashes. */
 function isServerCode(file: ts.SourceFile, path: string): boolean {
@@ -81,19 +115,32 @@ function isServerCode(file: ts.SourceFile, path: string): boolean {
   return file.statements.some((statement) => {
     if (!ts.isImportDeclaration(statement)) return false;
     // Erased at build time, so the file can still reach the browser.
-    if (statement.importClause?.isTypeOnly) return false;
+    if (isTypeOnlyImport(statement)) return false;
     const from = statement.moduleSpecifier;
     if (!ts.isStringLiteral(from)) return false;
     return from.text === "server-only" || NODE_MODULE.test(from.text);
   });
 }
 
-/** Whether any identifier in the code (never a comment or a string) is randomUUID. */
+const isRandomUuidString = (node: ts.Node): boolean =>
+  (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+  node.text === "randomUUID";
+
+/**
+ * Whether the code names randomUUID: as an identifier, or as a string used as
+ * a key (`crypto["randomUUID"]`) or a call argument
+ * (`Reflect.get(crypto, "randomUUID")`). Never a comment or any other string.
+ */
 function namesRandomUuid(file: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isIdentifier(node) && node.text === "randomUUID") {
+    if (
+      (ts.isIdentifier(node) && node.text === "randomUUID") ||
+      (ts.isElementAccessExpression(node) &&
+        isRandomUuidString(node.argumentExpression)) ||
+      (ts.isCallExpression(node) && node.arguments.some(isRandomUuidString))
+    ) {
       found = true;
       return;
     }
@@ -207,6 +254,44 @@ describe("browser code uses randomUuid, never crypto.randomUUID", () => {
         "lib/a.ts",
       ),
     ).toBe(true);
+  });
+
+  it("does not take a Node import whose every name is a type as server code", () => {
+    expect(
+      offends(
+        'import { type Readable } from "node:stream";\ncrypto.randomUUID();',
+        "lib/a.ts",
+      ),
+    ).toBe(true);
+    // A value name among them keeps the import, so it is server code.
+    expect(
+      offends(
+        'import { type Readable, Writable } from "node:stream";\ncrypto.randomUUID();',
+        "lib/a.ts",
+      ),
+    ).toBe(false);
+  });
+
+  it("catches the name used as a string key or argument", () => {
+    for (const code of [
+      'globalThis.crypto["randomUUID"]();',
+      "crypto[`randomUUID`]();",
+      'Reflect.get(crypto, "randomUUID").call(crypto);',
+    ]) {
+      expect(offends(code, "lib/x.ts")).toBe(true);
+    }
+    expect(offends('const note = "randomUUID";', "lib/x.ts")).toBe(false);
+  });
+
+  it("scans .jsx, .js and .mjs files too", () => {
+    expect(files.some((path) => path.endsWith(".jsx"))).toBe(true);
+    const code =
+      '"use client";\nconst id = crypto.randomUUID();\nexport default () => <p>{id}</p>;';
+    expect(offends(code, "app/(storefront)/components/header/Header.jsx")).toBe(
+      true,
+    );
+    expect(offends("crypto.randomUUID();", "lib/x.js")).toBe(true);
+    expect(offends("crypto.randomUUID();", "lib/x.mjs")).toBe(true);
   });
 
   it("exempts only route handlers under app/", () => {

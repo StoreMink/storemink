@@ -44,6 +44,9 @@ interface LandingAttribution {
   paidClick: boolean;
 }
 
+/** Warned once per page load when an event cannot be built (track below). */
+let warnedUnbuildableEvent = false;
+
 /**
  * Where this page load came from, read ONCE, in memory only. A client-side
  * navigation keeps document.referrer but drops the landing URL's campaign
@@ -52,9 +55,6 @@ interface LandingAttribution {
  * Nothing is written to the browser, matching the "no identifier stored"
  * promise in the privacy policy.
  */
-/** Warned once per page load when an event cannot be built (track below). */
-let warnedUnbuildableEvent = false;
-
 function readLandingAttribution(): LandingAttribution {
   const params = new URLSearchParams(window.location.search);
   const utm: LandingAttribution["utm"] = {};

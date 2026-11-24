@@ -968,7 +968,7 @@ export async function processReturn(
      *  Honoured only after the server confirms the order has no mobile. */
     acknowledgeUnverifiedCustomer?: boolean;
     /**
-     * One key per return ATTEMPT, minted by the till (`crypto.randomUUID()`)
+     * One key per return ATTEMPT, minted by the till with `randomUuid()` (lib/random-uuid.ts)
      * and kept until that attempt succeeds or the cashier changes what is
      * coming back. A second submission carrying it — a retry after a lost
      * response, a double tap — is answered with the FIRST return instead of
