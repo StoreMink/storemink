@@ -62,5 +62,6 @@ export async function saveAnalyticsTimeZone(
   updateTag(STORE_TAG);
   revalidatePath("/dashboard/analytics");
   revalidatePath("/dashboard/settings");
+  revalidatePath("/dashboard/settings/general");
   return { success: "Business time zone saved." };
 }

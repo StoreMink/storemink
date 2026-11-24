@@ -40,7 +40,6 @@ export async function GeneralSettings({
           db
             .select({
               name: storeBillingSettings.businessName,
-              legalName: storeBillingSettings.legalName,
               address: storeBillingSettings.businessAddress,
               taxId: storeBillingSettings.taxId,
             })
@@ -110,8 +109,11 @@ export async function GeneralSettings({
               <CouldNotLoad />
             ) : (
               <Rows>
+                {/* The business name the Edit page saves, never the legal
+                    name: Taxes & invoices cannot change that, so showing it
+                    here would make Edit look as if it did nothing. */}
                 <Row label="Business name">
-                  {business?.legalName ?? business?.name ?? <Missing />}
+                  {business?.name?.trim() || <Missing />}
                 </Row>
                 <Row label="Business address">
                   {business?.address ? (

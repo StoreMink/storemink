@@ -107,19 +107,25 @@ describe("Settings, General", () => {
   it("shows the business details to someone with Taxes & invoices", async () => {
     db.rows = [
       {
-        name: "Echos",
-        legalName: "Echos LLP",
+        name: "Echos Foods",
         address: "1 Mall Road",
         taxId: null,
       },
     ];
     await renderGeneral(access({ settings: ["view"], billing: ["view"] }));
     const business = card("Business details");
-    expect(within(business).getByText("Echos LLP")).toBeInTheDocument();
+    expect(within(business).getByText("Echos Foods")).toBeInTheDocument();
     expect(within(business).getByText("1 Mall Road")).toBeInTheDocument();
     expect(
       within(business).getByRole("link", { name: "Edit" }),
     ).toHaveAttribute("href", "/dashboard/billing");
+  });
+
+  it("shows Not added for a blank business name", async () => {
+    db.rows = [{ name: "   ", address: null, taxId: null }];
+    await renderGeneral(access({ settings: ["view"], billing: ["view"] }));
+    const business = card("Business details");
+    expect(within(business).getAllByText("Not added").length).toBe(3);
   });
 
   it("says a card could not load and still shows the rest", async () => {

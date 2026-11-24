@@ -19,7 +19,13 @@
 
    ★ CONTAINER QUERIES, NOT MEDIA QUERIES. The frame narrows when the Mink
    panel opens or the sidebar is dragged wider, which a window breakpoint
-   cannot see. */
+   cannot see.
+
+   ★ THE MENU FOLDS AWAY BELOW 1000px, NOT 720px. The pages beside it still
+   size their grids from the window (md:, lg:, xl:), so they assume more room
+   than the page column has: at 720px the column was about 420px wide and
+   Channels still laid out four cards across. From 1000px the column keeps
+   at least about 700px. */
 
 .dashboard-shell .sm-settings {
   container-type: inline-size;
@@ -222,7 +228,7 @@
   display: none;
 }
 
-@container sm-settings (max-width: 720px) {
+@container sm-settings (max-width: 999px) {
   .dashboard-shell .sm-settings-grid {
     grid-template-columns: minmax(0, 1fr);
   }

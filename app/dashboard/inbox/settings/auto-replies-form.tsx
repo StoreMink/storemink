@@ -521,7 +521,10 @@ export function AutoRepliesForm({ view }: { view: AutoRepliesView }) {
               {view.canChangeTimeZone ? (
                 <>
                   Change the time zone under{" "}
-                  <Link href="/dashboard/settings" className="underline">
+                  <Link
+                    href="/dashboard/settings/general"
+                    className="underline"
+                  >
                     Settings
                   </Link>
                   .

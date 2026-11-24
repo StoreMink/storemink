@@ -6562,9 +6562,14 @@ settings, Website Builder) to be in the menu too.
   with no profile it renders the page alone. The frame has the menu's search
   (Escape clears), the Notices badge from the unread counts, the new-tab mark
   for the Website Builder, and a "Settings" back link on phones.
-  `settings-shell.css` is a container query on the frame: below 720px it is
+  `settings-shell.css` is a container query on the frame: below 1000px it is
   one column, the menu on the Settings home and the page elsewhere, with 44px
-  targets and a 16px search box. The frame cancels `.dash-content`'s padding
+  targets and a 16px search box. ★ 1000px, not 720px (Vansh's second
+  review): the pages beside the menu still size their grids from the window,
+  so a narrower page column squeezed them (Channels' four cards across a
+  420px column). `app/dashboard/(settings)/loading.tsx` is the loading state
+  between settings pages: inside the group, `app/dashboard/loading.tsx` sees
+  no change of segment, and this boundary keeps the menu on screen. The frame cancels `.dash-content`'s padding
   and pads its own main column with the same `--dash-pad-*` values, so
   `.dash-savebar`'s negative margins still line up. It is at least
   `--sm-settings-view` tall (the window less the 56px topbar, and from 768px
@@ -6593,7 +6598,12 @@ settings, Website Builder) to be in the menu too.
   in `lib/analytics/range.ts`, the reader `getStoreAnalyticsTimeZone` also
   uses, and the plan through `effectivePlan`, as the dashboard layout does)
   and the business details. Each fails on its own: the card says it
-  couldn't be loaded and the rest still render. A role
+  couldn't be loaded and the rest still render. Business name is the
+  `business_name` Taxes & invoices saves (blank reads "Not added"), never the
+  legal name, which that page cannot change. Links that mean a settings page
+  name it: the inbox's time zone link goes to `/dashboard/settings/general`
+  and the profile menu's Account Settings to `/dashboard/settings/account`,
+  since on a narrow frame `/dashboard/settings` shows only the menu. A role
   without Settings view sees "Choose a page from the settings menu." on the
   home.
 - **The dashboard sidebar keeps its own menu on settings pages.**

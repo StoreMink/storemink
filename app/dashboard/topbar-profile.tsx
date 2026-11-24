@@ -157,7 +157,7 @@ export function TopbarProfile({
           </div>
           <div className="p-1.5">
             <Link
-              href="/dashboard/settings"
+              href="/dashboard/settings/account"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2.5 rounded-[var(--dash-radius-xs)] px-2.5 py-2 text-[13px] text-[var(--dash-text-2)] transition-colors hover:bg-[var(--dash-surface-2)] hover:text-[var(--dash-text)]"
             >
