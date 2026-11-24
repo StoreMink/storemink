@@ -301,6 +301,22 @@ describe("Publish", () => {
     ).toMatch(/it shows Ready to publish when it passes/);
   });
 
+  it("★ says a live theme's publish is a new version, and that stores already using it keep theirs (migration 0288)", () => {
+    const first = publishDialogWords("Aurora", facts, false).lead;
+    expect(first).toMatch(/It appears in the theme catalog/);
+    expect(first).not.toMatch(/in place of/);
+    const next = publishDialogWords(
+      "Aurora",
+      { ...facts, replaces: "1.0.0" },
+      false,
+    ).lead;
+    expect(next).toBe(
+      `It becomes this theme's new version in ${PUBLISH_REACH}, in place of v1.0.0, and the live demo store shows it. Stores already using this theme keep the version they have.`,
+    );
+    expect(next).not.toContain(EM);
+    expect(next).not.toContain(EN);
+  });
+
   it("waits, with the reason under it, when Publish can do nothing now", () => {
     panel({
       publish: {
@@ -427,7 +443,7 @@ describe("the live panel", () => {
     expect(demo.getAttribute("target")).toBe("_blank");
     expect(
       screen.getByText(
-        /Live, v1\.0\.0, since 1 Oct\. Stores that installed it keep this exact version\. Live themes can't be changed yet\./,
+        /Live, v1\.0\.0, since 1 Oct\. To change it, describe the change in the chat or change its pictures\. Publishing the result makes a new version, and stores already using this theme keep the version they have\./,
       ),
     ).toBeTruthy();
     const again = screen.getByRole("link", {

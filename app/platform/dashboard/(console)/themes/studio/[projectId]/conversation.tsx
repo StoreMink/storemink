@@ -117,6 +117,7 @@ export function ThemeConversation({
   now,
   working,
   lockedReason,
+  liveNote,
   progressCard,
   apiRef,
   onViewDesign,
@@ -140,6 +141,9 @@ export function ThemeConversation({
    * status and the switches); shown only while the composer is locked, and
    * a general sentence when absent. */
   lockedReason?: string | null;
+  /** For a theme with a published release: what sending a change means for
+   * it, in a sentence, shown under the composer while it can be used. */
+  liveNote?: string | null;
   /** The progress card, shown at the end of the timeline. */
   progressCard?: ReactNode;
   apiRef?: RefObject<ComposerApi | null>;
@@ -795,7 +799,9 @@ export function ThemeConversation({
                 : "Theme Studio can't take a message right now. Use the button at the top of the page.")}
           </p>
         ) : (
-          <p className="studio-muted text-xs">Ctrl or ⌘ and Enter to send.</p>
+          <p className="studio-muted text-xs">
+            {liveNote ? `${liveNote} ` : null}Ctrl or ⌘ and Enter to send.
+          </p>
         )}
       </form>
     </div>

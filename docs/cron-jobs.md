@@ -118,6 +118,7 @@ gcloud builds submit --project storemink-prod --region global --config=cloudbuil
 | `storemink-send-emails`             | `* * * * *`    | `https://storemink.com/api/cron/send-emails`             |
 | `storemink-plan-expiry`             | `15 0 * * *`   | `https://storemink.com/api/cron/plan-expiry`             |
 | `storemink-expire-pending-payments` | `30 * * * *`   | `https://storemink.com/api/cron/expire-pending-payments` |
+| `storemink-confirm-payments`        | `*/5 * * * *`  | `https://storemink.com/api/cron/confirm-payments`        |
 | `storemink-seo-refresh`             | `0 2 * * *`    | `https://storemink.com/api/cron/seo-refresh`             |
 | `storemink-search-metrics`          | `30 2 * * *`   | `https://storemink.com/api/cron/search-metrics`          |
 | `storemink-domain-reconcile`        | `10 * * * *`   | `https://storemink.com/api/cron/domain-reconcile`        |
@@ -816,6 +817,39 @@ It answers **200 even when an import failed** — a failed import is a recorded
 outcome on the job that the merchant reads in the log, not an outage, and a 5xx
 would make Scheduler retry a job that has already given up.
 
+### `confirm-payments`: paid orders confirmed within minutes
+
+**Created in production on 21 Nov 2026** (`storemink-confirm-payments`,
+`*/5 * * * *`, enabled; checked with `gcloud scheduler jobs list` the same
+day). ⚠ Until the release that adds this route is deployed, each attempt is
+answered 404 and the job's last status reads `5` (not found); that is expected
+and raises no alert. Nothing breaks meanwhile: the same pass runs at the top of
+the hourly `expire-pending-payments` job, so a paid order whose shopper closed
+the tab is confirmed within the hour instead of within minutes. The command it
+was created with:
+
+```bash
+CRON_SECRET_VALUE=$(gcloud secrets versions access latest \
+  --secret=CRON_SECRET --project=storemink-prod)
+gcloud scheduler jobs create http storemink-confirm-payments \
+  --project=storemink-prod --location=asia-south1 \
+  --schedule="*/5 * * * *" --time-zone="Etc/UTC" \
+  --uri="https://storemink.com/api/cron/confirm-payments" \
+  --http-method=GET --headers="Authorization=Bearer ${CRON_SECRET_VALUE}" \
+  --attempt-deadline=300s --max-retry-attempts=1
+unset CRON_SECRET_VALUE
+```
+
+It asks Razorpay about every online order that has been waiting between 2 and
+45 minutes and marks the paid ones paid (`confirmYoungPendingOrders`,
+`lib/orders/pending-payments.ts`): at most 100 orders a run, newest first, one
+gateway lookup per store. **It never cancels anything**; cancelling stays with
+`expire-pending-payments` and its 45-minute rule. It answers
+`{ ok, considered, paid, errors }`, and 503 when a read failed so the next run
+is not waited for. A store that has set up its Razorpay webhook rarely needs
+it; it exists for the stores that have not, and for a webhook delivery that
+was missed. Do not create it on dev (no schedulers there).
+
 ### `billing` — the subscription heartbeat
 
 ```bash
@@ -827,6 +861,12 @@ gcloud scheduler jobs create http storemink-billing \
   --attempt-deadline=300s --max-retry-attempts=3
 unset CRON_SECRET_VALUE
 ```
+
+Since 21 Nov 2026 the collect, evaluate and downgrade steps read **every
+page**, not the first 50 rows: each sorts oldest first and the route keeps
+asking for the next page until a short one (at most 40 pages a step, inside the
+first 180 seconds of the request). The response's `more` is true only when a
+step stopped with pages still ahead; run the job again if it stays true.
 
 Runs seven steps **in one request, in order**: promote a GST change that has
 started (`promoteDueTaxChange`), collect at T-4d, reconcile (payments we never
@@ -936,7 +976,9 @@ a day falls in it; moving the minute only moves the check.
 
 **The response body** carries each pass's summary: `collectionSkipped`,
 `promote` (`promoted`, the GST change made current this run or null, and
-`errors`), `collect`, `reconcile` (with `completed`, closed-tab purchases
+`errors`), `collect` (with `notified`: renewals whose order and bank notice
+were created this run), `debits` (`considered`, `sent`, `waiting`, `failed`,
+`cancelled`, `errors`; see below), `reconcile` (with `completed`, closed-tab purchases
 finished this run; a recovery scan that could not be read counts in
 `reconcile.errors`, so the run answers 503), `repair` (`considered`, `issued`,
 `completed`, `filed`, `deferred`, `unissued`, `errors`, `more`), `evaluate`, `downgrade` (with `ended`, cancelling plans
@@ -947,6 +989,19 @@ advanced) and `refunds` (`repairedInvoices`, `flaggedForPerson`, `detected`,
 pass filled its batch: `collect.considered`, the evaluate outcomes, the
 downgrade outcomes (`downgraded + ended + advancedAfterGrace`) at 50, or
 `refunds.more` or `repair.more`. A backlog draining is 200, not an error.
+
+★★ **An automatic renewal is two passes of this job, a day or more apart**
+(21 Nov 2026). The collect pass creates the gateway order with its pre-debit
+notice (`collect.notified`). The debit pass (`debits`, after collect and before
+reconcile) sends the debit once the notice period has passed: `sent` counts
+debits handed to the gateway, `waiting` those not yet allowed (a notice period
+still running, or a gateway that did not answer this run), `failed` tries that
+ended (refused, a mandate gone, 24 hours of gateway silence), `cancelled`
+attempts withdrawn because their plan was cancelled or their invoice closed. A
+`debits.errors` above zero answers 503. With no gateway configured the pass is
+skipped and reports zeros. So this job must keep running hourly for a renewal
+to be collected at all: paused for two days, a notified renewal is simply
+debited late, never twice.
 
 ⚠ **`collectionSkipped` in the response body means AUTOPAY is off, not that
 billing is idle.** While the Razorpay subsequent-charge endpoint is unverified
@@ -979,6 +1034,8 @@ and never wired to anything:
 | `theme_studio_image_checkpoints` | 30 days after settlement          | Private raw originals; queued/running retry ancestors are protected. Run usage and settled assets remain.                                                                                                                                                                                                                                                                                                                      |
 | `whatsapp_logs`                  | 90 days                           | Rendered WhatsApp message bodies with Meta's delivery timeline — email_logs' window, for its reason.                                                                                                                                                                                                                                                                                                                           |
 | `whatsapp_inbound_events`        | 30 days                           | Raw webhook payloads (customer text); the facts they produced live on the account, template and log rows.                                                                                                                                                                                                                                                                                                                      |
+| `image_provider_generations`     | 14 days                           | One row per image job submitted to ElevenLabs (Theme Studio and storefront redesign photos, when an operator has chosen that provider), kept so a job that was paid for and never collected is collected by the next try and not drawn again. A job can only be collected within six hours of its submit.                                                                                                                      |
+| `image_provider_submits`         | 14 days                           | One row per submit to ElevenLabs that got no answer (an answered submit deletes its own row), with the seconds it was out for, so the job it may have made can be found in ElevenLabs' list by its creation time and collected, not paid for twice. Looked for within six hours of the submit.                                                                                                                                 |
 | `ai_quota_refunds`               | 90 days                           | One row per Generate with AI take that was given back, kept so a second refund of the same take gives nothing; a take is refunded only inside its own request.                                                                                                                                                                                                                                                                 |
 | `mink_refine_requests`           | 30 days                           | One row per Refine with Mink AI request: the browser's stop and the charge claim; it decides only while its refine runs.                                                                                                                                                                                                                                                                                                       |
 | `help_assistant_feedback`        | 365 days                          | A Help Centre visitor's thumbs up or down on a Mink AI answer, with the question, the answer and its guides, so operators can fix the guides behind bad answers. Nothing in it identifies the visitor.                                                                                                                                                                                                                         |

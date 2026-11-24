@@ -64,10 +64,11 @@ import {
   beginAttempt,
   capturedDraftPurchases,
   fileRecoveredPurchase,
+  type PurchaseCompletion,
   readAddonOrderTarget,
+  recordGatewayOrder,
   settleAttempt,
   verifyRecoveredCapture,
-  type PurchaseCompletion,
 } from "./collect";
 
 export type PlanChangeResult<T> =
@@ -455,10 +456,19 @@ export async function startPlanChange(input: {
     return { ok: false, error: "Couldn't start the payment. Try again." };
   }
 
-  await settleAttempt(attempt.attemptId, "processing", {
+  // ★ The order id leaves the server only once the attempt holds it
+  // (`recordGatewayOrder`): an order the attempt does not know about must
+  // never be payable.
+  const recorded = await recordGatewayOrder({
+    attemptId: attempt.attemptId,
     providerOrderId: order.data.id,
+    invoiceId: invoice.id,
+    storeId: input.storeId,
     now,
   });
+  if (!recorded) {
+    return { ok: false, error: "Couldn't start the payment. Try again." };
+  }
 
   return {
     ok: true,

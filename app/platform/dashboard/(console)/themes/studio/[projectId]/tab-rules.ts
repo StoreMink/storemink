@@ -38,8 +38,8 @@ export function changeBlockedReason(
   switch (project.status) {
     case "generating":
       return "Theme Studio is working on this theme. You can send a change when it finishes.";
-    case "published":
-      return "Live themes can't be changed yet. Start a new theme from this brief instead.";
+    // A live theme takes a change (migration 0288): publishing the result
+    // is the theme's next release, and stores keep the one they installed.
     case "archived":
       return "This theme was removed from the list, so it can't be changed.";
     case "draft":
@@ -56,18 +56,18 @@ export function changeBlockedReason(
 
 /** Why the pictures of a design can't be changed now (uploads, Save), or
  * null when they can: the server takes picture changes on a theme that is
- * ready or Ready to publish. */
+ * ready, Ready to publish or live. */
 export function pictureEditBlockedReason(project: Project): string | null {
   switch (project.status) {
     case "ready":
     case "candidate":
+    // A live theme's pictures can be changed too (migration 0288).
+    case "published":
       return null;
     case "generating":
       return "Theme Studio is working on this theme. Change the pictures once it finishes.";
     case "approved":
       return "A publish that didn't finish holds the theme: try it again first.";
-    case "published":
-      return "Live themes can't be changed yet.";
     case "archived":
       return "This theme was removed from the list, so it can't be changed.";
     case "blocked":

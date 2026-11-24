@@ -18,7 +18,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, CalendarClock, Loader2 } from "lucide-react";
 import {
   confirmPayInvoice,
   startPayInvoice,
@@ -35,6 +35,14 @@ import {
   istShortDate,
 } from "@/lib/billing/tax-copy";
 import { shouldOpenPayment } from "./amount-guard";
+
+/**
+ * An automatic renewal that is SCHEDULED: the bank's notice has gone out and
+ * the debit follows a day or more later. Nothing is owed by hand meanwhile.
+ */
+function isScheduled(inv: PayableInvoice): boolean {
+  return inv.status === "processing" && !!inv.autopayAt;
+}
 
 /** "1 Nov 2026 to 30 Nov 2026", in India time (GST design 7.3). */
 function period(from: string | null, to: string | null): string | null {
@@ -58,10 +66,32 @@ export function OpenInvoices({
 
   if (invoices.length === 0) return null;
 
-  async function pay(inv: PayableInvoice) {
+  /**
+   * "Pay now instead", for an invoice whose automatic payment is scheduled.
+   * ★ Asked first, in plain words: pressing it cancels the scheduled payment
+   * whether or not the merchant then finishes paying.
+   */
+  function payInstead(inv: PayableInvoice) {
+    const when = inv.autopayAt ? istShortDate(inv.autopayAt) : null;
+    const ok = window.confirm(
+      `Pay ${formatRupees(inv.totalPaise)} now? ${
+        when
+          ? `The automatic payment scheduled for on or after ${when} will be cancelled`
+          : "The scheduled automatic payment will be cancelled"
+      }, so you are not charged twice.`,
+    );
+    if (ok) void pay(inv, { insteadOfAutopay: true });
+  }
+
+  async function pay(
+    inv: PayableInvoice,
+    opts: { insteadOfAutopay?: boolean } = {},
+  ) {
     const invoiceId = inv.id;
     setPaying(invoiceId);
-    const start = await startPayInvoice(invoiceId);
+    const start = opts.insteadOfAutopay
+      ? await startPayInvoice(invoiceId, true)
+      : await startPayInvoice(invoiceId);
     if (!start.ok) {
       // ★ The server's sentence, word for word (renewal-cancel design 8.4).
       // It knows WHY: a cancelled plan's next invoice ("You've cancelled your
@@ -121,6 +151,9 @@ export function OpenInvoices({
       onDismiss: () => {
         setPaying(null);
         toast.error("Payment wasn't completed.");
+        // The row now reads as a payment the merchant can continue (and, after
+        // "Pay now instead", no longer as a scheduled automatic one).
+        router.refresh();
       },
     });
     if (!opened) {
@@ -129,18 +162,52 @@ export function OpenInvoices({
     }
   }
 
+  // ★★ NOTHING TO PAY BY HAND WHEN EVERY INVOICE IS A SCHEDULED AUTOPAY
+  // (21 Nov 2026). An automatic renewal now waits a day or more between its
+  // bank notice and its debit, and the amber "You have an invoice to pay ...
+  // your store moves to the Free plan" would alarm a merchant whose renewal is
+  // going exactly to plan. The calm panel says what is true instead.
+  const allScheduled = invoices.every(isScheduled);
+  const owed = invoices.filter((inv) => !isScheduled(inv)).length;
+
   return (
-    <section className="rounded-xl border border-amber-300 bg-amber-50 p-6">
+    <section
+      className={
+        allScheduled
+          ? "rounded-xl border border-[#e5e7eb] bg-white p-6"
+          : "rounded-xl border border-amber-300 bg-amber-50 p-6"
+      }
+    >
       <div className="flex items-start gap-3">
-        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        {allScheduled ? (
+          <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
+        ) : (
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+        )}
         <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-amber-900">
-            {invoices.length === 1
-              ? "You have an invoice to pay"
-              : `You have ${invoices.length} invoices to pay`}
+          <h2
+            className={
+              allScheduled
+                ? "text-base font-semibold text-[#111827]"
+                : "text-base font-semibold text-amber-900"
+            }
+          >
+            {allScheduled
+              ? "Your renewal is scheduled"
+              : owed === 1
+                ? "You have an invoice to pay"
+                : `You have ${owed} invoices to pay`}
           </h2>
-          <p className="mt-0.5 text-sm text-amber-800">
-            Unpaid by the due date, your store moves to the Free plan.
+          <p
+            className={
+              allScheduled
+                ? "mt-0.5 text-sm text-[#5b6472]"
+                : "mt-0.5 text-sm text-amber-800"
+            }
+          >
+            {allScheduled
+              ? "Your saved payment method will be charged automatically. There is nothing you need to do. If you would rather pay it yourself, choose Pay now instead."
+              : "Unpaid by the due date, your store moves to the Free plan."}
           </p>
 
           <ul className="mt-4 space-y-2">
@@ -155,10 +222,15 @@ export function OpenInvoices({
               // `processing` means a payment is already with the gateway.
               // Offering "Pay" would open a second one against the same money.
               const inFlight = inv.status === "processing";
+              const scheduled = isScheduled(inv);
               return (
                 <li
                   key={inv.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-4 py-3"
+                  className={
+                    allScheduled
+                      ? "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#e5e7eb] bg-white px-4 py-3"
+                      : "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-white px-4 py-3"
+                  }
                 >
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-[#111827]">
@@ -184,7 +256,57 @@ export function OpenInvoices({
                       </div>
                     )}
                   </div>
-                  {inFlight ? (
+                  {scheduled && inv.autopayAt ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-xs font-medium text-[#374151]">
+                        Autopay on or after {istShortDate(inv.autopayAt)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => payInstead(inv)}
+                        disabled={!canManage || paying !== null}
+                        className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[#d1d5db] bg-white px-3 py-1.5 text-sm font-semibold text-[#111827] transition hover:bg-[#f9fafb] disabled:opacity-50"
+                        title={
+                          canManage
+                            ? undefined
+                            : "Only an admin who can manage billing may pay this"
+                        }
+                      >
+                        {paying === inv.id ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Opening…
+                          </>
+                        ) : (
+                          "Pay now instead"
+                        )}
+                      </button>
+                    </div>
+                  ) : inFlight && inv.resumable ? (
+                    // A checkout the merchant opened and did not finish: the
+                    // server reopens the SAME gateway order, so continuing
+                    // can never pay the invoice twice.
+                    <button
+                      type="button"
+                      onClick={() => pay(inv)}
+                      disabled={!canManage || paying !== null}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#111827] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-50"
+                      title={
+                        canManage
+                          ? undefined
+                          : "Only an admin who can manage billing may pay this"
+                      }
+                    >
+                      {paying === inv.id ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Opening…
+                        </>
+                      ) : (
+                        "Continue payment"
+                      )}
+                    </button>
+                  ) : inFlight ? (
                     <span className="text-xs font-medium text-amber-700">
                       Payment in progress…
                     </span>

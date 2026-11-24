@@ -1796,6 +1796,17 @@ function UpgradeModal({
                       Approve a mandate once in your UPI app. The first payment
                       is taken now.
                     </p>
+                    {/* ★ The mandate is registered "as presented" (22 Nov
+                        2026), so Razorpay's window shows its ceiling as an
+                        amount that can be charged at any time. Said here
+                        first, in our own words, so that screen is not the
+                        first the merchant hears of a number above their
+                        plan's price. */}
+                    <p className="mt-1 text-xs leading-5 text-[#5b6472]">
+                      The payment window shows an upper limit, not what you pay.
+                      We charge only your renewal amount, once in each billing
+                      cycle, and your bank sends a notice first.
+                    </p>
                     {/* ★ The escape hatch. Checkout shows only the rail on the
                         order, so a merchant with no UPI app would otherwise be
                         unable to subscribe at all. */}

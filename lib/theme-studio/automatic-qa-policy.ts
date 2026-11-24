@@ -36,6 +36,7 @@ const LAYOUT_GATE_IDS: readonly GateId[] = [
   "browser.accessibility",
   "browser.media",
   "browser.performance",
+  "browser.header_menu",
 ];
 
 /** Gates whose failure is a broken runtime, which no theme revision can

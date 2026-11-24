@@ -35,6 +35,10 @@ const mail = vi.hoisted(() => ({
     subject: "free",
     html: "<p>f</p>",
   })),
+  autopayStoppedTemplate: vi.fn<(d: any) => unknown>(() => ({
+    subject: "stopped",
+    html: "<p>s</p>",
+  })),
   // The real conversion is tested in billing-emails.test.ts; this stand-in
   // keeps its shape so the test can see what dunning hands the template.
   emailTaxFromInvoice: vi.fn((inv: any) =>
@@ -53,6 +57,7 @@ const notif = vi.hoisted(() => ({ recordEvent: vi.fn() }));
 vi.mock("@/lib/notifications/record", () => notif);
 
 import {
+  notifyAutopayStopped,
   notifyDowngraded,
   notifyGraceStarted,
   notifyInvoiceIssued,
@@ -199,6 +204,79 @@ describe("notifyGraceStarted", () => {
   it("★★ NEVER throws — grace has already started in the database", async () => {
     mail.sendBillingEmail.mockRejectedValue(new Error("resend down"));
     await expect(notifyGraceStarted(args)).resolves.toBeUndefined();
+  });
+});
+
+describe("notifyAutopayStopped: asking the merchant to pay by hand", () => {
+  const NOW = new Date("2026-09-03T00:00:00.000Z");
+  const args = {
+    storeId: STORE,
+    plan: "pro",
+    amountPaise: 240_000,
+    tax: null,
+    dueAt: DUE,
+    invoiceRef: "SM/2026-27/00007",
+    attempts: 3,
+    now: NOW,
+  };
+
+  it("★★ names the amount, the invoice, the tries and the day to pay by", async () => {
+    await notifyAutopayStopped(args);
+    expect(mail.autopayStoppedTemplate.mock.calls[0][0]).toMatchObject({
+      storeName: "Acme",
+      planName: "Pro",
+      amountPaise: 240_000,
+      invoiceRef: "SM/2026-27/00007",
+      attempts: 3,
+      payBy: DUE.toISOString(),
+      manageUrl: "https://acme.storemink.com/dashboard/plans",
+    });
+    expect(mail.sendBillingEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("★ says WHY: every try used by default, or the mandate itself is gone", async () => {
+    await notifyAutopayStopped(args);
+    expect(mail.autopayStoppedTemplate.mock.calls[0][0].cause).toBe(
+      "exhausted",
+    );
+    await notifyAutopayStopped({ ...args, attempts: 1, cause: "mandate" });
+    expect(mail.autopayStoppedTemplate.mock.calls[1][0]).toMatchObject({
+      cause: "mandate",
+      attempts: 1,
+    });
+  });
+
+  it("★ names no pay-by day once the cycle has already turned", async () => {
+    await notifyAutopayStopped({
+      ...args,
+      now: new Date("2026-09-06T00:00:00.000Z"),
+    });
+    expect(mail.autopayStoppedTemplate.mock.calls[0][0].payBy).toBeNull();
+  });
+
+  it("logs it in-app as an invoice that is due", async () => {
+    await notifyAutopayStopped(args);
+    expect(notif.recordEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "subscription.invoice_due",
+        storeId: STORE,
+        payload: expect.objectContaining({
+          amount: 2400,
+          reference: "SM/2026-27/00007",
+        }),
+      }),
+    );
+  });
+
+  it("says nothing when there is nobody to tell", async () => {
+    mail.resolveBillingEmail.mockResolvedValue(null);
+    await notifyAutopayStopped(args);
+    expect(mail.sendBillingEmail).not.toHaveBeenCalled();
+  });
+
+  it("★★ NEVER throws: the invoice stays payable whatever the mail does", async () => {
+    mail.sendBillingEmail.mockRejectedValue(new Error("resend down"));
+    await expect(notifyAutopayStopped(args)).resolves.toBeUndefined();
   });
 });
 

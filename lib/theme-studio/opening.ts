@@ -26,6 +26,8 @@ export const OPENING_SLIDES = { min: 2, max: 3 } as const;
 export interface OpeningOptions {
   /** v27+: only a hero_carousel qualifies; a single hero does not. */
   carousel?: boolean;
+  /** v34+: the opening sits flush under the header (padding_y "none"). */
+  flush?: boolean;
 }
 
 type Section =
@@ -124,12 +126,23 @@ export function enforceHomepageOpening(
   const issues = homepageOpeningIssues(pkg, options);
   if (issues.length) return { package: pkg, issues };
   const first = opening(pkg);
-  if (!first || first.section.style?.width === "full")
-    return { package: pkg, issues: [] };
+  if (!first) return { package: pkg, issues: [] };
+  // v34: the band sits FLUSH under the header (`flush`). Every hand-made
+  // exemplar opens with padding "none"; the first live v34 theme wrote "sm",
+  // which put 28px of page colour between an 80px header and its
+  // photograph, and the two read as one very tall bar (owner, 22 Nov 2026).
+  // A model is not asked: it is the same in every theme.
+  const wide = first.section.style?.width === "full";
+  const flush = !options.flush || first.section.style?.padding_y === "none";
+  if (wide && flush) return { package: pkg, issues: [] };
   const next = structuredClone(pkg);
   const section =
     next.definition.preset.pages[first.page].sections[first.index];
-  section.style = { ...(section.style ?? {}), width: "full" };
+  section.style = {
+    ...(section.style ?? {}),
+    width: "full",
+    ...(options.flush ? { padding_y: "none" as const } : {}),
+  };
   return { package: next, issues: [] };
 }
 
@@ -148,6 +161,7 @@ export function isOpeningSettingPath(
   return (
     path === `${root}/config/variant` ||
     path === `${root}/config/height` ||
-    path === `${root}/style/width`
+    path === `${root}/style/width` ||
+    path === `${root}/style/padding_y`
   );
 }

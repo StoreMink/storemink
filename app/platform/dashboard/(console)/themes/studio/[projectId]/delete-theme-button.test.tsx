@@ -11,14 +11,16 @@ const state = vi.hoisted(() => ({
   push: vi.fn(),
   refresh: vi.fn(),
   remove: vi.fn(),
+  toast: vi.fn(),
 }));
+vi.mock("sonner", () => ({ toast: { success: state.toast } }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: state.push, refresh: state.refresh }),
 }));
 vi.mock("@/app/actions/theme-studio-actions", () => ({
   deleteThemeStudioProjectAction: state.remove,
 }));
-import { DeleteThemeButton } from "./delete-theme-button";
+import { deletedMessage, DeleteThemeButton } from "./delete-theme-button";
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -57,6 +59,27 @@ it("requires the exact theme ID before sending a permanent delete", async () => 
   await waitFor(() =>
     expect(state.push).toHaveBeenCalledWith("/dashboard/themes/studio"),
   );
+  expect(state.toast).toHaveBeenCalledWith("Theme deleted for good.");
+});
+it("says when stores keep the deleted theme", async () => {
+  state.remove.mockResolvedValue({ ok: true, storesKept: 2 });
+  render(<DeleteThemeButton {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+  fireEvent.change(screen.getByLabelText(/Type clay-co to confirm/), {
+    target: { value: "clay-co" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Delete theme permanently" }),
+  );
+  await waitFor(() =>
+    expect(state.toast).toHaveBeenCalledWith(
+      "Theme deleted. The 2 stores using it keep it as it is.",
+    ),
+  );
+  expect(deletedMessage(0)).toBe("Theme deleted for good.");
+  expect(deletedMessage(1)).toBe(
+    "Theme deleted. The store using it keeps it as it is.",
+  );
 });
 it("asks a phone keyboard not to capitalise or correct the ID, and says why Delete waits", () => {
   render(<DeleteThemeButton {...props} />);
@@ -79,7 +102,8 @@ it("asks a phone keyboard not to capitalise or correct the ID, and says why Dele
 it("keeps a refused deletion visible, does not navigate, and starts clean when opened again", async () => {
   state.remove.mockResolvedValue({
     ok: false,
-    error: "A store is using this theme.",
+    error:
+      "Wait for active work to finish or cancel it before deleting this theme.",
   });
   render(<DeleteThemeButton {...props} />);
   fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
@@ -91,7 +115,7 @@ it("keeps a refused deletion visible, does not navigate, and starts clean when o
   );
   expect(await screen.findByRole("alert")).toHaveProperty(
     "textContent",
-    "A store is using this theme.",
+    "Wait for active work to finish or cancel it before deleting this theme.",
   );
   expect(state.push).not.toHaveBeenCalled();
   // The refusal shows before the request has fully settled: wait for the
@@ -114,8 +138,12 @@ it("says what is erased and what is kept, in plain words", () => {
   fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
   expect(screen.getByText("Delete Clay for good?")).toBeTruthy();
   const words = screen.getByText(/It can't be undone/).textContent ?? "";
-  expect(words).toMatch(/A theme a store uses can't be deleted/);
-  expect(words).toMatch(/Published pictures are kept/);
+  // ★ A theme stores use can be deleted, and they keep it (owner, 23 Nov 2026).
+  expect(words).toMatch(/no new store can choose it/);
+  expect(words).toMatch(
+    /Stores already using it keep it exactly as it is, pictures included/,
+  );
+  expect(words).not.toMatch(/can't be deleted/);
   expect(words).not.toMatch(/version/i);
   expect(
     words.includes(String.fromCharCode(0x2014)) ||

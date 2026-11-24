@@ -12,7 +12,9 @@ production step after that release. Two GST alerts (23 and 24) are defined with
 the GST release; applying them is likewise the owner's production step after
 that release. Four takedown alerts (25 to 28) and a second log-based counter are
 defined with the content takedown release (decision D12, production step P4);
-the owner applies them after that release is deployed.
+the owner applies them after that release is deployed. One payments alert
+(29) is defined with the payments release (PR #303); the owner applies it
+after that release.
 
 Everything below lives in the **storemink-prod** project, carries the label
 `managed-by=storemink-alerts`, and emails one channel named **"StoreMink owner
@@ -25,7 +27,7 @@ back here.
 | Email notification channel | 1                      | "StoreMink owner email"                                                                                                                                                                                                                    |
 | Uptime checks              | 3                      | below                                                                                                                                                                                                                                      |
 | Log-based counters         | 2                      | `mink_chat_run_failures`; `moderation_followups_ran` (applied with alert 27)                                                                                                                                                               |
-| Alert policies             | 15 applied, 13 defined | below, in the order the script creates them; 16 to 20 are applied at step A1, 21 and 22 by the owner after the refunds release, 23 and 24 by the owner after the GST release, 25 to 28 by the owner after the takedown release is deployed |
+| Alert policies             | 15 applied, 14 defined | below, in the order the script creates them; 16 to 20 are applied at step A1, 21 and 22 by the owner after the refunds release, 23 and 24 by the owner after the GST release, 25 to 28 by the owner after the takedown release is deployed |
 
 The repo copy of what created them is
 [`scripts/prod-monitoring.py`](../scripts/prod-monitoring.py); read it for the
@@ -599,6 +601,32 @@ channel. The script itself only ever adds the email channel.
 - **Applying it** is the same owner's step as alert 25; roll it back the same
   way, with `displayName="Cloud Scheduler attempt failed (send-emails)"`.
 
+### 29. Billing: a payment landed on a closed payment attempt (ERROR, log)
+
+- **Fires on** a `billing.payment_on_closed_attempt` log line
+  (`fileClosedAttemptPayment`, `lib/billing/collect.ts`), written once, when
+  the reconciliation item is filed. The line carries `storeId`, `invoiceId`,
+  `attemptId`, `providerPaymentId`, how the attempt was closed and which path
+  found it. A line ending in `_file` fires too: the item could not be
+  written, so look the payment up by hand.
+- **Means** StoreMink holds a merchant's payment that is not recorded on
+  their invoice. Either a renewal debit the bank reported failed and then
+  captured (Razorpay does not treat a failed payment as final), or a checkout
+  left open in another tab after it was replaced. StoreMink takes no further
+  debit or payment for that invoice and does not downgrade the store while
+  the item is open, but the merchant still sees an unpaid renewal and is
+  asked to pay.
+- **Check first** storemink.com console, Billing & tax, Reconciliation: the
+  item "A renewal debit recorded as failed was captured later" or "Payment
+  made on a checkout that had been closed". Settle the invoice with that
+  payment, or refund it in the Razorpay dashboard, then close the item with
+  what you did. Closing it without settling the invoice lets the ordinary
+  downgrade go ahead on the next hourly run.
+- **Applying it is the owner's production step** after the payments release:
+  `python3 -I scripts/prod-monitoring.py --apply --email <alert address>`
+  (it creates only what is missing). Roll it back like alert 21, with
+  `displayName="Billing: a payment landed on a closed payment attempt"`.
+
 ## Seven things to know
 
 1. **Alert 8 assumes a maximum of 4 web servers.** If `_MAX_INSTANCES` on the
@@ -779,7 +807,7 @@ python3 -I scripts/prod-monitoring.py --update "<display name>" --apply
 ```
 
 - It writes only to storemink-prod: the channel, the three uptime checks, the
-  two log counters and the 28 policies (16 to 20 only once the owner approves
+  two log counters and the 29 policies (16 to 20 only once the owner approves
   step A1, 21 and 22 only once the owner applies them after the refunds
   release, 23 and 24 only once the owner applies them after the GST release,
   25 to 28 only once the owner applies them after the takedown release is

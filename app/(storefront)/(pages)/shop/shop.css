@@ -43,16 +43,23 @@
   --shop-overlay: rgba(var(--sm-shadow-rgb), 0.92); /* lightbox backdrop */
 }
 
+/* ★ Every storefront page starts below the fixed header by its MEASURED
+   height (--sm-header-h, storefront-theme.css; use-header-fit.ts publishes
+   it), plus the page's own room. A fixed number assumed the 68px bar: under
+   a stacked (108px) or utility (134px) header, or with the announcement bar
+   (36px), page tops slid under it (Muse's Saved items, 23 Nov 2026). The
+   added room keeps a plain 68px header exactly where it was.
+   app/(storefront)/page-top-clearance.test.ts holds every page to it. */
 .shop-main {
   min-height: 100vh;
   background: var(--shop-bg);
-  padding: 120px 24px 80px;
+  padding: calc(var(--sm-header-h, 68px) + 52px) 24px 80px;
   color: var(--shop-text);
 }
 
 @media (min-width: 768px) {
   .shop-main {
-    padding: 140px 64px 96px;
+    padding: calc(var(--sm-header-h, 68px) + 72px) 64px 96px;
   }
 }
 
@@ -60,12 +67,12 @@
    listing keeps its roomier hero spacing; only the PDP had the large empty
    band visible above the breadcrumb/product image. */
 .shop-main.pdp-page {
-  padding-top: 92px;
+  padding-top: calc(var(--sm-header-h, 68px) + 24px);
 }
 
 @media (min-width: 768px) {
   .shop-main.pdp-page {
-    padding-top: 100px;
+    padding-top: calc(var(--sm-header-h, 68px) + 32px);
   }
 }
 
@@ -334,12 +341,12 @@
    ============================================================ */
 .shop-listing {
   background: var(--sm-cream);
-  padding: 80px 0 80px; /* full-bleed: no side padding */
+  padding: calc(var(--sm-header-h, 68px) + 12px) 0 80px; /* full-bleed: no side padding */
 }
 
 @media (min-width: 768px) {
   .shop-listing {
-    padding: 88px 0 96px;
+    padding: calc(var(--sm-header-h, 68px) + 20px) 0 96px;
   }
 }
 
@@ -1377,6 +1384,13 @@
   }
   .sm-gallery.mode-thumbs-left .sm-gallery-frame {
     order: 2;
+    /* Named, never left to auto-placement: with the thumbnails absent the
+       frame would otherwise fall into the 72px column. */
+    grid-column: 2;
+  }
+  /* One photograph: no thumbnails, so no thumbnail column either. */
+  .sm-gallery.mode-thumbs-left.is-single {
+    display: block;
   }
   .sm-gallery.mode-thumbs-left .pdp-thumbs,
   .sm-gallery.mode-thumbs-left .gpdp-thumbs {

@@ -156,8 +156,10 @@ describe("the stylesheets follow the page settings", () => {
         /padding: \d+px 64px/,
       );
     }
+    // The top is the header's measured height plus the page's room
+    // (app/(storefront)/page-top-clearance.test.ts); the sides stay 64px.
     expect(SHEETS.shop).toContain(
-      "@media (min-width: 768px) { .shop-main { padding: 140px 64px 96px; } }",
+      "@media (min-width: 768px) { .shop-main { padding: calc(var(--sm-header-h, 68px) + 72px) 64px 96px; } }",
     );
   });
 

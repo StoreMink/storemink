@@ -126,6 +126,30 @@ describe("homepage opening", () => {
     expect(enforced.issues).toEqual([]);
   });
 
+  it("★ sets the opening flush under the header when asked (v34), whatever padding the draft wrote", () => {
+    // The first live v34 theme wrote padding "sm": 28px of page colour sat
+    // between its header and its photograph (22 Nov 2026).
+    const padded = pkgWith("vitrine", (def) => {
+      carouselFirst(def);
+      const first = home(def).sections[0];
+      (first.config as HeroCarouselConfig).height = "large";
+      first.style = { width: "full", padding_y: "sm", scheme: "soft" };
+    });
+    const flush = enforceHomepageOpening(padded, { flush: true });
+    expect(flush.issues).toEqual([]);
+    expect(home(flush.package.definition).sections[0].style).toEqual({
+      width: "full",
+      padding_y: "none",
+      scheme: "soft",
+    });
+    // Not asked (an earlier prompt version): exactly as the draft wrote it.
+    expect(enforceHomepageOpening(padded).package).toBe(padded);
+    // Already flush and wide: the very package.
+    expect(enforceHomepageOpening(flush.package, { flush: true }).package).toBe(
+      flush.package,
+    );
+  });
+
   it("names the opening's variant, height and width as settings a correction may not touch", () => {
     const pkg = pkgWith("ritual", (def) => {
       home(def).sections.unshift({
@@ -140,6 +164,7 @@ describe("homepage opening", () => {
       `${root}/config/variant`,
       `${root}/config/height`,
       `${root}/style/width`,
+      `${root}/style/padding_y`,
     ])
       expect(isOpeningSettingPath(pkg, path)).toBe(true);
     for (const path of [

@@ -33,6 +33,7 @@ import {
   count,
   desc,
   eq,
+  gt,
   inArray,
   isNotNull,
   isNull,
@@ -58,6 +59,7 @@ import {
 import type { ReconciliationItem } from "./invoice-types";
 import {
   capturedDraftPurchases,
+  fileClosedAttemptPayment,
   fileRecoveredPurchase,
   readAddonOrderTarget,
   settleAttempt,
@@ -68,7 +70,7 @@ import { issueInvoice } from "./invoice-store";
 import { completeLocationPurchase } from "./locations";
 import { completePlanChangePurchase } from "./plan-change";
 import { gatewayCreatedAt } from "./payment-tax";
-import { advanceAfterPayment } from "./renewal-worker";
+import { advanceAfterPayment, announceAutopayStopped } from "./renewal-worker";
 import { CAPTURED_DRAFT_REPAIR } from "./tax-copy";
 
 export type { ReconciliationItem };
@@ -95,8 +97,35 @@ export const STALE_AFTER_MINUTES = 15;
  */
 export const FAIL_AFTER_HOURS = 72;
 
+/**
+ * How long an AUTOMATIC debit with no payment at all on its order waits before
+ * it is declared failed.
+ *
+ * ★ Counted from when the DEBIT was sent (`debit_sent_at`), never from when
+ * the attempt was opened: a renewal's order is created a day or more before
+ * its debit, and lists no payment for all that time by design. Nothing but
+ * that one server call can pay a recurring order (it needs the customer's
+ * mandate token). A debit call that timed out, or a worker that died right
+ * after claiming it, either created a payment, which the gateway then lists
+ * on the order within moments, or created nothing. So an order still listing
+ * no payment hours after its debit was sent never will, and holding the
+ * invoice the full 72 hours only keeps the merchant from paying it by hand. A
+ * manual checkout keeps the long window: its order stays payable from an open
+ * browser tab.
+ */
+export const AUTO_NO_PAYMENT_FAIL_AFTER_HOURS = 6;
+
 /** States that are not over, and so can still be resolved. */
 const IN_FLIGHT = ["created", "processing", "authorized", "unknown"];
+
+/** States that are over with no money recorded. */
+const CLOSED_WITHOUT_PAYMENT = ["failed", "cancelled"];
+
+/** Stranded attempts with no gateway order that one pass will close. */
+const ORDERLESS_BATCH = 100;
+
+/** Closed checkouts whose orders one pass asks the gateway about. */
+const CLOSED_CHECKOUT_BATCH = 100;
 
 export interface ReconcileSummary {
   considered: number;
@@ -104,10 +133,20 @@ export interface ReconcileSummary {
   recovered: number;
   /** Declared failed after the long window, freeing the invoice. */
   failed: number;
+  /**
+   * Attempts that never got a gateway order, closed as failed: nothing could
+   * be paid on them, and they were holding their invoice in flight.
+   */
+  orderless: number;
   /** Asked, still no answer. Left alone. */
   stillUnknown: number;
   /** Flagged for a human. */
   flagged: number;
+  /**
+   * Payments found on checkouts that had already been closed (their orders
+   * stay payable from an open tab), filed for a person this pass.
+   */
+  paidAfterClose: number;
   /**
    * Purchases whose payment was captured while the invoice was still a draft
    * (the merchant closed the tab before the confirm), finished this pass:
@@ -142,8 +181,10 @@ export async function reconcileStrandedAttempts(
     considered: 0,
     recovered: 0,
     failed: 0,
+    orderless: 0,
     stillUnknown: 0,
     flagged: 0,
+    paidAfterClose: 0,
     completed: 0,
     errors: 0,
   };
@@ -169,7 +210,11 @@ export async function reconcileStrandedAttempts(
     providerOrderId: string | null;
     amountPaise: number;
     state: string;
+    /** `automatic` for a debit the renewal pass sent; `manual` for a checkout. */
+    mode: string;
     createdAt: string;
+    /** When the debit of an automatic attempt was sent (0281); else null. */
+    debitSentAt: string | null;
   }[];
   try {
     rows = await withService(async (db) =>
@@ -181,7 +226,9 @@ export async function reconcileStrandedAttempts(
           providerOrderId: billingPaymentAttempts.providerOrderId,
           amountPaise: billingPaymentAttempts.amountPaise,
           state: billingPaymentAttempts.state,
+          mode: billingPaymentAttempts.mode,
           createdAt: billingPaymentAttempts.createdAt,
+          debitSentAt: billingPaymentAttempts.debitSentAt,
         })
         .from(billingPaymentAttempts)
         .where(
@@ -191,6 +238,17 @@ export async function reconcileStrandedAttempts(
             // ★ Without an order there is nothing to ask about. An attempt that
             // never reached the gateway is handled below, not here.
             isNotNull(billingPaymentAttempts.providerOrderId),
+            // ★★ NOT AN AUTOMATIC ATTEMPT STILL WAITING OUT ITS NOTICE PERIOD
+            // (21 Nov 2026). A renewal's order is created a day or more before
+            // its debit is sent, so for all that time its order rightly lists
+            // no payment. That is not a stranded attempt: reading it here
+            // would fail it as "never sent" hours before the debit pass was
+            // even allowed to send it. It is this pass's business only once
+            // `debit_sent_at` is set.
+            or(
+              isNull(billingPaymentAttempts.debitAfter),
+              isNotNull(billingPaymentAttempts.debitSentAt),
+            ),
           ),
         )
         .orderBy(desc(billingPaymentAttempts.createdAt))
@@ -203,10 +261,16 @@ export async function reconcileStrandedAttempts(
   }
 
   const failBefore = now.getTime() - FAIL_AFTER_HOURS * 3_600_000;
+  const autoEmptyFailBefore =
+    now.getTime() - AUTO_NO_PAYMENT_FAIL_AFTER_HOURS * 3_600_000;
 
   for (const row of rows) {
     summary.considered += 1;
     try {
+      // ★ The clocks below run from when money was last ASKED to move: the
+      // debit of an automatic attempt (sent a day or more after the attempt
+      // was opened), else the attempt's own start.
+      const askedAt = new Date(row.debitSentAt ?? row.createdAt).getTime();
       const res = await fetchPayments(creds, row.providerOrderId!);
       if (!res.ok) {
         // The gateway is unreachable. Not a verdict — try again next sweep.
@@ -302,15 +366,51 @@ export async function reconcileStrandedAttempts(
       }
 
       // ── No captured payment at the gateway ──────────────────────────────
-      if (new Date(row.createdAt).getTime() < failBefore) {
-        // Old enough that a payment landing now would be extraordinary, and the
-        // gateway has told us there is none. Free the invoice.
+      // ★★ AN AUTOMATIC DEBIT THE GATEWAY ITSELF REPORTS FAILED IS FAILED NOW
+      // (21 Nov 2026). The renewal pass creates exactly one payment on each
+      // order it charges, and nothing else can pay that order, so when every
+      // payment on it reads `failed` the bank has said no and nothing can
+      // still land. This used to be read only as "not captured" and waited
+      // the full 72 hours, which held the next try and the grace clock back
+      // three days for every debit declined after the call returned.
+      // ⚠ NEVER for a manual checkout: its order stays payable, and a failed
+      // try in the Razorpay window is routinely followed by one that works.
+      const declined =
+        row.mode === "automatic" &&
+        res.data.length > 0 &&
+        res.data.every((payment) => payment.status === "failed");
+      // ★ AND ONE WHOSE ORDER NEVER GOT A PAYMENT AT ALL is over after a few
+      // hours, not three days (see AUTO_NO_PAYMENT_FAIL_AFTER_HOURS): until it
+      // is, the merchant cannot pay the invoice by hand either.
+      const neverSent =
+        row.mode === "automatic" &&
+        res.data.length === 0 &&
+        askedAt < autoEmptyFailBefore;
+      if (declined || neverSent || askedAt < failBefore) {
+        // Declined, or old enough that a payment landing now would be
+        // extraordinary and the gateway has told us there is none. Free the
+        // invoice.
         const settled = await settleAttempt(row.id, "failed", {
-          failureCode: "reconciled_no_payment",
-          failureReason: `no captured payment after ${FAIL_AFTER_HOURS}h`,
+          failureCode: declined ? "gateway_failed" : "reconciled_no_payment",
+          failureReason: declined
+            ? "the gateway reports the debit failed"
+            : neverSent
+              ? `no payment on the order after ${AUTO_NO_PAYMENT_FAIL_AFTER_HOURS}h`
+              : `no captured payment after ${FAIL_AFTER_HOURS}h`,
           now,
         });
         if (settled === null || settled === "failed") summary.failed += 1;
+        // ★ When that was the last automatic try, ask the merchant to pay by
+        // hand. Only on a failure THIS call recorded (never one a concurrent
+        // settle won), so it is said once; the announcement re-checks the
+        // invoice and the count itself.
+        if (settled === "failed" && row.mode === "automatic" && row.storeId) {
+          await announceAutopayStopped({
+            storeId: row.storeId,
+            invoiceId: row.invoiceId,
+            now,
+          });
+        }
         continue;
       }
 
@@ -321,6 +421,24 @@ export async function reconcileStrandedAttempts(
       summary.errors += 1;
     }
   }
+
+  // ★★ THEN THE ATTEMPTS THAT NEVER GOT A GATEWAY ORDER (21 Nov 2026). The
+  // scan above asks about an attempt by its order id, so one with no order
+  // was never looked at again. That happens when starting a payment timed out
+  // (the attempt is left `unknown`) or the request died between opening the
+  // attempt and creating the order (`created`): the invoice then read
+  // `processing` for ever, so the cycle turn waited on it indefinitely and the
+  // store kept a plan nobody was paying for; a `created` one also answered
+  // "a payment is already in progress" to every later Pay. No order id was
+  // ever handed to a browser or recorded for a debit, so no money can move on
+  // such an attempt: after the stale window it is simply over.
+  await closeOrderlessAttempts({ staleBefore, now, summary });
+
+  // ★★ THEN THE CHECKOUTS THAT WERE CLOSED WHILE THEIR ORDER COULD STILL BE
+  // PAID (PR #303 re-review, 22 Nov 2026). The scan above reads only attempts
+  // still in flight, so a payment made on a closed checkout from a tab left
+  // open was seen by nothing unless its webhook arrived.
+  await findPaymentsOnClosedCheckouts({ creds, fetchPayments, now, summary });
 
   // ★★ THEN FINISH WHAT WAS PAID BUT NEVER CONFIRMED (RC-F1b). A capture found
   // above (or on an earlier pass) for an enrolment, a plan change or a
@@ -338,6 +456,197 @@ export async function reconcileStrandedAttempts(
   });
 
   return summary;
+}
+
+/**
+ * Close stranded attempts that never got a gateway order.
+ *
+ * Each is settled `failed` through `settleAttempt`, the same conditional claim
+ * every other settle uses, so an attempt that gains its order in the same
+ * moment (it would no longer be `created` or `unknown` with a null order) is
+ * left to the claim's own check. An AUTOMATIC one that was the invoice's last
+ * try asks the merchant to pay by hand, like any other failed debit.
+ */
+async function closeOrderlessAttempts(input: {
+  staleBefore: string;
+  now: Date;
+  summary: ReconcileSummary;
+}): Promise<void> {
+  let rows: {
+    id: string;
+    storeId: string | null;
+    invoiceId: string;
+    mode: string;
+  }[];
+  try {
+    rows = await withService((db) =>
+      db
+        .select({
+          id: billingPaymentAttempts.id,
+          storeId: billingPaymentAttempts.storeId,
+          invoiceId: billingPaymentAttempts.invoiceId,
+          mode: billingPaymentAttempts.mode,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            inArray(billingPaymentAttempts.state, IN_FLIGHT),
+            lt(billingPaymentAttempts.createdAt, input.staleBefore),
+            isNull(billingPaymentAttempts.providerOrderId),
+            // Never one a payment id was recorded on: that is money to look
+            // for, not an attempt that went nowhere.
+            isNull(billingPaymentAttempts.providerPaymentId),
+          ),
+        )
+        .orderBy(asc(billingPaymentAttempts.createdAt))
+        .limit(ORDERLESS_BATCH),
+    );
+  } catch (err) {
+    logError("billing.reconcile.orderless_scan", err);
+    input.summary.errors += 1;
+    return;
+  }
+
+  for (const row of rows) {
+    try {
+      const settled = await settleAttempt(row.id, "failed", {
+        failureCode: "no_gateway_order",
+        failureReason: "the payment was never started at the gateway",
+        now: input.now,
+      });
+      if (settled !== "failed") continue;
+      input.summary.orderless += 1;
+      logInfo("billing.reconcile.orderless_closed", {
+        attemptId: row.id,
+        storeId: row.storeId,
+        invoiceId: row.invoiceId,
+      });
+      if (row.mode === "automatic" && row.storeId) {
+        await announceAutopayStopped({
+          storeId: row.storeId,
+          invoiceId: row.invoiceId,
+          now: input.now,
+        });
+      }
+    } catch (err) {
+      logError("billing.reconcile.orderless_one", err, { attemptId: row.id });
+      input.summary.errors += 1;
+    }
+  }
+}
+
+/**
+ * Ask the gateway about attempts closed in the last `FAIL_AFTER_HOURS` whose
+ * order could still be paid, and file any payment captured on one for a
+ * person.
+ *
+ * ★ WHY THESE. Closing an attempt does not close its Razorpay order. A manual
+ * checkout is closed with its order still payable when the amount due changed
+ * (Pay now), when the GST, plan or rail changed under an enrolment, or when
+ * this pass gave up waiting, each on the gateway's word that nobody had paid
+ * YET. The window left open in another tab can still pay it.
+ * ★★ AND AN AUTOMATIC DEBIT THAT WAS SENT (PR #303 review, 22 Nov 2026). This
+ * said "a failed debit is final", which Razorpay does not promise: a payment
+ * marked failed can be authorised late by the bank and captured. The webhook
+ * files such a capture, but a missed webhook left it recorded nowhere,
+ * because this scan read manual checkouts only. An automatic attempt that
+ * ended BEFORE its debit is still not read: nothing but our own server call
+ * can pay a recurring order.
+ *
+ * ★ The same horizon the stale scan uses: 72 hours after an attempt is over,
+ * a payment landing on it would be extraordinary. Bounded per pass, newest
+ * first; a read that fails is simply asked again next hour.
+ *
+ * ★ Filed once per payment in any status (`fileClosedAttemptPayment`), so an
+ * item a person has resolved is not filed again by the next pass. Nothing is
+ * applied or refunded here.
+ */
+async function findPaymentsOnClosedCheckouts(input: {
+  creds: NonNullable<ReturnType<typeof getPlatformRazorpayCreds>>;
+  fetchPayments: typeof rzpFetchOrderPayments;
+  now: Date;
+  summary: ReconcileSummary;
+}): Promise<void> {
+  const closedAfter = new Date(
+    input.now.getTime() - FAIL_AFTER_HOURS * 3_600_000,
+  ).toISOString();
+  let rows: {
+    id: string;
+    storeId: string | null;
+    invoiceId: string;
+    providerOrderId: string | null;
+    amountPaise: number;
+    state: string;
+    failureCode: string | null;
+    mode: string;
+  }[];
+  try {
+    rows = await withService((db) =>
+      db
+        .select({
+          id: billingPaymentAttempts.id,
+          storeId: billingPaymentAttempts.storeId,
+          invoiceId: billingPaymentAttempts.invoiceId,
+          providerOrderId: billingPaymentAttempts.providerOrderId,
+          amountPaise: billingPaymentAttempts.amountPaise,
+          state: billingPaymentAttempts.state,
+          failureCode: billingPaymentAttempts.failureCode,
+          mode: billingPaymentAttempts.mode,
+        })
+        .from(billingPaymentAttempts)
+        .where(
+          and(
+            inArray(billingPaymentAttempts.state, CLOSED_WITHOUT_PAYMENT),
+            // A manual checkout, or an automatic attempt whose DEBIT WAS SENT.
+            // One that ended before its debit cannot be paid: nothing but
+            // our own server call pays a recurring order.
+            or(
+              eq(billingPaymentAttempts.mode, "manual"),
+              isNotNull(billingPaymentAttempts.debitSentAt),
+              isNotNull(billingPaymentAttempts.providerPaymentId),
+            ),
+            isNotNull(billingPaymentAttempts.providerOrderId),
+            gt(billingPaymentAttempts.resolvedAt, closedAfter),
+          ),
+        )
+        .orderBy(desc(billingPaymentAttempts.resolvedAt))
+        .limit(CLOSED_CHECKOUT_BATCH),
+    );
+  } catch (err) {
+    logError("billing.reconcile.closed_checkout_scan", err);
+    input.summary.errors += 1;
+    return;
+  }
+
+  for (const row of rows) {
+    try {
+      const res = await input.fetchPayments(input.creds, row.providerOrderId!);
+      // Unreachable, or refused: not a verdict. Asked again next pass.
+      if (!res.ok) continue;
+      const paid = capturedPayment(res.data);
+      if (!paid) continue;
+      const filed = await fileClosedAttemptPayment({
+        storeId: row.storeId,
+        invoiceId: row.invoiceId,
+        attemptId: row.id,
+        providerPaymentId: paid.id,
+        providerOrderId: row.providerOrderId,
+        expectedPaise: row.amountPaise,
+        observedPaise: typeof paid.amount === "number" ? paid.amount : null,
+        closedAs: row.state,
+        closedCode: row.failureCode,
+        automatic: row.mode === "automatic",
+        source: "reconcile",
+        now: input.now,
+      });
+      if (filed) input.summary.paidAfterClose += 1;
+    } catch (err) {
+      logError("billing.reconcile.closed_checkout_one", err, {
+        attemptId: row.id,
+      });
+      input.summary.errors += 1;
+    }
+  }
 }
 
 /**

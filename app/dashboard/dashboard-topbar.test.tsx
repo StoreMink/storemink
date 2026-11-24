@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  cleanup,
   fireEvent,
   render,
   screen,
@@ -18,10 +19,13 @@ vi.mock("next/navigation", () => ({
 const chat = vi.hoisted(() => ({
   isChatOpen: false,
   toggleChat: vi.fn(),
+  // False renders the top bar as the platform console does: no ChatProvider.
+  mounted: true,
 }));
 
 vi.mock("./chat-context", () => ({
   useChat: () => chat,
+  useHasChat: () => chat.mounted,
 }));
 
 // The pop-out bar has its own suite (mink-dock.test.tsx).
@@ -70,16 +74,26 @@ const SEARCH_GROUPS: DashboardSearchGroup[] = [
   },
 ];
 
-function renderTopbar(searchGroups = SEARCH_GROUPS) {
+function renderTopbar(
+  searchGroups = SEARCH_GROUPS,
+  storeName: string | null = "Echos",
+) {
   render(
     <DashboardTopbar
       email="owner@example.com"
       role="owner"
-      storeName="Echos"
+      storeName={storeName ?? undefined}
       searchGroups={searchGroups}
     />,
   );
 }
+
+// Every suite starts on a store with a chat mounted, whatever order the
+// test-order-independence job runs them in.
+beforeEach(() => {
+  chat.isChatOpen = false;
+  chat.mounted = true;
+});
 
 function desktopResults() {
   const list = document.getElementById("dashboard-search-results");
@@ -89,8 +103,27 @@ function desktopResults() {
 
 describe("DashboardTopbar Mink AI button", () => {
   beforeEach(() => {
-    chat.isChatOpen = false;
     chat.toggleChat.mockReset();
+  });
+
+  // The platform console has no chat (Mink AI works on one store's data), so a
+  // button there would do nothing when pressed.
+  it("shows no Mink AI button where no chat is mounted", () => {
+    chat.mounted = false;
+    renderTopbar();
+    expect(screen.queryByRole("button", { name: "Mink AI" })).toBeNull();
+    expect(screen.queryByTestId("mink-dock")).toBeNull();
+  });
+
+  // The console passes no storeName; there "/" opens the marketing site.
+  it("shows My Store only on a store", () => {
+    renderTopbar(SEARCH_GROUPS, null);
+    expect(screen.queryByRole("button", { name: "My Store" })).toBeNull();
+    cleanup();
+    renderTopbar();
+    expect(
+      screen.getByRole("button", { name: "My Store" }),
+    ).toBeInTheDocument();
   });
 
   it("toggles the chat and reports whether the panel is open", () => {

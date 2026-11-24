@@ -45,6 +45,8 @@ function invoice(over: Partial<PayableInvoice> = {}): PayableInvoice {
     taxPaise: 2_700_00,
     taxRateBps: 1800,
     taxInclusive: false,
+    autopayAt: null,
+    resumable: false,
     ...over,
   };
 }
@@ -188,5 +190,200 @@ describe("the amount guard on Pay (GST design 7.4)", () => {
       ),
     );
     expect(h.openRazorpayModal).not.toHaveBeenCalled();
+  });
+});
+
+// 21 Nov 2026: an automatic renewal waits a day or more between the bank's
+// notice and its debit. Its invoice is `processing` all that time, and the
+// panel must not ask the merchant to pay it or threaten the Free plan.
+describe("★★ a renewal whose automatic debit is scheduled", () => {
+  // 23 Nov 2026, 05:53 UTC is 23 Nov in India.
+  const scheduled = () =>
+    invoice({ status: "processing", autopayAt: "2026-11-23T05:53:31Z" });
+
+  it("says the renewal is scheduled and that nothing is needed", () => {
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    expect(screen.getByText("Your renewal is scheduled")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Your saved payment method will be charged automatically. There is nothing you need to do. If you would rather pay it yourself, choose Pay now instead.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Autopay on or after 23 Nov 2026")).toBeTruthy();
+  });
+
+  it("★ never asks for a payment or warns of the Free plan", () => {
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    expect(screen.queryByText(/invoice to pay/)).toBeNull();
+    expect(screen.queryByText(/Free plan/)).toBeNull();
+    expect(screen.queryByText("Payment in progress…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Pay now" })).toBeNull();
+  });
+
+  it("★ a debit already SENT is a payment in progress, as before", () => {
+    render(
+      <OpenInvoices
+        invoices={[invoice({ status: "processing", autopayAt: null })]}
+        canManage
+      />,
+    );
+    expect(screen.getByText("Payment in progress…")).toBeTruthy();
+    expect(screen.getByText("You have an invoice to pay")).toBeTruthy();
+  });
+
+  it("beside an invoice that is owed, only the owed one is counted and offered", () => {
+    render(
+      <OpenInvoices
+        invoices={[
+          scheduled(),
+          invoice({ id: "inv-2", invoiceRef: "SM/2026-27/00041" }),
+        ]}
+        canManage
+      />,
+    );
+    expect(screen.getByText("You have an invoice to pay")).toBeTruthy();
+    expect(screen.getByText("Autopay on or after 23 Nov 2026")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Pay now" })).toHaveLength(1);
+  });
+
+  it("an open invoice is never read as scheduled, whatever it carries", () => {
+    render(
+      <OpenInvoices
+        invoices={[invoice({ autopayAt: "2026-11-23T05:53:31Z" })]}
+        canManage
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Pay now" })).toBeTruthy();
+    expect(screen.queryByText("Your renewal is scheduled")).toBeNull();
+  });
+});
+
+// The merchant may pay a scheduled renewal themselves. Pressing the button
+// cancels the scheduled automatic payment, so it asks first.
+describe("★★ Pay now instead", () => {
+  const scheduled = () =>
+    invoice({ status: "processing", autopayAt: "2026-11-23T05:53:31Z" });
+  let confirm: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    h.actions.startPayInvoice.mockResolvedValue(start(17_700_00));
+  });
+  afterEach(() => {
+    confirm.mockRestore();
+  });
+
+  it("is offered beside the scheduled date", () => {
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    expect(
+      screen.getByRole("button", { name: "Pay now instead" }),
+    ).toBeTruthy();
+  });
+
+  it("★★ asks first, naming the amount and what is cancelled", () => {
+    confirm.mockReturnValue(false);
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay now instead" }));
+    expect(confirm).toHaveBeenCalledWith(
+      "Pay ₹17,700 now? The automatic payment scheduled for on or after 23 Nov 2026 will be cancelled, so you are not charged twice.",
+    );
+  });
+
+  it("★★ a merchant who says no changes nothing: the server is never asked", () => {
+    confirm.mockReturnValue(false);
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay now instead" }));
+    expect(h.actions.startPayInvoice).not.toHaveBeenCalled();
+    expect(h.openRazorpayModal).not.toHaveBeenCalled();
+  });
+
+  it("★ on yes, starts the payment as a replacement and opens the window once", async () => {
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay now instead" }));
+    await vi.waitFor(() => expect(h.openRazorpayModal).toHaveBeenCalled());
+    expect(h.actions.startPayInvoice).toHaveBeenCalledTimes(1);
+    expect(h.actions.startPayInvoice).toHaveBeenCalledWith("inv-1", true);
+    expect(h.openRazorpayModal).toHaveBeenCalledTimes(1);
+    expect(h.openRazorpayModal.mock.calls[0][0]).toMatchObject({
+      rzpOrderId: "order_1",
+      amountPaise: 17_700_00,
+    });
+  });
+
+  it("★ a refusal shows the server's own sentence and refreshes the list", async () => {
+    h.actions.startPayInvoice.mockResolvedValue({
+      ok: false,
+      error: "A payment is already being processed. Give it a moment.",
+    });
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay now instead" }));
+    await vi.waitFor(() =>
+      expect(h.toast.error).toHaveBeenCalledWith(
+        "A payment is already being processed. Give it a moment.",
+      ),
+    );
+    expect(h.openRazorpayModal).not.toHaveBeenCalled();
+    expect(h.refresh).toHaveBeenCalled();
+  });
+
+  it("★ closing the window refreshes the list, so the row can be continued", async () => {
+    render(<OpenInvoices invoices={[scheduled()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay now instead" }));
+    await vi.waitFor(() => expect(h.openRazorpayModal).toHaveBeenCalled());
+    h.refresh.mockClear();
+    h.openRazorpayModal.mock.calls[0][0].onDismiss();
+    expect(h.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("an admin who cannot manage billing sees it disabled", () => {
+    render(<OpenInvoices invoices={[scheduled()]} canManage={false} />);
+    const button = screen.getByRole("button", {
+      name: "Pay now instead",
+    }) as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+  });
+
+  it("an ordinary Pay now never asks to replace anything", async () => {
+    render(<OpenInvoices invoices={[invoice()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Pay now" }));
+    await vi.waitFor(() => expect(h.openRazorpayModal).toHaveBeenCalled());
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.actions.startPayInvoice).toHaveBeenCalledWith("inv-1");
+  });
+});
+
+// A payment window that was opened and closed leaves a checkout the merchant
+// can go back to. It used to read "Payment in progress" with no way forward.
+describe("★★ Continue payment", () => {
+  const unfinished = () => invoice({ status: "processing", resumable: true });
+
+  beforeEach(() => {
+    h.actions.startPayInvoice.mockResolvedValue(start(17_700_00));
+  });
+
+  it("is offered for a checkout that was opened and not finished", () => {
+    render(<OpenInvoices invoices={[unfinished()]} canManage />);
+    expect(
+      screen.getByRole("button", { name: "Continue payment" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("Payment in progress…")).toBeNull();
+  });
+
+  it("★ reopens through the ordinary start, never as a replacement", async () => {
+    render(<OpenInvoices invoices={[unfinished()]} canManage />);
+    fireEvent.click(screen.getByRole("button", { name: "Continue payment" }));
+    await vi.waitFor(() => expect(h.openRazorpayModal).toHaveBeenCalled());
+    expect(h.actions.startPayInvoice).toHaveBeenCalledWith("inv-1");
+  });
+
+  it("★ a payment really moving has no button", () => {
+    render(
+      <OpenInvoices
+        invoices={[invoice({ status: "processing", resumable: false })]}
+        canManage
+      />,
+    );
+    expect(screen.getByText("Payment in progress…")).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

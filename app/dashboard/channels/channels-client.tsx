@@ -948,7 +948,13 @@ function RazorpayModal({
     const res = await generateWebhookSecret();
     if ("error" in res) return toast.error(res.error);
     setPayWebhookSecret(res.secret);
-    onState((s) => ({ ...s, webhookConfigured: true }));
+    // A new secret is not proved until Razorpay delivers an event signed
+    // with it, so the status goes back to "not confirmed yet".
+    onState((s) => ({
+      ...s,
+      webhookConfigured: true,
+      webhookLastEventAt: null,
+    }));
     toast.success("Webhook secret generated. Add it in Razorpay now.");
   }
   const [keySecret, setKeySecret] = useState("");
@@ -1073,11 +1079,20 @@ function RazorpayModal({
               <div className="flex items-center gap-1.5">
                 <p className="text-sm font-semibold text-[#111827]">
                   Payment webhook{" "}
-                  {state.webhookConfigured && (
-                    <span className="ml-1 text-xs font-normal text-green-700">
-                      · active
-                    </span>
-                  )}
+                  {/* ★ "Receiving events" only once Razorpay has really
+                      delivered one. A generated secret used to read "active"
+                      although nothing was arriving until the merchant pasted
+                      it into Razorpay. */}
+                  {state.webhookConfigured &&
+                    (state.webhookLastEventAt ? (
+                      <span className="ml-1 text-xs font-normal text-green-700">
+                        · receiving events
+                      </span>
+                    ) : (
+                      <span className="ml-1 text-xs font-normal text-amber-700">
+                        · not confirmed yet
+                      </span>
+                    ))}
                 </p>
                 <InfoTip label="About the payment webhook">
                   In Razorpay, open Settings → Webhooks → Add New Webhook. Paste
@@ -1088,6 +1103,22 @@ function RazorpayModal({
                 Confirms orders the moment payment clears, even if the shopper
                 closes the tab.
               </p>
+              {state.webhookConfigured && (
+                <p
+                  className={`mt-1 text-xs ${state.webhookLastEventAt ? "text-[#5b6472]" : "text-amber-700"}`}
+                >
+                  {state.webhookLastEventAt
+                    ? `Last event from Razorpay: ${new Date(
+                        state.webhookLastEventAt,
+                      ).toLocaleString("en-IN", {
+                        day: "numeric",
+                        month: "short",
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}.`
+                    : "Nothing has arrived from Razorpay yet. Add this URL and secret in Razorpay; your next payment confirms it."}
+                </p>
+              )}
               {state.webhookUrl && (
                 <button
                   type="button"

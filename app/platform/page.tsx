@@ -375,8 +375,7 @@ export default async function StoreminkLanding() {
             <div className="smh-container">
               <h2>
                 <span className="smh-dim">
-                  Sell everywhere people shop. Online and in person. On enquiry
-                  and wholesale.
+                  Sell online, in person, and wholesale-all
                 </span>{" "}
                 From one dashboard.
               </h2>

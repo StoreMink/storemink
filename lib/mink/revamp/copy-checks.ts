@@ -18,7 +18,10 @@
 // ★ PURE AND CLIENT-SAFE: no server import.
 // ---------------------------------------------------------------------------
 
-import { unsupportedClaimLabels } from "@/lib/theme-studio/claims";
+import {
+  ORGANIC_CLAIM_LABEL,
+  unsupportedClaimLabels,
+} from "@/lib/theme-studio/claims";
 import { withoutLongDashes } from "@/lib/text/long-dashes";
 import type { RevampRequest, RevampSnapshot } from "./contract";
 
@@ -285,7 +288,10 @@ export function unsupportedClaimsIn(text: string, evidence: string): string[] {
       found.add(claim.word);
     }
   }
-  for (const label of unsupportedClaimLabels(text, evidence)) found.add(label);
+  // Theme Studio's own rules, less the one this list already has a word for
+  // ("organic" above): one claim is reported once.
+  for (const label of unsupportedClaimLabels(text, evidence))
+    if (label !== ORGANIC_CLAIM_LABEL) found.add(label);
   return [...found];
 }
 

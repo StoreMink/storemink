@@ -580,11 +580,20 @@ export function renewalDueTemplate(d: {
       html: billingEmail({
         storeName: d.storeName,
         heading: "Your plan renews soon",
-        preheader: `We'll charge ${total} on ${due}. There's nothing you need to do.`,
+        // ★ No day is named for the charge: the debit follows the bank's own
+        // notice by a day or more (36 hours for a card), so it lands a few
+        // days BEFORE the renewal date, and saying "on <renewal date>" was
+        // never true.
+        preheader: `We'll charge ${total} to your saved payment method before then. There's nothing you need to do.`,
         blocks: [
           emailParagraph(
             `<strong>${store}</strong>'s ${plan} plan renews on <strong>${dueHtml}</strong>. We'll charge <strong>${totalHtml}</strong> to your saved payment method, so there's nothing you need to do.`,
             { lead: true },
+          ),
+          // The pre-debit notice is the bank's or card issuer's own message;
+          // saying it is coming keeps it from reading as an unexpected charge.
+          emailParagraph(
+            "Your bank or card issuer will send you a notice of the amount before the payment is taken.",
           ),
           emailDetails([
             ...storeAndPlan(d.storeName, d.planName),
@@ -624,6 +633,79 @@ export function renewalDueTemplate(d: {
         changed,
         emailParagraph(
           `Pay from your dashboard in a couple of taps. If it's not paid by the renewal date you'll get 48 hours' grace, then the store moves to the Free plan. Not renewing? Cancel in ${PLANS_PAGE_HTML} and this invoice won't be charged.`,
+        ),
+        emailButton(d.manageUrl, "Pay now"),
+      ],
+    }),
+  };
+}
+
+/**
+ * Automatic collection has stopped trying (three tries, 24 hours apart, owner
+ * decision 21 Nov 2026): the merchant is asked to pay the renewal by hand.
+ *
+ * `payBy` is the day the new cycle begins, given only while it is still
+ * ahead. After it the overdue notice carries the 48-hour deadline, so this
+ * one names no date it cannot keep.
+ */
+export function autopayStoppedTemplate(d: {
+  storeName: string;
+  planName: string;
+  /** The issued invoice's total, in paise. */
+  amountPaise: number;
+  /** The GST in it (the invoice's tax columns), or null when none. */
+  tax: EmailTax | null;
+  payBy: string | null;
+  invoiceRef: string | null;
+  /** How many automatic tries were made. */
+  attempts: number;
+  /**
+   * `exhausted`: every automatic try was used. `mandate`: the autopay
+   * mandate itself was cancelled or paused, so no try can succeed; the email
+   * then says that instead of counting tries, and asks them to set autopay up
+   * again.
+   */
+  cause?: "exhausted" | "mandate";
+  manageUrl: string;
+}): BuiltEmail {
+  const store = escapeHtml(d.storeName);
+  const plan = escapeHtml(d.planName);
+  const amount = copyAmount(d.amountPaise, d.tax);
+  const total = moneyPaise(amount.totalPaise);
+  const totalHtml = escapeHtml(total);
+  const payByHtml = d.payBy ? escapeHtml(istShortDate(d.payBy)) : null;
+  const tries = d.attempts === 1 ? "once" : `${d.attempts} times`;
+  const mandateGone = d.cause === "mandate";
+  return {
+    subject: `Action needed: pay ${total} for your ${d.planName} plan`,
+    html: billingEmail({
+      storeName: d.storeName,
+      eyebrow: "Action needed",
+      tone: "danger",
+      heading: mandateGone
+        ? "Autopay is no longer active"
+        : "Automatic payment didn't go through",
+      preheader: `We couldn't collect ${total} for ${d.storeName}'s ${d.planName} plan. Please pay it from your dashboard.`,
+      blocks: [
+        emailParagraph(
+          mandateGone
+            ? `The autopay permission for <strong>${store}</strong> has been cancelled or paused with your bank or card, so we can't collect <strong>${totalHtml}</strong> for the ${plan} renewal automatically.`
+            : `We tried ${tries} to collect <strong>${totalHtml}</strong> for <strong>${store}</strong>'s ${plan} renewal from your saved payment method, and it didn't go through. We won't try again automatically.`,
+          { lead: true },
+        ),
+        emailDetails([
+          ...storeAndPlan(d.storeName, d.planName),
+          ...detailRows(renewalAmountRows(amount, false)),
+          ...(payByHtml ? [{ label: "Pay by", valueHtml: payByHtml }] : []),
+          {
+            label: "Invoice",
+            valueHtml: d.invoiceRef ? escapeHtml(d.invoiceRef) : "",
+          },
+        ]),
+        emailParagraph(
+          payByHtml
+            ? `Please pay this invoice from ${PLANS_PAGE_HTML} by <strong>${payByHtml}</strong> to keep your plan. If it's not paid by then you'll get 48 hours' grace, then the store moves to the Free plan.`
+            : `Please pay this invoice from ${PLANS_PAGE_HTML} as soon as you can to keep your plan. An unpaid renewal moves the store to the Free plan 48 hours after it falls due.`,
         ),
         emailButton(d.manageUrl, "Pay now"),
       ],

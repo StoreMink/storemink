@@ -545,6 +545,8 @@ inherits staging's database, Firebase project, bucket and every secret name.
 | `_MINK_IMAGE_MODEL`                                                             | `gemini-nano-banana-2.1`                                            | `gemini-nano-banana-2.1`                                            | `gemini-nano-banana-2.1`                                         |
 | `_MINK_CHIRP_LOCATION`                                                          | `us`                                                                | `us`                                                                | `us`                                                             |
 | `_SARVAM_API_KEY`                                                               | `<SARVAM_API_KEY>` **←**                                            | _(empty unless configured)_                                         | _(empty unless configured)_                                      |
+| `_ELEVENLABS_API_KEY`                                                           | _(empty unless configured)_                                         | _(empty unless configured)_                                         | _(empty unless configured)_                                      |
+| `_ELEVENLABS_KEY_EXCLUSIVE`                                                     | _(empty; `true` only where no other environment uses this key)_     | _(empty; `true` only where no other environment uses this key)_     | _(empty; `true` only where no other environment uses this key)_  |
 | `_MINK_MAX_STEPS_PER_RUN`                                                       | `12`                                                                | `12`                                                                | `12`                                                             |
 | `_MINK_MAX_TOOL_CALLS_PER_RUN`                                                  | `16`                                                                | `16`                                                                | `16`                                                             |
 | `_MINK_MAX_PARALLEL_READ_TOOLS`                                                 | `4`                                                                 | `4`                                                                 | `4`                                                              |
@@ -617,6 +619,26 @@ inherits staging's database, Firebase project, bucket and every secret name.
 > that should support Saaras. Anyone who can inspect that trigger or a deployed
 > revision can read the key. A manual Cloud Run-only value is not durable because
 > this build uses authoritative `--set-env-vars` on every deployment.
+
+> **ELEVENLABS_API_KEY follows the same rule.** Set `_ELEVENLABS_API_KEY` on
+> each trigger whose service should be able to draw Theme Studio and redesign
+> photos with ElevenLabs; it becomes a regular Cloud Run environment variable,
+> readable by anyone who can inspect the trigger or a revision. Empty (the
+> file default) means Google draws whatever the operator console's Image
+> provider choice says. The Theme Studio worker services copy it from the web
+> service on every deploy (`scripts/theme-studio-workers.py`).
+
+> **`_ELEVENLABS_KEY_EXCLUSIVE` says whether that key is this environment's
+> alone.** When a submit to ElevenLabs gets no answer, StoreMink can find the
+> job it made in ElevenLabs' job list instead of paying for the picture
+> again, but a job there shows no prompt, so a job made in the same seconds by
+> another environment on the same key (a laptop, the other service) would be
+> taken as well, and a store would get someone else's picture. So the search
+> runs only where this is `true`. Leave it empty (the file default) on any
+> trigger whose key is also in a developer's `.env.local` or on another
+> service; set it to `true` only after giving that environment a key nothing
+> else uses. Empty costs at most a picture paid for twice after a lost
+> answer. The Theme Studio workers copy it with the key.
 
 > **⚠ COST CUTS OF 2026-08-10 — three values here are now tuned for spend, not
 > for headroom.** Monthly GCP was tracking to ~₹6,400 and had to come down.

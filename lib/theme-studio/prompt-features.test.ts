@@ -24,6 +24,14 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreVariants: false,
     templates: false,
     templatesJson: false,
+    stylesheet: false,
+    moreDirections: false,
+    commitments: false,
+    designPlan: false,
+    followUpRepair: false,
+    headerMenu: false,
+    menuFit: false,
+    phoneOpeningChanges: false,
   });
   expect(themePromptFeatures("theme-studio-v19")).toEqual({
     targetedRepair: true,
@@ -44,6 +52,14 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreVariants: false,
     templates: false,
     templatesJson: false,
+    stylesheet: false,
+    moreDirections: false,
+    commitments: false,
+    designPlan: false,
+    followUpRepair: false,
+    headerMenu: false,
+    menuFit: false,
+    phoneOpeningChanges: false,
   });
   expect(themePromptFeatures(THEME_STUDIO_PROMPT_VERSION)).toEqual({
     targetedRepair: true,
@@ -64,8 +80,16 @@ it("preserves old paid request shapes and carries capabilities into future promp
     moreVariants: true,
     templates: true,
     templatesJson: true,
+    stylesheet: true,
+    moreDirections: true,
+    commitments: true,
+    designPlan: true,
+    followUpRepair: true,
+    headerMenu: true,
+    menuFit: true,
+    phoneOpeningChanges: true,
   });
-  expect(themePromptFeatures("theme-studio-v33")).toEqual(
+  expect(themePromptFeatures("theme-studio-v36")).toEqual(
     themePromptFeatures(THEME_STUDIO_PROMPT_VERSION),
   );
   expect(themePromptFeatures("invalid").compactInitial).toBe(false);
@@ -139,8 +163,45 @@ it("adds the page templates only from v32, so v31 requests replay unchanged", ()
 });
 
 it("writes the templates as a JSON string only from v33, so v32 requests replay unchanged", () => {
-  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v33");
   expect(themePromptFeatures("theme-studio-v32").templatesJson).toBe(false);
   expect(themePromptFeatures("theme-studio-v33").templatesJson).toBe(true);
   expect(themePromptFeatures("theme-studio-v33").templates).toBe(true);
+});
+
+it("adds the theme stylesheet only from v34, so v33 requests replay unchanged", () => {
+  expect(themePromptFeatures("theme-studio-v33").stylesheet).toBe(false);
+  expect(themePromptFeatures("theme-studio-v34").stylesheet).toBe(true);
+  expect(themePromptFeatures("theme-studio-v34").templatesJson).toBe(true);
+  // The diversity mechanics arrive with it: fourteen directions and layout
+  // commitments.
+  for (const feature of [
+    "moreDirections",
+    "commitments",
+    "designPlan",
+  ] as const) {
+    expect(themePromptFeatures("theme-studio-v33")[feature]).toBe(false);
+    expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(true);
+  }
+});
+
+it("keeps follow-ups through automatic fixes and explains the header menu only from v35, so v34 requests replay unchanged", () => {
+  // Owner, 23 Nov 2026: "ai theme builder should be capable of
+  // understanding the follow ups the operator gives".
+  for (const feature of ["followUpRepair", "headerMenu", "menuFit"] as const) {
+    expect(themePromptFeatures("theme-studio-v34")[feature]).toBe(false);
+    expect(themePromptFeatures("theme-studio-v35")[feature]).toBe(true);
+  }
+  expect(themePromptFeatures("theme-studio-v35").stylesheet).toBe(true);
+});
+
+it("gives a change's opening slides phone photographs only from v36, so v35 runs replay unchanged", () => {
+  // Owner, 23 Nov 2026: Muse's slideshow showed only the wall on a phone.
+  expect(THEME_STUDIO_PROMPT_VERSION).toBe("theme-studio-v36");
+  expect(themePromptFeatures("theme-studio-v35").phoneOpeningChanges).toBe(
+    false,
+  );
+  expect(themePromptFeatures("theme-studio-v36").phoneOpeningChanges).toBe(
+    true,
+  );
+  expect(themePromptFeatures("theme-studio-v36").menuFit).toBe(true);
 });

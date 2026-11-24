@@ -7,10 +7,7 @@ import {
   THEME_STUDIO_LIMITS,
   THEME_STUDIO_VIEWPORTS,
 } from "@/lib/theme-studio/contracts";
-import {
-  readThemeStudioBuildTimeRange,
-  readThemeStudioProgress,
-} from "@/lib/theme-studio/progress";
+import { readThemeStudioProgress } from "@/lib/theme-studio/progress";
 import { withService } from "@/lib/db/client";
 import { requireOperator } from "../../../require-operator";
 import { STUDIO_RELEASE_ROWS, studioStatus } from "../studio-status";
@@ -102,14 +99,9 @@ export default async function ThemeStudioProjectPage({
     );
   }
 
-  const reads = await withService(async (db) => {
-    // One after the other on purpose: they share one client.
-    const progress = await readThemeStudioProgress(db, { projectId });
-    const buildTime = await readThemeStudioBuildTimeRange(db);
-    return { progress, buildTime };
-  });
-  let progress = reads.progress;
-  const buildTime = reads.buildTime;
+  let progress = await withService((db) =>
+    readThemeStudioProgress(db, { projectId }),
+  );
   if (!progress) notFound();
   // ★ ONE PROJECT READ PER REQUEST. The open tab and the release controls
   // read the project through the same React cache (tab-reads.ts), keyed by
@@ -167,7 +159,6 @@ export default async function ThemeStudioProjectPage({
       project={project}
       initialProgress={progress}
       serverRow={status.row}
-      buildTime={buildTime}
       tab={tab}
       explicitTab={first(query[STUDIO_PAGE_PARAMS.tab]) !== null}
       versionId={versionId}

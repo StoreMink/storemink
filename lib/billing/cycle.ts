@@ -220,6 +220,101 @@ export function collectionRoute(c: CollectionCheck): CollectionRoute {
 }
 
 // ---------------------------------------------------------------------------
+// Automatic retries
+// ---------------------------------------------------------------------------
+
+/**
+ * How many times one invoice may be debited automatically (owner decision,
+ * 21 Nov 2026: three tries, 24 hours apart, then the merchant is asked to pay
+ * by hand).
+ *
+ * ★★ WHY A LIMIT EXISTS AT ALL. A declined debit leaves the invoice open, and
+ * the hourly renewal pass re-reads every subscription inside the collection
+ * window. With no limit it opened a new attempt on every run: about 140 debits
+ * against one mandate between T-4d and the end of grace, each one a decline
+ * message on the merchant's phone and a strike against StoreMink's account at
+ * the gateway and the card networks.
+ */
+export const AUTO_COLLECT_MAX_ATTEMPTS = 3;
+
+/** The least time between two automatic debits of one invoice. */
+export const AUTO_COLLECT_RETRY_HOURS = 24;
+
+export type AutoCollectDecision =
+  /** Debit the mandate now. */
+  | "attempt"
+  /** The last try was under 24 hours ago: leave it for a later run. */
+  | "wait"
+  /** Every automatic try is used: only the merchant can pay this invoice. */
+  | "exhausted";
+
+/**
+ * The most automatic attempts of any kind one invoice is given, whatever
+ * became of them: a backstop, twice the tries. An invoice whose attempts keep
+ * ending before a debit is sent (a notice that never arrives, a gateway that
+ * will not answer) stops here instead of starting one a day until grace ends.
+ */
+export const AUTO_COLLECT_MAX_STARTS = AUTO_COLLECT_MAX_ATTEMPTS * 2;
+
+/** What `autoCollectDecision` reads about an invoice's automatic attempts. */
+export interface AutoCollectHistory {
+  /**
+   * ★ TRIES: attempts that asked the bank for money (a debit was sent, or a
+   * payment exists). This is what the three-try rule counts.
+   */
+  attempts: number;
+  /**
+   * Every automatic attempt that was not withdrawn before its debit: the
+   * tries above, plus the ones that ended first (the gateway refused the
+   * order, the notice never arrived, the start timed out).
+   */
+  starts: number;
+  /** When the newest automatic attempt of any kind was opened. */
+  lastAttemptAt: Date | null;
+}
+
+/** Is automatic collection over for this invoice? */
+export function autoCollectExhausted(
+  history: Pick<AutoCollectHistory, "attempts" | "starts">,
+): boolean {
+  return (
+    history.attempts >= AUTO_COLLECT_MAX_ATTEMPTS ||
+    history.starts >= AUTO_COLLECT_MAX_STARTS
+  );
+}
+
+/**
+ * May this invoice be debited automatically right now?
+ *
+ * ★★ A TRY IS A DEBIT THAT WAS SENT (PR #303 review, 22 Nov 2026). `attempts`
+ * used to count every automatic attempt on the invoice in any state, so a
+ * plan cancelled and kept again (its scheduled debit withdrawn each time)
+ * and one start that timed out used all three "tries" without the bank ever
+ * being asked for money: the merchant was told autopay had stopped, and the
+ * grace clock ran, on a healthy mandate. Now only a sent debit is a try; an
+ * attempt withdrawn before its debit counts for nothing; and one that ended
+ * before its debit for any other reason counts toward the backstop only
+ * (`AUTO_COLLECT_MAX_STARTS`).
+ *
+ * `lastAttemptAt` is when the newest attempt of ANY kind was opened, so
+ * attempts stay 24 hours apart whatever became of the last one. Exactly 24
+ * hours counts as due, so a run on the boundary does the work.
+ */
+export function autoCollectDecision(
+  input: AutoCollectHistory & { now: Date },
+): AutoCollectDecision {
+  if (autoCollectExhausted(input)) return "exhausted";
+  if (
+    input.lastAttemptAt &&
+    input.now.getTime() - input.lastAttemptAt.getTime() <
+      AUTO_COLLECT_RETRY_HOURS * 60 * 60 * 1000
+  ) {
+    return "wait";
+  }
+  return "attempt";
+}
+
+// ---------------------------------------------------------------------------
 // Mandate sizing
 // ---------------------------------------------------------------------------
 

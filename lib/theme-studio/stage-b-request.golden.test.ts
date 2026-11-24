@@ -10,12 +10,15 @@ import {
 } from "./prompt-features";
 import {
   currentThemeForRevision,
+  HEADER_MENU_PROMPT,
   heroContrastPrompt,
   stageBInitialSystemPrompt,
   stageBSystemPrompt,
   stageBUserText,
   stageBVarietySystemPrompt,
 } from "./prompts";
+import { commitmentsPrompt, layoutCommitments } from "./commitments";
+import { stylesheetPrompt } from "./style-rules";
 import {
   STAGE_B_DRAFT_SCHEMA,
   STAGE_B_INITIAL_DRAFT_SCHEMA,
@@ -34,7 +37,10 @@ import {
 // stage-b-request.golden.json holds the sha256 of each schema twin, system
 // prompt, revision context and revision user text those revisions send. The
 // v19 to v32 pins were recorded on 25 Oct 2026 from the code before v33 moved
-// the templates into a JSON string; v33's were recorded with that change. It
+// the templates into a JSON string; v33's were recorded with that change, and
+// v34's (22 Nov 2026) with the theme stylesheet, v35's (23 Nov 2026) with
+// the header menu section, and v36's the same day, equal to v35's (v36
+// changes what a change does with its draft, not what it sends). It
 // is rebuilt here exactly as it was recorded, with the flags the pipeline
 // passes for each revision (pipeline.test.ts proves it passes them).
 //
@@ -120,6 +126,7 @@ function rebuild(last: number) {
             f.moreVariants,
             f.templates,
             f.templatesJson,
+            f.stylesheet,
           ),
         ),
       );
@@ -152,12 +159,14 @@ function rebuild(last: number) {
       intent2,
       f.fontPairings,
       f.templatesJson,
+      f.stylesheet,
     );
     const ctxBasket = currentThemeForRevision(
       INPUTS.basketPackage,
       intent1,
       f.fontPairings,
       f.templatesJson,
+      f.stylesheet,
     );
     prompts[`currentThemeExemplar@v${v}`] = sha(ctxExemplar);
     prompts[`currentThemeBasket@v${v}`] = sha(ctxBasket);
@@ -171,6 +180,30 @@ function rebuild(last: number) {
         f.templatesJson,
       ),
     );
+    // v34+: the stylesheet section the pipeline appends after the system
+    // prompt (style-rules.ts), for a new theme and for a revision. Earlier
+    // revisions append nothing, so they have no such pins.
+    if (f.stylesheet) {
+      prompts[`stylesheetNew@v${v}`] = sha(
+        stylesheetPrompt(intent2.designDirection, false),
+      );
+      prompts[`stylesheetRevise@v${v}`] = sha(
+        stylesheetPrompt(intent2.designDirection, true),
+      );
+    }
+    // v34+: the layout commitments a new theme with no reference is given
+    // (commitments.ts), for the pinned theme id against an empty catalogue.
+    if (f.commitments) {
+      prompts[`commitments@v${v}`] = sha(
+        commitmentsPrompt(
+          layoutCommitments(intent2.designDirection, facts.themeId, [])!,
+          intent2.designDirection!,
+        ),
+      );
+    }
+    // v35+: which header layouts show the menu on a computer, appended last
+    // to Stage B's system prompt and to the change scope's (prompts.ts).
+    if (f.headerMenu) prompts[`headerMenu@v${v}`] = sha(HEADER_MENU_PROMPT);
   }
   return { schemas, prompts };
 }
@@ -207,7 +240,14 @@ describe(`Stage B requests of prompt revisions v19 to v${CURRENT}`, () => {
       Object.keys(rebuilt.prompts).sort(),
     );
     expect(Object.keys(GOLDEN.schemas)).toHaveLength(4 * (CURRENT - 18));
-    expect(Object.keys(GOLDEN.prompts)).toHaveLength(9 * (CURRENT - 18));
+    // Nine request texts for each revision, from v34 the two stylesheet
+    // sections and the layout commitments as well, and from v35 the header
+    // menu section.
+    expect(Object.keys(GOLDEN.prompts)).toHaveLength(
+      9 * (CURRENT - 18) +
+        3 * Math.max(0, CURRENT - 33) +
+        Math.max(0, CURRENT - 34),
+    );
   });
 
   it.each(Object.keys(GOLDEN.schemas))("schema %s is byte for byte", (key) => {

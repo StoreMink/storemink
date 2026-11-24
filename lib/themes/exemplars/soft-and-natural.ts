@@ -5,6 +5,7 @@
 import { DESIGN_FONTS } from "../fonts";
 import { ritual } from "../definitions/ritual";
 import { catalogueOf, exemplar, exemplarMeta, img, section } from "./shared";
+import { EXEMPLAR_STYLESHEETS } from "./stylesheets";
 
 const ID = "exemplar-soft-and-natural";
 const pic = (name: string) => img(ID, name);
@@ -469,6 +470,8 @@ export const softAndNatural = exemplar(
         { label: "Returns", href: "/refund-policy" },
       ],
     },
+    // The theme's own style rules (./stylesheets.ts, plan Phase 3).
+    stylesheet: EXEMPLAR_STYLESHEETS["soft-and-natural"],
     sampleData: catalogue,
   },
 );

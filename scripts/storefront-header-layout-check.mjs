@@ -55,6 +55,13 @@ const first = {
   heroFull: `<section class="home-section is-fullbleed">${hero.replace("variant-minimal", "variant-fullbleed height-large")}</section>`,
   carouselFull:
     '<section class="home-section is-fullbleed"><div class="home-carousel has-arrows height-large" style="background:#2a211f">Photo carousel</div></section>',
+  // ★ The same openings with the section's own vertical padding set (a
+  // theme's or a merchant's `padding_y`): the photograph still starts where
+  // the section does (22 Nov 2026: the Roast theme's "sm" left 28px of page
+  // colour between the header and its slideshow).
+  heroFullPadded: `<section class="home-section home-pad-lg is-fullbleed">${hero.replace("variant-minimal", "variant-fullbleed height-large")}</section>`,
+  carouselFullPadded:
+    '<section class="home-section home-pad-sm is-fullbleed"><div class="home-carousel has-arrows height-large" style="background:#2a211f">Photo carousel</div></section>',
   custom:
     '<section class="home-section home-custom-code"><div style="height:300px;background:#eee">Custom hero</div></section>',
 };
@@ -62,7 +69,22 @@ const first = {
 // a transparent header floats over them (they start under the opaque
 // announcement bar only); under every other header they start below the
 // whole header, announcement bar included.
-const HERO_LED = ["hero", "carousel", "heroFull", "carouselFull"];
+const HERO_LED = [
+  "hero",
+  "carousel",
+  "heroFull",
+  "carouselFull",
+  "heroFullPadded",
+  "carouselFullPadded",
+];
+// The openings that are a full-width photograph: nothing sits above the
+// photograph inside its own section.
+const FULL_PHOTO = [
+  "heroFull",
+  "carouselFull",
+  "heroFullPadded",
+  "carouselFullPadded",
+];
 // The section gap (homepage.css `.home-sections` padding), where a hero-led
 // page used to start whatever the header measured.
 const sectionGap = (width) => Math.min(72, Math.max(40, width * 0.06));
@@ -145,9 +167,11 @@ try {
                 const header = document
                   .querySelector("header")
                   .getBoundingClientRect();
-                const first = document
-                  .querySelector(".home-section")
-                  .getBoundingClientRect();
+                const firstSection = document.querySelector(".home-section");
+                const first = firstSection.getBoundingClientRect();
+                const photo = firstSection.querySelector(
+                  ":scope > .home-hero, :scope > .home-carousel",
+                );
                 const children = [
                   ...document.querySelectorAll(
                     "header .logo,header .phoneSearchBtn,header .userIcon,header .cartBtn,header .hamburgerBtn",
@@ -173,6 +197,10 @@ try {
                   headerBottom: header.bottom,
                   controlsBottom: Math.max(...readable.map((r) => r.bottom)),
                   contentTop: first.top,
+                  // How far the photograph starts below its own section.
+                  photoGap: photo
+                    ? photo.getBoundingClientRect().top - first.top
+                    : null,
                   gap: first.top - header.bottom,
                   controlsPadding: Math.min(
                     ...children.map((r) =>
@@ -245,6 +273,10 @@ try {
                 ) > (mode === "server" ? 16 : 1)
               )
                 problems.push("custom hero clearance changed");
+              if (FULL_PHOTO.includes(content) && result.photoGap > 0.5)
+                problems.push(
+                  `the opening photograph starts ${result.photoGap}px below its section: page colour shows under the header`,
+                );
               if (HERO_LED.includes(content)) {
                 if (header === "transparent") {
                   // ★ The transparent header floats over the opening
@@ -255,9 +287,14 @@ try {
                       `the transparent header's opening moved (${result.contentTop}px)`,
                     );
                 } else if (header === "market") {
+                  // The market bar reserves its own height on the root. A
+                  // full-width photograph starts right under it; any other
+                  // hero keeps the breathing gap below the bar.
                   const expected =
                     result.headerHeight +
-                    Math.min(32, Math.max(16, width * 0.025));
+                    (FULL_PHOTO.includes(content)
+                      ? 0
+                      : Math.min(32, Math.max(16, width * 0.025)));
                   if (
                     Math.abs(result.contentTop - expected) >
                     (mode === "server" ? 16 : 1)
@@ -279,10 +316,11 @@ try {
                   // And no further down than the header, or the page's own
                   // section gap where that is larger: flush under the bar,
                   // the way a solid header meets a full-width photograph.
-                  const expected = Math.max(
-                    sectionGap(width),
-                    result.headerHeight,
-                  );
+                  // ★ A full-width photograph meets the header exactly; a
+                  // hero drawn as a card keeps the section gap as its floor.
+                  const expected = FULL_PHOTO.includes(content)
+                    ? result.headerHeight
+                    : Math.max(sectionGap(width), result.headerHeight);
                   if (
                     mode === "measured"
                       ? Math.abs(result.contentTop - expected) > 1

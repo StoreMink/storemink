@@ -10,6 +10,7 @@ import {
   type Plan,
 } from "@/lib/plans";
 import { getPlanAllowancesLive } from "@/lib/plans/allowances";
+import { getMinkCreditCycle } from "@/lib/ai/quota";
 import { getMinkConfig } from "@/lib/mink/config";
 import type { NextInvoiceView } from "@/lib/billing/invoice-types";
 
@@ -170,7 +171,14 @@ export async function loadStoreDetail(
   try {
     // Read before the one big round trip, so the cap an operator is shown is
     // the cap the quota gate is really enforcing for this store.
-    const allowances = await getPlanAllowancesLive();
+    // ★ The usage figure is read under the store's own credit window (its
+    // paid cycle, else 30 days from the day it was created), the key the meter
+    // writes. This used to ask for the calendar month, which showed 0 used for
+    // every store on a paid cycle.
+    const [allowances, cycle] = await Promise.all([
+      getPlanAllowancesLive(),
+      getMinkCreditCycle(storeId),
+    ]);
     return await withService(async (db) => {
       const result = await db.execute(sql`
         select
@@ -212,7 +220,7 @@ export async function loadStoreDetail(
           (select count(*)::int from pos_staff ps where ps.store_id = s.id) as pos_staff,
           (select coalesce(used, 0)::int from ai_usage au
             where au.store_id = s.id
-              and au.period = to_char(now(), 'YYYY-MM')) as ai_used,
+              and au.period = ${cycle.period}) as ai_used,
           (select coalesce(balance, 0)::int from ai_credit_balances cb
             where cb.store_id = s.id) as credit_balance,
           (select enabled from mink_store_access ma

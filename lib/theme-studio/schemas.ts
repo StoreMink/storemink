@@ -33,7 +33,11 @@ import {
 } from "@/lib/themes/buttons";
 import { MOTION_REVEALS } from "@/lib/themes/motion";
 import { GRID_GAPS, PAGE_WIDTHS, SECTION_GAPS } from "@/lib/themes/page";
-import { DESIGN_DIRECTION_IDS, PALETTE_FAMILIES } from "./design-directions";
+import {
+  DESIGN_DIRECTION_IDS,
+  PALETTE_FAMILIES,
+  STUDIO_DESIGN_DIRECTION_IDS,
+} from "./design-directions";
 import { REQUIRED_DESIGN_CHOICES } from "./style-choices";
 import {
   THEME_STUDIO_FEATURES,
@@ -298,7 +302,9 @@ export const STAGE_A_VARIETY_SCHEMA: Schema = (() => {
   const intent = structuredClone(STAGE_A_INTENT_SCHEMA);
   const fields = intent.properties as Record<string, Schema>;
   fields.schemaVersion = { type: "integer", enum: [2] };
-  fields.designDirection = enumOf(DESIGN_DIRECTION_IDS);
+  // v34: all fourteen directions; the pre-v34 twin offers the first seven
+  // (stageASchemaFor).
+  fields.designDirection = enumOf(STUDIO_DESIGN_DIRECTION_IDS);
   fields.paletteFamily = enumOf(PALETTE_FAMILIES);
   intent.required = Object.keys(fields);
   return obj({
@@ -436,6 +442,11 @@ export const STAGE_B_DRAFT_SCHEMA: Schema = obj({
   // every value the object used to enforce. Same position as v32's
   // `templates`, so the v32 twin puts the object back in its place.
   templatesJson: str,
+  // v34 (plan Phase 3): the theme's own style rules as one JSON string, an
+  // array of rules from lib/themes/stylesheet.ts's closed vocabulary. A
+  // string for the reason templatesJson is one: the answer schema stays
+  // under what Vertex accepts. Top level, so it is never a repair target.
+  stylesheetJson: str,
   // v32 (plan Phase 2c's last chrome candidate): the announcement bar above
   // the header, one line and an optional site path; "" for text means none.
   // Top level like the templates, so it is never a repair target.
@@ -737,7 +748,69 @@ function withoutBriefPeople(schema: Schema): Schema {
 }
 
 const STAGE_A_SCHEMAS = [STAGE_A_ENVELOPE_SCHEMA, STAGE_A_VARIETY_SCHEMA];
+
+const WITH_DESIGN_PLAN = new Map<Schema, Schema>();
+/**
+ * A Stage A schema whose intent also carries `designPlanJson` (v34+, a new
+ * theme only; design-plan.ts): the design, decided before anything is built,
+ * as ONE JSON string that the pipeline parses and checks. A string like
+ * `templatesJson` and `stylesheetJson`, so the plan's enumerations never
+ * count against the structured-output size limit. Every other request keeps
+ * its schema byte for byte.
+ */
+export function withDesignPlan(schema: Schema): Schema {
+  let twin = WITH_DESIGN_PLAN.get(schema);
+  if (twin) return twin;
+  twin = structuredClone(schema);
+  let added = false;
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    const properties = record.properties as Record<string, Schema> | undefined;
+    if (
+      properties &&
+      "referenceAnalysis" in properties &&
+      "summary" in properties
+    ) {
+      properties.designPlanJson = { type: "string" };
+      record.required = Object.keys(properties);
+      added = true;
+      return;
+    }
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  if (!added) throw new Error("Stage A schema has no intent to plan in.");
+  WITH_DESIGN_PLAN.set(schema, twin);
+  return twin;
+}
 const STAGE_A_TWINS = new Map<string, Schema>();
+
+/** The pre-v34 shape of a Stage A schema: its designDirection enum (the
+ * variety envelope's; the plain envelope has none) lists the first seven
+ * directions, matched by value like the other twins. */
+function withFirstSevenDirections(schema: Schema): Schema {
+  const all = JSON.stringify(STUDIO_DESIGN_DIRECTION_IDS);
+  if (!JSON.stringify(schema).includes(all)) return schema;
+  const twin = structuredClone(schema);
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum) && JSON.stringify(record.enum) === all)
+      record.enum = [...DESIGN_DIRECTION_IDS];
+    Object.values(record).forEach(walk);
+  };
+  walk(twin);
+  return twin;
+}
 
 /** The Stage A schema a run of this prompt revision sends: the current one,
  * or a twin without the brief's `people` field (pre-v28) and/or without the
@@ -747,14 +820,18 @@ export function stageASchemaFor(
   peopleInImagery: boolean,
   nestedBlocks = true,
   moreSections = true,
+  /** v34+: fourteen design directions; before it, the first seven. */
+  moreDirections = true,
 ): Schema {
-  if (peopleInImagery && nestedBlocks && moreSections) return schema;
+  if (peopleInImagery && nestedBlocks && moreSections && moreDirections)
+    return schema;
   const index = STAGE_A_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage A schema.");
-  const key = `${index}:${peopleInImagery}:${nestedBlocks}:${moreSections}`;
+  const key = `${index}:${peopleInImagery}:${nestedBlocks}:${moreSections}:${moreDirections}`;
   let twin = STAGE_A_TWINS.get(key);
   if (!twin) {
     twin = schema;
+    if (!moreDirections) twin = withFirstSevenDirections(twin);
     if (!nestedBlocks || !moreSections)
       twin = withSectionTypes(
         twin,
@@ -776,6 +853,8 @@ function withoutTemplates(schema: Schema): Schema {
   delete properties.templatesJson;
   delete properties.templates;
   delete properties.announcement;
+  // Never present before v34, and v34 is after v32.
+  delete properties.stylesheetJson;
   twin.required = Object.keys(properties);
   const full = JSON.stringify(PRODUCT_DETAIL_ENUM);
   const walk = (node: unknown) => {
@@ -790,6 +869,17 @@ function withoutTemplates(schema: Schema): Schema {
     Object.values(record).forEach(walk);
   };
   walk(twin);
+  return twin;
+}
+
+/** The pre-v34 shape of a Stage B schema: no stylesheetJson. */
+function withoutStylesheet(schema: Schema): Schema {
+  const twin = structuredClone(schema);
+  const properties = twin.properties as Record<string, Schema>;
+  delete properties.stylesheetJson;
+  twin.required = (twin.required as string[]).filter(
+    (key) => key !== "stylesheetJson",
+  );
   return twin;
 }
 
@@ -826,18 +916,30 @@ export function stageBSchemaFor(
   moreVariants = true,
   templates = true,
   templatesJson = true,
+  stylesheet = true,
 ): Schema {
   // A request without templates has neither shape of them, so the JSON flag
   // only counts alongside `templates` (one twin per real shape).
   const asJson = templates && templatesJson;
-  if (fontPairings && nestedBlocks && moreSections && moreVariants && asJson)
+  // The stylesheet came after the JSON templates, so it only counts with
+  // them (one twin per real shape).
+  const styled = asJson && stylesheet;
+  if (
+    fontPairings &&
+    nestedBlocks &&
+    moreSections &&
+    moreVariants &&
+    asJson &&
+    styled
+  )
     return schema;
   const index = STAGE_B_SCHEMAS.indexOf(schema);
   if (index < 0) throw new Error("Unknown Stage B schema.");
-  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}:${templates}:${asJson}`;
+  const key = `${index}:${fontPairings}:${nestedBlocks}:${moreSections}:${moreVariants}:${templates}:${asJson}:${styled}`;
   let twin = STAGE_B_TWINS.get(key);
   if (!twin) {
     twin = schema;
+    if (!styled) twin = withoutStylesheet(twin);
     if (!templates) twin = withoutTemplates(twin);
     else if (!asJson) twin = withTemplatesObject(twin);
     if (!nestedBlocks || !moreSections)

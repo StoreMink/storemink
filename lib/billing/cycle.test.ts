@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   AFA_EXEMPT_LIMIT_PAISE,
+  AUTO_COLLECT_MAX_ATTEMPTS,
+  AUTO_COLLECT_MAX_STARTS,
+  autoCollectExhausted,
+  AUTO_COLLECT_RETRY_HOURS,
+  autoCollectDecision,
   COLLECTION_LEAD_DAYS,
   GRACE_HOURS,
   PERIOD_DAYS,
@@ -258,5 +263,168 @@ describe("mandateSizePaise", () => {
   it("returns whole paise", () => {
     const n = mandateSizePaise({ planPaise: 1_234_57, locationsPaise: 7_77 });
     expect(Number.isInteger(n)).toBe(true);
+  });
+});
+
+// Owner decision, 21 Nov 2026: three automatic tries, 24 hours apart, then the
+// merchant is asked to pay by hand.
+describe("autoCollectDecision: three tries, 24 hours apart", () => {
+  const NOW = new Date("2026-11-21T10:20:00.000Z");
+  const hoursAgo = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
+
+  it("the rule is three tries, 24 hours apart", () => {
+    expect(AUTO_COLLECT_MAX_ATTEMPTS).toBe(3);
+    expect(AUTO_COLLECT_RETRY_HOURS).toBe(24);
+  });
+
+  it("the first try goes at once", () => {
+    expect(
+      autoCollectDecision({
+        attempts: 0,
+        starts: 0,
+        lastAttemptAt: null,
+        now: NOW,
+      }),
+    ).toBe("attempt");
+  });
+
+  it("★★ an hour after a failed try it WAITS: the hourly run does not debit again", () => {
+    for (const hours of [0, 1, 12, 23.99]) {
+      expect(
+        autoCollectDecision({
+          attempts: 1,
+          starts: 1,
+          lastAttemptAt: hoursAgo(hours),
+          now: NOW,
+        }),
+      ).toBe("wait");
+    }
+  });
+
+  it("the next try is due exactly 24 hours after the last", () => {
+    expect(
+      autoCollectDecision({
+        attempts: 1,
+        starts: 1,
+        lastAttemptAt: hoursAgo(24),
+        now: NOW,
+      }),
+    ).toBe("attempt");
+    expect(
+      autoCollectDecision({
+        attempts: 2,
+        starts: 2,
+        lastAttemptAt: hoursAgo(30),
+        now: NOW,
+      }),
+    ).toBe("attempt");
+  });
+
+  it("★★ after three tries it is exhausted, however long ago the last one was", () => {
+    for (const hours of [0, 24, 24 * 30]) {
+      expect(
+        autoCollectDecision({
+          attempts: 3,
+          starts: 3,
+          lastAttemptAt: hoursAgo(hours),
+          now: NOW,
+        }),
+      ).toBe("exhausted");
+    }
+    expect(
+      autoCollectDecision({
+        attempts: 7,
+        starts: 7,
+        lastAttemptAt: null,
+        now: NOW,
+      }),
+    ).toBe("exhausted");
+  });
+
+  it("at most three debits ever leave for one invoice, run every hour for six days", () => {
+    // The renewal pass as it really runs: hourly, from T-4d to the end of grace,
+    // against a mandate that declines every time.
+    let attempts = 0;
+    let last: Date | null = null;
+    const sent: number[] = [];
+    for (let hour = 0; hour < 6 * 24; hour += 1) {
+      const now = new Date(NOW.getTime() + hour * 3_600_000);
+      if (
+        autoCollectDecision({
+          attempts,
+          starts: attempts,
+          lastAttemptAt: last,
+          now,
+        }) === "attempt"
+      ) {
+        attempts += 1;
+        last = now;
+        sent.push(hour);
+      }
+    }
+    expect(sent).toEqual([0, 24, 48]);
+  });
+
+  // ★★ PR #303 review, 22 Nov 2026: a try is a debit that was SENT. Every
+  // automatic attempt used to count, so a plan cancelled and kept again (its
+  // scheduled debit withdrawn each time) plus one start that timed out used
+  // all three tries without the bank ever being asked for money.
+  it("★★ attempts that never asked the bank for money do not use the three tries", () => {
+    // A cancel, Keep my plan, a second cancel and keep, then a start that
+    // timed out: no debit was sent. `automaticAttemptsOn` reports the two
+    // withdrawn attempts as nothing at all, and the timeout as a start.
+    expect(
+      autoCollectDecision({
+        attempts: 0,
+        starts: 1,
+        lastAttemptAt: hoursAgo(25),
+        now: NOW,
+      }),
+    ).toBe("attempt");
+    expect(autoCollectExhausted({ attempts: 0, starts: 1 })).toBe(false);
+    // Two debits really sent and declined, and three attempts that ended
+    // before their debit: one try is still owed.
+    expect(
+      autoCollectDecision({
+        attempts: 2,
+        starts: 5,
+        lastAttemptAt: hoursAgo(25),
+        now: NOW,
+      }),
+    ).toBe("attempt");
+  });
+
+  it("the 24 hours are counted from the newest attempt of any kind", () => {
+    expect(
+      autoCollectDecision({
+        attempts: 0,
+        starts: 1,
+        lastAttemptAt: hoursAgo(2),
+        now: NOW,
+      }),
+    ).toBe("wait");
+  });
+
+  it("★ the backstop: six attempts that all ended before their debit stop it too", () => {
+    expect(AUTO_COLLECT_MAX_STARTS).toBe(6);
+    expect(
+      autoCollectDecision({
+        attempts: 0,
+        starts: 5,
+        lastAttemptAt: hoursAgo(25),
+        now: NOW,
+      }),
+    ).toBe("attempt");
+    expect(
+      autoCollectDecision({
+        attempts: 0,
+        starts: 6,
+        lastAttemptAt: hoursAgo(25),
+        now: NOW,
+      }),
+    ).toBe("exhausted");
+    expect(autoCollectExhausted({ attempts: 0, starts: 6 })).toBe(true);
+    expect(autoCollectExhausted({ attempts: 3, starts: 3 })).toBe(true);
+    expect(autoCollectExhausted({ attempts: 2, starts: 5 })).toBe(false);
   });
 });

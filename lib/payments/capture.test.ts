@@ -74,7 +74,20 @@ describe("settleOrderPayment", () => {
     const res = await settleOrderPayment(creds, "order_1", 50000, {
       capture: true,
     });
-    expect(res).toEqual({ kind: "unknown" });
+    expect(res).toEqual({ kind: "unknown", refused: false });
+  });
+
+  it("★ says when Razorpay ANSWERED and refused the read (a revoked key, another account's order)", async () => {
+    vi.mocked(rzpFetchOrderPayments).mockResolvedValue({
+      ok: false,
+      error: "Authentication failed",
+      outcome: "rejected",
+    } as never);
+    const res = await settleOrderPayment(creds, "order_1", 50000, {
+      capture: true,
+    });
+    // Still undecided: a refusal is never read as "nothing was paid".
+    expect(res).toEqual({ kind: "unknown", refused: true });
   });
 
   it("★★ captures an AUTHORIZED payment of the exact amount (manual-capture accounts)", async () => {

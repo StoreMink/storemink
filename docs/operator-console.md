@@ -172,6 +172,22 @@ Chirp 3 and Sarvam Saaras v4. It writes the service-only
 reads that row before transcription. There is no per-store override. A failed
 settings read fails the request rather than silently using a different model.
 
+Below it, **Image provider** (superadmins only) chooses who draws Theme
+Studio's photos and the storefront redesign's page photos: **Google** (the
+default) or **ElevenLabs** (GPT Image 2.5 Sunburst), and for ElevenLabs the
+quality (**Low** or **Medium**) and the resolution (**1K** or **2K**). It
+writes the service-only `image_generation_settings` singleton; there is no
+per-store override. Chat images, Refine, storefront personalisation and the
+redesign's product re-shoots are always drawn by Google. The choice applies to
+the next run that starts drawing. ElevenLabs draws only when
+`ELEVENLABS_API_KEY` is set on the service; the page warns when it is chosen
+without the key, and Google goes on drawing until the key is there. A failed
+settings read also means Google. A 1K picture is enlarged to fit the page, so
+it looks softer than 2K. Most of a picture's cost on ElevenLabs comes from the
+reference photo sent with it (measured 22 Nov 2026 at 1K: about 130 credits
+with none, about 475 to 560 with one), and nearly every redesign photo carries
+one; the quality setting moves the price little.
+
 Mink AI is available in every store without operator enrollment. Store detail
 has no Enable/Disable Mink control. Migration 0157 backfills existing stores
 and automatically provisions the complete tool registry for future signups.
@@ -356,6 +372,17 @@ design still looks like a theme already in the catalogue, the Checks tab says so
 with its distinctness and the threshold: a warning that calls for a look at the
 composition and never stops Publish. References take priority over novelty.
 Image updates retain the comparison, and older versions have no score.
+
+From prompt v34 a new theme is planned before it is built. The Checks tab shows
+its **Design plan**: the colours, fonts, buttons and layout decided up front,
+how it sets its type, and what sets it apart. Before any picture is drawn, the
+built design is measured against every published theme. A design less than 50%
+different from one of them is corrected up to twice; if it still is, the build
+stops with nothing drawn, and the chat names the theme it resembled and what
+they share. Start it again with a brief that sets it apart. A theme built from
+reference screenshots is held to the same rule, and Publish still refuses a
+theme less than 50% different from a published one, because the catalogue can
+change between a build and a publish.
 
 A model that asks for details leaves the theme at **Needs your answer** until
 you answer in the chat, or make another design current, which sets the questions

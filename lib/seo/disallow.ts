@@ -44,6 +44,9 @@ export const STOREFRONT_DISALLOW: readonly DisallowRule[] = [
   { path: "/checkout" },
   { path: "/orders" },
   { path: "/notifications" },
+  // One shopper's own saved products, kept on their device: empty to a
+  // crawler (the page is noindex as well).
+  { path: "/wishlist", exact: true },
   { path: "/blogs/write", exact: true },
   { path: "/blogs/my-submissions", exact: true },
 ];

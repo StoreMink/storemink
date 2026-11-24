@@ -24,8 +24,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  failureOutcome,
   rzpCreateOrder,
   rzpFetchOrderPayments,
+  rzpFetchToken,
   rzpFetchPaymentRefunds,
   rzpRefund,
   validateCredentials,
@@ -135,6 +137,52 @@ describe("★ a failure is classified, not just reported", () => {
     },
   );
 
+  // PR #303 re-review, 22 Nov 2026. A rejected READ is taken to mean "these
+  // keys cannot read this order" (revoked, or another account's), and a
+  // store may then disconnect its gateway with that order unchecked. A 429
+  // says none of that, so a paid order read in a busy minute was skipped and
+  // later cancelled.
+  it.each([408, 425, 429])(
+    "★★ %s on a READ is UNKNOWN: Razorpay was busy, the keys were not refused",
+    async (status) => {
+      respond({ ok: false, status, json: { error: { description: "slow" } } });
+      expect(await rzpFetchOrderPayments(CREDS, "order_1")).toMatchObject({
+        ok: false,
+        outcome: "unknown",
+      });
+    },
+  );
+
+  it.each([400, 401, 403, 404])(
+    "%s on a read is still a refusal of the keys or the order",
+    async (status) => {
+      respond({ ok: false, status, json: { error: { description: "no" } } });
+      expect(await rzpFetchOrderPayments(CREDS, "order_1")).toMatchObject({
+        ok: false,
+        outcome: "rejected",
+      });
+    },
+  );
+
+  it("★ a 429 on a WRITE stays a verdict: it was turned away before anything was created", async () => {
+    respond({
+      ok: false,
+      status: 429,
+      json: { error: { description: "slow" } },
+    });
+    const res = await rzpCreateOrder(CREDS, { amountPaise: 50000 });
+    expect(res).toMatchObject({ ok: false, outcome: "rejected" });
+  });
+
+  it("the rule itself, by status and method", () => {
+    expect(failureOutcome(429, undefined)).toBe("unknown");
+    expect(failureOutcome(429, "get")).toBe("unknown");
+    expect(failureOutcome(429, "POST")).toBe("rejected");
+    expect(failureOutcome(408, "PATCH")).toBe("rejected");
+    expect(failureOutcome(404, "GET")).toBe("rejected");
+    expect(failureOutcome(503, "POST")).toBe("unknown");
+  });
+
   it("★ a network throw is UNKNOWN — a timeout is a success we never read", async () => {
     respond({ reject: new Error("socket hang up") });
     const res = await rzpRefund(CREDS, {
@@ -241,6 +289,67 @@ describe("rzpCreateOrder", () => {
   it("accepts exactly the ₹1 minimum", async () => {
     respond({ json: { id: "order_1" } });
     expect((await rzpCreateOrder(CREDS, { amountPaise: 100 })).ok).toBe(true);
+  });
+});
+
+// 21 Nov 2026: the order of a renewal debit. Razorpay answers the debit call
+// "The requested URL was not found on the server" unless the order was created
+// with the pre-debit notification (docs/autopay-verification.md).
+describe("★★ rzpCreateOrder for a subsequent (recurring) payment", () => {
+  it("sends payment_capture and the notification, in Razorpay's own field names", async () => {
+    const fetchMock = respond({ json: { id: "order_1" } });
+    await rzpCreateOrder(CREDS, {
+      amountPaise: 177000,
+      receipt: "sm_bill_att-1",
+      paymentCapture: true,
+      notification: { tokenId: "token_1", paymentAfterUnix: 1795413211 },
+    });
+    expect(sent(fetchMock).body).toEqual({
+      amount: 177000,
+      currency: "INR",
+      receipt: "sm_bill_att-1",
+      payment_capture: true,
+      notification: { token_id: "token_1", payment_after: 1795413211 },
+    });
+  });
+
+  it("★ an ordinary checkout order carries neither: capture stays the account's own setting", async () => {
+    const fetchMock = respond({ json: {} });
+    await rzpCreateOrder(CREDS, { amountPaise: 50000, receipt: "r1" });
+    const body = sent(fetchMock).body;
+    expect(body).not.toHaveProperty("payment_capture");
+    expect(body).not.toHaveProperty("notification");
+  });
+
+  it("payment_capture false is sent as false, not dropped", async () => {
+    const fetchMock = respond({ json: {} });
+    await rzpCreateOrder(CREDS, { amountPaise: 50000, paymentCapture: false });
+    expect(sent(fetchMock).body.payment_capture).toBe(false);
+  });
+});
+
+describe("rzpFetchToken: a mandate's state at the gateway", () => {
+  it("reads the customer's token", async () => {
+    const fetchMock = respond({
+      json: { id: "token_1", recurring_details: { status: "confirmed" } },
+    });
+    const res = await rzpFetchToken(CREDS, "cust_1", "token_1");
+    expect(sent(fetchMock).url).toBe(
+      "https://api.razorpay.com/v1/customers/cust_1/tokens/token_1",
+    );
+    expect(sent(fetchMock).init.method).toBe("GET");
+    expect(res).toMatchObject({
+      ok: true,
+      data: { recurring_details: { status: "confirmed" } },
+    });
+  });
+
+  it("★ ids are encoded, so neither can rewrite the path", async () => {
+    const fetchMock = respond({ json: {} });
+    await rzpFetchToken(CREDS, "cust/../x", "token?y=1");
+    expect(sent(fetchMock).url).toBe(
+      "https://api.razorpay.com/v1/customers/cust%2F..%2Fx/tokens/token%3Fy%3D1",
+    );
   });
 });
 

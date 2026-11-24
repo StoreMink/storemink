@@ -66,6 +66,34 @@ describe("a photograph-led page under a solid header", () => {
     );
   });
 
+  it("★★ a full-width photograph meets the header exactly, and has no padding of its own above it (22 Nov 2026)", () => {
+    // The section: the header's height and nothing more, where the rule
+    // above would floor it at the page's section gap (72px on a wide screen
+    // under a 68px bar).
+    expect(
+      bodiesOf(
+        HOME,
+        ".storefront-root:not(.sm-header-market):not(.sm-header-transparent) .home-sections:has( > .home-section.is-fullbleed:first-child > :is(.home-hero, .home-carousel) )",
+      ),
+    ).toEqual(["padding-top: var(--sm-header-h, 68px);"]);
+    // The market bar reserves its own height on the root.
+    expect(
+      bodiesOf(
+        HOME,
+        ".storefront-root.sm-header-market .home-sections:has( > .home-section.is-fullbleed:first-child > :is(.home-hero, .home-carousel) )",
+      ),
+    ).toEqual(["padding-top: 0;"]);
+    // The photograph: the section's own vertical padding (a theme's or a
+    // merchant's) never pushes it down from the header. Roast's "sm" left
+    // 28px of page colour there.
+    expect(
+      bodiesOf(
+        HOME,
+        ".home-sections > .home-section.is-fullbleed:first-child:has( > :is(.home-hero, .home-carousel) )",
+      ),
+    ).toEqual(["padding-top: 0;"]);
+  });
+
   it("the ticker and text reserve still leaves photograph-led pages alone, so the two never stack", () => {
     const bodies = bodiesOf(
       HOME,
@@ -101,9 +129,20 @@ describe("--sm-header-h counts the announcement bar", () => {
     const declarations = [...THEME.matchAll(/--sm-header-h:([^;]*);/g)].map(
       (m) => m[1].trim(),
     );
-    expect(declarations.length).toBeGreaterThanOrEqual(5);
+    expect(declarations.length).toBeGreaterThanOrEqual(4);
     for (const value of declarations)
       expect(value).toContain("var(--sm-announce-h)");
+  });
+
+  it("★ the fallback is the bar's real height, 68px, at every width (it was 80px, and 88px on a tablet, after the bar was slimmed)", () => {
+    const declarations = [...THEME.matchAll(/--sm-header-h:([^;]*);/g)].map(
+      (m) => m[1].trim(),
+    );
+    // The first is the root's own; the others are the taller variants.
+    expect(declarations[0]).toBe("calc(68px + var(--sm-announce-h))");
+    expect(declarations.join(" ")).not.toMatch(/\b(80|88)px/);
+    // The header's padding and its controls are what make 68px.
+    expect(HEADER).toMatch(/\.header \{[^}]*padding: 12px 24px;/);
   });
 
   it("the measured height includes it: the bar rides in the header's own top border", () => {

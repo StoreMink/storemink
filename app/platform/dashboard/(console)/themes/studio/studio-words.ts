@@ -130,6 +130,8 @@ export function buildTimeWords(range: ThemeStudioBuildTimeRange): string {
 const RUN_STOP: Record<string, string> = {
   invalid_output:
     "The model's answer still failed its checks after its repair attempts.",
+  too_similar:
+    "The design came out too much like a theme that is already published, so it was stopped before any picture was drawn. Start it again with a brief that sets it apart: another layout, page colour or font.",
   model_refused: "The model declined this request for safety reasons.",
   model_declined: "The model declined to build this theme.",
   output_truncated: "The model ran out of room before it finished.",
@@ -462,6 +464,7 @@ export const CHECK_HEADINGS: Readonly<Record<string, string>> = {
   "browser.accessibility": "Accessibility",
   "browser.media": "Pictures load",
   "browser.performance": "Speed",
+  "browser.header_menu": "Menu on a computer",
 };
 
 /** What the check says when it has nothing more specific: a check failed,
@@ -489,6 +492,8 @@ const CHECK_GENERAL: Readonly<Record<string, string>> = {
   "browser.accessibility": "Part of the page fails an accessibility rule.",
   "browser.media": "A picture did not load.",
   "browser.performance": "The page is slow to load.",
+  "browser.header_menu":
+    "On a computer, the menu is hidden behind the menu button.",
 };
 
 const UNKNOWN_CHECK = "A check found a problem it did not name.";
@@ -594,6 +599,12 @@ export const FINDING_TEXT: Readonly<
   },
   "browser.media": {
     broken_image: "A picture did not load.",
+  },
+  "browser.header_menu": {
+    menu_hidden:
+      "On a computer, the menu is hidden behind the menu button because it does not fit beside the logo. Ask for the centred or stacked header, or a shorter menu.",
+    menu_wraps:
+      "On a computer, the menu does not fit beside the centred logo, so it sits on a second row under it. Ask for shorter menu labels, fewer header links, or the stacked header.",
   },
   "browser.performance": {
     lcp: "The main content is slow to show.",

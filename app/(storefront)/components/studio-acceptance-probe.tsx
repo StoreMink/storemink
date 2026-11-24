@@ -511,6 +511,10 @@ async function measure(perf: { lcp: number | null; cls: number }) {
   // The header chrome is the same on every surface, so its states are
   // opened once, on the home page; the gates expect them there.
   const states = location.pathname === "/" ? await chromeStates() : [];
+  // Whether a shopper on this screen sees the header's menu, or finds it
+  // behind the menu button (owner, 23 Nov 2026: Muse's menu was hidden on a
+  // 1440px screen and nothing said so). Read after the header fit ran.
+  const menu = location.pathname === "/" ? headerMenu() : null;
 
   return {
     path: `${location.pathname}${location.search}`.slice(0, 512),
@@ -523,7 +527,37 @@ async function measure(perf: { lcp: number | null; cls: number }) {
     violations: page.violations,
     contrastUnresolved: page.contrastUnresolved,
     states,
+    ...(menu ? { headerMenu: menu } : {}),
     ...timing,
+  };
+}
+
+/** The header's menu as this screen shows it: its layout (the root's
+ *  sm-header-* class), how many top-level items it has, whether it is on
+ *  screen or behind the menu button, and whether it had to move to a row of
+ *  its own under a centred logo (use-header-fit.ts "stack"). */
+function headerMenu(): {
+  layout: string;
+  links: number;
+  shown: boolean;
+  stacked: boolean;
+} | null {
+  const nav = document.querySelector<HTMLElement>(
+    'header [data-sm="header-menu"]',
+  );
+  if (!nav) return null;
+  const box = nav.getBoundingClientRect();
+  const root = nav.closest(".storefront-root")?.className ?? "";
+  return {
+    layout: /(?:^|\s)sm-header-([a-z]+)/.exec(root)?.[1] ?? "classic",
+    links: nav.children.length,
+    shown:
+      box.width > 0 &&
+      box.height > 0 &&
+      getComputedStyle(nav).visibility !== "hidden",
+    stacked: (nav.closest("header")?.getAttribute("data-header-compact") ?? "")
+      .split(/\s+/)
+      .includes("stack"),
   };
 }
 

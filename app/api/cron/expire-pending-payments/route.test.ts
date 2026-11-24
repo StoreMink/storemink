@@ -34,6 +34,9 @@ vi.mock("@/lib/orders/mark-paid", () => ({
 vi.mock("@/lib/orders/cancel", () => ({
   releaseCancelledOrder: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/offers/cart", () => ({
+  releaseOrderOfferUses: vi.fn(async () => []),
+}));
 vi.mock("@/lib/whatsapp/cod-sweep", () => ({
   sweepCodConfirmations: vi.fn(async () => ({
     reminded: 1,
@@ -48,6 +51,7 @@ import { lookupStoreGateway } from "@/lib/payments/provider";
 import { settleOrderPayment } from "@/lib/payments/capture";
 import { markOrderPaid } from "@/lib/orders/mark-paid";
 import { releaseCancelledOrder } from "@/lib/orders/cancel";
+import { releaseOrderOfferUses } from "@/lib/offers/cart";
 import {
   sweepExpiredPickups,
   sweepPickupReminders,
@@ -72,10 +76,14 @@ function pending(over: Record<string, unknown> = {}) {
   };
 }
 
-/** `pendingRows` feeds the main read, `lateRows` the late-payment sweep. */
-function seed(pendingRows: any[], lateRows: any[] = []) {
+/**
+ * `youngRows` feeds the confirming pass that runs first (orders still inside
+ * the grace period), `pendingRows` the main read, `lateRows` the late-payment
+ * sweep.
+ */
+function seed(pendingRows: any[], lateRows: any[] = [], youngRows: any[] = []) {
   dbHolder.current = makeDbMock({
-    selectByTable: { orders: [pendingRows, lateRows] },
+    selectByTable: { orders: [youngRows, pendingRows, lateRows] },
     returning: [{ id: "o1" }],
   });
 }
@@ -141,7 +149,7 @@ describe("expire-pending-payments", () => {
       amountPaise: 50000,
     });
     const body = await (await run()).json();
-    expect(markOrderPaid).toHaveBeenCalledWith("o1", "pay_1");
+    expect(markOrderPaid).toHaveBeenCalledWith("o1", "pay_1", { strict: true });
     expect(body.paid).toBe(1);
     expect(body.expired).toBe(0);
     expect(dbHolder.current.calls.update).toHaveLength(0);
@@ -210,6 +218,99 @@ describe("expire-pending-payments", () => {
     });
     // The coupon use is given back.
     expect(dbHolder.current.calls.execute).toHaveLength(1);
+    // ★★ And the OFFER uses (21 Nov 2026): they used to stay claimed, so one
+    // dismissed payment window used up a "one per customer" offer for good.
+    expect(releaseOrderOfferUses).toHaveBeenCalledWith("s1", "o1");
+  });
+
+  it("★ gives nothing back for an order a payment claimed first", async () => {
+    // The pending → failed claim matched no row: the shopper's payment was
+    // recorded a moment earlier.
+    dbHolder.current = makeDbMock({
+      selectByTable: { orders: [[], [pending()], []] },
+      returning: [],
+    });
+    const body = await (await run()).json();
+    expect(body.expired).toBe(0);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+    expect(releaseOrderOfferUses).not.toHaveBeenCalled();
+  });
+
+  it("★★ keys Razorpay REFUSES (revoked, or another account's) leave the order alone, but not for ever", async () => {
+    vi.mocked(settleOrderPayment).mockResolvedValue({
+      kind: "unknown",
+      refused: true,
+    });
+    seed([pending()]);
+    expect((await (await run()).json()).expired).toBe(0);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+
+    // A week on, the order is cancelled and its stock freed. It used to stay
+    // pending with no limit, at the front of every batch.
+    seed([
+      pending({
+        created_at: new Date(Date.now() - 8 * 24 * HOUR).toISOString(),
+      }),
+    ]);
+    expect((await (await run()).json()).expired).toBe(1);
+    expect(releaseCancelledOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("★★ NEVER expires an order Razorpay has captured, even when marking it paid has failed for over a week (PR #303 review)", async () => {
+    vi.mocked(settleOrderPayment).mockResolvedValue({
+      kind: "captured",
+      paymentId: "pay_held",
+    } as never);
+    vi.mocked(markOrderPaid).mockRejectedValue(new Error("write failed"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    seed([
+      pending({
+        created_at: new Date(Date.now() - 9 * 24 * HOUR).toISOString(),
+      }),
+    ]);
+    const body = await (await run()).json();
+    // Not expired, nothing it held given back, and counted for a person.
+    expect(body.expired).toBe(0);
+    expect(body.capturedUnrecorded).toBe(1);
+    expect(releaseCancelledOrder).not.toHaveBeenCalled();
+    expect(
+      errors.mock.calls.some((call) =>
+        String(call[0]).includes("captured payment could not be recorded"),
+      ),
+    ).toBe(true);
+    errors.mockRestore();
+    vi.mocked(markOrderPaid).mockResolvedValue("paid");
+  });
+
+  describe("★★ young orders whose money has landed are confirmed first", () => {
+    const young = () =>
+      pending({
+        id: "o-young",
+        razorpay_order_id: "order_young",
+        created_at: new Date(Date.now() - 10 * 60_000).toISOString(),
+      });
+
+    it("marks a young paid order paid, on the hourly run too", async () => {
+      seed([], [], [young()]);
+      vi.mocked(settleOrderPayment).mockResolvedValue({
+        kind: "captured",
+        paymentId: "pay_y",
+        amountPaise: 50000,
+      });
+      const body = await (await run()).json();
+      expect(markOrderPaid).toHaveBeenCalledWith("o-young", "pay_y", {
+        strict: true,
+      });
+      expect(body.paid).toBe(1);
+    });
+
+    it("★ never cancels a young order with no payment yet", async () => {
+      seed([], [], [young()]);
+      const body = await (await run()).json();
+      expect(body.expired).toBe(0);
+      expect(dbHolder.current.calls.update).toHaveLength(0);
+      expect(releaseCancelledOrder).not.toHaveBeenCalled();
+    });
   });
 
   it("a disconnected gateway expires the order (nothing to verify against)", async () => {
