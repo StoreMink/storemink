@@ -30,6 +30,14 @@
    below is `.dash-*` class-based — there are no bare element selectors — so
    scoping a dialog cannot restyle its internals by accident. */
 .dashboard-shell {
+  /* Frame geometry. The top bar is --dash-topbar-h tall, and
+     --dash-main-inset-y is the vertical room .dash-main gives up around the
+     page (its margins and top rule; .dash-main-inset below sets it). Read by
+     anything sized to the window less the dashboard chrome, such as the
+     Settings frame, so those numbers are written once. */
+  --dash-topbar-h: 56px;
+  --dash-main-inset-y: 0px;
+
   /* Surfaces */
   --dash-bg: #ebebeb;
   --dash-surface: #ffffff;
@@ -125,6 +133,26 @@
 }
 
 /* ---------- Layout shell ---------- */
+/* The store dashboard's content pane: flush on phones, and from 768px set
+   in by 8px with a rule along its top and left. The numbers live here, not in
+   the layout's classes, so --dash-main-inset-y is worked out from them. */
+.dashboard-shell .dash-main-inset {
+  --dash-main-gap: 0px;
+  --dash-main-rule: 0px;
+  --dash-main-inset-y: calc(var(--dash-main-gap) * 2 + var(--dash-main-rule));
+  margin: var(--dash-main-gap);
+  border-style: solid;
+  border-color: #e5e5e5;
+  border-width: var(--dash-main-rule) 0 0 var(--dash-main-rule);
+}
+
+@media (min-width: 768px) {
+  .dashboard-shell .dash-main-inset {
+    --dash-main-gap: 8px;
+    --dash-main-rule: 1px;
+  }
+}
+
 .dashboard-shell .dash-main {
   flex: 1 1 0%;
   min-width: 0;
@@ -1765,7 +1793,7 @@ a.dash-status-pill:hover {
   /* Read by the Mink AI pop-out bar too (`.dash-mink-pop`), so the tab that
      hangs from the top bar can never drift from its colour. */
   --dash-topbar-bg: #2a3439;
-  height: 56px;
+  height: var(--dash-topbar-h);
   flex-shrink: 0;
   background-color: var(--dash-topbar-bg);
   color: #ffffff;

@@ -6,12 +6,9 @@ import SettingsPage from "./page";
 
 vi.mock("@/app/dashboard/lib/access", () => ({
   getViewerAccess: vi.fn(),
-  getActingStoreId: vi.fn(async () => "store-1"),
 }));
-vi.mock("./general-settings", () => ({
-  GeneralSettings: ({ storeId }: { storeId: string }) => (
-    <div>General for {storeId}</div>
-  ),
+vi.mock("./settings-home-redirect", () => ({
+  SettingsHomeRedirect: () => <div>Opening General</div>,
 }));
 
 function access(allowed: Record<string, ("view" | "manage")[]>) {
@@ -33,17 +30,17 @@ describe("Settings home", () => {
     );
   });
 
-  it("shows General beside the settings menu", async () => {
+  it("opens General beside the menu, without reading it here", async () => {
     await renderPage();
-    expect(screen.getByText("General for store-1")).toBeInTheDocument();
+    expect(screen.getByText("Opening General")).toBeInTheDocument();
   });
 
   it("points a role without Settings view at the menu instead", async () => {
     vi.mocked(getViewerAccess).mockResolvedValue(
-      access({ notifications: ["view"] }),
+      access({ channels: ["view"] }),
     );
     await renderPage();
-    expect(screen.queryByText(/General for/)).toBeNull();
+    expect(screen.queryByText("Opening General")).toBeNull();
     expect(
       screen.getByText("Choose a page from the settings menu."),
     ).toBeInTheDocument();

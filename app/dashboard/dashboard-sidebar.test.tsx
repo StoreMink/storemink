@@ -451,6 +451,68 @@ describe("DashboardSidebar on a settings page", () => {
     expect(screen.getByRole("link", { name: "Staff" })).toHaveClass("active");
   });
 
+  it("★ keeps the Settings panel on a printable invoice, which has no frame", () => {
+    path.current = "/dashboard/plans/invoices/abc";
+    render(
+      <DashboardSidebar
+        groups={[
+          {
+            group: "Settings",
+            items: [
+              {
+                href: "/dashboard/settings",
+                label: "Settings",
+                icon: "settings",
+                children: [
+                  {
+                    href: "/dashboard/plans",
+                    label: "Plans & Billing",
+                    icon: "ai",
+                  },
+                ],
+              },
+            ],
+          },
+        ]}
+        settingsFrame
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Back" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Plans & Billing" })).toHaveClass(
+      "bg-white",
+    );
+  });
+
+  it("highlights Storefront on Website settings, below the Builder's address", () => {
+    path.current = "/dashboard/builder/settings";
+    render(
+      <DashboardSidebar
+        groups={[
+          ...FRAME_NAV,
+          {
+            group: "Website",
+            items: [
+              {
+                href: "/dashboard/builder",
+                label: "Website Builder",
+                icon: "homepage",
+              },
+            ],
+          },
+        ]}
+        settingsFrame
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Storefront" })).toHaveClass(
+      "active",
+    );
+    expect(
+      screen.getByRole("link", { name: "Website Builder" }),
+    ).not.toHaveClass("active");
+  });
+
   it("keeps the Settings panel where the frame is not used (the operator console)", () => {
     path.current = "/dashboard/admins";
     render(<DashboardSidebar groups={FRAME_NAV} />);

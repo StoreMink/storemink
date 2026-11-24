@@ -40,9 +40,6 @@ export interface SettingsNavItem {
   wrapped: boolean;
   /** Opens in a new tab (the Website Builder). */
   newTab?: boolean;
-  /** The main sidebar item kept highlighted while this page is open (only
-   *  wrapped pages have one: the others are not inside Settings). */
-  owner?: string;
   /** Extra words the menu's search matches, beside the label. */
   keywords: string[];
 }
@@ -52,11 +49,28 @@ export interface SettingsNavGroup {
   items: SettingsNavItem[];
 }
 
-const SETTINGS_OWNER = "/dashboard/settings";
-const STOREFRONT_OWNER = "/dashboard/storefront";
+type ItemExtras = Pick<SettingsNavItem, "key" | "wrapped" | "keywords">;
 
-type ItemExtras = Pick<SettingsNavItem, "key" | "wrapped" | "keywords"> &
-  Partial<Pick<SettingsNavItem, "owner">>;
+/**
+ * Pages below a framed address that render outside the frame: the printable
+ * invoice and credit note (app/dashboard/plans/), which keep the sidebar's
+ * Settings panel with Plans & Billing open. A test fails when another page
+ * outside the route group sits below a framed address without being listed.
+ */
+export const UNFRAMED_PREFIXES = [
+  "/dashboard/plans/invoices/",
+  "/dashboard/plans/credit-notes/",
+];
+
+/**
+ * The main sidebar item that owns a settings page when the section tree says
+ * otherwise. Website settings lives below the Website Builder's address but
+ * is a Storefront page. Every other page's owner is its section's parent
+ * (resolveActiveSection in dashboard-sidebar.tsx).
+ */
+export const SETTINGS_OWNER_OVERRIDES: Record<string, string> = {
+  "/dashboard/builder/settings": "/dashboard/storefront",
+};
 
 /** A page that is a dashboard section: its label, href, icon and permission. */
 function fromSection(sectionKey: string, extras: ItemExtras): SettingsNavItem {
@@ -100,19 +114,16 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
         icon: "settings",
         section: "settings",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["store name", "address", "time zone", "timezone", "plan"],
       },
       fromSettingsChild("/dashboard/settings/domain", {
         key: "domain",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["custom domain", "dns", "url", "web address"],
       }),
       fromSettingsChild("/dashboard/settings/policies", {
         key: "policies",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["terms", "refund", "privacy", "shipping policy"],
       }),
     ],
@@ -123,13 +134,11 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       fromSection("themes", {
         key: "storefront",
         wrapped: true,
-        owner: STOREFRONT_OWNER,
         keywords: ["theme", "customise", "customize", "design"],
       }),
       fromSection("branding", {
         key: "branding",
         wrapped: true,
-        owner: STOREFRONT_OWNER,
         keywords: ["logo", "colour", "color", "brand voice", "social links"],
       }),
       {
@@ -139,7 +148,6 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
         icon: "custom_code",
         section: "builder",
         wrapped: true,
-        owner: STOREFRONT_OWNER,
         keywords: ["custom code", "html", "storefront settings"],
       },
       fromSection("builder", {
@@ -155,13 +163,11 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       fromSettingsChild("/dashboard/settings/shipping", {
         key: "shipping",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["delivery", "rates", "courier", "free shipping"],
       }),
       fromSection("channels", {
         key: "channels",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: [
           "razorpay",
           "shiprocket",
@@ -174,7 +180,6 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       fromSection("billing", {
         key: "billing",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["gst", "gstin", "tax", "invoice"],
       }),
     ],
@@ -185,13 +190,11 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       fromSection("admins", {
         key: "admins",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["team", "invite", "cashier", "manager"],
       }),
       fromSection("roles", {
         key: "roles",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["access", "permissions"],
       }),
     ],
@@ -202,13 +205,11 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       fromSection("notifications", {
         key: "notifications",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["email", "sms", "alerts", "templates"],
       }),
       fromSettingsChild("/dashboard/settings/notices", {
         key: "notices",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["blocked", "takedown", "notice"],
       }),
     ],
@@ -219,7 +220,6 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
       fromSettingsChild("/dashboard/settings/analytics", {
         key: "analytics",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["google analytics", "ga4", "meta pixel", "tracking"],
       }),
       fromSection("activity", {
@@ -237,13 +237,11 @@ export const SETTINGS_NAV: SettingsNavGroup[] = [
         // Every signed-in admin may change their own account.
         section: null,
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: ["password", "profile", "mobile", "phone", "name"],
       }),
       fromSection("ai", {
         key: "plans",
         wrapped: true,
-        owner: SETTINGS_OWNER,
         keywords: [
           "plan",
           "upgrade",
@@ -272,16 +270,25 @@ export function activeSettingsItem(
   if (path === SETTINGS_HOME) {
     return items.find((i) => i.href === SETTINGS_GENERAL);
   }
+  if (UNFRAMED_PREFIXES.some((p) => path.startsWith(p))) return undefined;
   return items
     .filter((i) => i.wrapped && pathMatches(path, i.href))
     .sort((a, b) => b.href.length - a.href.length)[0];
 }
 
-/** The main sidebar item to keep highlighted on a settings page, or null. */
-export function settingsOwnerHref(pathname: string): string | null {
+/** Whether this path renders inside the Settings frame. */
+export function inSettingsFrame(pathname: string): boolean {
   const path = normalizePath(pathname);
-  if (pathMatches(path, SETTINGS_HOME)) return SETTINGS_OWNER;
-  return activeSettingsItem(path)?.owner ?? null;
+  return pathMatches(path, SETTINGS_HOME) || !!activeSettingsItem(path);
+}
+
+/** The owner this path takes from SETTINGS_OWNER_OVERRIDES, or null. */
+export function settingsOwnerOverride(pathname: string): string | null {
+  const path = normalizePath(pathname);
+  const key = Object.keys(SETTINGS_OWNER_OVERRIDES).find((href) =>
+    pathMatches(path, href),
+  );
+  return key ? SETTINGS_OWNER_OVERRIDES[key] : null;
 }
 
 /** Search: the label or one of the keywords contains every typed word. */

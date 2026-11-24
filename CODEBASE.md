@@ -6552,8 +6552,13 @@ settings, Website Builder) to be in the menu too.
   `getSection` from `lib/permissions.ts` (a section, or a child of the
   Settings section), so a rename there reaches this menu with the sidebar;
   only General and Website settings, which no section names, are written
-  inline. `activeSettingsItem`, `settingsOwnerHref` and `settingsItemMatches`
-  (every typed word must match) read it. `app/dashboard/nav-path.ts` holds the
+  inline. `activeSettingsItem`, `inSettingsFrame`, `settingsOwnerOverride`
+  and `settingsItemMatches` (every typed word must match) read it.
+  `UNFRAMED_PREFIXES` names the two pages below a framed address that are
+  not in the frame (the printable invoice and credit note), and
+  `SETTINGS_OWNER_OVERRIDES` the one page whose sidebar owner the sidebar
+  cannot work out (Website settings at `/dashboard/builder/settings` lights
+  Storefront, not Website Builder). `app/dashboard/nav-path.ts` holds the
   one `normalizePath` and `pathMatches` (`/dashboard` matches only itself)
   the sidebar, its links and this menu share.
 - **`settings-shell.tsx` (server) filters, `settings-frame.tsx` (client)
@@ -6572,8 +6577,10 @@ settings, Website Builder) to be in the menu too.
   no change of segment, and this boundary keeps the menu on screen. The frame cancels `.dash-content`'s padding
   and pads its own main column with the same `--dash-pad-*` values, so
   `.dash-savebar`'s negative margins still line up. It is at least
-  `--sm-settings-view` tall (the window less the 56px topbar, and from 768px
-  less the 17px of `.dash-main`'s top and bottom margins and top border), a
+  `--sm-settings-view` tall (the window less `--dash-topbar-h` and
+  `--dash-main-inset-y`, both set once in `dashboard.css`: the store
+  layout's content pane takes its 768px margins and top rule from
+  `.dash-main-inset` there, so the frame never restates them), a
   flex column whose grid takes the rest; the sticky menu sits at
   `top: calc(var(--dash-pad-t) * -1)` like `.dash-savebar` and is at most that
   tall. Printing hides the menu and gives the page the whole width.
@@ -6589,12 +6596,15 @@ settings, Website Builder) to be in the menu too.
   `plans/credit-notes/[id]`), bare, and the Plans & Billing components
   (`plans-client.tsx` and the rest) stay in `app/dashboard/plans`, which the
   console, signup and the Locations card import.
-- **General** (`general-settings.tsx`, at `/dashboard/settings` and
-  `/dashboard/settings/general`): store details (Edit links to Branding),
+- **General** (`general-settings.tsx`, at `/dashboard/settings/general`):
+  store details (Edit links to Branding),
   business details from Taxes & invoices (only with `billing` view), the
   business time zone (the form for Settings manage, read-only otherwise) and
-  the plan (linking to Plans & Billing with `ai` view). Two reads: the
-  store row (details, the time zone through `analyticsTimeZoneFromSettings`
+  the plan (linking to Plans & Billing with `ai` view). Cards use the
+  dashboard's `dash-card` classes and `--dash-*` colours. Two reads: the
+  store row from `getCurrentStoreOrNull` (memoized for the request, so it
+  costs nothing after the layout's own lookup, and null on a miss or error
+  rather than another store's row) (details, the time zone through `analyticsTimeZoneFromSettings`
   in `lib/analytics/range.ts`, the reader `getStoreAnalyticsTimeZone` also
   uses, and the plan through `effectivePlan`, as the dashboard layout does)
   and the business details. Each fails on its own: the card says it
@@ -6603,24 +6613,34 @@ settings, Website Builder) to be in the menu too.
   legal name, which that page cannot change. Links that mean a settings page
   name it: the inbox's time zone link goes to `/dashboard/settings/general`
   and the profile menu's Account Settings to `/dashboard/settings/account`,
-  since on a narrow frame `/dashboard/settings` shows only the menu. A role
-  without Settings view sees "Choose a page from the settings menu." on the
-  home.
+  since on a narrow frame `/dashboard/settings` shows only the menu.
+  ★ The Settings home renders no General reads: `settings-home-redirect.tsx`
+  asks whether the page column is visible (the frame's container query hides
+  it below 1000px) and, only where it shows, replaces the address with
+  `/dashboard/settings/general`; a ResizeObserver on the frame does the same
+  when a narrow window widens. A role without Settings view sees "Choose a
+  page from the settings menu." on the home. The time zone's label comes
+  from `analyticsTimeZoneLabel` (`lib/analytics/range.ts`), which the inbox's
+  automatic replies use too.
 - **The dashboard sidebar keeps its own menu on settings pages.**
   `DashboardSidebar` takes `settingsFrame` (only the store dashboard layout
   passes it; the operator console, which has its own `/dashboard/billing` and
   `/dashboard/roles`, does not). On a settings page it does not swap to the
-  Settings sub-panel and highlights the owning item: Storefront for the four
-  storefront pages, Settings for the rest (`SidebarNavLink` takes `active`),
-  but only when that item is in the viewer's nav: a role with Branding but
-  not Storefront sees Branding as its own top-level item and that stays lit.
+  Settings sub-panel and highlights the owning item, the section the
+  ordinary sidebar match already finds (Storefront for its pages, Settings
+  for its children; `settingsOwnerOverride` for Website settings), but only
+  when that item is in the viewer's nav: a role with Branding but not
+  Storefront sees Branding as its own top-level item and that stays lit. The
+  printable invoice and credit note are outside the frame and keep the
+  Settings sub-panel.
 - The Policies, Domain and Analytics tracking pages now use the same page
   header and width as the other settings pages.
 - Tests: `settings-nav.test.ts` (every item has a real page, an icon and a
   real section; every Settings child and `parent: "settings"` section is
   listed; every wrapped page is in the route group and nothing else is;
   labels, hrefs and icons match `getSection`), `settings-frame.test.tsx`,
-  `general-settings.test.tsx`, `page.test.tsx`, and the settings-page block of
+  `general-settings.test.tsx`, `page.test.tsx`,
+  `settings-home-redirect.test.tsx`, and the settings-page block of
   `dashboard-sidebar.test.tsx` (mutation-checked).
 - No merchant step changes: every guide's "Settings → …" path still leads to
   the same page, so no Help Centre update.

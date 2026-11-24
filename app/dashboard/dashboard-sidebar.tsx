@@ -21,7 +21,10 @@ import {
   unreadBadge,
   useUnreadCounts,
 } from "./components/unread-counts-context";
-import { settingsOwnerHref } from "./(settings)/settings/settings-nav";
+import {
+  inSettingsFrame,
+  settingsOwnerOverride,
+} from "./(settings)/settings/settings-nav";
 import { pathMatches } from "./nav-path";
 
 type Child = {
@@ -202,15 +205,20 @@ export function DashboardSidebar({
   const inLogs = pathname.startsWith(logsBasePath);
   // ★ ON A SETTINGS PAGE THE SIDEBAR STAYS THE MAIN NAV. The settings menu
   // sits inside the page, so a Settings panel here would be a second list of
-  // the same pages. The item that owns the page (Settings, or Storefront for
-  // Branding and Website settings) stays highlighted, though the page's
-  // address is not its own. Only when that owner IS in this viewer's nav: a
-  // role with Branding but not Storefront sees Branding as its own top-level
-  // item, and forcing the Storefront href would leave nothing highlighted.
-  const ownerHref =
-    settingsFrame && !inLogs ? settingsOwnerHref(pathname) : null;
-  const settingsOwner =
-    ownerHref && allItems.some((i) => i.href === ownerHref) ? ownerHref : null;
+  // the same pages. The item that owns the page stays highlighted, though the
+  // page's address is not its own: the section tree's answer (Settings for
+  // Staff, Storefront for Branding), except Website settings, which lives
+  // below the Website Builder's address and belongs to Storefront. Only an
+  // owner that IS in this viewer's nav counts: a role with Branding but not
+  // Storefront sees Branding as its own top-level item, which the tree finds.
+  // The printable invoice and credit note are outside the frame, so they keep
+  // the Settings panel with Plans & Billing open.
+  const framed = settingsFrame && !inLogs && inSettingsFrame(pathname);
+  const settingsOwner = framed
+    ? ([settingsOwnerOverride(pathname), activeSection?.href].find(
+        (href) => !!href && allItems.some((i) => i.href === href),
+      ) ?? null)
+    : null;
 
   useEffect(() => {
     setOpen(false);

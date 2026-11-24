@@ -13,6 +13,14 @@ export const COMMON_ANALYTICS_TIME_ZONES = [
   ["Australia/Sydney", "Australia - Sydney"],
 ] as const;
 
+/** A zone's name for people: its label in the list above, else the zone id. */
+export function analyticsTimeZoneLabel(timeZone: string): string {
+  return (
+    COMMON_ANALYTICS_TIME_ZONES.find(([zone]) => zone === timeZone)?.[1] ??
+    timeZone
+  );
+}
+
 export const ANALYTICS_RANGE_PRESETS = [
   "today",
   "yesterday",

@@ -340,7 +340,7 @@ export default async function DashboardLayout({
               <div className="flex flex-1 overflow-hidden">
                 <DashboardSidebar groups={nav} settingsFrame />
 
-                <div className="dash-main rounded-none md:rounded-tl-[16px] shadow-sm border-l-0 md:border-l border-t-0 md:border-t border-[#e5e5e5] overflow-hidden flex-1 relative flex flex-col mt-0 md:mt-2 ml-0 md:ml-2 mb-0 md:mb-2 mr-0 md:mr-2">
+                <div className="dash-main dash-main-inset rounded-none md:rounded-tl-[16px] shadow-sm overflow-hidden flex-1 relative flex flex-col">
                   <div className="dash-content flex-1 overflow-y-auto relative z-10">
                     {children}
                   </div>

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { lookupStoreById } from "@/lib/store/resolve";
+import { getCurrentStoreOrNull } from "@/lib/store/resolve";
 import { GeneralSettings } from "./general-settings";
 
 const db = vi.hoisted(() => ({
@@ -21,7 +21,7 @@ vi.mock("@/lib/db/client", () => ({
     return fn(chain);
   }),
 }));
-vi.mock("@/lib/store/resolve", () => ({ lookupStoreById: vi.fn() }));
+vi.mock("@/lib/store/resolve", () => ({ getCurrentStoreOrNull: vi.fn() }));
 vi.mock("@/lib/observability/logger", () => ({ logWarn: vi.fn() }));
 vi.mock("./business-time-zone-form", () => ({
   BusinessTimeZoneForm: ({ timeZone }: { timeZone: string }) => (
@@ -52,7 +52,7 @@ function access(allowed: Record<string, ("view" | "manage")[]>) {
 }
 
 async function renderGeneral(a = access({ settings: ["view", "manage"] })) {
-  const page = await GeneralSettings({ access: a, storeId: "store-1" });
+  const page = await GeneralSettings({ access: a });
   return render(page);
 }
 
@@ -63,7 +63,7 @@ function card(title: string) {
 beforeEach(() => {
   db.rows = [];
   db.fail = false;
-  vi.mocked(lookupStoreById).mockResolvedValue(STORE as never);
+  vi.mocked(getCurrentStoreOrNull).mockResolvedValue(STORE as never);
 });
 
 describe("Settings, General", () => {
@@ -141,7 +141,7 @@ describe("Settings, General", () => {
   });
 
   it("reads the plan and time zone from the store row, with no other read", async () => {
-    vi.mocked(lookupStoreById).mockResolvedValue({
+    vi.mocked(getCurrentStoreOrNull).mockResolvedValue({
       ...STORE,
       plan: "pro",
       settings: { business: { timeZone: "not a zone" } },
@@ -156,13 +156,24 @@ describe("Settings, General", () => {
   });
 
   it("says the plan and time zone could not load when the store row cannot", async () => {
-    vi.mocked(lookupStoreById).mockRejectedValue(new Error("down"));
+    // getCurrentStoreOrNull answers a database error with null.
+    vi.mocked(getCurrentStoreOrNull).mockResolvedValue(null);
     await renderGeneral(access({ settings: ["view"] }));
     expect(
       within(card("Plan")).getByText(/couldn.t be loaded/),
     ).toBeInTheDocument();
     expect(
       within(card("Business time zone")).getByText(/couldn.t be loaded/),
+    ).toBeInTheDocument();
+  });
+
+  it("★ never shows a fallback store's business details when the store is unknown", async () => {
+    vi.mocked(getCurrentStoreOrNull).mockResolvedValue(null);
+    db.rows = [{ name: "Someone else", address: null, taxId: null }];
+    await renderGeneral(access({ settings: ["view"], billing: ["view"] }));
+    expect(screen.queryByText("Someone else")).toBeNull();
+    expect(
+      within(card("Business details")).getByText(/couldn.t be loaded/),
     ).toBeInTheDocument();
   });
 });

@@ -13,7 +13,7 @@ import { withService } from "@/lib/db/client";
 import { getActingStoreId, getViewerAccess } from "@/app/dashboard/lib/access";
 import { logError } from "@/lib/observability/logger";
 import { getStoreAnalyticsTimeZone } from "@/lib/analytics/settings";
-import { COMMON_ANALYTICS_TIME_ZONES } from "@/lib/analytics/range";
+import { analyticsTimeZoneLabel } from "@/lib/analytics/range";
 import {
   loadAutoReplies,
   saveAutoReplies,
@@ -50,16 +50,13 @@ export async function getWhatsAppAutoReplies(): Promise<
       withService((db) => loadAutoReplies(db, storeId)),
       getStoreAnalyticsTimeZone(storeId),
     ]);
-    const label =
-      COMMON_ANALYTICS_TIME_ZONES.find(([zone]) => zone === timeZone)?.[1] ??
-      timeZone;
     return {
       ok: true,
       view: {
         settings: stored.settings,
         saved: stored.saved,
         canManage: access.can("inbox", "manage"),
-        timeZoneLabel: label,
+        timeZoneLabel: analyticsTimeZoneLabel(timeZone),
         canChangeTimeZone: access.can("settings", "manage"),
       },
     };

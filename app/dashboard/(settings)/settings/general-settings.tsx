@@ -3,12 +3,12 @@ import Link from "next/link";
 import { eq } from "drizzle-orm";
 import { storeBillingSettings } from "@/drizzle/schema";
 import { withService } from "@/lib/db/client";
-import { lookupStoreById } from "@/lib/store/resolve";
+import { getCurrentStoreOrNull } from "@/lib/store/resolve";
 import { brandFromSettings } from "@/lib/store/brand";
 import { storeOrigin } from "@/lib/site";
 import {
-  COMMON_ANALYTICS_TIME_ZONES,
   analyticsTimeZoneFromSettings,
+  analyticsTimeZoneLabel,
 } from "@/lib/analytics/range";
 import { PLAN_META, effectivePlan } from "@/lib/plans";
 import { logWarn } from "@/lib/observability/logger";
@@ -19,24 +19,21 @@ import { BusinessTimeZoneForm } from "./business-time-zone-form";
  * Settings, General: the store at a glance, read from where each fact is
  * edited, with a link to that page. Only the time zone is changed here.
  *
- * Two reads: the store row (details, time zone and plan all come from it,
- * the plan through effectivePlan as in the dashboard layout) and, for
- * someone with Taxes & invoices, the business details. Each fails on its
- * own: a card that cannot load says so, and the rest of the page still
- * shows.
+ * Two reads. The store row (details, time zone and plan all come from it,
+ * the plan through effectivePlan as in the dashboard layout) is the
+ * request's own host lookup, which the dashboard layout already made, so it
+ * costs nothing more. getCurrentStoreOrNull, never getCurrentStore: that one
+ * answers a database error with the fallback store, and General would then
+ * show another store's details. Then, for someone with Taxes & invoices, the
+ * business details. Each fails on its own: a card that cannot load says so,
+ * and the rest of the page still shows.
  */
-export async function GeneralSettings({
-  access,
-  storeId,
-}: {
-  access: ViewerAccess;
-  storeId: string;
-}) {
+export async function GeneralSettings({ access }: { access: ViewerAccess }) {
   const canBilling = access.can("billing", "view");
-  const [store, business] = await Promise.all([
-    lookupStoreById(storeId).catch(failed("store")),
-    canBilling
-      ? withService((db) =>
+  const store = await getCurrentStoreOrNull().catch(failed("store"));
+  const business =
+    canBilling && store
+      ? await withService((db) =>
           db
             .select({
               name: storeBillingSettings.businessName,
@@ -44,13 +41,14 @@ export async function GeneralSettings({
               taxId: storeBillingSettings.taxId,
             })
             .from(storeBillingSettings)
-            .where(eq(storeBillingSettings.storeId, storeId))
+            .where(eq(storeBillingSettings.storeId, store.id))
             .limit(1),
         )
           .then((rows) => rows[0] ?? null)
           .catch(failed("business"))
-      : Promise.resolve(null),
-  ]);
+      : canBilling
+        ? undefined
+        : null;
 
   const brand = store
     ? brandFromSettings(store.settings, store.name, "")
@@ -84,7 +82,7 @@ export async function GeneralSettings({
                     href={address}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-[#4338ca] hover:underline"
+                    className="text-[var(--dash-accent-hover)] hover:underline"
                   >
                     {address.replace(/^https:\/\//, "")}
                   </a>
@@ -136,7 +134,7 @@ export async function GeneralSettings({
           <Card title="Business time zone">
             {timeZone ? (
               <Rows>
-                <Row label="Time zone">{timeZoneLabel(timeZone)}</Row>
+                <Row label="Time zone">{analyticsTimeZoneLabel(timeZone)}</Row>
               </Rows>
             ) : (
               <CouldNotLoad />
@@ -175,13 +173,6 @@ function failed(what: string) {
   };
 }
 
-function timeZoneLabel(timeZone: string): string {
-  return (
-    COMMON_ANALYTICS_TIME_ZONES.find(([value]) => value === timeZone)?.[1] ??
-    timeZone
-  );
-}
-
 function Card({
   title,
   action,
@@ -192,12 +183,12 @@ function Card({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-[10px] border border-[#e5e5e5] bg-white p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <h2 className="text-[14px] font-medium text-[#1a1a1a]">{title}</h2>
+    <section className="dash-card">
+      <header className="dash-card-header">
+        <h2 className="dash-card-title">{title}</h2>
         {action}
-      </div>
-      {children}
+      </header>
+      <div className="dash-card-body">{children}</div>
     </section>
   );
 }
@@ -206,7 +197,7 @@ function EditLink({ href, children }: { href: string; children: ReactNode }) {
   return (
     <Link
       href={href}
-      className="inline-flex min-h-8 items-center rounded-md px-2.5 text-[13px] font-medium text-[#4338ca] hover:bg-[#eef2ff]"
+      className="inline-flex min-h-8 items-center rounded-md px-2.5 text-[13px] font-medium text-[var(--dash-accent-hover)] hover:bg-[var(--dash-accent-soft)]"
     >
       {children}
     </Link>
@@ -214,25 +205,27 @@ function EditLink({ href, children }: { href: string; children: ReactNode }) {
 }
 
 function Rows({ children }: { children: ReactNode }) {
-  return <dl className="divide-y divide-[#f0f0f0]">{children}</dl>;
+  return <dl className="divide-y divide-[var(--dash-border)]">{children}</dl>;
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid gap-1 py-2.5 text-[13px] first:pt-0 last:pb-0 sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-4">
-      <dt className="text-[#5b6472]">{label}</dt>
-      <dd className="min-w-0 break-words text-[#1a1a1a]">{children}</dd>
+      <dt className="text-[var(--dash-text-2)]">{label}</dt>
+      <dd className="min-w-0 break-words text-[var(--dash-text)]">
+        {children}
+      </dd>
     </div>
   );
 }
 
 function Missing() {
-  return <span className="text-[#5b6472]">Not added</span>;
+  return <span className="text-[var(--dash-text-2)]">Not added</span>;
 }
 
 function CouldNotLoad() {
   return (
-    <p className="text-[13px] text-[#5b6472]">
+    <p className="text-[13px] text-[var(--dash-text-2)]">
       This couldn&apos;t be loaded. Refresh the page to try again.
     </p>
   );

@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SECTIONS, getSection } from "../../lib/permissions";
 import { navIcons } from "../../nav-icons";
@@ -7,8 +7,9 @@ import {
   SETTINGS_NAV,
   SETTINGS_NAV_ITEMS,
   activeSettingsItem,
+  inSettingsFrame,
   settingsItemMatches,
-  settingsOwnerHref,
+  settingsOwnerOverride,
 } from "./settings-nav";
 
 const APP = join(__dirname, "..", "..", "..");
@@ -135,29 +136,71 @@ describe("activeSettingsItem", () => {
   });
 });
 
-describe("settingsOwnerHref", () => {
-  it("keeps Settings highlighted for settings pages at other addresses", () => {
-    expect(settingsOwnerHref("/dashboard/admins")).toBe("/dashboard/settings");
-    expect(settingsOwnerHref("/dashboard/plans/invoices")).toBe(
-      "/dashboard/settings",
-    );
-    expect(settingsOwnerHref("/dashboard/settings/general")).toBe(
-      "/dashboard/settings",
+/** Every page under app/dashboard outside the (settings) route group, as the
+ *  address it serves (route groups dropped, a dynamic segment as "x"). */
+function pagesOutsideGroup(dir = join(APP, "dashboard")): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (!statSync(path).isDirectory()) {
+      if (name === "page.tsx") {
+        const parts = relative(APP, dir)
+          .split(sep)
+          .filter((p) => !p.startsWith("("))
+          .map((p) => (p.startsWith("[") ? "x" : p));
+        out.push("/" + parts.join("/"));
+      }
+      continue;
+    }
+    if (name === "(settings)") continue;
+    out.push(...pagesOutsideGroup(path));
+  }
+  return out;
+}
+
+describe("inSettingsFrame", () => {
+  it("is true on the Settings pages, wherever their address", () => {
+    expect(inSettingsFrame("/dashboard/settings")).toBe(true);
+    expect(inSettingsFrame("/dashboard/settings/general")).toBe(true);
+    expect(inSettingsFrame("/dashboard/admins")).toBe(true);
+    expect(inSettingsFrame("/dashboard/plans/invoices")).toBe(true);
+    expect(inSettingsFrame("/dashboard/branding")).toBe(true);
+    expect(inSettingsFrame("/dashboard/builder/settings")).toBe(true);
+  });
+
+  it("is false for the printable invoice and credit note", () => {
+    expect(inSettingsFrame("/dashboard/plans/invoices/abc")).toBe(false);
+    expect(inSettingsFrame("/dashboard/plans/credit-notes/abc")).toBe(false);
+    expect(activeSettingsItem("/dashboard/plans/invoices/abc")).toBeUndefined();
+  });
+
+  it("is false outside Settings", () => {
+    expect(inSettingsFrame("/dashboard/products")).toBe(false);
+    expect(inSettingsFrame("/dashboard/builder")).toBe(false);
+    expect(inSettingsFrame("/dashboard/logs")).toBe(false);
+  });
+
+  it("★ claims no page that renders outside the route group", () => {
+    // A page below a framed address but outside app/dashboard/(settings) has
+    // no frame, so the sidebar must keep its panel there: list it in
+    // UNFRAMED_PREFIXES.
+    const pages = pagesOutsideGroup();
+    expect(pages).toContain("/dashboard/plans/invoices/x");
+    expect(pages.filter((p) => inSettingsFrame(p))).toEqual([]);
+  });
+});
+
+describe("settingsOwnerOverride", () => {
+  it("gives Website settings to Storefront", () => {
+    expect(settingsOwnerOverride("/dashboard/builder/settings")).toBe(
+      "/dashboard/storefront",
     );
   });
 
-  it("keeps Storefront highlighted for the storefront pages", () => {
-    expect(settingsOwnerHref("/dashboard/branding")).toBe(
-      "/dashboard/storefront",
-    );
-    expect(settingsOwnerHref("/dashboard/builder/settings")).toBe(
-      "/dashboard/storefront",
-    );
-  });
-
-  it("is null outside Settings", () => {
-    expect(settingsOwnerHref("/dashboard/products")).toBeNull();
-    expect(settingsOwnerHref("/dashboard/builder")).toBeNull();
+  it("is null for every other page", () => {
+    expect(settingsOwnerOverride("/dashboard/builder")).toBeNull();
+    expect(settingsOwnerOverride("/dashboard/admins")).toBeNull();
+    expect(settingsOwnerOverride("/dashboard/branding")).toBeNull();
   });
 });
 

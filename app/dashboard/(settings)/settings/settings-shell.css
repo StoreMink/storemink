@@ -8,8 +8,8 @@
    page column edge to edge and its sticky top still lands on the topbar.
 
    ★ --sm-settings-view IS THE SCROLL AREA'S HEIGHT: the window less the
-   56px topbar, and from 768px less the 17px .dash-main gives up to its
-   md:mt-2, md:mb-2 and md:border-t (app/dashboard/layout.tsx). The frame is
+   top bar (--dash-topbar-h) and the room .dash-main gives up around the page
+   (--dash-main-inset-y), both set once in dashboard.css. The frame is
    at least that tall, so the menu's border runs to the bottom however short
    the page is, and the sticky menu is never taller than what shows.
 
@@ -30,18 +30,14 @@
 .dashboard-shell .sm-settings {
   container-type: inline-size;
   container-name: sm-settings;
-  --sm-settings-view: calc(100dvh - 56px);
+  --sm-settings-view: calc(
+    100dvh - var(--dash-topbar-h, 56px) - var(--dash-main-inset-y, 0px)
+  );
   display: flex;
   flex-direction: column;
   margin: calc(var(--dash-pad-t, 28px) * -1)
     calc(var(--dash-pad-x, 32px) * -1) -40px;
   min-height: var(--sm-settings-view);
-}
-
-@media (min-width: 768px) {
-  .dashboard-shell .sm-settings {
-    --sm-settings-view: calc(100dvh - 56px - 17px);
-  }
 }
 
 /* flex: 1 rather than min-height: 100%, which a parent with only a
