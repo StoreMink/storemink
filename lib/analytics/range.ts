@@ -13,6 +13,14 @@ export const COMMON_ANALYTICS_TIME_ZONES = [
   ["Australia/Sydney", "Australia - Sydney"],
 ] as const;
 
+/** A zone's name for people: its label in the list above, else the zone id. */
+export function analyticsTimeZoneLabel(timeZone: string): string {
+  return (
+    COMMON_ANALYTICS_TIME_ZONES.find(([zone]) => zone === timeZone)?.[1] ??
+    timeZone
+  );
+}
+
 export const ANALYTICS_RANGE_PRESETS = [
   "today",
   "yesterday",
@@ -89,6 +97,20 @@ export function isValidTimeZone(value: unknown): value is string {
 
 export function normalizeAnalyticsTimeZone(value: unknown): string {
   return isValidTimeZone(value) ? value : DEFAULT_ANALYTICS_TIME_ZONE;
+}
+
+/** The store's business time zone from its `stores.settings` (the
+ *  `business.timeZone` key), defaulted the way every reader defaults it. */
+export function analyticsTimeZoneFromSettings(settings: unknown): string {
+  const business =
+    settings && typeof settings === "object"
+      ? (settings as Record<string, unknown>).business
+      : undefined;
+  return normalizeAnalyticsTimeZone(
+    business && typeof business === "object"
+      ? (business as Record<string, unknown>).timeZone
+      : undefined,
+  );
 }
 
 function partsAt(instant: Date, timeZone: string): LocalDateTime {

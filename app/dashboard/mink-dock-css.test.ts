@@ -79,6 +79,20 @@ function pinnedClasses(): Set<string> {
   return pinned;
 }
 
+/**
+ * Pinned classes that never sit under the tab, each with where it is. The tab
+ * hangs at the RIGHT of the content column and only from 768px; a menu pinned
+ * in a column on the LEFT cannot meet it, and marking it would hide the tab on
+ * every page that menu appears on. Each entry must still be pinned (a test
+ * below), so a stale one fails rather than exempting nothing.
+ */
+const LEFT_COLUMN_PINS = new Map([
+  [
+    "sm-settings-rail-inner",
+    "the Settings menu, a 236px column on the left (settings-shell.css)",
+  ],
+]);
+
 /** The class names a JSX opening tag's className lists, as written. */
 function tagClasses(tag: string): string[] {
   const attr = tag.match(/className=(?:"([^"]*)"|\{([^}]*)\})/);
@@ -144,7 +158,8 @@ describe("the top-bar Mink AI tab", () => {
       for (const [tag] of source.matchAll(/<[A-Za-z][\w.]*\s[^<>]*>/g)) {
         const classes = tagClasses(tag);
         for (const className of classes) {
-          if (!pinned.has(className)) continue;
+          if (!pinned.has(className) || LEFT_COLUMN_PINS.has(className))
+            continue;
           used.add(className);
           if (!tag.includes(MARKER))
             unmarked.push(`${relative(process.cwd(), file)}: ${className}`);
@@ -156,6 +171,12 @@ describe("the top-bar Mink AI tab", () => {
       expect.arrayContaining(["dash-offer-header", "dash-savebar"]),
     );
     expect(unmarked).toEqual([]);
+  });
+
+  it("exempts only pinned classes that sit in a left column", () => {
+    const pinned = pinnedClasses();
+    for (const className of LEFT_COLUMN_PINS.keys())
+      expect(pinned.has(className)).toBe(true);
   });
 
   it("keeps its hover styles to a fine pointer", () => {

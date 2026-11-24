@@ -160,7 +160,9 @@ and cached-icon troubleshooting to the published storefront-branding guide.
 > `.dashboard-frame:has([data-dash-pinned-top])`. `mink-dock-css.test.ts`
 > fails when an element using a class some stylesheet pins flush to the top (a
 > negative `--dash-pad-t` top inset) lacks the marker; a bar pinned only with
-> Tailwind classes or a CSS module is not detected. Screen reading and the
+> Tailwind classes or a CSS module is not detected. The Settings menu is
+> exempt by name (`LEFT_COLUMN_PINS`): it is pinned in a left column the bar
+> never reaches, and a stale entry fails. Screen reading and the
 > spotlight skip it through `[data-mink-dock]`. No first-visit auto-out, no
 > keyboard shortcut, no microphone. Help: `20261110_0277_mink_rail_help`; the
 > review fixes change no merchant step, so no Help Centre update.
@@ -241,8 +243,8 @@ stylesheet guard: no credit rule paints a box, hides the line or takes it out
 of flow, and the empty rule's declarations are pinned exactly;
 mutation-checked); `app/(storefront)/layout.test.tsx` (effective plan, comps,
 both previews, the stripped client brand);
-`app/dashboard/branding/branding-form.test.tsx`;
-`app/dashboard/branding/page.test.tsx`. Checked offline in headless Chrome
+`app/dashboard/(settings)/branding/branding-form.test.tsx`;
+`app/dashboard/(settings)/branding/page.test.tsx`. Checked offline in headless Chrome
 with the real stylesheets (five footer variants, three outcomes, the floating
 controls, 390 and 1280px). ⚠ `FooterConfig.showCredit` (lib/chrome/types.ts)
 is stored and normalised but read by nothing and edited by nothing. No
@@ -2273,7 +2275,7 @@ message; `docs/whatsapp-dev-live-test.md` Part L16 is that run.
 ### WhatsApp Commerce — Phase 2 slice 4: The template manager (2026-10-14)
 
 Plan §4's "template manager": **Channels → WhatsApp → Manage templates**
-(`app/dashboard/channels/whatsapp/templates/`, `channels` view to read,
+(`app/dashboard/(settings)/channels/whatsapp/templates/`, `channels` view to read,
 `channels` manage to change) lists every template the number holds, newest
 first, catalogue and merchant alike, with Meta's status, its reason and the
 words (header, body, footer, buttons), and lets the merchant **add their
@@ -2787,7 +2789,7 @@ Dashboard → Channels gains a **WhatsApp** card (category Messaging) whose
 modal asks ONE question before Meta's popup — _is this number already on the
 WhatsApp Business app?_ — because Coexistence is a different onboarding flow
 and asking afterwards hands the merchant a Meta error they cannot act on
-(plan §7). `app/dashboard/channels/embedded-signup.ts` loads Meta's JS SDK,
+(plan §7). `app/dashboard/(settings)/channels/embedded-signup.ts` loads Meta's JS SDK,
 opens Embedded Signup with the environment's configuration id and joins the
 two things the popup returns by two routes (the CODE from `FB.login`, the WABA
 and phone-number ids from a `message` event — ★ read only from a
@@ -3208,7 +3210,7 @@ the first two are replaced, a merchant's is kept by id, and the policy pages
 written.
 ★★ THE STOREFRONT PAGE'S CUSTOMISE STOREFRONT BUTTON (owner, 31 Oct 2026) is
 a shortcut into the chat, never a second way to start a redesign.
-`app/dashboard/storefront/customise-storefront-dialog.tsx` asks what the store
+`app/dashboard/(settings)/storefront/customise-storefront-dialog.tsx` asks what the store
 sells and who buys it (required, at least 3 characters), the look and feel,
 facts about the business and anything to avoid, each bounded by
 `CUSTOMISE_FORM_LIMITS` in `lib/mink/revamp/customise-form.ts` (pure,
@@ -6528,6 +6530,128 @@ the incomplete set. Migration `20260913_0110_mink_current_offers_help` edits
 the existing Mink capability/permission and Offers nudge paragraphs in place;
 it adds no new section.
 
+### Settings: one page with its own menu (2026-11-17)
+
+Settings is now one place, Shopify admin style: a settings menu on the left
+and the open settings page beside it. It used to be a card grid of links, and
+most settings pages lived at their own addresses with nothing tying them
+together. Vansh asked for the storefront pages (Storefront, Branding, Website
+settings, Website Builder) to be in the menu too.
+
+- **`app/dashboard/(settings)/settings/settings-nav.ts` is the one registry** (pure). Its
+  groups: Store (General, Domain, Policies), Online store (Storefront,
+  Branding, Website settings at `/dashboard/builder/settings`, Website Builder,
+  which opens in a new tab), Selling (Shipping & delivery, Channels, Taxes &
+  invoices), People (Staff, Roles & permissions), Messages (Notifications,
+  Notices from StoreMink), Data (Analytics tracking, Logs) and You and your
+  plan (Account, Plans & Billing). Each item names its permission section
+  (`null` for Account, which everyone has), whether its page renders inside
+  the frame (`wrapped`; the Website Builder and Logs leave Settings) and
+  search keywords ("gstin", "razorpay"). ★ Label, href and icon are NOT
+  written here: `fromSection` and `fromSettingsChild` read them through
+  `getSection` from `lib/permissions.ts` (a section, or a child of the
+  Settings section), so a rename there reaches this menu with the sidebar;
+  only General and Website settings, which no section names, are written
+  inline. `activeSettingsItem`, `inSettingsFrame`, `settingsOwnerOverride`
+  and `settingsItemMatches` (every typed word must match) read it.
+  `UNFRAMED_PREFIXES` names the two pages below a framed address that are
+  not in the frame (the printable invoice and credit note), and
+  `SETTINGS_OWNER_OVERRIDES` the one page whose sidebar owner the sidebar
+  cannot work out (Website settings at `/dashboard/builder/settings` lights
+  Storefront, not Website Builder). `app/dashboard/nav-path.ts` holds the
+  one `normalizePath` and `pathMatches` (`/dashboard` matches only itself)
+  the sidebar, its links and this menu share.
+- **`settings-shell.tsx` (server) filters, `settings-frame.tsx` (client)
+  draws.** The shell lists only items whose section the viewer can view, and
+  marks "View only" where the section has a manage action the viewer lacks;
+  with no profile it renders the page alone. The frame has the menu's search
+  (Escape clears), the Notices badge from the unread counts, the new-tab mark
+  for the Website Builder, and a "Settings" back link on phones.
+  `settings-shell.css` is a container query on the frame: below 1000px it is
+  one column, the menu on the Settings home and the page elsewhere, with 44px
+  targets and a 16px search box. ★ 1000px, not 720px (Vansh's second
+  review): the pages beside the menu still size their grids from the window,
+  so a narrower page column squeezed them (Channels' four cards across a
+  420px column). `app/dashboard/(settings)/loading.tsx` is the loading state
+  between settings pages: inside the group, `app/dashboard/loading.tsx` sees
+  no change of segment, and this boundary keeps the menu on screen. The frame cancels `.dash-content`'s padding
+  and pads its own main column with the same `--dash-pad-*` values, so
+  `.dash-savebar`'s negative margins still line up. It is at least
+  `--sm-settings-view` tall (the window less `--dash-topbar-h` and
+  `--dash-main-inset-y`, both set once in `dashboard.css`: the store
+  layout's content pane takes its 768px margins and top rule from
+  `.dash-main-inset` there, so the frame never restates them), a
+  flex column whose grid takes the rest; the sticky menu sits at
+  `top: calc(var(--dash-pad-t) * -1)` like `.dash-savebar` and is at most that
+  tall. Printing hides the menu and gives the page the whole width.
+- **★ Wrapping is one route group** (2026-11-21, Vansh's review).
+  `app/dashboard/(settings)/layout.tsx` mounts `SettingsShell` once for every
+  page under it: `settings/`, `admins/`, `roles/`, `channels/`, `billing/`,
+  `storefront/`, `branding/`, `builder/settings/` and the two Plans & Billing
+  pages (`plans/page.tsx`, `plans/invoices/page.tsx`). A route group adds
+  nothing to the address, so every URL is unchanged, and moving between
+  settings pages no longer remounts the frame (eight identical layouts did,
+  losing the menu's search and scroll). The printable invoice and credit
+  note stay outside the group (`app/dashboard/plans/invoices/[id]`,
+  `plans/credit-notes/[id]`), bare, and the Plans & Billing components
+  (`plans-client.tsx` and the rest) stay in `app/dashboard/plans`, which the
+  console, signup and the Locations card import.
+- **General** (`general-settings.tsx`, at `/dashboard/settings/general`):
+  store details (Edit links to Branding),
+  business details from Taxes & invoices (only with `billing` view), the
+  business time zone (the form for Settings manage, read-only otherwise) and
+  the plan (linking to Plans & Billing with `ai` view). Cards use the
+  dashboard's `dash-card` classes and `--dash-*` colours. Two reads: the
+  store row from `getCurrentStoreOrNull` (memoized for the request, so it
+  costs nothing after the layout's own lookup, and null on a miss or error
+  rather than another store's row) (details, the time zone through `analyticsTimeZoneFromSettings`
+  in `lib/analytics/range.ts`, the reader `getStoreAnalyticsTimeZone` also
+  uses, and the plan through `effectivePlan`, as the dashboard layout does)
+  and the business details. Each fails on its own: the card says it
+  couldn't be loaded and the rest still render. Business name is the
+  `business_name` Taxes & invoices saves (blank reads "Not added"), never the
+  legal name, which that page cannot change. Links that mean a settings page
+  name it: the inbox's time zone link goes to `/dashboard/settings/general`
+  and the profile menu's Account Settings to `/dashboard/settings/account`,
+  since on a narrow frame `/dashboard/settings` shows only the menu.
+  ★ The Settings home renders no General reads: `settings-home-redirect.tsx`
+  asks whether the page column is visible (the frame's container query hides
+  it below 1000px) and, only where it shows, replaces the address with
+  `/dashboard/settings/general`; a ResizeObserver on the frame does the same
+  when a narrow window widens. The sidebar's Settings item opens
+  `/dashboard/settings/general` directly, so a wide frame skips the home;
+  a phone reaches the menu by the page's "Settings" back link. On the
+  home no menu item is marked open and the menu's title is the page's h1.
+  Taxes & invoices drops its pinned header's negative top margin under the
+  back link, which it would otherwise cover. A role without Settings view sees "Choose a
+  page from the settings menu." on the home. The time zone's label comes
+  from `analyticsTimeZoneLabel` (`lib/analytics/range.ts`), which the inbox's
+  automatic replies use too.
+- **The dashboard sidebar keeps its own menu on settings pages.**
+  `DashboardSidebar` takes `settingsFrame` (only the store dashboard layout
+  passes it; the operator console, which has its own `/dashboard/billing` and
+  `/dashboard/roles`, does not). On a settings page it does not swap to the
+  Settings sub-panel and highlights the owning item, the section the
+  ordinary sidebar match already finds (Storefront for its pages, Settings
+  for its children; `settingsOwnerOverride` for Website settings), but only
+  when that item is in the viewer's nav: a role with Branding but not
+  Storefront sees Branding as its own top-level item and that stays lit. The
+  printable invoice and credit note are outside the frame and keep the
+  Settings sub-panel. Home is never taken as the owner (it is the
+  fallback for any address the match cannot place), so a role without
+  Settings sees nothing lit on Account Settings.
+- The Policies, Domain and Analytics tracking pages now use the same page
+  header and width as the other settings pages.
+- Tests: `settings-nav.test.ts` (every item has a real page, an icon and a
+  real section; every Settings child and `parent: "settings"` section is
+  listed; every wrapped page is in the route group and nothing else is;
+  labels, hrefs and icons match `getSection`), `settings-frame.test.tsx`,
+  `general-settings.test.tsx`, `page.test.tsx`,
+  `settings-home-redirect.test.tsx`, and the settings-page block of
+  `dashboard-sidebar.test.tsx` (mutation-checked).
+- No merchant step changes: every guide's "Settings → …" path still leads to
+  the same page, so no Help Centre update.
+
 ### Dashboard on phones (2026-10-04)
 
 `app/dashboard/dashboard.css` owns the mobile shell, wrapping page actions,
@@ -8202,7 +8326,7 @@ wholesip/
 │   │   │                      # assignee and label, searches inside messages, and
 │   │   │                      # writes notes, quotes and photo/PDF replies.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
-│   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
+│   │   ├── (settings)/admins/ roles/ # ★ THE ONE STAFF PAGE + the read-only roles reference
 │   │   │                      # (§41). admins/ lists dashboard admins AND register
 │   │   │                      # staff (pos_staff) together, each with a role from
 │   │   │                      # the PLATFORM's list (platform_roles — operators
@@ -8219,7 +8343,7 @@ wholesip/
 │   │   │                      # else uses it. Before 2026-10-14 any store's
 │   │   │                      # superadmin could act on any admin, and delete any
 │   │   │                      # login, by uid.
-│   │   ├── storefront/        # ★ Storefront (§11; was themes/ until 2026-10-11 —
+│   │   ├── (settings)/storefront/ # ★ Storefront (§11; was themes/ until 2026-10-11 —
 │   │   │                      # next.config.ts 307s /dashboard/themes here on store
 │   │   │                      # hosts only, so the operator console's own
 │   │   │                      # /dashboard/themes is untouched). A theme is chosen
@@ -8234,7 +8358,7 @@ wholesip/
 │   │   │                      # the redesign starts), Edit in Website Builder and
 │   │   │                      # View your store, plus a Branding card. Permission
 │   │   │                      # key is still `themes` (saved roles store the key)
-│   │   ├── branding/          # per-store branding editor; nested under Storefront
+│   │   ├── (settings)/branding/ # per-store branding editor; nested under Storefront
 │   │   │                      # in the sidebar (`parent: "themes"`, its own
 │   │   │                      # `branding` permission key kept). ★ ONE editor
 │   │   │                      # (revamped 31 Oct 2026): page.tsx reads the brand,
@@ -8265,9 +8389,9 @@ wholesip/
 │   │   │                      # marks. View-only roles see every field disabled
 │   │   │                      # and a notice. branding.css is `.dashboard-shell`
 │   │   │                      # scoped and uses the --dash-* tokens.
-│   │   ├── billing/           # ★ Invoices & Billing (§17): tax config + tax-class
+│   │   ├── (settings)/billing/ # ★ Invoices & Billing (§17): tax config + tax-class
 │   │   │                      # manager + invoice-template editor (billing.css)
-│   │   ├── channels/          # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
+│   │   ├── (settings)/channels/ # ★ Channels (§18/§35/WhatsApp): connect the store's OWN Razorpay,
 │   │                          # whatsapp/templates/ = the template manager (every
 │   │                          # template with Meta's answer; add, delete, refresh);
 │   │                      # Shiprocket, Twilio and WhatsApp (whatsapp-modal.tsx +
@@ -8316,7 +8440,15 @@ wholesip/
 │   │   │                      # ★ failures/ = everything that DIDN'T work, read
 │   │   │                      # across the other tables (§33). SIX views, ONE
 │   │   │                      # `activity` permission
-│   │   └── settings/          # account/ + domain/ + shipping/ (checkout rate policy) +
+│   │   └── (settings)/settings/ # ★ one page with its own menu (2026-11-17):
+│   │                          # settings-nav.ts (the menu registry), settings-shell.tsx
+│   │                          # + settings-frame.tsx + settings-shell.css (the frame,
+│   │                          # mounted once by (settings)/layout.tsx for this folder and
+│   │                          # (settings)/admins/, roles/, channels/, billing/,
+│   │                          # storefront/, branding/, builder/settings/ and the two
+│   │                          # plans pages; URLs unchanged), general-settings.tsx + general/
+│   │                          # (General) + settings-home-redirect.tsx (the home) +
+│   │                          # account/ + domain/ + shipping/ (checkout rate policy) +
 │   │                          # ★ notices/ (takedown, convention 45): Notices from
 │   │                          # StoreMink, a Settings child (view = Settings view,
 │   │                          # reply = Settings manage): page.tsx (every told block,
@@ -12797,7 +12929,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     "Choose your storefront theme", loses its switching steps and switch
     section; setup, signup, dashboard, branding, brand voice and Mink AI
     website guides edited in place). Tests: `switch.test.ts`,
-    `app/actions/theme-actions.test.ts`, `app/dashboard/storefront/*.test.tsx`.
+    `app/actions/theme-actions.test.ts`, `app/dashboard/(settings)/storefront/*.test.tsx`.
     **★★ NO SAMPLE CATALOGUE (owner, 31 Oct 2026: a theme's sample products
     and categories "should not be visible anywhere in the dashboard at
     all").** A merchant's store never receives a theme's sample products or
@@ -13094,7 +13226,7 @@ Promise((r) => setTimeout(r, 300)); })`) instead of re-running the suite
     is." (or "The N stores using it keep it as it is."). The dialog says the
     theme leaves the library so no new store can choose it, and that stores
     already using it keep it exactly as it is, pictures included. The
-    merchant's Storefront page (`app/dashboard/storefront/page.tsx`
+    merchant's Storefront page (`app/dashboard/(settings)/storefront/page.tsx`
     `keptCard`) shows such a theme's own name and picture from the kept
     release, with "Your store uses a theme that is no longer in the library.
     It keeps working." and no preview (its demo store is gone); it reads the
@@ -29558,7 +29690,7 @@ Sharma / +919877542162` beside `Customer / 9877542162`);
       product.** They are still `pos_staff` rows with a PIN (proxy.ts bounces
       a cashier/manager claim to /pos), because a PIN on an authorised device
       and an email + password login are different flows. What a merchant sees
-      is ONE Staff page (`app/dashboard/admins`, `shared.ts` → `StaffRow` with
+      is ONE Staff page (`app/dashboard/(settings)/admins`, `shared.ts` → `StaffRow` with
       `kind: "admin" | "pos"`) and ONE invite: the dialog's role picker is
       grouped Dashboard / Point of sale with the register roles greyed until
       POS is on, and `inviteUser` routes a register role to `inviteStaff`

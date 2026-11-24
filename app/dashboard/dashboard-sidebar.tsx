@@ -21,6 +21,13 @@ import {
   unreadBadge,
   useUnreadCounts,
 } from "./components/unread-counts-context";
+import {
+  inSettingsFrame,
+  settingsOwnerOverride,
+  SETTINGS_GENERAL,
+  SETTINGS_HOME,
+} from "./(settings)/settings/settings-nav";
+import { pathMatches } from "./nav-path";
 
 type Child = {
   label: string;
@@ -39,13 +46,6 @@ type Item = {
   openInNewTab?: boolean;
 };
 type Group = { group: string; items: Item[] };
-
-function matches(pathname: string, href: string): boolean {
-  return (
-    pathname === href ||
-    (href !== "/dashboard" && pathname.startsWith(`${href}/`))
-  );
-}
 
 /**
  * Which top-level section owns this path — i.e. whose sub-nav panel to show.
@@ -75,8 +75,10 @@ export function resolveActiveSection<
     // A DIRECT match wins first, and that order is load-bearing:
     // `/dashboard/users` must open the Customers panel rather than being claimed
     // by some parent that happens to list a child beneath that path.
-    items.find((it) => matches(pathname, it.href)) ??
-    items.find((it) => it.children?.some((c) => matches(pathname, c.href))) ??
+    items.find((it) => pathMatches(pathname, it.href)) ??
+    items.find((it) =>
+      it.children?.some((c) => pathMatches(pathname, c.href)),
+    ) ??
     items.find((it) => it.href === "/dashboard") ??
     items[0]
   );
@@ -124,6 +126,7 @@ export function DashboardSidebar({
   groups: navGroups,
   logTypes,
   logsBasePath = "/dashboard/logs",
+  settingsFrame = false,
 }: {
   groups?: Group[];
   /** The log registry for THIS console. Absent = the merchant's (LogsRail's
@@ -134,6 +137,12 @@ export function DashboardSidebar({
    *  today; it is a prop so a future third console cannot silently inherit the
    *  wrong one. */
   logsBasePath?: string;
+  /** The merchant dashboard's Settings pages carry their own settings menu
+   *  (app/dashboard/(settings)/settings/settings-frame.tsx), so the sidebar shows the
+   *  main nav there instead of a second Settings panel. The operator console
+   *  leaves this off: its paths overlap (/dashboard/billing, /dashboard/roles)
+   *  but it has no settings menu. */
+  settingsFrame?: boolean;
 }) {
   const pathname = usePathname();
   const { open, setOpen } = useMobileNav();
@@ -196,6 +205,28 @@ export function DashboardSidebar({
   // tells them apart, which the generic child matcher below cannot see. So it
   // gets the same panel treatment through its own rail.
   const inLogs = pathname.startsWith(logsBasePath);
+  // ★ ON A SETTINGS PAGE THE SIDEBAR STAYS THE MAIN NAV. The settings menu
+  // sits inside the page, so a Settings panel here would be a second list of
+  // the same pages. The item that owns the page stays highlighted, though the
+  // page's address is not its own: the section tree's answer (Settings for
+  // Staff, Storefront for Branding), except Website settings, which lives
+  // below the Website Builder's address and belongs to Storefront. Only an
+  // owner that IS in this viewer's nav counts: a role with Branding but not
+  // Storefront sees Branding as its own top-level item, which the tree finds.
+  // The printable invoice and credit note are outside the frame, so they keep
+  // the Settings panel with Plans & Billing open. Home is never the owner:
+  // resolveActiveSection falls back to it for any address it cannot place,
+  // so a role without Settings would see Home lit on Account Settings. With
+  // no owner each link uses its own match and nothing is lit.
+  const framed = settingsFrame && !inLogs && inSettingsFrame(pathname);
+  const settingsOwner = framed
+    ? ([settingsOwnerOverride(pathname), activeSection?.href].find(
+        (href) =>
+          !!href &&
+          href !== "/dashboard" &&
+          allItems.some((i) => i.href === href),
+      ) ?? null)
+    : null;
 
   useEffect(() => {
     setOpen(false);
@@ -243,10 +274,10 @@ export function DashboardSidebar({
                 </Suspense>
               </div>
             </div>
-          ) : activeSection?.children?.length ? (
+          ) : !settingsOwner && activeSection?.children?.length ? (
             (() => {
               const activeChildHref = activeSection
-                .children!.filter((c) => matches(pathname, c.href))
+                .children!.filter((c) => pathMatches(pathname, c.href))
                 .sort((a, b) => b.href.length - a.href.length)[0]?.href;
               return (
                 <div className="dash-nav-scroll px-3">
@@ -315,12 +346,24 @@ export function DashboardSidebar({
                     {g.items.map((item) => (
                       <SidebarNavLink
                         key={item.href}
-                        href={item.href}
+                        href={
+                          // Settings opens General directly: the home would
+                          // only redirect there on a wide frame. A phone
+                          // reaches the menu by the page's back link.
+                          settingsFrame && item.href === SETTINGS_HOME
+                            ? SETTINGS_GENERAL
+                            : item.href
+                        }
                         label={item.label}
                         icon={item.icon}
                         badge={item.badge}
                         badgeTone={item.badgeTone}
                         openInNewTab={item.openInNewTab}
+                        active={
+                          settingsOwner
+                            ? item.href === settingsOwner
+                            : undefined
+                        }
                       />
                     ))}
                   </nav>

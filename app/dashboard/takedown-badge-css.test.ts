@@ -189,7 +189,8 @@ function takedownBadges(): Mark[] {
 
 /** The takedown marks from T18a, T18b, T19a and T19b, by file. */
 const EXPECTED_MARKS: Record<string, number> = {
-  [join("app", "dashboard", "settings", "notices", "page.tsx")]: 1,
+  [join("app", "dashboard", "(settings)", "settings", "notices", "page.tsx")]:
+    1,
   [join("app", "dashboard", "blogs", "blogs-management-view.tsx")]: 1,
   [join("app", "dashboard", "blogs", "blog-editor-dialog.tsx")]: 1,
   [join("app", "dashboard", "products", "products-management-view.tsx")]: 1,
