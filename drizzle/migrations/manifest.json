@@ -11067,6 +11067,28 @@
           }
         ]
       }
+    },
+    {
+      "id": "20261125_0290_customer_delete_guard_help",
+      "description": "Help Centre: the customer-data guide, edited in place for the delete guard (a customer with orders or store credit cannot be deleted; any other customer is deleted from their page, which removes their addresses, reviews, comments, group memberships and an unused login, while their blog posts stay without an author). Excerpt and search description follow.",
+      "file": "sql/20261125_0290_customer_delete_guard_help.sql",
+      "transaction": true,
+      "requires": ["20261123_0289_theme_delete_keeps_store_releases"],
+      "verify": {},
+      "applyVerify": {
+        "queries": [
+          {
+            "name": "the customer-data guide says a customer with orders cannot be deleted",
+            "sql": "select count(*)::text from help_articles where slug='protect-customer-data-and-understand-deletion-risk' and status='published' and body like '%can''t be deleted, because their order history%' and body like '%<h2>Delete a customer</h2>%' and body like '%<h2>Before you delete</h2>%' and body like '%when a customer with orders or store credit asks for their data to be removed%'",
+            "equals": "1"
+          },
+          {
+            "name": "the guide no longer says deletion can cascade into orders",
+            "sql": "select count(*)::text from help_articles where slug='protect-customer-data-and-understand-deletion-risk' and (body like '%can cascade into order records%' or body like '%Current Help Centre limitation%' or seo_description like '%linked order removal%')",
+            "equals": "0"
+          }
+        ]
+      }
     }
   ]
 }

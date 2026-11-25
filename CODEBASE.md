@@ -8202,6 +8202,50 @@ wholesip/
 │   │   │                      # assignee and label, searches inside messages, and
 │   │   │                      # writes notes, quotes and photo/PDF replies.
 │   │   ├── users/             # customers + user_groups/ (segments)  [superadmin only]
+│   │   │                      # ★★ DELETING A CUSTOMER IS GUARDED (25 Nov 2026).
+│   │   │                      # orders.customer_id is ON DELETE CASCADE, so one
+│   │   │                      # click on Delete used to remove every order,
+│   │   │                      # payment, refund and invoice behind a customer, and
+│   │   │                      # deleteAuthUser(id) took any login with that id
+│   │   │                      # (an owner who shopped at their own store has
+│   │   │                      # admins.id = users.id). deleteCustomer
+│   │   │                      # (app/actions/customer-actions.ts) now runs ONE
+│   │   │                      # withService transaction: lock the store-scoped
+│   │   │                      # users row FOR UPDATE, count orders, read store
+│   │   │                      # credit, then delete. The lock conflicts with an
+│   │   │                      # order insert's FOR KEY SHARE, so a racing order is
+│   │   │                      # either counted or fails once the row is gone (a
+│   │   │                      # single DELETE ... NOT EXISTS would keep its
+│   │   │                      # snapshot and cascade it away). The refusal is
+│   │   │                      # decided on EVERY order with the id (the cascade is
+│   │   │                      # not store-scoped); the words count only this
+│   │   │                      # store's ("This customer has 3 orders, so they
+│   │   │                      # can't be deleted."), or say "linked to orders" with
+│   │   │                      # no number. Store credit above 0 refuses too (the
+│   │   │                      # credit ledger has no foreign key). A thrown check
+│   │   │                      # fails closed ("We couldn't check this customer's
+│   │   │                      # orders, so nothing was deleted."). After the
+│   │   │                      # commit the login is deleted only when
+│   │   │                      # authIdsInUse says nothing else uses it (a failed
+│   │   │                      # check keeps it), never for a pos_ id, and a failed
+│   │   │                      # login delete is logged, not reported. The words
+│   │   │                      # live in shared.ts (customerDeleteBlocker,
+│   │   │                      # CUSTOMER_DELETE_CONSEQUENCES), so the screens say
+│   │   │                      # what the server would answer: data.ts adds
+│   │   │                      # order_count/has_orders (one grouped read per page)
+│   │   │                      # and store_credit (detail), each in a scope of its
+│   │   │                      # own after the main read closes, null when it
+│   │   │                      # fails. The list's delete dialog shows the reason
+│   │   │                      # with only Close; the detail page disables Delete
+│   │   │                      # and writes the reason under it; unknown counts
+│   │   │                      # leave Delete available and the server decides.
+│   │   │                      # ⚠ A location-bound admin sees this store's order
+│   │   │                      # COUNT (a number, never order data; the section is
+│   │   │                      # store-wide). Not built: a RESTRICT foreign key
+│   │   │                      # migration, erasing personal data while keeping
+│   │   │                      # orders, merging duplicate till customers, a
+│   │   │                      # deletion audit event, superadmin-only deletion.
+│   │   │                      # Help: 20261125_0290 edits the customer-data guide.
 │   │   ├── admins/ roles/     # ★ THE ONE STAFF PAGE + the read-only roles reference
 │   │   │                      # (§41). admins/ lists dashboard admins AND register
 │   │   │                      # staff (pos_staff) together, each with a role from
@@ -11393,7 +11437,10 @@ wholesip/
 │                              # explained) and five more guides (Branding under
 │                              # Storefront; Customise storefront in the Mink AI
 │                              # website guide) (§11).
-│                              # Next free: 0290 (0289 = deleting a Theme
+│                              # Next free: 0291 (0290 = Help: the
+│                              # customer-data guide for the delete guard (a
+│                              # customer with orders or store credit can't be
+│                              # deleted); 0289 = deleting a Theme
 │                              # Studio theme stores use keeps the releases
 │                              # they pinned, and the install guard refuses
 │                              # a deleted id even with releases left, no
@@ -21224,9 +21271,10 @@ the trusted `store_id`, and direct customer PII is minimized/masked.
       controlled live test before relying on merchant-account rates, booking or
       webhooks for customer parcels, and the refund guide carries the equivalent
       first-live-Razorpay-refund reconciliation gate.
-      The customer-data guide also warns that the current permanent account
-      deletion path can cascade into account-linked orders and routes merchants
-      to support instead of publishing an unsafe click-through deletion recipe.
+      The customer-data guide explains that a customer with orders or store
+      credit can't be deleted, what deleting any other customer removes, and
+      the steps (since migration 0290; before it the delete cascaded into
+      account-linked orders and the guide sent merchants to support).
       The accuracy sweep also records the product gaps it had to explain rather
       than hide: location scope is applied to the main Orders list but not yet
       consistently to order-detail and cancellation reads; storefront Razorpay

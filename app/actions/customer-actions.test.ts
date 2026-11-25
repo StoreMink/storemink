@@ -7,6 +7,14 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth/firebase-users", () => ({
   deleteAuthUser: vi.fn(async () => {}),
 }));
+vi.mock("@/lib/auth/identity-usage", () => ({
+  authIdsInUse: vi.fn(async () => new Set<string>()),
+}));
+vi.mock("@/lib/observability/logger", () => ({
+  logError: vi.fn(),
+  logWarn: vi.fn(),
+  logInfo: vi.fn(),
+}));
 vi.mock("@/app/dashboard/lib/access", () => ({
   getManagerUserId: vi.fn(),
   getActingStoreId: vi.fn(async () => "a0000000-0000-4000-8000-000000000001"),
@@ -24,6 +32,8 @@ vi.mock("@/lib/db/client", () => ({
 
 import { updateCustomer, deleteCustomer } from "./customer-actions";
 import { deleteAuthUser } from "@/lib/auth/firebase-users";
+import { authIdsInUse } from "@/lib/auth/identity-usage";
+import { logError } from "@/lib/observability/logger";
 import { getManagerUserId } from "@/app/dashboard/lib/access";
 import { revalidatePath } from "next/cache";
 
@@ -42,6 +52,7 @@ describe("customer-actions", () => {
     // Ownership pre-check finds the in-store customer by default.
     dbHolder.current = makeDbMock({ selectQueue: [[{ id: "cust-1" }]] });
     vi.mocked(deleteAuthUser).mockResolvedValue();
+    vi.mocked(authIdsInUse).mockResolvedValue(new Set());
     vi.mocked(getManagerUserId).mockResolvedValue("user-1");
   });
 
@@ -119,6 +130,24 @@ describe("customer-actions", () => {
   });
 
   describe("deleteCustomer", () => {
+    // The three reads deleteCustomer makes, by table: the locked users row,
+    // the order counts, the store credit balance.
+    const mockDelete = (opts: {
+      user?: any[] | Error;
+      orders?: any[] | Error;
+      credit?: any[] | Error;
+    }) => {
+      dbHolder.current = makeDbMock({
+        selectByTable: {
+          users: [
+            opts.user ?? [{ id: "cust-1", email: " Grace@Example.com " }],
+          ],
+          orders: [opts.orders ?? [{ here: 0, total: 0 }]],
+          customer_credit_balances: [opts.credit ?? []],
+        },
+      });
+    };
+
     // Permission gate.
     it("rejects when caller lacks users.manage", async () => {
       vi.mocked(getManagerUserId).mockResolvedValue(null);
@@ -130,40 +159,142 @@ describe("customer-actions", () => {
     // be deletable by id. The service scope bypasses RLS, so the app-layer
     // ownership check is the only thing preventing a cross-tenant account delete.
     it("refuses to delete a customer from another store", async () => {
-      dbHolder.current = makeDbMock({ selectQueue: [[]] }); // no in-store row
+      mockDelete({ user: [] });
       const result = await deleteCustomer("other-store-cust");
       expect(result.error).toMatch(/not found/i);
       expect(deleteAuthUser).not.toHaveBeenCalled();
       expect(dbHolder.current.calls.delete).toHaveLength(0);
     });
 
-    // Happy path — removes BOTH the Cloud SQL row and the Identity Platform
-    // login (no cross-system cascade to lean on anymore).
-    it("deletes the customer row and the auth user, then revalidates", async () => {
+    // The users row is locked before the orders are counted, so an order
+    // being placed now is either counted or waits and then fails.
+    it("locks the customer row FOR UPDATE", async () => {
+      mockDelete({});
+      await deleteCustomer("cust-1");
+      expect(dbHolder.current.calls.forUpdate).toEqual(["update"]);
+    });
+
+    // The cascade would delete every order behind this customer.
+    it("refuses a customer with orders in this store, naming the count", async () => {
+      mockDelete({ orders: [{ here: 3, total: 3 }] });
+      const result = await deleteCustomer("cust-1");
+      expect(result.error).toBe(
+        "This customer has 3 orders, so they can't be deleted. Their order history is part of your records.",
+      );
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    it("says 1 order, not 1 orders", async () => {
+      mockDelete({ orders: [{ here: 1, total: 1 }] });
+      const result = await deleteCustomer("cust-1");
+      expect(result.error).toMatch(/has 1 order,/);
+    });
+
+    // The cascade is not store-scoped, so orders elsewhere also refuse, and
+    // the message reveals no other store's count.
+    it("refuses when the only orders are another store's, without a count", async () => {
+      mockDelete({ orders: [{ here: 0, total: 2 }] });
+      const result = await deleteCustomer("cust-1");
+      expect(result.error).toMatch(/linked to orders/);
+      expect(result.error).not.toMatch(/\d/);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+    });
+
+    // The credit ledger has no foreign key: a balance would be orphaned.
+    it("refuses a customer holding store credit", async () => {
+      mockDelete({ credit: [{ balance: "250.00" }] });
+      const result = await deleteCustomer("cust-1");
+      expect(result.error).toMatch(/₹250\.00 of store credit/);
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+    });
+
+    it("deletes a customer whose credit is zero", async () => {
+      mockDelete({ credit: [{ balance: "0" }] });
       const result = await deleteCustomer("cust-1");
       expect(result.success).toBe(true);
       expect(dbHolder.current.calls.delete).toHaveLength(1);
-      expect(deleteAuthUser).toHaveBeenCalledWith("cust-1");
-      expect(revalidatePath).toHaveBeenCalledWith("/dashboard/users");
     });
 
-    // The authoritative profile-row delete runs first; if it fails, the login
-    // is left alone and the caller sees an error.
-    it("returns an error when the profile-row delete fails", async () => {
+    // Happy path: the row goes, then the login, once nothing else uses it.
+    it("deletes the row, then the unused login, then revalidates", async () => {
+      mockDelete({});
+      const result = await deleteCustomer("cust-1");
+      expect(result.success).toBe(true);
+      expect(dbHolder.current.calls.delete).toHaveLength(1);
+      // Asked with the trimmed, lowercased email.
+      const asked = vi.mocked(authIdsInUse).mock.calls[0][0];
+      expect([...asked.get("cust-1")!]).toEqual(["grace@example.com"]);
+      expect(deleteAuthUser).toHaveBeenCalledWith("cust-1");
+      expect(revalidatePath).toHaveBeenCalledWith("/dashboard/users");
+      expect(revalidatePath).toHaveBeenCalledWith("/dashboard/users/cust-1");
+    });
+
+    // An owner who shopped at their own store shares the login.
+    it("keeps a login that something else still uses", async () => {
+      mockDelete({});
+      vi.mocked(authIdsInUse).mockResolvedValue(new Set(["cust-1"]));
+      const result = await deleteCustomer("cust-1");
+      expect(result.success).toBe(true);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    // A failed in-use check keeps the login (fail toward keeping).
+    it("keeps the login when the in-use check fails", async () => {
+      mockDelete({});
+      vi.mocked(authIdsInUse).mockRejectedValue(new Error("db down"));
+      const result = await deleteCustomer("cust-1");
+      expect(result.success).toBe(true);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+      expect(logError).toHaveBeenCalledWith(
+        "customers.login_use_check_failed",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // A till customer has no login at all.
+    it("never touches logins for a till (pos_) customer", async () => {
+      mockDelete({ user: [{ id: "pos_abc", email: null }] });
+      const result = await deleteCustomer("pos_abc");
+      expect(result.success).toBe(true);
+      expect(authIdsInUse).not.toHaveBeenCalled();
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    // The customer is gone; a failed login delete is logged, not reported.
+    it("still succeeds when the login delete fails", async () => {
+      mockDelete({});
+      vi.mocked(deleteAuthUser).mockRejectedValue(new Error("on fire"));
+      const result = await deleteCustomer("cust-1");
+      expect(result.success).toBe(true);
+      expect(logError).toHaveBeenCalledWith(
+        "customers.login_delete_failed",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    // Fail closed: a check that could not run never reads as "not found"
+    // and never deletes.
+    it("refuses with a retry message when the order check throws", async () => {
+      mockDelete({ orders: new Error("connection reset") });
+      const result = await deleteCustomer("cust-1");
+      expect(result.error).toBe(
+        "We couldn't check this customer's orders, so nothing was deleted. Please try again.",
+      );
+      expect(dbHolder.current.calls.delete).toHaveLength(0);
+      expect(deleteAuthUser).not.toHaveBeenCalled();
+    });
+
+    it("refuses with the retry message when the row delete fails", async () => {
+      mockDelete({});
       dbHolder.current.db.delete = vi.fn(() => {
         throw new Error("still here");
       });
       const result = await deleteCustomer("cust-1");
-      expect(result.error).toMatch(/failed to delete customer/i);
+      expect(result.error).toMatch(/nothing was deleted/);
       expect(deleteAuthUser).not.toHaveBeenCalled();
-    });
-
-    // A genuine auth-delete failure (the wrapper already tolerates "not found")
-    // aborts with a failure message.
-    it("returns an error when the auth delete fails", async () => {
-      vi.mocked(deleteAuthUser).mockRejectedValue(new Error("on fire"));
-      const result = await deleteCustomer("cust-1");
-      expect(result.error).toMatch(/failed to delete customer/i);
     });
   });
 });

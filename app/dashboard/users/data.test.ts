@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { blogs, productReviews, users } from "@/drizzle/schema";
+import {
+  blogs,
+  customerCreditBalances,
+  orders,
+  productReviews,
+  users,
+} from "@/drizzle/schema";
 
 // A customer's reviews that StoreMink removed and told the store about read
 // "Removed by StoreMink" on the customer detail page (takedown design 7.3).
@@ -10,7 +16,11 @@ import { blogs, productReviews, users } from "@/drizzle/schema";
 const H = vi.hoisted(() => ({
   customer: [] as Record<string, unknown>[],
   reviews: [] as Record<string, unknown>[],
+  orders: [] as Record<string, unknown>[],
+  credit: [] as Record<string, unknown>[],
+  failCounts: false,
   open: 0,
+  maxOpen: 0,
   fail: false,
 }));
 
@@ -28,16 +38,24 @@ vi.mock("@/lib/db/client", () => {
       leftJoin: () => q,
       where: () => q,
       orderBy: () => q,
+      groupBy: () => q,
       limit: () => q,
       then: (resolve: (v: unknown) => unknown, reject: (e: unknown) => void) =>
-        Promise.resolve(
-          table === H_TABLES.users
-            ? H.customer
-            : table === H_TABLES.productReviews
-              ? H.reviews
-              : table === H_TABLES.blogs
-                ? []
-                : [],
+        (table === H_TABLES.orders && H.failCounts
+          ? Promise.reject(new Error("counts down"))
+          : Promise.resolve(
+              table === H_TABLES.orders
+                ? H.orders
+                : table === H_TABLES.credit
+                  ? H.credit
+                  : table === H_TABLES.users
+                    ? H.customer
+                    : table === H_TABLES.productReviews
+                      ? H.reviews
+                      : table === H_TABLES.blogs
+                        ? []
+                        : [],
+            )
         ).then(resolve, reject),
     };
     return q;
@@ -46,6 +64,7 @@ vi.mock("@/lib/db/client", () => {
     withService: vi.fn(async (fn: (db: any) => Promise<any>) => {
       if (H.fail) throw new Error("db down");
       H.open += 1;
+      H.maxOpen = Math.max(H.maxOpen, H.open);
       try {
         return await fn({ select: () => query() });
       } finally {
@@ -54,6 +73,11 @@ vi.mock("@/lib/db/client", () => {
     }),
   };
 });
+vi.mock("@/lib/observability/logger", () => ({
+  logWarn: vi.fn(),
+  logError: vi.fn(),
+  logInfo: vi.fn(),
+}));
 vi.mock("@/lib/moderation/merchant", () => ({
   blockedItemIds: vi.fn(async () => new Map<string, string>()),
 }));
@@ -64,10 +88,14 @@ const H_TABLES = vi.hoisted(() => ({
   users: null as unknown,
   productReviews: null as unknown,
   blogs: null as unknown,
+  orders: null as unknown,
+  credit: null as unknown,
 }));
 H_TABLES.users = users;
 H_TABLES.productReviews = productReviews;
 H_TABLES.blogs = blogs;
+H_TABLES.orders = orders;
+H_TABLES.credit = customerCreditBalances;
 
 import { blockedItemIds } from "@/lib/moderation/merchant";
 import { getCustomer } from "./data";
@@ -96,7 +124,11 @@ beforeEach(() => {
     },
   ];
   H.reviews = [review("r1"), review("r2")];
+  H.orders = [];
+  H.credit = [];
+  H.failCounts = false;
   H.open = 0;
+  H.maxOpen = 0;
   H.fail = false;
 });
 
@@ -158,5 +190,36 @@ describe("getCustomer and reviews removed by StoreMink", () => {
     expect(await getCustomer("u1")).toBeNull();
     expect(blockedItemIds).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+// The order counts and store credit behind the delete guard. Shown on the
+// customer's page; the server still decides any delete.
+describe("getCustomer order counts and store credit", () => {
+  it("adds this store's order count and whether any order exists", async () => {
+    H.orders = [{ customerId: "u1", here: 2, total: 3 }];
+    H.credit = [{ balance: "120.50" }];
+    const customer = await getCustomer("u1");
+    expect(customer?.order_count).toBe(2);
+    expect(customer?.has_orders).toBe(true);
+    expect(customer?.store_credit).toBe(120.5);
+    // Scopes of their own after the customer read closed: at most the two
+    // side reads at once, never three (one nested inside the customer read).
+    expect(H.maxOpen).toBeLessThanOrEqual(2);
+  });
+
+  it("reads zero orders and no credit as zero", async () => {
+    const customer = await getCustomer("u1");
+    expect(customer?.order_count).toBe(0);
+    expect(customer?.has_orders).toBe(false);
+    expect(customer?.store_credit).toBe(0);
+  });
+
+  it("a failed count reads as unknown and the customer still loads", async () => {
+    H.failCounts = true;
+    const customer = await getCustomer("u1");
+    expect(customer?.first_name).toBe("Asha");
+    expect(customer?.order_count).toBeNull();
+    expect(customer?.has_orders).toBeNull();
   });
 });

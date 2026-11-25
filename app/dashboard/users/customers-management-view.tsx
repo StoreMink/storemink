@@ -42,6 +42,8 @@ import {
   formatDate,
   initials,
   type Customer,
+  CUSTOMER_DELETE_CONSEQUENCES,
+  customerDeleteBlocker,
 } from "./shared";
 
 const SORT_OPTIONS: { key: CustomerSort; label: string }[] = [
@@ -169,6 +171,10 @@ export function CustomersManagementView({
     });
   };
 
+  const deleteBlocker = deleteTarget
+    ? customerDeleteBlocker(deleteTarget)
+    : null;
+
   const handleDelete = () => {
     if (!deleteTarget) return;
     startTransition(async () => {
@@ -177,7 +183,7 @@ export function CustomersManagementView({
         toast.error(result.error);
         return;
       }
-      toast.success("User deleted");
+      toast.success("Customer deleted");
       setDeleteTarget(null);
       router.refresh();
     });
@@ -552,35 +558,45 @@ export function CustomersManagementView({
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirm */}
+      {/* Delete confirm. A customer the server would refuse (orders, store
+          credit) gets the reason and only Close, never a Delete button. */}
       <Dialog
         open={deleteTarget !== null}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
       >
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
-            <DialogTitle>Delete user</DialogTitle>
+            <DialogTitle>
+              {deleteBlocker ? "Can't delete customer" : "Delete customer"}
+            </DialogTitle>
             <DialogDescription>
-              Delete {deleteTarget ? customerName(deleteTarget) : "this user"}{" "}
-              and their account? Their reviews and blog submissions go too. This
-              can&apos;t be undone.
+              {deleteBlocker ??
+                `Delete ${deleteTarget ? customerName(deleteTarget) : "this customer"} and their login? ${CUSTOMER_DELETE_CONSEQUENCES}`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteTarget(null)}
-              disabled={isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={isPending}
-            >
-              {isPending ? "Deleting..." : "Delete"}
-            </Button>
+            {deleteBlocker ? (
+              <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+                Close
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={isPending}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={isPending}
+                >
+                  {isPending ? "Deleting..." : "Delete"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
