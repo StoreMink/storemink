@@ -9,13 +9,18 @@ import {
   gt,
   gte,
   ilike,
+  inArray,
   isNotNull,
   or,
+  sql,
 } from "drizzle-orm";
-import { withService } from "@/lib/db/client";
+import { withService, type Db } from "@/lib/db/client";
+import { logWarn } from "@/lib/observability/logger";
 import {
   blogs,
   customerAdmin,
+  customerCreditBalances,
+  orders,
   productReviews,
   products,
   users,
@@ -97,6 +102,99 @@ function sanitizeSearch(q: string): string {
   return q.trim().slice(0, 100);
 }
 
+type OrderCounts = Map<string, { here: number; total: number }>;
+
+/**
+ * Orders per customer id: `here` is this store's, `total` every store's.
+ * The delete refusal is decided on `total` because the cascade is not
+ * store-scoped; screens show `here`. One grouped read for the whole page.
+ */
+async function readOrderCounts(
+  db: Db,
+  storeId: string,
+  ids: string[],
+): Promise<OrderCounts> {
+  const out: OrderCounts = new Map();
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select({
+      customerId: orders.customerId,
+      here: sql<number>`(count(*) filter (where ${orders.storeId} = ${storeId}))::int`,
+      total: sql<number>`count(*)::int`,
+    })
+    .from(orders)
+    .where(inArray(orders.customerId, ids))
+    .groupBy(orders.customerId);
+  for (const row of rows) {
+    if (row.customerId) {
+      out.set(row.customerId, {
+        here: Number(row.here),
+        total: Number(row.total),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The counts in a scope of their own, after the main read has closed (never
+ * nested inside it), so a failure costs only the counts: a failed statement
+ * would abort the main read's transaction. Null when it fails.
+ */
+async function safeOrderCounts(
+  storeId: string,
+  ids: string[],
+): Promise<OrderCounts | null> {
+  if (ids.length === 0) return new Map();
+  try {
+    return await withService((db) => readOrderCounts(db, storeId, ids));
+  } catch (err) {
+    logWarn("customers.order_counts_failed", {
+      storeId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** Store credit owed to one customer, or null when it can't be read. */
+async function safeStoreCredit(
+  storeId: string,
+  id: string,
+): Promise<number | null> {
+  try {
+    const credit = await withService((db) =>
+      db
+        .select({ balance: customerCreditBalances.balance })
+        .from(customerCreditBalances)
+        .where(
+          and(
+            eq(customerCreditBalances.storeId, storeId),
+            eq(customerCreditBalances.customerId, id),
+          ),
+        )
+        .limit(1),
+    );
+    return Number(credit[0]?.balance ?? 0);
+  } catch (err) {
+    logWarn("customers.store_credit_failed", {
+      storeId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** The counts for one customer; unknown (a failed read) is null. */
+function orderFields(
+  counts: OrderCounts | null,
+  id: string,
+): Pick<Customer, "order_count" | "has_orders"> {
+  if (!counts) return { order_count: null, has_orders: null };
+  const c = counts.get(id);
+  return { order_count: c?.here ?? 0, has_orders: (c?.total ?? 0) > 0 };
+}
+
 /**
  * One page of customers (newest first by default), filtered/sorted in SQL.
  * `error` is true if the view/table hasn't been migrated yet.
@@ -110,7 +208,8 @@ export async function getCustomers(
   const filter = query.filter ?? "all";
   const sort = query.sort ?? "newest";
 
-  const conds = [eq(customerAdmin.storeId, await getActingStoreId())];
+  const storeId = await getActingStoreId();
+  const conds = [eq(customerAdmin.storeId, storeId)];
 
   const term = sanitizeSearch(query.q ?? "");
   if (term) {
@@ -158,8 +257,15 @@ export async function getCustomers(
         .where(whereExpr);
       return { rows, total: countRows[0]?.n ?? 0 };
     });
+    const counts = await safeOrderCounts(
+      storeId,
+      rows.flatMap((r) => (r.id ? [r.id] : [])),
+    );
     return {
-      data: rows as Customer[],
+      data: rows.map((r) => ({
+        ...r,
+        ...orderFields(counts, r.id ?? ""),
+      })) as Customer[],
       error: false,
       total,
       page,
@@ -270,7 +376,21 @@ export async function getCustomer(id: string): Promise<CustomerDetail | null> {
     console.error("Failed to load customer:", err);
     return null;
   }
-  if (!detail || detail.reviews.length === 0) return detail;
+  if (!detail) return null;
+
+  // Read after the scope above has closed, in scopes of their own, so a
+  // failure costs only these figures (null = unknown; the server still
+  // decides any delete).
+  const [counts, storeCredit] = await Promise.all([
+    safeOrderCounts(storeId, [id]),
+    safeStoreCredit(storeId, id),
+  ]);
+  detail = {
+    ...detail,
+    ...orderFields(counts, id),
+    store_credit: storeCredit,
+  };
+  if (detail.reviews.length === 0) return detail;
 
   // The reviews StoreMink removed and told the store about (takedown design
   // 7.3): each reads "Removed by StoreMink" with the notice its "See why"

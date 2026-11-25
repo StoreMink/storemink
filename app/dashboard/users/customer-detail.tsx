@@ -3,14 +3,25 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CalendarDays, Copy, Mail, Phone, Star, Trash2 } from "lucide-react";
+import {
+  CalendarDays,
+  Copy,
+  Mail,
+  Phone,
+  Star,
+  Trash2,
+  Wallet,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { deleteCustomer, updateCustomer } from "@/app/actions/customer-actions";
 import { ITEM } from "@/lib/moderation/copy";
 import {
+  CUSTOMER_DELETE_CONSEQUENCES,
+  customerDeleteBlocker,
   formatDate,
   formatDateTime,
+  formatRupees,
   type CustomerDetail as CustomerDetailType,
 } from "./shared";
 
@@ -34,6 +45,9 @@ export function CustomerDetail({
   const [email, setEmail] = useState(customer.email ?? "");
 
   const mailto = customer.email ? `mailto:${customer.email}` : null;
+  // The server's own reason, when the screen already knows the delete would
+  // be refused (orders, store credit). Unknown counts leave it null.
+  const deleteBlocker = customerDeleteBlocker(customer);
 
   const save = () =>
     startTransition(async () => {
@@ -58,7 +72,7 @@ export function CustomerDetail({
         toast.error(result.error);
         return;
       }
-      toast.success("User deleted");
+      toast.success("Customer deleted");
       router.push("/dashboard/users");
       router.refresh();
     });
@@ -153,12 +167,27 @@ export function CustomerDetail({
                 <Star className="h-4 w-4" />
                 <span>
                   <small>Activity</small>
+                  {customer.order_count != null && (
+                    <>
+                      {customer.order_count} order
+                      {customer.order_count === 1 ? "" : "s"} ·{" "}
+                    </>
+                  )}
                   {customer.review_count} review
                   {customer.review_count === 1 ? "" : "s"} ·{" "}
                   {customer.blog_count} blog
                   {customer.blog_count === 1 ? "" : "s"}
                 </span>
               </div>
+              {customer.store_credit != null && customer.store_credit > 0 && (
+                <div className="customer-detail-field">
+                  <Wallet className="h-4 w-4" />
+                  <span>
+                    <small>Store credit</small>
+                    {formatRupees(customer.store_credit)}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -274,7 +303,9 @@ export function CustomerDetail({
             <div className="customer-detail-danger">
               {confirmDelete ? (
                 <>
-                  <span>Delete this user?</span>
+                  <span>
+                    Delete this customer? {CUSTOMER_DELETE_CONSEQUENCES}
+                  </span>
                   <div className="customer-detail-danger-row">
                     <Button
                       variant="destructive"
@@ -295,15 +326,21 @@ export function CustomerDetail({
                   </div>
                 </>
               ) : (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => setConfirmDelete(true)}
-                  className="justify-start"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Delete customer
-                </Button>
+                <>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={deleteBlocker !== null}
+                    onClick={() => setConfirmDelete(true)}
+                    className="justify-start"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete customer
+                  </Button>
+                  {deleteBlocker && (
+                    <p className="customer-detail-muted">{deleteBlocker}</p>
+                  )}
+                </>
               )}
             </div>
           )}

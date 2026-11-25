@@ -113,3 +113,59 @@ describe("CustomerDetail and reviews removed by StoreMink", () => {
     expect(screen.queryByText(ITEM.removed)).toBeNull();
   });
 });
+
+// The delete guard: a customer the server would refuse shows the reason and
+// a disabled Delete; unknown counts leave Delete available.
+describe("CustomerDetail delete guard", () => {
+  it("disables Delete and says why when the customer has orders", () => {
+    render(
+      <CustomerDetail
+        customer={{ ...customer([]), order_count: 2, has_orders: true }}
+        canManage
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /delete customer/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(
+        "This customer has 2 orders, so they can't be deleted. Their order history is part of your records.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/2 orders ·/)).toBeInTheDocument();
+  });
+
+  it("disables Delete for a customer holding store credit, and shows it", () => {
+    render(
+      <CustomerDetail
+        customer={{
+          ...customer([]),
+          order_count: 0,
+          has_orders: false,
+          store_credit: 75,
+        }}
+        canManage
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /delete customer/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/of store credit, so they can't/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Store credit")).toBeInTheDocument();
+  });
+
+  it("leaves Delete available when the counts are unknown", () => {
+    render(
+      <CustomerDetail
+        customer={{ ...customer([]), order_count: null, has_orders: null }}
+        canManage
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /delete customer/i }),
+    ).toBeEnabled();
+    expect(screen.queryByText(/can't be deleted/)).toBeNull();
+  });
+});
